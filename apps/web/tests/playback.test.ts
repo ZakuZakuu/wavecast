@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { isSeekAllowed, nextVisibleSegment } from "../lib/playback";
+import { isSeekAllowed, nextVisibleSegment, remainingSegmentSeconds } from "../lib/playback";
 import type { LiveEpisode } from "../lib/types";
 
 const episode: LiveEpisode = {
-  id: "episode", seed_id: "seed", state: "STREAMING", generation_mode: "PROGRESSIVE", current_segment_id: "opening",
+  id: "episode", seed_id: "seed", listener_id: "listener", version: 1, state: "STREAMING", generation_mode: "PROGRESSIVE", current_segment_id: "opening",
   playback_position_seconds: 0, is_listener_active: true, is_playing: true,
   program_estimated_duration_seconds: 30 * 60, generated_frontier_seconds: 22,
   committed_frontier_seconds: 0, timeline_duration_seconds: 58,
@@ -23,5 +23,10 @@ describe("generated-frontier player behavior", () => {
 
   it("surfaces a known music segment for next when narration is unfinished", () => {
     expect(nextVisibleSegment(episode)?.id).toBe("bridge");
+  });
+
+  it("uses only the segment-local remaining duration after seek or restore", () => {
+    const restored = { ...episode, playback_position_seconds: 12 };
+    expect(remainingSegmentSeconds(restored, restored.segments[0])).toBe(10);
   });
 });

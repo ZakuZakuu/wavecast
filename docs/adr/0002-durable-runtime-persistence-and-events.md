@@ -8,9 +8,11 @@ Phase 1 proved deterministic playback semantics in memory. The next milestone re
 
 `EpisodeRepository` is the persistence boundary used by `EpisodeOrchestrator`. `InMemoryEpisodeRepository` remains the default for zero-credential mock development and unit tests. `PostgresEpisodeRepository` uses SQLAlchemy 2's asyncpg dialect and stores the complete typed `LiveEpisode` snapshot, including every `Segment`, as a versioned JSONB payload plus indexed listener/seed identity columns. Postgres is therefore the source of truth for state recovery and SSE polling.
 
+Every persistence write is compare-and-swap: a snapshot at version `N` only updates the matching row at version `N`, then becomes `N + 1`. A stale snapshot raises an explicit retryable conflict and cannot roll back a newer materialized or playback state. SSE is intentionally version-polled from Postgres; its async coroutine offloads synchronous repository/orchestrator reads to a worker thread, so the adapter never invokes `asyncio.run()` inside the API event loop.
+
 An anonymous, stable browser ID scopes an episode by `(listener_id, seed_id)`; it is deliberately not an authentication system. The API accepts an `X-Wavecast-Listener` header and also maintains a same-site cookie fallback.
 
-The API exposes an SSE endpoint which polls the repository version and emits `episode_state_changed` snapshots. `GenerationScheduler` is an explicit seam with an inline implementation only. Browser audio completion reports a lifecycle event to the API; the browser no longer advances the server clock every second.
+The API exposes an SSE endpoint which polls the repository version and emits `episode_state_changed` snapshots. The web client consumes the same-origin EventSource using its cookie-scoped anonymous identity and applies only newer snapshots. `GenerationScheduler` is an explicit seam with an inline implementation only. Browser audio completion reports a lifecycle event to the API; a browser-local clock calculates segment-relative offsets and periodically checkpoints valid positions, so the browser no longer advances the server clock every second.
 
 ## Alternatives considered
 
