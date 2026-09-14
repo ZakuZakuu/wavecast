@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { formatSeconds, isSeekAllowed } from "../lib/playback";
@@ -45,7 +45,6 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
       syncing = true;
       try {
         let updated = await api.heartbeat(localEpisode.id);
-        if (updated.is_playing) updated = await api.tick(updated.id, 1);
         if (updated.state !== "MATERIALIZED") updated = await api.ensureBuffer(updated.id);
         setEpisode(updated);
       } catch (reason) {
@@ -55,7 +54,7 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
       }
     };
     void synchronize();
-    const interval = window.setInterval(() => void synchronize(), 1000);
+    const interval = window.setInterval(() => void synchronize(), 10_000);
     return () => window.clearInterval(interval);
   }, [localEpisode?.id, localEpisode?.is_listener_active, setEpisode]);
 
@@ -68,6 +67,10 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
     }
   }
 
+  const completeBrowserSegment = useCallback(() => {
+    if (localEpisode?.is_playing) void update(api.completed(localEpisode.id));
+  }, [localEpisode?.id, localEpisode?.is_playing]);
+
   if (error && !localEpisode) {
     return <main className="shell"><Link href="/">← Home</Link><p className="error">{error} — 请先启动 API 服务。</p></main>;
   }
@@ -78,7 +81,7 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
   const generatedPercent = Math.round((localEpisode.generated_frontier_seconds / localEpisode.timeline_duration_seconds) * 100);
   return (
     <main className="shell player-shell">
-      <TonePlayer segment={current} playing={localEpisode.is_playing && localEpisode.is_listener_active} />
+      <TonePlayer segment={current} playing={localEpisode.is_playing && localEpisode.is_listener_active} onEnded={completeBrowserSegment} />
       <nav className="nav"><Link href="/">← 返回节目</Link><span className="status-dot">{localEpisode.state === "MATERIALIZED" ? "fixed episode" : "building ahead"}</span></nav>
       <section className="now-playing">
         <p className="eyebrow">{current?.kind === "MUSIC" ? "NOW PLAYING" : "HOST ON MIC"}</p>

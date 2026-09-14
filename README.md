@@ -15,6 +15,19 @@ pnpm dev:web
 
 Open `http://localhost:3000`. No API keys are needed. The frontend proxies `/api/*` to the FastAPI server during development.
 
+### Durable runtime (optional Postgres)
+
+Mock mode is the default. To exercise restart-safe episode state, start the included database and apply the migration:
+
+```bash
+docker compose up -d postgres
+export WAVECAST_DATABASE_URL=postgresql+asyncpg://wavecast:wavecast@127.0.0.1:5432/wavecast
+uv run alembic upgrade head
+uv run uvicorn services.api.main:app --reload --port 8000
+```
+
+To run the real Postgres integration test, set `WAVECAST_TEST_DATABASE_URL` to the same URL. All other tests remain credential-free and use the in-memory repository.
+
 ## Validation
 
 ```bash
