@@ -13,6 +13,7 @@ from wavecast.models.episode import (
     SegmentState,
     utc_now,
 )
+from wavecast.storage.episodes import EpisodeNotFoundError, EpisodeRepository
 
 SESSION_TTL = timedelta(seconds=30)
 DEFAULT_BUFFER_CHAPTERS = 2
@@ -25,21 +26,22 @@ class EpisodeRuntimeError(ValueError):
 class InMemoryEpisodeRepository:
     def __init__(self) -> None:
         self._episodes: dict[str, LiveEpisode] = {}
-        self._episode_id_by_seed: dict[str, str] = {}
+        self._episode_id_by_listener_seed: dict[tuple[str, str], str] = {}
 
     def save(self, episode: LiveEpisode) -> LiveEpisode:
         self._episodes[episode.id] = episode
-        self._episode_id_by_seed[episode.seed_id] = episode.id
+        episode.version += 1
+        self._episode_id_by_listener_seed[(episode.listener_id, episode.seed_id)] = episode.id
         return episode
 
     def get(self, episode_id: str) -> LiveEpisode:
         try:
             return self._episodes[episode_id]
         except KeyError as error:
-            raise EpisodeRuntimeError(f"episode not found: {episode_id}") from error
+            raise EpisodeNotFoundError(episode_id) from error
 
-    def find_by_seed(self, seed_id: str) -> LiveEpisode | None:
-        episode_id = self._episode_id_by_seed.get(seed_id)
+    def find_by_listener_seed(self, listener_id: str, seed_id: str) -> LiveEpisode | None:
+        episode_id = self._episode_id_by_listener_seed.get((listener_id, seed_id))
         return self._episodes.get(episode_id) if episode_id else None
 
     def all(self) -> list[LiveEpisode]:
@@ -51,13 +53,13 @@ class EpisodeOrchestrator:
 
     def __init__(
         self,
-        repository: InMemoryEpisodeRepository,
+        repository: EpisodeRepository,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
         self.repository = repository
         self.now = now
 
-    def start(self, seed: EpisodeSeed) -> LiveEpisode:
+    def start(self, seed: EpisodeSeed, listener_id: str = "test-listener") -> LiveEpisode:
         now = self.now()
         opening = Segment(
             id="segment-opening",
@@ -74,6 +76,7 @@ class EpisodeOrchestrator:
         )
         episode = LiveEpisode(
             seed_id=seed.id,
+            listener_id=listener_id,
             state=EpisodeState.STREAMING,
             program_estimated_duration_seconds=seed.estimated_duration_seconds,
             segments=[opening, *self._future_segments()],
@@ -83,12 +86,18 @@ class EpisodeOrchestrator:
         )
         return self.repository.save(episode)
 
-    def start_or_resume(self, seed: EpisodeSeed) -> LiveEpisode:
-        existing = self.repository.find_by_seed(seed.id)
-        return self.resume(existing.id) if existing else self.start(seed)
+    def start_or_resume(self, seed: EpisodeSeed, listener_id: str = "test-listener") -> LiveEpisode:
+        existing = self.repository.find_by_listener_seed(listener_id, seed.id)
+        return self.resume(existing.id) if existing else self.start(seed, listener_id)
 
-    def get(self, episode_id: str) -> LiveEpisode:
-        return self.repository.get(episode_id)
+    def get(self, episode_id: str, listener_id: str | None = None) -> LiveEpisode:
+        try:
+            episode = self.repository.get(episode_id)
+        except EpisodeNotFoundError as error:
+            raise EpisodeRuntimeError(f"episode not found: {episode_id}") from error
+        if listener_id is not None and episode.listener_id != listener_id:
+            raise EpisodeRuntimeError("episode does not belong to this listener")
+        return episode
 
     def heartbeat(self, episode_id: str) -> LiveEpisode:
         episode = self._active_episode(episode_id)
@@ -163,6 +172,16 @@ class EpisodeOrchestrator:
                 break
         episode.last_activity_at = self.now()
         return self.repository.save(episode)
+
+    def complete_current_segment(self, episode_id: str) -> LiveEpisode:
+        """Lifecycle transition reported by a browser audio-ended event, not a server clock."""
+        episode = self._active_episode(episode_id)
+        current = self._current_segment(episode)
+        if current is None:
+            raise EpisodeRuntimeError("episode has no current segment")
+        start = self._timeline_start(episode, current.id)
+        remaining = max(0, current.duration_seconds - (episode.playback_position_seconds - start))
+        return self.tick(episode_id, elapsed_seconds=remaining)
 
     def seek(self, episode_id: str, position_seconds: int) -> LiveEpisode:
         episode = self._active_episode(episode_id)
