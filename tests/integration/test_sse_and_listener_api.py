@@ -1,8 +1,11 @@
 import json
 
 from fastapi.testclient import TestClient
+from wavecast.storage import EpisodeConcurrencyError
 
-from services.api.main import app
+import services.api.main as api_module
+
+app = api_module.app
 
 
 def test_anonymous_listener_header_isolates_episode_access() -> None:
@@ -40,3 +43,15 @@ def test_sse_delivers_the_persisted_episode_snapshot() -> None:
     payload = json.loads(data.removeprefix("data: "))
     assert payload["id"] == created["id"]
     assert payload["version"] == 2
+
+
+def test_concurrent_start_conflict_is_retryable_not_an_internal_error(monkeypatch) -> None:
+    def start_conflict(*_args: object, **_kwargs: object) -> None:
+        raise EpisodeConcurrencyError("duplicate listener and seed")
+
+    monkeypatch.setattr(api_module.orchestrator, "start_or_resume", start_conflict)
+
+    response = TestClient(app).post("/api/episodes/from-seed/city-pop-misunderstood")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Episode creation raced; retry"
