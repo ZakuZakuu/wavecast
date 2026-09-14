@@ -65,6 +65,14 @@ class ReplaceRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
 
 
+class TickRequest(BaseModel):
+    elapsed_seconds: int = Field(ge=0, le=60)
+
+
+class BufferRequest(BaseModel):
+    target_chapters: int = Field(default=2, ge=1, le=2)
+
+
 def get_episode_or_404(episode_id: str) -> LiveEpisode:
     try:
         return orchestrator.get(episode_id)
@@ -89,12 +97,12 @@ def list_seeds() -> list[EpisodeSeed]:
     return SEEDS
 
 
-@app.post("/api/episodes/from-seed/{seed_id}", response_model=LiveEpisode, status_code=201)
+@app.post("/api/episodes/from-seed/{seed_id}", response_model=LiveEpisode)
 def create_episode(seed_id: str) -> LiveEpisode:
     seed = next((candidate for candidate in SEEDS if candidate.id == seed_id), None)
     if seed is None:
         raise HTTPException(status_code=404, detail="Episode seed not found")
-    return orchestrator.start(seed)
+    return orchestrator.start_or_resume(seed)
 
 
 @app.get("/api/episodes/{episode_id}", response_model=LiveEpisode)
@@ -104,7 +112,24 @@ def episode(episode_id: str) -> LiveEpisode:
 
 @app.post("/api/episodes/{episode_id}/advance", response_model=LiveEpisode)
 def advance(episode_id: str) -> LiveEpisode:
-    return operate(lambda: orchestrator.advance(episode_id))
+    return operate(lambda: orchestrator.ensure_buffer(episode_id))
+
+
+@app.post("/api/episodes/{episode_id}/ensure-buffer", response_model=LiveEpisode)
+def ensure_buffer(episode_id: str, request: BufferRequest) -> LiveEpisode:
+    return operate(
+        lambda: orchestrator.ensure_buffer(episode_id, target_chapters=request.target_chapters)
+    )
+
+
+@app.post("/api/episodes/{episode_id}/tick", response_model=LiveEpisode)
+def tick(episode_id: str, request: TickRequest) -> LiveEpisode:
+    return operate(lambda: orchestrator.tick(episode_id, elapsed_seconds=request.elapsed_seconds))
+
+
+@app.post("/api/episodes/{episode_id}/heartbeat", response_model=LiveEpisode)
+def heartbeat(episode_id: str) -> LiveEpisode:
+    return operate(lambda: orchestrator.heartbeat(episode_id))
 
 
 @app.post("/api/episodes/{episode_id}/seek", response_model=LiveEpisode)
@@ -125,6 +150,11 @@ def next_playable(episode_id: str) -> LiveEpisode:
 @app.post("/api/episodes/{episode_id}/leave", response_model=LiveEpisode)
 def leave(episode_id: str) -> LiveEpisode:
     return operate(lambda: orchestrator.leave(episode_id))
+
+
+@app.post("/api/episodes/{episode_id}/pause", response_model=LiveEpisode)
+def pause(episode_id: str) -> LiveEpisode:
+    return operate(lambda: orchestrator.pause(episode_id))
 
 
 @app.post("/api/episodes/{episode_id}/resume", response_model=LiveEpisode)
