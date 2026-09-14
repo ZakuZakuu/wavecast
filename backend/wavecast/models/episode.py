@@ -40,6 +40,7 @@ class SegmentState(StrEnum):
     AUDIO_READY = "AUDIO_READY"
     COMMITTED = "COMMITTED"
     PLAYED = "PLAYED"
+    SKIPPED = "SKIPPED"
 
 
 class CoverParams(BaseModel):
@@ -100,28 +101,39 @@ class Segment(BaseModel):
     def is_committed(self) -> bool:
         return self.state in {SegmentState.COMMITTED, SegmentState.PLAYED}
 
+    @property
+    def is_timeline_active(self) -> bool:
+        return self.state is not SegmentState.SKIPPED
+
 
 class LiveEpisode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     seed_id: str
     state: EpisodeState = EpisodeState.STARTED
     generation_mode: GenerationMode = GenerationMode.PROGRESSIVE
+    program_estimated_duration_seconds: int = Field(gt=0)
     segments: list[Segment]
     current_segment_id: str | None = None
     playback_position_seconds: int = Field(default=0, ge=0)
     is_listener_active: bool = True
+    is_playing: bool = True
     last_activity_at: datetime = Field(default_factory=utc_now)
+    last_heartbeat_at: datetime = Field(default_factory=utc_now)
     created_at: datetime = Field(default_factory=utc_now)
 
     @property
     def ordered_segments(self) -> list[Segment]:
         return sorted(self.segments, key=lambda segment: segment.order)
 
+    @property
+    def timeline_segments(self) -> list[Segment]:
+        return [segment for segment in self.ordered_segments if segment.is_timeline_active]
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def generated_frontier_seconds(self) -> int:
         total = 0
-        for segment in self.ordered_segments:
+        for segment in self.timeline_segments:
             if not segment.is_audio_ready:
                 break
             total += segment.duration_seconds
@@ -131,7 +143,7 @@ class LiveEpisode(BaseModel):
     @property
     def committed_frontier_seconds(self) -> int:
         total = 0
-        for segment in self.ordered_segments:
+        for segment in self.timeline_segments:
             if not segment.is_committed:
                 break
             total += segment.duration_seconds
@@ -139,8 +151,14 @@ class LiveEpisode(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def timeline_duration_seconds(self) -> int:
+        return sum(segment.duration_seconds for segment in self.timeline_segments)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def estimated_total_seconds(self) -> int:
-        return sum(segment.duration_seconds for segment in self.ordered_segments)
+        """Deprecated compatibility alias for the current, not promised, timeline."""
+        return self.timeline_duration_seconds
 
     def segment(self, segment_id: str) -> Segment:
         for segment in self.segments:

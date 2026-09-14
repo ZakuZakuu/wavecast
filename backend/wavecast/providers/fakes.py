@@ -21,7 +21,9 @@ class FakeSearchProvider:
 
 class FakeLLMProvider:
     async def structured(self, prompt: str, output_type: type[BaseModel]) -> BaseModel:
-        raise NotImplementedError("FakeLLMProvider requires an explicit fixture response per agent contract")
+        raise NotImplementedError(
+            "FakeLLMProvider requires an explicit fixture response per agent contract"
+        )
 
 
 class FakeTTSProvider:
@@ -34,18 +36,41 @@ class FakeMusicProvider:
     def __init__(self) -> None:
         self._tracks = {
             "mock:opening": TrackMetadata(
-                track_ref="mock:opening", title="Neon First Light", artist="Mira Fields", duration_seconds=22, playable=True
+                track_ref="mock:opening",
+                title="Neon First Light",
+                artist="Mira Fields",
+                duration_seconds=22,
+                playable=True,
             ),
             "mock:bridge": TrackMetadata(
-                track_ref="mock:bridge", title="Midnight Transfer", artist="Signal Garden", duration_seconds=24, playable=True
+                track_ref="mock:bridge",
+                title="Midnight Transfer",
+                artist="Signal Garden",
+                duration_seconds=24,
+                playable=True,
             ),
             "mock:resolution": TrackMetadata(
-                track_ref="mock:resolution", title="Daybreak in Stereo", artist="Southbound FM", duration_seconds=26, playable=True
+                track_ref="mock:resolution",
+                title="Daybreak in Stereo",
+                artist="Southbound FM",
+                duration_seconds=26,
+                playable=True,
+            ),
+            "mock:finale": TrackMetadata(
+                track_ref="mock:finale",
+                title="Afterimage Avenue",
+                artist="Southbound FM",
+                duration_seconds=25,
+                playable=True,
             ),
         }
 
     async def search(self, query: str) -> list[TrackMetadata]:
-        return [track for track in self._tracks.values() if query.lower() in f"{track.title} {track.artist}".lower()]
+        return [
+            track
+            for track in self._tracks.values()
+            if query.lower() in f"{track.title} {track.artist}".lower()
+        ]
 
     async def resolve_track(self, track_ref: str) -> TrackMetadata:
         return self._tracks[track_ref]

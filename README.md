@@ -29,5 +29,4 @@ pnpm build
 
 ## Current scope
 
-Phase 1 implements an in-memory, mock-only vertical slice. It is intentionally not durable across a server restart and uses browser-generated placeholder tones rather than licensed audio. The application boundary is already separated into domain models, deterministic orchestration, and provider protocols so real adapters and persistence can replace these seams in later phases.
-
+Phase 1 implements an in-memory, mock-only vertical slice. Its deterministic playback clock advances segments by duration, keeps a one-to-two-chapter contiguous buffer, and stops speculative generation on leave or a heartbeat TTL. A seed always resolves to its existing in-memory episode on re-entry. It is intentionally not durable across a server restart and uses browser-generated placeholder tones rather than licensed audio. The application's program promise duration remains separate from the currently materialized timeline. Domain models, deterministic orchestration, and provider protocols remain ready for real adapters and persistence in later phases.

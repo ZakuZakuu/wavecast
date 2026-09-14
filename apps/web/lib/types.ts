@@ -1,5 +1,5 @@
 export type SegmentKind = "MUSIC" | "NARRATION";
-export type SegmentState = "PLANNED" | "SCRIPT_READY" | "AUDIO_GENERATING" | "AUDIO_READY" | "COMMITTED" | "PLAYED";
+export type SegmentState = "PLANNED" | "SCRIPT_READY" | "AUDIO_GENERATING" | "AUDIO_READY" | "COMMITTED" | "PLAYED" | "SKIPPED";
 
 export type Seed = {
   id: string;
@@ -37,7 +37,9 @@ export type LiveEpisode = {
   current_segment_id: string | null;
   playback_position_seconds: number;
   is_listener_active: boolean;
+  is_playing: boolean;
+  program_estimated_duration_seconds: number;
   generated_frontier_seconds: number;
   committed_frontier_seconds: number;
-  estimated_total_seconds: number;
+  timeline_duration_seconds: number;
 };
