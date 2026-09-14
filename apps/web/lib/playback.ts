@@ -1,5 +1,32 @@
 import type { LiveEpisode, Segment } from "./types";
 
+export type PlaybackAnchor = Pick<LiveEpisode, "current_segment_id" | "playback_position_seconds">;
+
+export function playbackAnchor(episode: LiveEpisode | null): PlaybackAnchor | null {
+  if (!episode) return null;
+  return {
+    current_segment_id: episode.current_segment_id,
+    playback_position_seconds: episode.playback_position_seconds,
+  };
+}
+
+export function reconcileBrowserPosition(
+  browserPosition: number,
+  previousAnchor: PlaybackAnchor | null,
+  nextEpisode: LiveEpisode | null,
+): number {
+  const nextAnchor = playbackAnchor(nextEpisode);
+  if (!nextAnchor) return 0;
+  if (
+    !previousAnchor
+    || previousAnchor.current_segment_id !== nextAnchor.current_segment_id
+    || previousAnchor.playback_position_seconds !== nextAnchor.playback_position_seconds
+  ) {
+    return nextAnchor.playback_position_seconds;
+  }
+  return browserPosition;
+}
+
 export function segmentStart(episode: LiveEpisode, segmentId: string): number {
   let total = 0;
   for (const segment of [...episode.segments].sort((a, b) => a.order - b.order)) {

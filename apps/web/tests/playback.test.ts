@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isSeekAllowed, nextVisibleSegment, remainingSegmentSeconds } from "../lib/playback";
+import { isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds } from "../lib/playback";
 import type { LiveEpisode } from "../lib/types";
 
 const episode: LiveEpisode = {
@@ -28,5 +28,12 @@ describe("generated-frontier player behavior", () => {
   it("uses only the segment-local remaining duration after seek or restore", () => {
     const restored = { ...episode, playback_position_seconds: 12 };
     expect(remainingSegmentSeconds(restored, restored.segments[0])).toBe(10);
+  });
+
+  it("keeps the browser clock ahead when an unrelated newer snapshot has the same playback anchor", () => {
+    const serverSnapshot = { ...episode, version: 2, playback_position_seconds: 5 };
+    const unrelatedNewerSnapshot = { ...serverSnapshot, version: 3, generated_frontier_seconds: 48 };
+
+    expect(reconcileBrowserPosition(11, serverSnapshot, unrelatedNewerSnapshot)).toBe(11);
   });
 });

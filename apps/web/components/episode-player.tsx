@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
-import { applyEpisodeUpdate, subscribeToEpisodeEvents } from "../lib/episode-events";
-import { formatSeconds, isSeekAllowed, remainingSegmentSeconds } from "../lib/playback";
+import { subscribeToEpisodeEvents } from "../lib/episode-events";
+import { formatSeconds, isSeekAllowed, playbackAnchor, reconcileBrowserPosition, remainingSegmentSeconds } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
 import { TonePlayer } from "./tone-player";
@@ -17,6 +17,7 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
   const episodeIdRef = useRef<string | null>(null);
   const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
+  const playbackAnchorRef = useRef<ReturnType<typeof playbackAnchor>>(null);
   const localEpisode = episode?.seed_id === seedId ? episode : null;
   const current = useMemo(
     () => localEpisode?.segments.find((segment) => segment.id === localEpisode.current_segment_id),
@@ -47,15 +48,20 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
   useEffect(() => {
     if (!localEpisode) return;
     return subscribeToEpisodeEvents(localEpisode.id, (incoming) => {
-      const known = usePlayerStore.getState().episode;
-      setEpisode(applyEpisodeUpdate(known, incoming));
+      setEpisode(incoming);
     });
   }, [localEpisode?.id, setEpisode]);
 
   useEffect(() => {
-    setBrowserPosition(localEpisode?.playback_position_seconds ?? 0);
-    browserPositionRef.current = localEpisode?.playback_position_seconds ?? 0;
-  }, [localEpisode?.current_segment_id, localEpisode?.version]);
+    const position = reconcileBrowserPosition(
+      browserPositionRef.current,
+      playbackAnchorRef.current,
+      localEpisode,
+    );
+    setBrowserPosition(position);
+    browserPositionRef.current = position;
+    playbackAnchorRef.current = playbackAnchor(localEpisode);
+  }, [localEpisode?.current_segment_id, localEpisode?.playback_position_seconds]);
 
   useEffect(() => {
     if (!localEpisode?.is_playing) return;
@@ -140,7 +146,7 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
       </section>
       <section className="timeline" aria-label="episode timeline">
         <div className="timeline-label"><span>可回听 {formatSeconds(localEpisode.generated_frontier_seconds)}</span><span>节目约 {formatSeconds(localEpisode.program_estimated_duration_seconds)}</span></div>
-        <input aria-label="Seek within generated audio" type="range" min="0" max={localEpisode.generated_frontier_seconds} value={localEpisode.playback_position_seconds} onChange={(event) => {
+        <input aria-label="Seek within generated audio" type="range" min="0" max={localEpisode.generated_frontier_seconds} value={browserPosition} onChange={(event) => {
           const value = Number(event.target.value);
           if (isSeekAllowed(localEpisode, value)) void update(api.seek(localEpisode.id, value));
         }} style={{ "--generated": `${generatedPercent}%` } as React.CSSProperties} />

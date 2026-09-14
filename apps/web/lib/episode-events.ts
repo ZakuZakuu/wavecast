@@ -1,7 +1,8 @@
 import type { LiveEpisode } from "./types";
+import { latestEpisodeSnapshot } from "./player-store";
 
 export function applyEpisodeUpdate(current: LiveEpisode | null, incoming: LiveEpisode): LiveEpisode {
-  return !current || incoming.version > current.version ? incoming : current;
+  return latestEpisodeSnapshot(current, incoming);
 }
 
 export function subscribeToEpisodeEvents(
