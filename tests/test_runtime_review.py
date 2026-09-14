@@ -87,6 +87,19 @@ def test_program_promise_duration_is_not_the_current_mock_timeline_duration() ->
     assert episode.timeline_duration_seconds < episode.program_estimated_duration_seconds
 
 
+def test_checkpoint_persists_partial_current_segment_without_entering_future() -> None:
+    runtime = make_runtime()
+    episode = runtime.start(make_seed())
+    checkpointed = runtime.checkpoint_playback(episode.id, 9)
+    runtime.pause(episode.id)
+    resumed = runtime.resume(episode.id)
+
+    assert checkpointed.playback_position_seconds == 9
+    assert resumed.playback_position_seconds == 9
+    with pytest.raises(EpisodeRuntimeError, match="outside"):
+        runtime.checkpoint_playback(episode.id, 23)
+
+
 def test_heartbeat_ttl_stops_a_stale_listener_before_more_generation() -> None:
     now = datetime(2026, 1, 1, tzinfo=UTC)
     runtime = EpisodeOrchestrator(InMemoryEpisodeRepository(), now=lambda: now)

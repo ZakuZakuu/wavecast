@@ -13,7 +13,11 @@ from wavecast.models.episode import (
     SegmentState,
     utc_now,
 )
-from wavecast.storage.episodes import EpisodeNotFoundError, EpisodeRepository
+from wavecast.storage.episodes import (
+    EpisodeConcurrencyError,
+    EpisodeNotFoundError,
+    EpisodeRepository,
+)
 
 SESSION_TTL = timedelta(seconds=30)
 DEFAULT_BUFFER_CHAPTERS = 2
@@ -29,6 +33,9 @@ class InMemoryEpisodeRepository:
         self._episode_id_by_listener_seed: dict[tuple[str, str], str] = {}
 
     def save(self, episode: LiveEpisode) -> LiveEpisode:
+        stored = self._episodes.get(episode.id)
+        if stored is not None and episode.version != stored.version:
+            raise EpisodeConcurrencyError(f"stale episode snapshot: {episode.id}")
         self._episodes[episode.id] = episode
         episode.version += 1
         self._episode_id_by_listener_seed[(episode.listener_id, episode.seed_id)] = episode.id
@@ -192,6 +199,23 @@ class EpisodeOrchestrator:
             self._commit(episode, target)
         episode.playback_position_seconds = position_seconds
         episode.is_playing = target is not None
+        episode.last_activity_at = self.now()
+        return self.repository.save(episode)
+
+    def checkpoint_playback(self, episode_id: str, position_seconds: int) -> LiveEpisode:
+        """Persist browser-owned progress without changing the current lifecycle segment."""
+        episode = self._active_episode(episode_id)
+        current = self._current_segment(episode)
+        if (
+            current is None
+            or position_seconds < 0
+            or position_seconds > episode.generated_frontier_seconds
+        ):
+            raise EpisodeRuntimeError("playback checkpoint is outside the generated timeline")
+        start = self._timeline_start(episode, current.id)
+        if not start <= position_seconds <= start + current.duration_seconds:
+            raise EpisodeRuntimeError("playback checkpoint must remain in the current segment")
+        episode.playback_position_seconds = position_seconds
         episode.last_activity_at = self.now()
         return self.repository.save(episode)
 

@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import cast
 from uuid import uuid4
 
+from anyio import to_thread
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -13,15 +14,24 @@ from pydantic import BaseModel, Field
 from wavecast.models.episode import CoverParams, EpisodeSeed, LiveEpisode
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
-from wavecast.storage import PostgresEpisodeRepository
+from wavecast.storage import EpisodeConcurrencyError, PostgresEpisodeRepository
+from wavecast.storage.episodes import EpisodeRepository
 
 LISTENER_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 DATABASE_URL = os.getenv("WAVECAST_DATABASE_URL")
-repository = (
+repository: EpisodeRepository = (
     PostgresEpisodeRepository(DATABASE_URL) if DATABASE_URL else InMemoryEpisodeRepository()
 )
 orchestrator = EpisodeOrchestrator(repository)
 scheduler = InlineGenerationScheduler(orchestrator)
+
+
+def configure_runtime(episode_repository: EpisodeRepository) -> None:
+    """Explicit injection seam for Postgres API integration tests and application setup."""
+    global repository, orchestrator, scheduler
+    repository = episode_repository
+    orchestrator = EpisodeOrchestrator(repository)
+    scheduler = InlineGenerationScheduler(orchestrator)
 
 app = FastAPI(title="Wavecast API", version="0.2.0")
 app.add_middleware(
@@ -84,6 +94,10 @@ class BufferRequest(BaseModel):
     target_chapters: int = Field(default=2, ge=1, le=2)
 
 
+class PlaybackCheckpointRequest(BaseModel):
+    position_seconds: int = Field(ge=0)
+
+
 def listener(request: Request) -> str:
     return cast(str, request.state.listener_id)
 
@@ -91,6 +105,8 @@ def listener(request: Request) -> str:
 def owned(episode_id: str, listener_id: str) -> None:
     try:
         orchestrator.get(episode_id, listener_id)
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
     except EpisodeRuntimeError as error:
         raise HTTPException(status_code=404, detail="Episode not found") from error
 
@@ -160,6 +176,17 @@ def seek(episode_id: str, request: Request, body: SeekRequest) -> LiveEpisode:
     )
 
 
+@app.post("/api/episodes/{episode_id}/playback-checkpoint", response_model=LiveEpisode)
+def playback_checkpoint(
+    episode_id: str, request: Request, body: PlaybackCheckpointRequest
+) -> LiveEpisode:
+    return operate(
+        episode_id,
+        listener(request),
+        lambda: orchestrator.checkpoint_playback(episode_id, body.position_seconds),
+    )
+
+
 @app.post("/api/episodes/{episode_id}/next", response_model=LiveEpisode)
 def next_playable(episode_id: str, request: Request) -> LiveEpisode:
     return operate(episode_id, listener(request), lambda: orchestrator.next_playable(episode_id))
@@ -199,12 +226,12 @@ async def episode_events(
     episode_id: str, request: Request, once: bool = False
 ) -> StreamingResponse:
     listener_id = listener(request)
-    owned(episode_id, listener_id)
+    await to_thread.run_sync(owned, episode_id, listener_id)
 
     async def stream() -> AsyncIterator[str]:
         version = -1
         while not await request.is_disconnected():
-            current = orchestrator.get(episode_id, listener_id)
+            current = await to_thread.run_sync(orchestrator.get, episode_id, listener_id)
             if current.version != version:
                 version = current.version
                 payload = json.dumps(current.model_dump(mode="json"), ensure_ascii=False)

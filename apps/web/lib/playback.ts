@@ -1,5 +1,20 @@
 import type { LiveEpisode, Segment } from "./types";
 
+export function segmentStart(episode: LiveEpisode, segmentId: string): number {
+  let total = 0;
+  for (const segment of [...episode.segments].sort((a, b) => a.order - b.order)) {
+    if (segment.state === "SKIPPED") continue;
+    if (segment.id === segmentId) return total;
+    total += segment.actual_duration_seconds ?? segment.planned_duration_seconds;
+  }
+  return total;
+}
+
+export function remainingSegmentSeconds(episode: LiveEpisode, segment: Segment): number {
+  const duration = segment.actual_duration_seconds ?? segment.planned_duration_seconds;
+  return Math.max(0, duration - Math.max(0, episode.playback_position_seconds - segmentStart(episode, segment.id)));
+}
+
 export function isSeekAllowed(episode: LiveEpisode, targetSeconds: number): boolean {
   return targetSeconds >= 0 && targetSeconds <= episode.generated_frontier_seconds;
 }

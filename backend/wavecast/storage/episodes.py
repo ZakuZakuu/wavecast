@@ -18,6 +18,10 @@ class EpisodeNotFoundError(KeyError):
     pass
 
 
+class EpisodeConcurrencyError(RuntimeError):
+    """The supplied snapshot was superseded and must be reloaded before retrying."""
+
+
 class EpisodeRepository(Protocol):
     def save(self, episode: LiveEpisode) -> LiveEpisode: ...
 
@@ -55,8 +59,9 @@ class PostgresEpisodeRepository:
         self.engine: AsyncEngine = create_async_engine(database_url, poolclass=NullPool)
 
     def save(self, episode: LiveEpisode) -> LiveEpisode:
-        episode.version += 1
-        self._run(self._save(episode))
+        next_version = episode.version + 1
+        self._run(self._save(episode, next_version))
+        episode.version = next_version
         return episode
 
     def get(self, episode_id: str) -> LiveEpisode:
@@ -80,28 +85,32 @@ class PostgresEpisodeRepository:
     def _run(coroutine: Any) -> Any:
         return asyncio.run(coroutine)
 
-    async def _save(self, episode: LiveEpisode) -> None:
-        payload = episode.model_dump(mode="json")
-        statement = insert(episodes_table).values(
+    async def _save(self, episode: LiveEpisode, next_version: int) -> None:
+        payload = episode.model_copy(update={"version": next_version}).model_dump(mode="json")
+        values = dict(
             id=episode.id,
             listener_id=episode.listener_id,
             seed_id=episode.seed_id,
-            version=episode.version,
+            version=next_version,
             payload=payload,
             updated_at=datetime.now(UTC),
         )
-        statement = statement.on_conflict_do_update(
-            index_elements=[episodes_table.c.id],
-            set_={
-                "listener_id": statement.excluded.listener_id,
-                "seed_id": statement.excluded.seed_id,
-                "version": statement.excluded.version,
-                "payload": statement.excluded.payload,
-                "updated_at": statement.excluded.updated_at,
-            },
-        )
         async with self.engine.begin() as connection:
-            await connection.execute(statement)
+            if episode.version == 0:
+                result = await connection.execute(
+                    insert(episodes_table).values(**values).on_conflict_do_nothing()
+                )
+            else:
+                result = await connection.execute(
+                    episodes_table.update()
+                    .where(
+                        episodes_table.c.id == episode.id,
+                        episodes_table.c.version == episode.version,
+                    )
+                    .values(**values)
+                )
+            if result.rowcount != 1:
+                raise EpisodeConcurrencyError(f"stale episode snapshot: {episode.id}")
 
     async def _get(self, episode_id: str) -> LiveEpisode | None:
         async with self.engine.connect() as connection:

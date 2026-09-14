@@ -30,6 +30,7 @@ export const api = {
   commit: (id: string, segmentId: string) => request<LiveEpisode>(`/episodes/${id}/commit/${segmentId}`, { method: "POST" }),
   next: (id: string) => request<LiveEpisode>(`/episodes/${id}/next`, { method: "POST" }),
   seek: (id: string, position: number) => request<LiveEpisode>(`/episodes/${id}/seek`, { method: "POST", body: JSON.stringify({ position_seconds: position }) }),
+  checkpoint: (id: string, position: number) => request<LiveEpisode>(`/episodes/${id}/playback-checkpoint`, { method: "POST", body: JSON.stringify({ position_seconds: position }) }),
   leave: (id: string) => request<LiveEpisode>(`/episodes/${id}/leave`, { method: "POST" }),
   pause: (id: string) => request<LiveEpisode>(`/episodes/${id}/pause`, { method: "POST" }),
   resume: (id: string) => request<LiveEpisode>(`/episodes/${id}/resume`, { method: "POST" }),
