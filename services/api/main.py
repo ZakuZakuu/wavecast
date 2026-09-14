@@ -136,7 +136,10 @@ def create_episode(seed_id: str, request: Request) -> LiveEpisode:
     seed = next((candidate for candidate in SEEDS if candidate.id == seed_id), None)
     if seed is None:
         raise HTTPException(status_code=404, detail="Episode seed not found")
-    return orchestrator.start_or_resume(seed, listener(request))
+    try:
+        return orchestrator.start_or_resume(seed, listener(request))
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode creation raced; retry") from error
 
 
 @app.get("/api/episodes/{episode_id}", response_model=LiveEpisode)
