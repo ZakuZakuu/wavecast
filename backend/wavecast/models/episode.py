@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from enum import StrEnum
+from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+class EpisodeState(StrEnum):
+    SEED = "SEED"
+    STARTED = "STARTED"
+    RESEARCHING = "RESEARCHING"
+    PLANNED = "PLANNED"
+    STREAMING = "STREAMING"
+    MATERIALIZING = "MATERIALIZING"
+    MATERIALIZED = "MATERIALIZED"
+    PUBLISHED = "PUBLISHED"
+    CANCELLED = "CANCELLED"
+
+
+class GenerationMode(StrEnum):
+    PROGRESSIVE = "PROGRESSIVE"
+    FULL = "FULL"
+
+
+class SegmentKind(StrEnum):
+    MUSIC = "MUSIC"
+    NARRATION = "NARRATION"
+
+
+class SegmentState(StrEnum):
+    PLANNED = "PLANNED"
+    SCRIPT_READY = "SCRIPT_READY"
+    AUDIO_GENERATING = "AUDIO_GENERATING"
+    AUDIO_READY = "AUDIO_READY"
+    COMMITTED = "COMMITTED"
+    PLAYED = "PLAYED"
+
+
+class CoverParams(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    family: str
+    seed: int
+    palette: tuple[str, str]
+
+
+class EpisodeSeed(BaseModel):
+    id: str
+    title: str
+    topic: str
+    short_description: str
+    estimated_duration_seconds: int = Field(gt=0)
+    opening_track_ref: str
+    opening_track_title: str
+    opening_track_artist: str
+    cover: CoverParams
+    generation_profile: str = "balanced"
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class Segment(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    chapter_id: str
+    order: int = Field(ge=0)
+    kind: SegmentKind
+    state: SegmentState = SegmentState.PLANNED
+    planned_duration_seconds: int = Field(gt=0)
+    actual_duration_seconds: int | None = Field(default=None, gt=0)
+    track_ref: str | None = None
+    title: str
+    artist: str | None = None
+    narration_text: str | None = None
+    asset_ref: str | None = None
+    committed_at: datetime | None = None
+    played_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_kind_fields(self) -> Segment:
+        if self.kind is SegmentKind.MUSIC and self.track_ref is None:
+            raise ValueError("music segments require a track_ref")
+        if self.kind is SegmentKind.NARRATION and self.track_ref is not None:
+            raise ValueError("narration segments cannot have a track_ref")
+        return self
+
+    @property
+    def duration_seconds(self) -> int:
+        return self.actual_duration_seconds or self.planned_duration_seconds
+
+    @property
+    def is_audio_ready(self) -> bool:
+        return self.state in {SegmentState.AUDIO_READY, SegmentState.COMMITTED, SegmentState.PLAYED}
+
+    @property
+    def is_committed(self) -> bool:
+        return self.state in {SegmentState.COMMITTED, SegmentState.PLAYED}
+
+
+class LiveEpisode(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    seed_id: str
+    state: EpisodeState = EpisodeState.STARTED
+    generation_mode: GenerationMode = GenerationMode.PROGRESSIVE
+    segments: list[Segment]
+    current_segment_id: str | None = None
+    playback_position_seconds: int = Field(default=0, ge=0)
+    is_listener_active: bool = True
+    last_activity_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @property
+    def ordered_segments(self) -> list[Segment]:
+        return sorted(self.segments, key=lambda segment: segment.order)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def generated_frontier_seconds(self) -> int:
+        total = 0
+        for segment in self.ordered_segments:
+            if not segment.is_audio_ready:
+                break
+            total += segment.duration_seconds
+        return total
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def committed_frontier_seconds(self) -> int:
+        total = 0
+        for segment in self.ordered_segments:
+            if not segment.is_committed:
+                break
+            total += segment.duration_seconds
+        return total
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def estimated_total_seconds(self) -> int:
+        return sum(segment.duration_seconds for segment in self.ordered_segments)
+
+    def segment(self, segment_id: str) -> Segment:
+        for segment in self.segments:
+            if segment.id == segment_id:
+                return segment
+        raise KeyError(f"unknown segment: {segment_id}")

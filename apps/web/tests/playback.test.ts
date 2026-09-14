@@ -1,0 +1,25 @@
+import { describe, expect, it } from "vitest";
+
+import { isSeekAllowed, nextVisibleSegment } from "../lib/playback";
+import type { LiveEpisode } from "../lib/types";
+
+const episode: LiveEpisode = {
+  id: "episode", seed_id: "seed", state: "STREAMING", generation_mode: "PROGRESSIVE", current_segment_id: "opening",
+  playback_position_seconds: 0, is_listener_active: true, generated_frontier_seconds: 22, committed_frontier_seconds: 0, estimated_total_seconds: 58,
+  segments: [
+    { id: "opening", chapter_id: "one", order: 0, kind: "MUSIC", state: "AUDIO_READY", planned_duration_seconds: 22, actual_duration_seconds: 22, track_ref: "mock:opening", title: "Opening", artist: "Artist", narration_text: null, asset_ref: null },
+    { id: "narration", chapter_id: "two", order: 1, kind: "NARRATION", state: "PLANNED", planned_duration_seconds: 10, actual_duration_seconds: null, track_ref: null, title: "Narration", artist: null, narration_text: null, asset_ref: null },
+    { id: "bridge", chapter_id: "two", order: 2, kind: "MUSIC", state: "PLANNED", planned_duration_seconds: 26, actual_duration_seconds: null, track_ref: "mock:bridge", title: "Bridge", artist: "Artist", narration_text: null, asset_ref: null },
+  ],
+};
+
+describe("generated-frontier player behavior", () => {
+  it("does not allow a listener to seek into ungenerated future", () => {
+    expect(isSeekAllowed(episode, 22)).toBe(true);
+    expect(isSeekAllowed(episode, 23)).toBe(false);
+  });
+
+  it("surfaces a known music segment for next when narration is unfinished", () => {
+    expect(nextVisibleSegment(episode)?.id).toBe("bridge");
+  });
+});
