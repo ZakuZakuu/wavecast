@@ -109,6 +109,8 @@ class Segment(BaseModel):
 class LiveEpisode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     seed_id: str
+    listener_id: str = "test-listener"
+    version: int = Field(default=0, ge=0)
     state: EpisodeState = EpisodeState.STARTED
     generation_mode: GenerationMode = GenerationMode.PROGRESSIVE
     program_estimated_duration_seconds: int = Field(gt=0)

@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: wavecast
+      POSTGRES_PASSWORD: wavecast
+      POSTGRES_DB: wavecast
+    ports:
+      - "5432:5432"
+    volumes:
+      - wavecast-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wavecast -d wavecast"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  wavecast-postgres:
