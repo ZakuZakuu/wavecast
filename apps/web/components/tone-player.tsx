@@ -7,7 +7,7 @@ import type { Segment } from "../lib/types";
 const frequencies: Record<string, number> = { MUSIC: 196, NARRATION: 245 };
 
 /** A clearly fake but audible local source, used only until a MusicProvider adapter exists. */
-export function TonePlayer({ segment, playing }: { segment: Segment | undefined; playing: boolean }) {
+export function TonePlayer({ segment, playing, onEnded }: { segment: Segment | undefined; playing: boolean; onEnded: () => void }) {
   const contextRef = useRef<AudioContext | null>(null);
   const oscillatorRef = useRef<OscillatorNode | null>(null);
 
@@ -26,8 +26,12 @@ export function TonePlayer({ segment, playing }: { segment: Segment | undefined;
     void context.resume();
     oscillator.start();
     oscillatorRef.current = oscillator;
-    return () => oscillator.stop();
-  }, [segment?.id, segment?.kind, playing]);
+    const completion = window.setTimeout(
+      onEnded,
+      (segment.actual_duration_seconds ?? segment.planned_duration_seconds) * 1000,
+    );
+    return () => { oscillator.stop(); window.clearTimeout(completion); };
+  }, [onEnded, playing, segment?.id, segment?.kind]);
 
   return null;
 }

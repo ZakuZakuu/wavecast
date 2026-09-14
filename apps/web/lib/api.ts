@@ -1,9 +1,21 @@
 import type { LiveEpisode, Seed } from "./types";
 
+const listenerStorageKey = "wavecast-anonymous-listener";
+
+function listenerId(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  const existing = window.localStorage.getItem(listenerStorageKey);
+  if (existing) return existing;
+  const created = crypto.randomUUID();
+  window.localStorage.setItem(listenerStorageKey, created);
+  return created;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const anonymousListener = listenerId();
   const response = await fetch(`/api${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: { "Content-Type": "application/json", ...(anonymousListener ? { "X-Wavecast-Listener": anonymousListener } : {}), ...init?.headers },
   });
   if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail ?? "Request failed");
   return response.json() as Promise<T>;
@@ -13,7 +25,7 @@ export const api = {
   seeds: () => request<Seed[]>("/seeds"),
   start: (seedId: string) => request<LiveEpisode>(`/episodes/from-seed/${seedId}`, { method: "POST" }),
   ensureBuffer: (id: string, targetChapters = 2) => request<LiveEpisode>(`/episodes/${id}/ensure-buffer`, { method: "POST", body: JSON.stringify({ target_chapters: targetChapters }) }),
-  tick: (id: string, elapsedSeconds: number) => request<LiveEpisode>(`/episodes/${id}/tick`, { method: "POST", body: JSON.stringify({ elapsed_seconds: elapsedSeconds }) }),
+  completed: (id: string) => request<LiveEpisode>(`/episodes/${id}/completed`, { method: "POST" }),
   heartbeat: (id: string) => request<LiveEpisode>(`/episodes/${id}/heartbeat`, { method: "POST" }),
   commit: (id: string, segmentId: string) => request<LiveEpisode>(`/episodes/${id}/commit/${segmentId}`, { method: "POST" }),
   next: (id: string) => request<LiveEpisode>(`/episodes/${id}/next`, { method: "POST" }),
