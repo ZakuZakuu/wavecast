@@ -1,0 +1,12 @@
+{
+  "name": "wavecast",
+  "private": true,
+  "packageManager": "pnpm@10.12.1",
+  "scripts": {
+    "dev:web": "pnpm --dir apps/web dev",
+    "lint": "pnpm --dir apps/web lint",
+    "typecheck": "pnpm --dir apps/web typecheck",
+    "test:web": "pnpm --dir apps/web test",
+    "build": "pnpm --dir apps/web build"
+  }
+}
