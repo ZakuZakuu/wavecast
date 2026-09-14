@@ -1,6 +1,7 @@
 .DS_Store
 .env
 .venv/
+*.egg-info/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -8,5 +9,5 @@ __pycache__/
 .ruff_cache/
 node_modules/
 .next/
+*.tsbuildinfo
 coverage/
-
