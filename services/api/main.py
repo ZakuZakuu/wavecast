@@ -115,6 +115,8 @@ def operate(episode_id: str, listener_id: str, operation: Callable[[], LiveEpiso
     owned(episode_id, listener_id)
     try:
         return operation()
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
     except EpisodeRuntimeError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
