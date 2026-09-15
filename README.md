@@ -68,6 +68,24 @@ pnpm test:web
 pnpm build
 ```
 
+### Phase 3 progressive intelligence (manual, paid opt-in)
+
+The Phase 3 pipeline keeps the episode runtime unchanged. Its fast path runs one Exa and one
+Tavily query concurrently, then one DeepSeek Responses JSON Schema call for a typed
+`FastStartPlan` under a 15-second hard deadline. A cancellable background path adds at most one
+Exa and two Tavily queries before Curator/Writer produce a broader typed arc and one future script.
+Run the sanitized live evaluation only after credential-free validation:
+
+```bash
+uv run --env-file .env python scripts/live_progressive_probe.py \
+  --anchor "3rd Coast - Jealousy" \
+  --anchor "3rd Coast - Luv is True"
+```
+
+It prints TTFS, stage usage, candidate counts, a novelty-distance curve, and a compact quality
+summary. It never prints raw provider responses or reasoning text. The command is explicitly paid
+and bounded; do not run it from ordinary tests or CI.
+
 ## Current scope
 
-Phase 1.5 adds a durable Postgres repository, listener-scoped resume, and version-polled SSE while retaining mock-mode development. Phase 2 adds independent DeepSeek, Exa, and Tavily adapters with a deterministic discovery/research router and in-memory usage ledger. Real calls remain opt-in; the episode runtime, frontend, TTS, and full agent pipeline remain unchanged until later milestones.
+Phase 1.5 adds a durable Postgres repository, listener-scoped resume, and version-polled SSE while retaining mock-mode development. Phase 2 adds independent DeepSeek, Exa, and Tavily adapters with a deterministic discovery/research router and in-memory usage ledger. Phase 3 adds a two-speed, typed progressive intelligence pipeline and TTFS tracing without wiring it into EpisodeOrchestrator or adding TTS. Real calls remain opt-in; the frontend and episode runtime remain unchanged.
