@@ -31,6 +31,23 @@ class AudioAsset(BaseModel):
     duration_seconds: int
 
 
+class AudioSource(BaseModel):
+    """A browser-loadable audio URL and its deterministic duration metadata."""
+
+    source_url: str = Field(min_length=1)
+    duration_seconds: int = Field(gt=0)
+
+
+class AudioProvider(Protocol):
+    """Resolves already-selected segments to browser audio sources."""
+
+    def music_source(self, track_ref: str) -> AudioSource: ...
+
+    def narration_source(
+        self, segment_id: str, narration_text: str, duration_seconds: int
+    ) -> AudioSource: ...
+
+
 class LLMProvider(Protocol):
     async def structured(self, prompt: str, output_type: type[BaseModel]) -> BaseModel: ...
 

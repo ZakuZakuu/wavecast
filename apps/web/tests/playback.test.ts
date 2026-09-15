@@ -9,9 +9,9 @@ const episode: LiveEpisode = {
   program_estimated_duration_seconds: 30 * 60, generated_frontier_seconds: 22,
   committed_frontier_seconds: 0, timeline_duration_seconds: 58,
   segments: [
-    { id: "opening", chapter_id: "one", order: 0, kind: "MUSIC", state: "AUDIO_READY", planned_duration_seconds: 22, actual_duration_seconds: 22, track_ref: "mock:opening", title: "Opening", artist: "Artist", narration_text: null, asset_ref: null },
-    { id: "narration", chapter_id: "two", order: 1, kind: "NARRATION", state: "PLANNED", planned_duration_seconds: 10, actual_duration_seconds: null, track_ref: null, title: "Narration", artist: null, narration_text: null, asset_ref: null },
-    { id: "bridge", chapter_id: "two", order: 2, kind: "MUSIC", state: "PLANNED", planned_duration_seconds: 26, actual_duration_seconds: null, track_ref: "mock:bridge", title: "Bridge", artist: "Artist", narration_text: null, asset_ref: null },
+    { id: "opening", chapter_id: "one", order: 0, kind: "MUSIC", state: "AUDIO_READY", planned_duration_seconds: 22, actual_duration_seconds: 22, audio_source_url: "/api/audio/mock/music/mock%3Aopening?duration=22", duration_seconds: 22, track_ref: "mock:opening", title: "Opening", artist: "Artist", narration_text: null, asset_ref: null },
+    { id: "narration", chapter_id: "two", order: 1, kind: "NARRATION", state: "PLANNED", planned_duration_seconds: 10, actual_duration_seconds: null, audio_source_url: null, duration_seconds: 10, track_ref: null, title: "Narration", artist: null, narration_text: null, asset_ref: null },
+    { id: "bridge", chapter_id: "two", order: 2, kind: "MUSIC", state: "PLANNED", planned_duration_seconds: 26, actual_duration_seconds: null, audio_source_url: "/api/audio/mock/music/mock%3Abridge?duration=24", duration_seconds: 26, track_ref: "mock:bridge", title: "Bridge", artist: "Artist", narration_text: null, asset_ref: null },
   ],
 };
 

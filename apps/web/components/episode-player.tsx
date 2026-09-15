@@ -5,10 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
-import { formatSeconds, isSeekAllowed, playbackAnchor, reconcileBrowserPosition, remainingSegmentSeconds } from "../lib/playback";
+import { formatSeconds, isSeekAllowed, playbackAnchor, reconcileBrowserPosition, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
-import { TonePlayer } from "./tone-player";
+import { AudioPlayer } from "./audio-player";
 
 export function EpisodePlayer({ seedId }: { seedId: string }) {
   const { episode, setEpisode } = usePlayerStore();
@@ -64,22 +64,6 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
   }, [localEpisode?.current_segment_id, localEpisode?.playback_position_seconds]);
 
   useEffect(() => {
-    if (!localEpisode?.is_playing) return;
-    const startedAt = performance.now();
-    const basePosition = localEpisode.playback_position_seconds;
-    const interval = window.setInterval(() => {
-      const position = Math.floor(basePosition + (performance.now() - startedAt) / 1000);
-      setBrowserPosition(position);
-      browserPositionRef.current = position;
-      if (position > basePosition && position % 5 === 0 && checkpointRef.current !== position) {
-        checkpointRef.current = position;
-        void api.checkpoint(localEpisode.id, position);
-      }
-    }, 250);
-    return () => window.clearInterval(interval);
-  }, [localEpisode?.id, localEpisode?.is_playing, localEpisode?.playback_position_seconds]);
-
-  useEffect(() => {
     if (!localEpisode?.is_listener_active) return;
     let syncing = false;
     const synchronize = async () => {
@@ -113,6 +97,17 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
     if (localEpisode?.is_playing) void update(api.completed(localEpisode.id));
   }, [localEpisode?.id, localEpisode?.is_playing]);
 
+  const handleAudioPosition = useCallback((segmentPosition: number) => {
+    if (!localEpisode || !current) return;
+    const position = Math.floor(segmentStart(localEpisode, current.id) + Math.max(0, segmentPosition));
+    setBrowserPosition(position);
+    browserPositionRef.current = position;
+    if (position > localEpisode.playback_position_seconds && position % 5 === 0 && checkpointRef.current !== position) {
+      checkpointRef.current = position;
+      void api.checkpoint(localEpisode.id, position);
+    }
+  }, [current, localEpisode]);
+
   const pausePlayback = useCallback(async () => {
     if (!localEpisode) return;
     await update(api.checkpoint(localEpisode.id, browserPosition));
@@ -127,10 +122,19 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
   }
 
   const generatedPercent = Math.round((localEpisode.generated_frontier_seconds / localEpisode.timeline_duration_seconds) * 100);
-  const remainingSeconds = current ? remainingSegmentSeconds(localEpisode, current) : 0;
+  const currentOffset = current
+    ? Math.max(0, browserPosition - segmentStart(localEpisode, current.id))
+    : 0;
   return (
     <main className="shell player-shell">
-      <TonePlayer segment={current} playing={localEpisode.is_playing && localEpisode.is_listener_active} remainingSeconds={remainingSeconds} onEnded={completeBrowserSegment} />
+      <AudioPlayer
+        segment={current}
+        playing={localEpisode.is_playing && localEpisode.is_listener_active}
+        positionSeconds={currentOffset}
+        onPositionChange={handleAudioPosition}
+        onEnded={completeBrowserSegment}
+        onError={() => setError("Audio source failed")}
+      />
       <nav className="nav"><Link href="/">← 返回节目</Link><span className="status-dot">{localEpisode.state === "MATERIALIZED" ? "fixed episode" : "building ahead"}</span></nav>
       <section className="now-playing">
         <p className="eyebrow">{current?.kind === "MUSIC" ? "NOW PLAYING" : "HOST ON MIC"}</p>
@@ -154,7 +158,7 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
       </section>
       <section className="segment-list">
         {localEpisode.segments.map((segment) => <article className={`segment ${segment.state === "PLANNED" || segment.state === "SKIPPED" ? "planned" : "ready"}`} key={segment.id}>
-          <span>{segment.kind === "MUSIC" ? "♫" : "◌"}</span><div><strong>{segment.title}</strong><p>{segment.artist ?? "旁白"} · {formatSeconds(segment.actual_duration_seconds ?? segment.planned_duration_seconds)}</p></div><small>{segment.state.replace("_", " ")}</small>
+          <span>{segment.kind === "MUSIC" ? "♫" : "◌"}</span><div><strong>{segment.title}</strong><p>{segment.artist ?? "旁白"} · {formatSeconds(segment.duration_seconds)}</p></div><small>{segment.state.replace("_", " ")}</small>
         </article>)}
       </section>
       <div className="session-actions">

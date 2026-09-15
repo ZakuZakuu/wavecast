@@ -1,6 +1,8 @@
 from .config import ProviderSettings
 from .contracts import (
     AudioAnalysisProvider,
+    AudioProvider,
+    AudioSource,
     CoverRenderer,
     LLMProvider,
     MusicProvider,
@@ -17,6 +19,7 @@ from .fakes import (
     FakeMusicProvider,
     FakeSearchProvider,
     FakeTTSProvider,
+    MockAudioProvider,
 )
 from .profiles import InferenceProfile, StructuredTransport
 from .routing import SearchIntent, SearchRouter
@@ -25,6 +28,8 @@ from .usage import UsageEvent, UsageLedger
 
 __all__ = [
     "AudioAnalysisProvider",
+    "AudioProvider",
+    "AudioSource",
     "CoverRenderer",
     "DeepSeekLLMProvider",
     "ExaSearchProvider",
@@ -33,6 +38,7 @@ __all__ = [
     "FakeMusicProvider",
     "FakeSearchProvider",
     "FakeTTSProvider",
+    "MockAudioProvider",
     "LLMProvider",
     "InferenceProfile",
     "MusicProvider",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from wavecast.models.episode import Segment, SegmentKind, SegmentState
+from wavecast.models.episode import MusicSegment, SegmentKind, SegmentState
 from wavecast.providers.contracts import MusicProvider, TrackMetadata
 
 from .models import (
@@ -69,7 +69,7 @@ def music_segment_from_track(
     order: int,
     planned_duration_seconds: int = 1,
     state: SegmentState = SegmentState.PLANNED,
-) -> Segment:
+) -> MusicSegment:
     """Build a timeline music segment only from a resolved catalog identity."""
 
     if isinstance(track, ResolvedTrack):
@@ -78,7 +78,7 @@ def music_segment_from_track(
         resolved = track.resolved_track()
     else:
         raise UnresolvedTrackError("unresolved track proposal cannot enter the audio timeline")
-    return Segment(
+    return MusicSegment(
         chapter_id=chapter_id,
         order=order,
         kind=SegmentKind.MUSIC,

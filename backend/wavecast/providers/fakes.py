@@ -1,8 +1,9 @@
 from hashlib import sha1
+from urllib.parse import quote
 
 from pydantic import BaseModel
 
-from .contracts import AudioAsset, SearchResult, TrackMetadata
+from .contracts import AudioAsset, AudioSource, SearchResult, TrackMetadata
 
 
 class FakeSearchProvider:
@@ -33,6 +34,38 @@ class FakeTTSProvider:
     async def synthesize(self, text: str, *, cues: list[str]) -> AudioAsset:
         digest = sha1(f"{text}|{cues}".encode()).hexdigest()[:12]
         return AudioAsset(asset_ref=f"fake-tts://{digest}", duration_seconds=max(8, len(text) // 6))
+
+
+class MockAudioProvider:
+    """Deterministic local audio-source provider; no network or paid API calls."""
+
+    _music_durations = {
+        "mock:opening": 22,
+        "mock:bridge": 24,
+        "mock:resolution": 26,
+        "mock:finale": 25,
+    }
+
+    def __init__(self, base_url: str = "/api/audio/mock") -> None:
+        self.base_url = base_url.rstrip("/")
+
+    def music_source(self, track_ref: str) -> AudioSource:
+        duration = self._music_durations.get(track_ref, 30)
+        encoded_ref = quote(track_ref, safe="")
+        return AudioSource(
+            source_url=f"{self.base_url}/music/{encoded_ref}?duration={duration}",
+            duration_seconds=duration,
+        )
+
+    def narration_source(
+        self, segment_id: str, narration_text: str, duration_seconds: int
+    ) -> AudioSource:
+        del narration_text
+        encoded_id = quote(segment_id, safe="")
+        return AudioSource(
+            source_url=f"{self.base_url}/narration/{encoded_id}?duration={duration_seconds}",
+            duration_seconds=duration_seconds,
+        )
 
 
 class FakeMusicProvider:
