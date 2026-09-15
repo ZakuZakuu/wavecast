@@ -1,5 +1,12 @@
 import pytest
-from wavecast.models.episode import CoverParams, EpisodeSeed, EpisodeState, SegmentState
+from wavecast.models.episode import (
+    CoverParams,
+    EpisodeSeed,
+    EpisodeState,
+    MusicSegment,
+    NarrationSegment,
+    SegmentState,
+)
 from wavecast.orchestration.episode import (
     EpisodeOrchestrator,
     EpisodeRuntimeError,
@@ -40,6 +47,36 @@ def test_opening_track_is_ready_immediately_and_future_advances_one_segment(
     assert updated.generated_frontier_seconds > 32
     assert updated.ordered_segments[1].state is SegmentState.AUDIO_READY
     assert updated.ordered_segments[5].state is SegmentState.PLANNED
+
+
+def test_timeline_serializes_explicit_playable_audio_segment_fields(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    episode = runtime.start(seed)
+    opening = episode.segment("segment-opening")
+    narration = episode.segment("segment-narration-1")
+
+    assert isinstance(opening, MusicSegment)
+    assert isinstance(narration, NarrationSegment)
+    opening_payload = opening.model_dump(mode="json")
+    assert opening_payload["audio_source_url"].startswith("/api/audio/mock/music/")
+    assert opening_payload["duration_seconds"] == 22
+    assert narration.model_dump(mode="json")["audio_source_url"] is None
+
+
+def test_browser_completion_transitions_segments_without_server_clock(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    episode = runtime.start(seed)
+    runtime.ensure_buffer(episode.id, target_chapters=1)
+    runtime.checkpoint_playback(episode.id, 7)
+
+    completed = runtime.complete_current_segment(episode.id)
+
+    assert completed.segment("segment-opening").state is SegmentState.PLAYED
+    assert completed.current_segment_id == "segment-narration-1"
+    assert completed.playback_position_seconds == 22
+    assert completed.is_playing is True
 
 
 def test_seek_cannot_cross_generated_frontier(

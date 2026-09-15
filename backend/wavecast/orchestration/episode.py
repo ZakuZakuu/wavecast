@@ -8,11 +8,14 @@ from wavecast.models.episode import (
     EpisodeState,
     GenerationMode,
     LiveEpisode,
+    MusicSegment,
+    NarrationSegment,
     Segment,
     SegmentKind,
     SegmentState,
     utc_now,
 )
+from wavecast.providers import AudioProvider, MockAudioProvider
 from wavecast.storage.episodes import (
     EpisodeConcurrencyError,
     EpisodeNotFoundError,
@@ -62,21 +65,24 @@ class EpisodeOrchestrator:
         self,
         repository: EpisodeRepository,
         now: Callable[[], datetime] = utc_now,
+        audio_provider: AudioProvider | None = None,
     ) -> None:
         self.repository = repository
         self.now = now
+        self.audio_provider = audio_provider or MockAudioProvider()
 
     def start(self, seed: EpisodeSeed, listener_id: str = "test-listener") -> LiveEpisode:
         now = self.now()
-        opening = Segment(
+        opening_source = self.audio_provider.music_source(seed.opening_track_ref)
+        opening = MusicSegment(
             id="segment-opening",
             chapter_id="chapter-1",
             order=0,
-            kind=SegmentKind.MUSIC,
             state=SegmentState.COMMITTED,
-            planned_duration_seconds=22,
-            actual_duration_seconds=22,
+            planned_duration_seconds=opening_source.duration_seconds,
+            actual_duration_seconds=opening_source.duration_seconds,
             track_ref=seed.opening_track_ref,
+            audio_source_url=opening_source.source_url,
             title=seed.opening_track_title,
             artist=seed.opening_track_artist,
             committed_at=now,
@@ -181,14 +187,29 @@ class EpisodeOrchestrator:
         return self.repository.save(episode)
 
     def complete_current_segment(self, episode_id: str) -> LiveEpisode:
-        """Lifecycle transition reported by a browser audio-ended event, not a server clock."""
+        """Apply a browser ``ended`` event without running a server playback clock."""
         episode = self._active_episode(episode_id)
         current = self._current_segment(episode)
         if current is None:
             raise EpisodeRuntimeError("episode has no current segment")
-        start = self._timeline_start(episode, current.id)
-        remaining = max(0, current.duration_seconds - (episode.playback_position_seconds - start))
-        return self.tick(episode_id, elapsed_seconds=remaining)
+        if not current.is_audio_ready:
+            raise EpisodeRuntimeError("cannot complete audio that is not ready")
+        if current.state is SegmentState.AUDIO_READY:
+            self._commit(episode, current)
+        episode.playback_position_seconds = (
+            self._timeline_start(episode, current.id) + current.duration_seconds
+        )
+        current.state = SegmentState.PLAYED
+        current.played_at = self.now()
+        next_segment = self._next_active_segment(episode, current.order)
+        if next_segment is None or not next_segment.is_audio_ready:
+            episode.is_playing = False
+        else:
+            self._commit(episode, next_segment)
+            episode.playback_position_seconds = self._timeline_start(episode, next_segment.id)
+            episode.is_playing = True
+        episode.last_activity_at = self.now()
+        return self.repository.save(episode)
 
     def seek(self, episode_id: str, position_seconds: int) -> LiveEpisode:
         episode = self._active_episode(episode_id)
@@ -304,6 +325,9 @@ class EpisodeOrchestrator:
         if candidate is not None:
             candidate.title = replacement_title
             candidate.track_ref = f"mock:replanned:{candidate.order}"
+            source = self.audio_provider.music_source(candidate.track_ref)
+            candidate.audio_source_url = source.source_url
+            candidate.actual_duration_seconds = None
         return self.repository.save(episode)
 
     def _active_episode(self, episode_id: str) -> LiveEpisode:
@@ -313,18 +337,29 @@ class EpisodeOrchestrator:
             raise EpisodeRuntimeError("listener session is inactive; resume it before generating")
         return episode
 
-    @staticmethod
-    def _make_ready(segment: Segment) -> None:
+    def _make_ready(self, segment: Segment) -> None:
         if segment.kind is SegmentKind.NARRATION:
             segment.state = SegmentState.SCRIPT_READY
             segment.narration_text = (
                 segment.narration_text or "A short, evidence-aware transition into the next track."
             )
             segment.state = SegmentState.AUDIO_GENERATING
-            segment.asset_ref = f"fake-tts://{segment.id}"
-        segment.actual_duration_seconds = (
-            segment.actual_duration_seconds or segment.planned_duration_seconds
-        )
+            source = self.audio_provider.narration_source(
+                segment.id,
+                segment.narration_text,
+                segment.planned_duration_seconds,
+            )
+            segment.asset_ref = source.source_url
+            segment.audio_source_url = source.source_url
+            segment.actual_duration_seconds = source.duration_seconds
+        elif segment.audio_source_url is None and segment.track_ref is not None:
+            source = self.audio_provider.music_source(segment.track_ref)
+            segment.audio_source_url = source.source_url
+            segment.actual_duration_seconds = source.duration_seconds
+        else:
+            segment.actual_duration_seconds = (
+                segment.actual_duration_seconds or segment.planned_duration_seconds
+            )
         segment.state = SegmentState.AUDIO_READY
 
     def _commit(self, episode: LiveEpisode, segment: Segment) -> None:
@@ -395,59 +430,65 @@ class EpisodeOrchestrator:
             for chapter_id in chapter_ids
         )
 
-    @staticmethod
-    def _future_segments() -> list[Segment]:
+    def _future_segments(self) -> list[MusicSegment | NarrationSegment]:
+        def music(
+            *, id: str, chapter_id: str, order: int, track_ref: str, title: str, artist: str
+        ) -> MusicSegment:
+            source = self.audio_provider.music_source(track_ref)
+            return MusicSegment(
+                id=id,
+                chapter_id=chapter_id,
+                order=order,
+                state=SegmentState.PLANNED,
+                planned_duration_seconds=source.duration_seconds,
+                track_ref=track_ref,
+                audio_source_url=source.source_url,
+                title=title,
+                artist=artist,
+            )
+
         return [
-            Segment(
+            NarrationSegment(
                 id="segment-narration-1",
                 chapter_id="chapter-2",
                 order=1,
-                kind=SegmentKind.NARRATION,
                 planned_duration_seconds=10,
                 title="Host introduction",
             ),
-            Segment(
+            music(
                 id="segment-bridge",
                 chapter_id="chapter-2",
                 order=2,
-                kind=SegmentKind.MUSIC,
-                planned_duration_seconds=24,
                 track_ref="mock:bridge",
                 title="Midnight Transfer",
                 artist="Signal Garden",
             ),
-            Segment(
+            NarrationSegment(
                 id="segment-narration-2",
                 chapter_id="chapter-3",
                 order=3,
-                kind=SegmentKind.NARRATION,
                 planned_duration_seconds=11,
                 title="Host connection",
             ),
-            Segment(
+            music(
                 id="segment-resolution",
                 chapter_id="chapter-3",
                 order=4,
-                kind=SegmentKind.MUSIC,
-                planned_duration_seconds=26,
                 track_ref="mock:resolution",
                 title="Daybreak in Stereo",
                 artist="Southbound FM",
             ),
-            Segment(
+            NarrationSegment(
                 id="segment-narration-3",
                 chapter_id="chapter-4",
                 order=5,
-                kind=SegmentKind.NARRATION,
                 planned_duration_seconds=9,
                 title="Host resolution",
             ),
-            Segment(
+            music(
                 id="segment-finale",
                 chapter_id="chapter-4",
                 order=6,
-                kind=SegmentKind.MUSIC,
-                planned_duration_seconds=25,
                 track_ref="mock:finale",
                 title="Afterimage Avenue",
                 artist="Southbound FM",
