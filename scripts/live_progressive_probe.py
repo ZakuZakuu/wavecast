@@ -73,6 +73,21 @@ def stage_from_trace(trace: GenerationTrace, current: str) -> str:
     return current
 
 
+def event_elapsed(trace: GenerationTrace, name: str) -> int | None:
+    for event in trace.events:
+        if event.name == name:
+            return event.elapsed_from_start_ms
+    return None
+
+
+def elapsed_between(trace: GenerationTrace, start: str, end: str) -> int | None:
+    started = event_elapsed(trace, start)
+    finished = event_elapsed(trace, end)
+    if started is None or finished is None:
+        return None
+    return max(0, finished - started)
+
+
 def sanitized_report(
     *,
     fast_result: object,
@@ -87,6 +102,20 @@ def sanitized_report(
     background = background_result
     fast_plan = fast.plan  # type: ignore[attr-defined]
     fast_research = fast.research  # type: ignore[attr-defined]
+    background_chapters = (
+        [
+            {
+                "artist": chapter.track.artist,
+                "title": chapter.track.title,
+                "narrative_role": chapter.narrative_role.value,
+                "novelty_distance": chapter.novelty_distance.value,
+            }
+            for chapter in background.skeleton.chapters
+        ]
+        if background
+        else []
+    )
+    curator_end = "writer_started" if event_elapsed(trace, "writer_started") is not None else "program_skeleton_ready"
     report: dict[str, object] = {
         "fast_path": {
             "elapsed_ms": fast_elapsed_ms,
@@ -95,12 +124,22 @@ def sanitized_report(
             "candidate_count": len(fast_plan.next_candidates),
             "first_script_characters": len(fast_plan.first_narration.text),
             "evidence_count": len(fast_research.bundle.evidence),
+            "taste_dimensions": [
+                hypothesis.dimension for hypothesis in fast_plan.immediate_taste_hypotheses
+            ],
+            "immediate_candidates": [
+                f"{candidate.artist} — {candidate.title}"
+                for candidate in fast_plan.next_candidates[:8]
+            ],
         },
         "background": {
             "elapsed_ms": background_elapsed_ms,
             "completed": background is not None,
             "chapter_count": len(background.skeleton.chapters) if background else 0,  # type: ignore[attr-defined]
             "candidate_count": len(background.bundle.candidates) if background else 0,  # type: ignore[attr-defined]
+            "curator_elapsed_ms": elapsed_between(trace, "curator_started", curator_end),
+            "writer_elapsed_ms": elapsed_between(trace, "writer_started", "chapter_script_ready"),
+            "chapters": background_chapters,
         },
         "usage": {
             "fast_research": stage_summary(ledger, "fast_research"),
