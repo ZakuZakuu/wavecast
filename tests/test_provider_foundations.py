@@ -5,6 +5,7 @@ import pytest
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.errors import (
     ProviderAuthenticationError,
+    ProviderBudgetExceededError,
     ProviderConfigurationError,
     ProviderInvalidResponseError,
     ProviderRateLimitError,
@@ -82,6 +83,33 @@ def test_http_does_not_retry_authentication_errors() -> None:
                 max_attempts=2,
             )
         await client.aclose()
+
+    asyncio.run(run())
+    assert attempts == 1
+
+
+@pytest.mark.parametrize("status_code", [432, 433])
+def test_tavily_usage_limits_are_budget_exceeded(status_code: int) -> None:
+    attempts = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(status_code, json={"detail": "usage limit reached"})
+
+    async def run() -> None:
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            with pytest.raises(ProviderBudgetExceededError):
+                await request_json(
+                    client,
+                    provider="tavily",
+                    method="POST",
+                    url="https://example.test",
+                    max_attempts=2,
+                )
+        finally:
+            await client.aclose()
 
     asyncio.run(run())
     assert attempts == 1
