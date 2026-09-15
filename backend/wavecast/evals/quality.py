@@ -15,8 +15,9 @@ from wavecast.intelligence.models import (
     NarrativeRole,
     NoveltyDistance,
     ProgramSkeleton,
+    ResolvedTrackCandidate,
     TasteHypothesis,
-    TrackCandidate,
+    TrackProposal,
 )
 
 
@@ -98,10 +99,11 @@ def build_review_bundle(
     case: GuidedDiscoveryCase,
     fast_plan: FastStartPlan,
     skeleton: ProgramSkeleton | None,
+    resolved_candidates: list[ResolvedTrackCandidate] | None = None,
 ) -> GuidedDiscoveryReview:
     """Convert typed pipeline output into a compact, human-reviewable artifact."""
     def review_candidate(
-        candidate: TrackCandidate,
+        candidate: TrackProposal | ResolvedTrackCandidate,
         *,
         narrative_role: NarrativeRole | None = None,
         scene_cluster_rationale: str | None = None,
@@ -116,8 +118,10 @@ def build_review_bundle(
             narrative_role=narrative_role,
             evidence_ids=list(evidence_ids or candidate.evidence_ids),
             scene_cluster_rationale=scene_cluster_rationale,
-            track_ref=candidate.track_ref if candidate.is_resolved else None,
-            resolution_status=candidate.resolution_status,
+            track_ref=(candidate.track_ref if isinstance(candidate, ResolvedTrackCandidate) else None),
+            resolution_status=(
+                "resolved" if isinstance(candidate, ResolvedTrackCandidate) else "unresolved"
+            ),
         )
 
     candidates_by_key: dict[tuple[str, str], ReviewCandidate] = {}
@@ -142,6 +146,11 @@ def build_review_bundle(
             existing = candidates_by_key.get(key)
             if existing is None or chapter_review_candidate.resolution_status == "resolved":
                 candidates_by_key[key] = chapter_review_candidate
+
+    for candidate in resolved_candidates or []:
+        candidates_by_key[(candidate.artist.lower(), candidate.title.lower())] = review_candidate(
+            candidate
+        )
 
     return GuidedDiscoveryReview(
         case_id=case.case_id,

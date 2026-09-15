@@ -1,10 +1,18 @@
 import asyncio
+import json
 
+import pytest
+from pydantic import ValidationError
 from wavecast.intelligence.models import (
+    ChapterPlan,
     Evidence,
     FastStartPlan,
     NarrationScript,
+    NarrativeRole,
     NoveltyDistance,
+    ProgramSkeleton,
+    ResolvedTrack,
+    ResolvedTrackCandidate,
     TasteHypothesis,
     TrackCandidate,
     TrackProposal,
@@ -12,6 +20,7 @@ from wavecast.intelligence.models import (
 from wavecast.intelligence.resolution import (
     UnresolvedTrackError,
     music_segment_from_track,
+    resolve_track_candidate,
     resolve_track_proposal,
 )
 from wavecast.intelligence.trace import GenerationTrace
@@ -99,16 +108,44 @@ def test_event_page_like_proposal_stays_unresolved_without_title_heuristics() ->
     assert resolved is None
 
 
-def test_catalog_reference_without_canonical_identity_is_not_resolved() -> None:
-    candidate = TrackCandidate(
-        artist="LLM Artist",
-        title="LLM Title",
-        track_ref="unverified:ref",
-        confidence=0.5,
+def test_proposal_rejects_catalog_identity_fields() -> None:
+    with pytest.raises(ValidationError):
+        TrackProposal(
+            artist="Fake Artist",
+            title="Fake Song",
+            track_ref="mock:opening",
+            confidence=0.5,
+        )
+
+
+def test_llm_facing_schemas_do_not_expose_catalog_identity_fields() -> None:
+    proposal = TrackProposal(artist="Artist", title="Title", confidence=0.5)
+    skeleton = ProgramSkeleton(
+        thesis="An arc",
+        estimated_duration_seconds=120,
+        chapters=[
+            ChapterPlan(
+                index=0,
+                track=proposal,
+                narrative_role=NarrativeRole.ANCHOR,
+                reason="anchor",
+                novelty_distance=NoveltyDistance.VERY_CLOSE,
+                narration_goal="introduce",
+            )
+        ],
+    )
+    fast = FastStartPlan(
+        anchor_understanding=["anchor"],
+        immediate_taste_hypotheses=[],
+        next_candidates=[proposal],
+        first_narration=NarrationScript(text="Start here.", intended_duration_seconds=5),
     )
 
-    assert candidate.resolution_status == "unresolved"
-    assert not candidate.is_resolved
+    for schema in (fast.model_json_schema(), skeleton.model_json_schema()):
+        serialized = json.dumps(schema)
+        assert "track_ref" not in serialized
+        assert "canonical_artist" not in serialized
+        assert "canonical_title" not in serialized
 
 
 def test_unresolved_proposal_cannot_become_a_playable_music_segment() -> None:
@@ -137,3 +174,35 @@ def test_resolved_track_is_the_only_track_identity_accepted_by_timeline_boundary
     assert segment.track_ref == "mock:opening"
     assert segment.title == "Neon First Light"
     assert not segment.is_audio_ready
+
+
+def test_timeline_boundary_accepts_resolver_output_but_not_a_proposal() -> None:
+    proposal = TrackProposal(artist="Mira Fields", title="Neon First Light", confidence=0.8)
+    resolved = asyncio.run(resolve_track_candidate(FakeMusicProvider(), proposal))
+    assert isinstance(resolved, ResolvedTrackCandidate)
+
+    segment = music_segment_from_track(
+        resolved,
+        chapter_id="chapter-1",
+        order=0,
+        planned_duration_seconds=22,
+    )
+    assert segment.track_ref == "mock:opening"
+
+    with pytest.raises(UnresolvedTrackError):
+        music_segment_from_track(proposal, chapter_id="chapter-1", order=0)
+
+
+def test_resolved_track_is_accepted_without_a_candidate_wrapper() -> None:
+    segment = music_segment_from_track(
+        ResolvedTrack(
+            track_ref="mock:opening",
+            canonical_artist="Mira Fields",
+            canonical_title="Neon First Light",
+        ),
+        chapter_id="chapter-1",
+        order=0,
+        planned_duration_seconds=22,
+    )
+
+    assert segment.track_ref == "mock:opening"

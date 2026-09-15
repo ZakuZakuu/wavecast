@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NoveltyDistance(StrEnum):
@@ -46,6 +46,8 @@ class UnresolvedTrackError(ValueError):
 class TrackProposal(BaseModel):
     """An artist/title hypothesis that still needs catalog resolution."""
 
+    model_config = ConfigDict(extra="forbid")
+
     artist: str = Field(min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=160)
     reasons: list[str] = Field(default_factory=list)
@@ -63,45 +65,28 @@ class ResolvedTrack(BaseModel):
     canonical_title: str = Field(min_length=1, max_length=160)
 
 
-class TrackCandidate(TrackProposal):
-    """Backward-compatible proposal shape with optional catalog resolution.
-
-    Intelligence stages may emit this model without ``track_ref``.  A candidate is
-    resolved only after a MusicProvider supplies a stable reference and canonical
-    names; callers must use the resolution boundary before building timeline segments.
-    """
-
-    track_ref: str | None = None
-    canonical_artist: str | None = None
-    canonical_title: str | None = None
-
-    @property
-    def resolution_status(self) -> Literal["resolved", "unresolved"]:
-        return "resolved" if self.is_resolved else "unresolved"
-
-    @property
-    def is_resolved(self) -> bool:
-        return bool(self.track_ref and self.canonical_artist and self.canonical_title)
-
-    def resolved_track(self) -> ResolvedTrack:
-        if not self.is_resolved:
-            raise UnresolvedTrackError("track candidate has not been resolved by a music catalog")
-        assert self.track_ref is not None
-        assert self.canonical_artist is not None
-        assert self.canonical_title is not None
-        return ResolvedTrack(
-            track_ref=self.track_ref,
-            canonical_artist=self.canonical_artist or self.artist,
-            canonical_title=self.canonical_title or self.title,
-        )
+# Compatibility name for callers that still use the former proposal type.  It is
+# deliberately an alias, so it cannot add catalog identity fields to LLM schemas.
+TrackCandidate = TrackProposal
 
 
-class ResolvedTrackCandidate(TrackCandidate):
-    """A TrackCandidate whose catalog identity has been resolved."""
+class ResolvedTrackCandidate(TrackProposal):
+    """A proposal enriched with catalog identity by deterministic application code."""
 
     track_ref: str = Field(min_length=1, max_length=300)
     canonical_artist: str = Field(min_length=1, max_length=120)
     canonical_title: str = Field(min_length=1, max_length=160)
+
+    @property
+    def resolution_status(self) -> Literal["resolved"]:
+        return "resolved"
+
+    def resolved_track(self) -> ResolvedTrack:
+        return ResolvedTrack(
+            track_ref=self.track_ref,
+            canonical_artist=self.canonical_artist,
+            canonical_title=self.canonical_title,
+        )
 
 
 class NarrationScript(BaseModel):
@@ -113,7 +98,7 @@ class NarrationScript(BaseModel):
 
 class ChapterPlan(BaseModel):
     index: int = Field(ge=0)
-    track: TrackCandidate
+    track: TrackProposal
     narrative_role: NarrativeRole
     reason: str = Field(min_length=1, max_length=500)
     novelty_distance: NoveltyDistance
@@ -125,7 +110,7 @@ class ResearchBundle(BaseModel):
     anchors: list[str]
     taste_hypotheses: list[TasteHypothesis]
     evidence: list[Evidence]
-    candidates: list[TrackCandidate]
+    candidates: list[TrackProposal]
     uncertainties: list[str] = Field(default_factory=list)
 
 
@@ -138,8 +123,8 @@ class ProgramSkeleton(BaseModel):
 class FastStartPlan(BaseModel):
     anchor_understanding: list[str]
     immediate_taste_hypotheses: list[TasteHypothesis]
-    next_candidates: list[TrackCandidate]
-    selected_next_track: TrackCandidate | None = None
+    next_candidates: list[TrackProposal]
+    selected_next_track: TrackProposal | None = None
     first_narration: NarrationScript
     uncertainties: list[str] = Field(default_factory=list)
 

@@ -11,6 +11,7 @@ from wavecast.intelligence.models import (
     NoveltyDistance,
     ProgramSkeleton,
     ResearchBundle,
+    ResolvedTrackCandidate,
     TrackCandidate,
 )
 from wavecast.intelligence.planning import PlanningSession
@@ -87,7 +88,7 @@ def test_curator_preserves_narrative_distance_curve_without_search_dependency() 
         NoveltyDistance.DISCOVERY,
     ]
     assert [chapter.index for chapter in result.chapters] == [0, 1]
-    assert all(chapter.track.resolution_status == "unresolved" for chapter in result.chapters)
+    assert all(not isinstance(chapter.track, ResolvedTrackCandidate) for chapter in result.chapters)
     assert not hasattr(service, "discovery")
     assert "Playback order is exactly chapter order" in fixture.prompts[0]
     assert "very_close keeps the same core sonic identity" in fixture.prompts[0]
