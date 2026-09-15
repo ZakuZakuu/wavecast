@@ -2,7 +2,6 @@
 
 import argparse
 import asyncio
-import json
 from typing import Literal
 
 from pydantic import BaseModel
@@ -26,7 +25,9 @@ def parse_args() -> argparse.Namespace:
 def require_live_settings() -> ProviderSettings:
     settings = ProviderSettings.from_env()
     if settings.mode != "live":
-        raise ProviderConfigurationError("set WAVECAST_PROVIDER_MODE=live for a paid smoke call")
+        raise ProviderConfigurationError(
+            "set WAVECAST_PROVIDER_MODE=live in the local .env and run with uv --env-file"
+        )
     return settings
 
 
@@ -35,21 +36,25 @@ async def run(selected: Literal["all", "deepseek", "exa", "tavily"]) -> None:
     ledger = UsageLedger()
     if selected in {"all", "deepseek"}:
         provider = DeepSeekLLMProvider(settings, ledger=ledger)
-        result = await provider.structured('Return JSON {"status":"ok"}.', SmokeResponse)
-        print(f"DeepSeek OK: {result.model_dump_json()}")
-        await provider.client.close()
+        try:
+            result = await provider.structured('Return JSON {"status":"ok"}.', SmokeResponse)
+            print(f"DeepSeek OK: status={result.status}")
+        finally:
+            await provider.aclose()
     if selected in {"all", "exa"}:
         provider = ExaSearchProvider(settings, ledger=ledger)
-        results = await provider.search("3rd Coast Jealousy music", limit=1)
-        print(f"Exa OK: {json.dumps([item.model_dump() for item in results], ensure_ascii=False)}")
-        await provider.aclose()
+        try:
+            results = await provider.search("3rd Coast Jealousy music", limit=1)
+            print(f"Exa OK: {len(results)} result(s)")
+        finally:
+            await provider.aclose()
     if selected in {"all", "tavily"}:
         provider = TavilySearchProvider(settings, ledger=ledger)
-        results = await provider.search("3rd Coast Jealousy DJMAX", limit=1)
-        print(
-            f"Tavily OK: {json.dumps([item.model_dump() for item in results], ensure_ascii=False)}"
-        )
-        await provider.aclose()
+        try:
+            results = await provider.search("3rd Coast Jealousy DJMAX", limit=1)
+            print(f"Tavily OK: {len(results)} result(s)")
+        finally:
+            await provider.aclose()
     print(f"Usage: {ledger.totals().model_dump_json()}")
 
 
