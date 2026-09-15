@@ -107,6 +107,10 @@ def sanitized_failure_reason(error: ProviderError) -> str:
     message = str(error)
     if message.startswith("invalid novelty curve values:"):
         return message
+    if message.startswith("deepseek response was incomplete"):
+        if "max_output_tokens" in message:
+            return "incomplete:max_output_tokens"
+        return "incomplete"
     return type(error).__name__
 
 

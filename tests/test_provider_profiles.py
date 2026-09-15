@@ -28,6 +28,7 @@ def test_balanced_and_deep_profiles_keep_background_retry_and_reasoning_separate
         default_timeout_seconds=20,
         deep_timeout_seconds=45,
         default_max_output_tokens=4096,
+        deep_max_output_tokens=12288,
         default_max_attempts=2,
     )
 
@@ -35,6 +36,6 @@ def test_balanced_and_deep_profiles_keep_background_retry_and_reasoning_separate
     assert balanced.max_output_tokens == 4096
     assert balanced.max_attempts == 2
     assert deep.reasoning_effort == "high"
-    assert deep.max_output_tokens == 8192
+    assert deep.max_output_tokens == 12288
     assert deep.max_attempts == 2
     assert deep.timeout_seconds == 45
