@@ -53,7 +53,7 @@ export function syncAudioPlayback(
       audio.load();
       audio.currentTime = Math.max(0, options.positionSeconds);
     }
-  } else if (Math.abs(audio.currentTime - options.positionSeconds) > 0.5) {
+  } else if (Math.abs(audio.currentTime - options.positionSeconds) > 1) {
     audio.currentTime = Math.max(0, options.positionSeconds);
   }
 

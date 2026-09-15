@@ -33,8 +33,12 @@ describe("browser audio lifecycle", () => {
     expect(audio.load).toHaveBeenCalledOnce();
     expect(audio.play).toHaveBeenCalledOnce();
 
-    syncAudioPlayback(audio, { sourceUrl: audio.src, positionSeconds: 7, playing: false });
-    expect(audio.currentTime).toBe(7);
+    audio.currentTime = 7.8;
+    syncAudioPlayback(audio, { sourceUrl: audio.src, positionSeconds: 7, playing: true });
+    expect(audio.currentTime).toBe(7.8);
+
+    syncAudioPlayback(audio, { sourceUrl: audio.src, positionSeconds: 12, playing: false });
+    expect(audio.currentTime).toBe(12);
     expect(audio.pause).toHaveBeenCalled();
   });
 
