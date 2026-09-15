@@ -1,6 +1,6 @@
-from typing import Protocol
+from typing import Any, Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SearchResult(BaseModel):
@@ -10,6 +10,10 @@ class SearchResult(BaseModel):
     provider: str
     query: str
     score: float | None = None
+    content: str | None = None
+    published_at: str | None = None
+    request_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TrackMetadata(BaseModel):
