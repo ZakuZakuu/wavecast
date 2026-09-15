@@ -31,6 +31,8 @@ export type Segment = {
 export type LiveEpisode = {
   id: string;
   seed_id: string;
+  listener_id: string;
+  version: number;
   state: "STREAMING" | "MATERIALIZING" | "MATERIALIZED" | string;
   generation_mode: "PROGRESSIVE" | "FULL";
   segments: Segment[];
