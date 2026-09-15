@@ -95,15 +95,15 @@ def test_responses_json_schema_validates_and_maps_fast_profile() -> None:
 
 
 @pytest.mark.parametrize(
-    ("profile", "effort"),
+    ("profile", "effort", "max_output_tokens"),
     [
-        (InferenceProfile.FAST, "none"),
-        (InferenceProfile.BALANCED, "low"),
-        (InferenceProfile.DEEP, "high"),
+        (InferenceProfile.FAST, "none", 2048),
+        (InferenceProfile.BALANCED, "low", 4096),
+        (InferenceProfile.DEEP, "high", 12288),
     ],
 )
 def test_responses_reasoning_profiles_use_exact_request_shape(
-    profile: InferenceProfile, effort: str
+    profile: InferenceProfile, effort: str, max_output_tokens: int
 ) -> None:
     response = SimpleNamespace(
         id="response-profile",
@@ -129,6 +129,7 @@ def test_responses_reasoning_profiles_use_exact_request_shape(
     asyncio.run(run())
     request = responses.calls[0]
     assert request["reasoning"] == {"effort": effort}
+    assert request["max_output_tokens"] == max_output_tokens
     assert "output_config" not in request
 
 
@@ -219,7 +220,9 @@ def test_responses_incomplete_output_is_normalized_without_retry() -> None:
 
     async def run() -> None:
         provider = DeepSeekLLMProvider(response_settings(), client=client, ledger=ledger)
-        with pytest.raises(ProviderInvalidResponseError, match="incomplete"):
+        with pytest.raises(
+            ProviderInvalidResponseError, match=r"incomplete \(max_output_tokens\)"
+        ):
             await provider.structured(
                 "tiny test",
                 ResponseAnswer,
@@ -229,6 +232,8 @@ def test_responses_incomplete_output_is_normalized_without_retry() -> None:
 
     asyncio.run(run())
     assert len(responses.calls) == 1
+    assert ledger.events[0].request_id == "response-incomplete"
+    assert ledger.totals().input_tokens == 3
     assert ledger.totals().output_tokens == 4
 
 

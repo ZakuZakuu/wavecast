@@ -34,6 +34,8 @@ class FastStartPlanner:
         trace: GenerationTrace | None = None,
     ) -> FastStartPlan:
         prompt = self._prompt(request, research)
+        if trace:
+            trace.mark("fast_planner_started")
         try:
             plan = await self.llm.structured(
                 prompt,
@@ -69,8 +71,12 @@ class FastStartPlanner:
             "Create one FastStartPlan for a guided-listening episode. Use only the normalized "
             "evidence below. Separate evidence, hypotheses, and uncertainty. Prefer groove, "
             "harmony, production texture, instrumentation, vocal style, rhythmic feel, era, "
-            "scene, and emotional energy over generic genre tags. Choose a small immediate "
-            "direction and write one spoken first narration; never invent unsupported facts.\n"
+            "scene, and emotional energy over generic genre tags. Distinguish surface "
+            "descriptors such as female vocal, male rap, or upbeat from deeper explanatory "
+            "dimensions such as groove, harmonic language, production texture, instrument "
+            "palette, vocal interaction, rhythmic placement, era-specific sound, and scene "
+            "aesthetics whenever the evidence supports them. Choose a small immediate direction "
+            "and write one spoken first narration; never invent unsupported facts.\n"
             f"Request: {request.model_dump_json()}\n"
             f"Research: {research.bundle.model_dump_json()}"
         )
@@ -125,6 +131,14 @@ class FastPathCoordinator:
             )
             return result
         except TimeoutError:
+            if not any(
+                event.name in {"fast_research_done", "fast_research_timed_out"}
+                for event in trace.events
+            ):
+                trace.mark(
+                    "fast_research_timed_out",
+                    elapsed_ms=int((perf_counter() - started) * 1000),
+                )
             research = FastResearchResult(
                 bundle=research_anchor_bundle(request),
                 elapsed_ms=int((perf_counter() - started) * 1000),

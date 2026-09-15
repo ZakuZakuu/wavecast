@@ -23,6 +23,7 @@ class ProviderSettings:
     deepseek_timeout_seconds: float = 20.0
     deepseek_deep_timeout_seconds: float = 45.0
     deepseek_max_output_tokens: int = 4096
+    deepseek_deep_max_output_tokens: int = 12288
     max_attempts: int = 2
 
     @classmethod
@@ -45,6 +46,9 @@ class ProviderSettings:
             ),
             deepseek_max_output_tokens=_positive_int_from_env(
                 "DEEPSEEK_MAX_OUTPUT_TOKENS", default=4096
+            ),
+            deepseek_deep_max_output_tokens=_positive_int_from_env(
+                "DEEPSEEK_DEEP_MAX_OUTPUT_TOKENS", default=12288
             ),
         )
 

@@ -40,3 +40,18 @@ class GenerationTrace:
     @property
     def fallback_used(self) -> bool:
         return any(event.name == "fallback_used" for event in self.events)
+
+    @property
+    def fast_research_elapsed_ms(self) -> int | None:
+        for event in self.events:
+            if event.name in {"fast_research_done", "fast_research_timed_out"}:
+                elapsed = event.metadata.get("elapsed_ms")
+                return elapsed if isinstance(elapsed, int) else event.elapsed_from_start_ms
+        return None
+
+    @property
+    def fast_planner_started_ms(self) -> int | None:
+        for event in self.events:
+            if event.name == "fast_planner_started":
+                return event.elapsed_from_start_ms
+        return None
