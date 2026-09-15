@@ -41,6 +41,7 @@ class DeepSeekLLMProvider:
         self.settings = settings
         self.ledger = ledger or UsageLedger()
         self.sleep = sleep
+        self._owns_client = client is None
         self.client: Any = client or AsyncOpenAI(
             api_key=settings.credential_for("deepseek"),
             base_url=settings.deepseek_base_url,
@@ -120,6 +121,10 @@ class DeepSeekLLMProvider:
                 raise last_failure
             await self.sleep(0.25 * (2**attempt))
         raise AssertionError("bounded structured loop must return or raise")
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self.client.close()
 
     def _record(self, response: Any, elapsed_ms: int) -> None:
         usage = getattr(response, "usage", None)
