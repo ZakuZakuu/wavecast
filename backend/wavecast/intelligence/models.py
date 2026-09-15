@@ -1,6 +1,7 @@
 """Typed intelligence contracts; provider payloads are normalized before entering these models."""
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -38,15 +39,69 @@ class TasteHypothesis(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
 
 
-class TrackCandidate(BaseModel):
+class UnresolvedTrackError(ValueError):
+    """Raised when a proposal is used where a catalog identity is required."""
+
+
+class TrackProposal(BaseModel):
+    """An artist/title hypothesis that still needs catalog resolution."""
+
     artist: str = Field(min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=160)
-    track_ref: str | None = None
     reasons: list[str] = Field(default_factory=list)
     similarity_dimensions: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0, le=1)
     novelty_distance: NoveltyDistance = NoveltyDistance.CLOSE
+
+
+class ResolvedTrack(BaseModel):
+    """The minimal catalog identity required before a track can enter playback."""
+
+    track_ref: str = Field(min_length=1, max_length=300)
+    canonical_artist: str = Field(min_length=1, max_length=120)
+    canonical_title: str = Field(min_length=1, max_length=160)
+
+
+class TrackCandidate(TrackProposal):
+    """Backward-compatible proposal shape with optional catalog resolution.
+
+    Intelligence stages may emit this model without ``track_ref``.  A candidate is
+    resolved only after a MusicProvider supplies a stable reference and canonical
+    names; callers must use the resolution boundary before building timeline segments.
+    """
+
+    track_ref: str | None = None
+    canonical_artist: str | None = None
+    canonical_title: str | None = None
+
+    @property
+    def resolution_status(self) -> Literal["resolved", "unresolved"]:
+        return "resolved" if self.is_resolved else "unresolved"
+
+    @property
+    def is_resolved(self) -> bool:
+        return bool(self.track_ref and self.canonical_artist and self.canonical_title)
+
+    def resolved_track(self) -> ResolvedTrack:
+        if not self.is_resolved:
+            raise UnresolvedTrackError("track candidate has not been resolved by a music catalog")
+        assert self.track_ref is not None
+        assert self.canonical_artist is not None
+        assert self.canonical_title is not None
+        return ResolvedTrack(
+            track_ref=self.track_ref,
+            canonical_artist=self.canonical_artist or self.artist,
+            canonical_title=self.canonical_title or self.title,
+        )
+
+
+class ResolvedTrackCandidate(TrackCandidate):
+    """A TrackCandidate whose catalog identity has been resolved."""
+
+    track_ref: str = Field(min_length=1, max_length=300)
+    canonical_artist: str = Field(min_length=1, max_length=120)
+    canonical_title: str = Field(min_length=1, max_length=160)
 
 
 class NarrationScript(BaseModel):

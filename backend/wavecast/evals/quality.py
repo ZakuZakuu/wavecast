@@ -16,6 +16,7 @@ from wavecast.intelligence.models import (
     NoveltyDistance,
     ProgramSkeleton,
     TasteHypothesis,
+    TrackCandidate,
 )
 
 
@@ -58,6 +59,8 @@ class ReviewCandidate(BaseModel):
     narrative_role: NarrativeRole | None = None
     evidence_ids: list[str] = Field(default_factory=list)
     scene_cluster_rationale: str | None = None
+    track_ref: str | None = None
+    resolution_status: Literal["resolved", "unresolved"] = "unresolved"
 
 
 class GuidedDiscoveryReview(BaseModel):
@@ -97,38 +100,48 @@ def build_review_bundle(
     skeleton: ProgramSkeleton | None,
 ) -> GuidedDiscoveryReview:
     """Convert typed pipeline output into a compact, human-reviewable artifact."""
+    def review_candidate(
+        candidate: TrackCandidate,
+        *,
+        narrative_role: NarrativeRole | None = None,
+        scene_cluster_rationale: str | None = None,
+        evidence_ids: list[str] | None = None,
+    ) -> ReviewCandidate:
+        return ReviewCandidate(
+            artist=candidate.artist,
+            title=candidate.title,
+            similarity_dimensions=list(candidate.similarity_dimensions),
+            reasons=list(candidate.reasons),
+            novelty_distance=candidate.novelty_distance,
+            narrative_role=narrative_role,
+            evidence_ids=list(evidence_ids or candidate.evidence_ids),
+            scene_cluster_rationale=scene_cluster_rationale,
+            track_ref=candidate.track_ref if candidate.is_resolved else None,
+            resolution_status=candidate.resolution_status,
+        )
+
     candidates_by_key: dict[tuple[str, str], ReviewCandidate] = {}
     for candidate in fast_plan.next_candidates:
         key = (candidate.artist.lower(), candidate.title.lower())
         candidates_by_key.setdefault(
             key,
-            ReviewCandidate(
-                artist=candidate.artist,
-                title=candidate.title,
-                similarity_dimensions=list(candidate.similarity_dimensions),
-                reasons=list(candidate.reasons),
-                novelty_distance=candidate.novelty_distance,
-                evidence_ids=list(candidate.evidence_ids),
-            ),
+            review_candidate(candidate),
         )
 
     arc: list[ReviewCandidate] = []
     if skeleton:
         for chapter in skeleton.chapters:
-            review_candidate = ReviewCandidate(
-                artist=chapter.track.artist,
-                title=chapter.track.title,
-                similarity_dimensions=list(chapter.track.similarity_dimensions),
-                reasons=list(chapter.track.reasons),
-                novelty_distance=chapter.novelty_distance,
+            chapter_review_candidate = review_candidate(
+                chapter.track,
                 narrative_role=chapter.narrative_role,
                 evidence_ids=list(chapter.evidence_ids or chapter.track.evidence_ids),
                 scene_cluster_rationale=chapter.reason,
             )
-            arc.append(review_candidate)
-            candidates_by_key.setdefault(
-                (chapter.track.artist.lower(), chapter.track.title.lower()), review_candidate
-            )
+            arc.append(chapter_review_candidate)
+            key = (chapter.track.artist.lower(), chapter.track.title.lower())
+            existing = candidates_by_key.get(key)
+            if existing is None or chapter_review_candidate.resolution_status == "resolved":
+                candidates_by_key[key] = chapter_review_candidate
 
     return GuidedDiscoveryReview(
         case_id=case.case_id,

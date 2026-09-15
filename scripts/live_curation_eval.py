@@ -77,7 +77,7 @@ def stage_from_trace(trace: GenerationTrace, current: str) -> str:
 
 
 def sanitized_trace(trace: GenerationTrace) -> list[dict[str, object]]:
-    allowed_keys = {"fallback", "candidate_count", "chapter_count", "query_count"}
+    allowed_keys = {"fallback", "candidate_count", "chapter_count", "query_count", "elapsed_ms"}
     return [
         {
             "name": event.name,

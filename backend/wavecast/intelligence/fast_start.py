@@ -34,6 +34,8 @@ class FastStartPlanner:
         trace: GenerationTrace | None = None,
     ) -> FastStartPlan:
         prompt = self._prompt(request, research)
+        if trace:
+            trace.mark("fast_planner_started")
         try:
             plan = await self.llm.structured(
                 prompt,
@@ -129,6 +131,14 @@ class FastPathCoordinator:
             )
             return result
         except TimeoutError:
+            if not any(
+                event.name in {"fast_research_done", "fast_research_timed_out"}
+                for event in trace.events
+            ):
+                trace.mark(
+                    "fast_research_timed_out",
+                    elapsed_ms=int((perf_counter() - started) * 1000),
+                )
             research = FastResearchResult(
                 bundle=research_anchor_bundle(request),
                 elapsed_ms=int((perf_counter() - started) * 1000),
