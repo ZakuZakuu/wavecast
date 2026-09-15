@@ -45,6 +45,34 @@ def stage_summary(ledger: UsageLedger, stage: str) -> dict[str, object]:
     return ledger.totals_for_stage(stage).model_dump()
 
 
+def sanitized_trace(trace: GenerationTrace) -> list[dict[str, object]]:
+    """Expose timings and bounded counters only; never provider payloads."""
+    allowed_keys = {"fallback", "candidate_count", "chapter_count", "query_count"}
+    return [
+        {
+            "name": event.name,
+            "elapsed_ms": event.elapsed_from_start_ms,
+            "metadata": {
+                key: value for key, value in event.metadata.items() if key in allowed_keys
+            },
+        }
+        for event in trace.events
+    ]
+
+
+def stage_from_trace(trace: GenerationTrace, current: str) -> str:
+    names = {event.name for event in trace.events}
+    if "writer_started" in names:
+        return "writer"
+    if "curator_started" in names:
+        return "curator"
+    if "background_research_started" in names or "background_started" in names:
+        return "background_research"
+    if "first_script_ready" in names or "fallback_used" in names:
+        return "fast_start"
+    return current
+
+
 def sanitized_report(
     *,
     fast_result: object,
@@ -114,12 +142,14 @@ def sanitized_report(
 
 
 async def run(anchors: list[str], topic: str) -> dict[str, object]:
-    settings = replace(require_live_settings(), max_attempts=1)
     ledger = UsageLedger()
     exa: ExaSearchProvider | None = None
     tavily: TavilySearchProvider | None = None
     llm: DeepSeekLLMProvider | None = None
+    trace = GenerationTrace(request_id="live-progressive-probe")
+    stage = "fast_start"
     try:
+        settings = replace(require_live_settings(), max_attempts=1)
         probe_started = perf_counter()
         exa = ExaSearchProvider(settings, ledger=ledger)
         tavily = TavilySearchProvider(settings, ledger=ledger)
@@ -129,7 +159,6 @@ async def run(anchors: list[str], topic: str) -> dict[str, object]:
             anchor_tracks=anchors,
             desired_duration_seconds=1800,
         )
-        trace: GenerationTrace | None = None
         fast_started = perf_counter()
         fast = FastPathCoordinator(
             research=FastResearchService(
@@ -141,7 +170,7 @@ async def run(anchors: list[str], topic: str) -> dict[str, object]:
         fast_result = await fast.run(request, request_id="live-progressive-probe")
         fast_elapsed_ms = int((perf_counter() - fast_started) * 1000)
         trace = fast_result.trace
-        trace.mark("background_started")
+        stage = "background_research"
         cancel_event = asyncio.Event()
         background_started = perf_counter()
         background_result = await BackgroundIntelligencePipeline(
@@ -178,6 +207,35 @@ async def run(anchors: list[str], topic: str) -> dict[str, object]:
                 f"{report['fast_path']['time_to_first_script_ms']}ms"  # type: ignore[index]
             )
         return report
+    except ProviderError as error:
+        # Diagnostics are deliberately metadata-only.  The provider error text can
+        # contain vendor payloads, prompts, or other sensitive details.
+        failure_stage = stage_from_trace(trace, stage)
+        print("Progressive probe failed")
+        print(
+            "FAILURE: "
+            + json.dumps(
+                {"stage": failure_stage, "type": type(error).__name__}, sort_keys=True
+            )
+        )
+        print("TRACE: " + json.dumps(sanitized_trace(trace), sort_keys=True))
+        print(
+            "USAGE: "
+            + json.dumps(
+                {
+                    stage_name: stage_summary(ledger, stage_name)
+                    for stage_name in (
+                        "fast_research",
+                        "fast_start",
+                        "background_research",
+                        "curator",
+                        "writer",
+                    )
+                },
+                sort_keys=True,
+            )
+        )
+        raise
     finally:
         if llm is not None:
             await llm.aclose()
@@ -191,8 +249,8 @@ if __name__ == "__main__":
     arguments = parse_args()
     try:
         result = asyncio.run(run(arguments.anchor, arguments.topic))
-    except ProviderError as error:
-        raise SystemExit(f"Live progressive probe failed: {error}") from error
+    except ProviderError:
+        raise SystemExit(1)
     if arguments.json_output:
         arguments.json_output.write_text(
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"

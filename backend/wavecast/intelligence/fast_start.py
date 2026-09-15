@@ -45,12 +45,23 @@ class FastStartPlanner:
             if not isinstance(plan, FastStartPlan):
                 raise TypeError("fast planner returned an unexpected output model")
             if trace:
-                trace.mark("fast_plan_ready", candidate_count=len(plan.next_candidates))
+                trace.mark(
+                    "first_script_ready",
+                    fallback=False,
+                    candidate_count=len(plan.next_candidates),
+                )
             return plan
         except Exception as error:
             if trace:
                 trace.mark("fallback_used", reason=type(error).__name__)
-            return deterministic_fallback(request, research)
+            plan = deterministic_fallback(request, research)
+            if trace:
+                trace.mark(
+                    "first_script_ready",
+                    fallback=True,
+                    candidate_count=len(plan.next_candidates),
+                )
+            return plan
 
     @staticmethod
     def _prompt(request: FastResearchInput, research: FastResearchResult) -> str:
@@ -120,6 +131,7 @@ class FastPathCoordinator:
                 queries=[],
             )
             trace.mark("fallback_used", reason="deadline")
+            trace.mark("first_script_ready", fallback=True, candidate_count=0)
             return FastPathResult(
                 research=research,
                 plan=deterministic_fallback(request, research),

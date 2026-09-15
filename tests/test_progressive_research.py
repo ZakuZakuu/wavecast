@@ -13,19 +13,29 @@ from wavecast.providers.usage import UsageEvent, UsageLedger
 
 
 class DelayedSearch:
-    def __init__(self, provider: str, delay: float = 0, *, fail: bool = False) -> None:
+    def __init__(
+        self,
+        provider: str,
+        delay: float = 0,
+        *,
+        fail: bool = False,
+        ledger: UsageLedger | None = None,
+    ) -> None:
         self.provider = provider
         self.delay = delay
         self.fail = fail
+        self.ledger = ledger
         self.calls: list[str] = []
 
-    async def search(self, query: str, *, limit: int = 5) -> list[SearchResult]:
+    async def search(
+        self, query: str, *, limit: int = 5, stage: str | None = None
+    ) -> list[SearchResult]:
         del limit
         self.calls.append(query)
         await asyncio.sleep(self.delay)
         if self.fail:
             raise RuntimeError(f"{self.provider} failed")
-        return [
+        result = [
             SearchResult(
                 title=f"{self.provider} Artist - Candidate",
                 url=f"https://example.test/{self.provider}",
@@ -35,6 +45,18 @@ class DelayedSearch:
                 score=0.8,
             )
         ]
+        if self.ledger:
+            self.ledger.record(
+                UsageEvent(
+                    provider=self.provider,
+                    operation="search",
+                    request_id=query,
+                    elapsed_ms=1,
+                    search_queries=1,
+                    metadata={"stage": stage} if stage else {},
+                )
+            )
+        return result
 
 
 def request() -> FastResearchInput:
@@ -46,11 +68,9 @@ def request() -> FastResearchInput:
 
 
 def test_fast_research_runs_both_queries_concurrently_and_records_stage() -> None:
-    exa = DelayedSearch("exa", delay=0.04)
-    tavily = DelayedSearch("tavily", delay=0.04)
     ledger = UsageLedger()
-    ledger.record(UsageEvent(provider="exa", operation="search", elapsed_ms=1))
-    ledger.record(UsageEvent(provider="tavily", operation="search", elapsed_ms=1))
+    exa = DelayedSearch("exa", delay=0.04, ledger=ledger)
+    tavily = DelayedSearch("tavily", delay=0.04, ledger=ledger)
     trace = GenerationTrace(request_id="fast-1")
     service = FastResearchService(
         discovery=exa, research=tavily, ledger=ledger, deadline_seconds=0.2
@@ -64,6 +84,7 @@ def test_fast_research_runs_both_queries_concurrently_and_records_stage() -> Non
     assert len(exa.calls) == 1
     assert len(tavily.calls) == 1
     assert len(result.bundle.evidence) == 2
+    assert result.bundle.candidates == []
     assert "fast_research" in {
         event.metadata.get("stage") for event in ledger.events if event.metadata.get("stage")
     }
@@ -107,3 +128,54 @@ def test_research_results_are_deduplicated_by_url_and_context_is_trimmed() -> No
     assert build_background_queries(request())[0] not in {
         "unused fast query"
     }
+
+
+def test_background_same_provider_events_keep_distinct_stage_attribution() -> None:
+    from wavecast.intelligence.models import FastResearchResult, ResearchBundle
+    from wavecast.intelligence.research import BackgroundResearchService
+
+    ledger = UsageLedger()
+
+    class StageSearch(DelayedSearch):
+        async def search(
+            self, query: str, *, limit: int = 5, stage: str | None = None
+        ) -> list[SearchResult]:
+            result = await super().search(query, limit=limit, stage=stage)
+            ledger.record(
+                UsageEvent(
+                    provider=self.provider,
+                    operation="search",
+                    request_id=query,
+                    elapsed_ms=1,
+                    metadata={"stage": stage},
+                )
+            )
+            return result
+
+    fast_result = FastResearchResult(
+        bundle=ResearchBundle(
+            anchors=request().anchor_tracks,
+            taste_hypotheses=[],
+            evidence=[],
+            candidates=[],
+        ),
+        elapsed_ms=0,
+        queries=["fast-exa", "fast-tavily"],
+    )
+    tavily = StageSearch("tavily", delay=0.01)
+    background = BackgroundResearchService(
+        discovery=StageSearch("exa", delay=0.01),
+        research=tavily,
+        ledger=ledger,
+        deadline_seconds=0.2,
+    )
+
+    result = asyncio.run(background.run(request(), fast_result))
+
+    assert result is not None
+    tavily_events = [event for event in ledger.events if event.provider == "tavily"]
+    assert len(tavily_events) == 2
+    assert {event.request_id for event in tavily_events} == set(
+        build_background_queries(request())[1:]
+    )
+    assert all(event.metadata["stage"] == "background_research" for event in tavily_events)

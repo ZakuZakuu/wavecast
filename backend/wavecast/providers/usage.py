@@ -25,6 +25,7 @@ class UsageTotals(BaseModel):
     event_count: int
     input_tokens: int
     output_tokens: int
+    reasoning_tokens: int
     search_queries: int
     search_credits: float
     actual_cost_usd: float
@@ -38,13 +39,6 @@ class UsageLedger:
     def record(self, event: UsageEvent) -> None:
         self.events.append(event)
 
-    def annotate_latest(self, provider: str, operation: str, **metadata: Any) -> None:
-        """Attach deterministic stage labels without copying provider payloads."""
-        for event in reversed(self.events):
-            if event.provider == provider and event.operation == operation:
-                event.metadata.update(metadata)
-                return
-
     def totals(self) -> UsageTotals:
         return self._totals(self.events)
 
@@ -57,6 +51,12 @@ class UsageLedger:
             event_count=len(events),
             input_tokens=sum(event.input_tokens or 0 for event in events),
             output_tokens=sum(event.output_tokens or 0 for event in events),
+            reasoning_tokens=sum(
+                value
+                for event in events
+                if isinstance((value := event.metadata.get("reasoning_tokens")), int)
+                and value >= 0
+            ),
             search_queries=sum(event.search_queries or 0 for event in events),
             search_credits=sum(event.search_credits or 0 for event in events),
             actual_cost_usd=sum(event.actual_cost_usd or 0 for event in events),

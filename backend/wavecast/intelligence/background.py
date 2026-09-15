@@ -51,11 +51,13 @@ class BackgroundIntelligencePipeline:
     ) -> BackgroundPipelineResult | None:
         if cancel_event.is_set():
             return None
+        trace.mark("background_research_started")
         bundle = await self.research.run(
             request, fast_result.research, cancel_event=cancel_event, trace=trace
         )
         if bundle is None or cancel_event.is_set():
             return None
+        trace.mark("curator_started")
         skeleton = await self.curator.curate(
             bundle,
             fast_result.plan,
@@ -68,6 +70,7 @@ class BackgroundIntelligencePipeline:
             planning.apply_skeleton(skeleton)
         future_script: NarrationScript | None = None
         if skeleton.chapters:
+            trace.mark("writer_started")
             future_script = await self.writer.write(
                 skeleton.chapters[0], bundle.evidence, previous_committed_context=""
             )

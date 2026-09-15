@@ -45,19 +45,19 @@ def skeleton() -> ProgramSkeleton:
         chapters=[
             ChapterPlan(
                 index=0,
-                track=candidate("Discovery", NoveltyDistance.DISCOVERY),
-                narrative_role=NarrativeRole.DISCOVERY,
-                reason="open outward",
-                novelty_distance=NoveltyDistance.DISCOVERY,
+                track=candidate("Close", NoveltyDistance.CLOSE),
+                narrative_role=NarrativeRole.VALIDATION,
+                reason="stay near",
+                novelty_distance=NoveltyDistance.CLOSE,
                 narration_goal="explain texture",
                 evidence_ids=["e1"],
             ),
             ChapterPlan(
                 index=1,
-                track=candidate("Close", NoveltyDistance.CLOSE),
-                narrative_role=NarrativeRole.VALIDATION,
-                reason="stay near",
-                novelty_distance=NoveltyDistance.CLOSE,
+                track=candidate("Discovery", NoveltyDistance.DISCOVERY),
+                narrative_role=NarrativeRole.DISCOVERY,
+                reason="open outward",
+                novelty_distance=NoveltyDistance.DISCOVERY,
                 narration_goal="connect groove",
                 evidence_ids=["e1"],
             ),
@@ -65,7 +65,7 @@ def skeleton() -> ProgramSkeleton:
     )
 
 
-def test_curator_orders_distance_curve_without_search_dependency() -> None:
+def test_curator_preserves_narrative_distance_curve_without_search_dependency() -> None:
     fixture = StructuredFixture(skeleton())
     service = CuratorService(fixture)
     bundle = ResearchBundle(anchors=["Anchor"], taste_hypotheses=[], evidence=[], candidates=[])
@@ -84,6 +84,7 @@ def test_curator_orders_distance_curve_without_search_dependency() -> None:
         NoveltyDistance.CLOSE,
         NoveltyDistance.DISCOVERY,
     ]
+    assert [chapter.index for chapter in result.chapters] == [0, 1]
     assert not hasattr(service, "discovery")
 
 
@@ -128,3 +129,29 @@ def test_committed_planning_chapter_cannot_be_rewritten() -> None:
         assert "committed" in str(error)
     else:
         raise AssertionError("committed chapter was rewritten")
+
+
+def test_curator_and_planning_preserve_committed_prefix_exactly() -> None:
+    committed = skeleton().chapters[0]
+    service = CuratorService(StructuredFixture(skeleton()))
+    bundle = ResearchBundle(anchors=["Anchor"], taste_hypotheses=[], evidence=[], candidates=[])
+    fast = FastStartPlan(
+        anchor_understanding=["anchor"],
+        immediate_taste_hypotheses=[],
+        next_candidates=[],
+        first_narration=NarrationScript(text="start", intended_duration_seconds=5),
+    )
+    session = PlanningSession(committed_chapters=[committed])
+
+    result = asyncio.run(
+        service.curate(
+            bundle,
+            fast,
+            desired_duration_seconds=1200,
+            committed_chapters=[committed],
+        )
+    )
+    session.apply_skeleton(result)
+
+    assert result.chapters[0] == committed
+    assert session.committed_chapters == [committed]

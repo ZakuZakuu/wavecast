@@ -21,7 +21,9 @@ from .trace import GenerationTrace
 
 
 class SearchCallable(Protocol):
-    async def search(self, query: str, *, limit: int = 5) -> list[SearchResult]: ...
+    async def search(
+        self, query: str, *, limit: int = 5, stage: str | None = None
+    ) -> list[SearchResult]: ...
 
 
 FAST_RESEARCH_DEADLINE_SECONDS = 4.5
@@ -53,8 +55,12 @@ class FastResearchService:
         if trace:
             trace.mark("fast_research_started", query_count=len(queries))
         tasks = {
-            asyncio.create_task(self.discovery.search(discovery_query, limit=4)): "exa",
-            asyncio.create_task(self.research.search(research_query, limit=4)): "tavily",
+            asyncio.create_task(
+                self.discovery.search(discovery_query, limit=4, stage="fast_research")
+            ): "exa",
+            asyncio.create_task(
+                self.research.search(research_query, limit=4, stage="fast_research")
+            ): "tavily",
         }
         results_by_provider: dict[str, list[SearchResult]] = {}
         failures: list[str] = []
@@ -69,8 +75,6 @@ class FastResearchService:
                 results_by_provider[provider] = task.result()
                 if trace:
                     trace.mark(f"{provider}_done", result_count=len(results_by_provider[provider]))
-                if self.ledger:
-                    self.ledger.annotate_latest(provider, "search", stage="fast_research")
             except Exception as error:  # provider failures are data-quality uncertainty
                 failures.append(f"{provider} unavailable: {type(error).__name__}")
                 if trace:
@@ -119,9 +123,15 @@ class BackgroundResearchService:
         if trace:
             trace.mark("background_started", query_count=len(queries))
         tasks = {
-            asyncio.create_task(self.discovery.search(queries[0], limit=4)): "exa",
-            asyncio.create_task(self.research.search(queries[1], limit=4)): "tavily",
-            asyncio.create_task(self.research.search(queries[2], limit=4)): "tavily",
+            asyncio.create_task(
+                self.discovery.search(queries[0], limit=4, stage="background_research")
+            ): "exa",
+            asyncio.create_task(
+                self.research.search(queries[1], limit=4, stage="background_research")
+            ): "tavily",
+            asyncio.create_task(
+                self.research.search(queries[2], limit=4, stage="background_research")
+            ): "tavily",
         }
         if cancel_event and cancel_event.is_set():
             for task in tasks:
@@ -137,8 +147,6 @@ class BackgroundResearchService:
         for task in done:
             try:
                 extra.extend(task.result())
-                if self.ledger:
-                    self.ledger.annotate_latest(tasks[task], "search", stage="background_research")
             except Exception:
                 continue
         merged = merge_bundles(fast_result.bundle, bundle_from_results(request, normalize_results(extra), []))
@@ -189,8 +197,7 @@ def bundle_from_results(
     request: FastResearchInput, results: list[SearchResult], uncertainties: list[str]
 ) -> ResearchBundle:
     evidence: list[Evidence] = []
-    candidates: list[TrackCandidate] = []
-    for index, result in enumerate(results):
+    for result in results:
         evidence_id = "evidence-" + sha1(
             f"{result.provider}|{result.url}|{result.query}".encode()
         ).hexdigest()[:12]
@@ -205,22 +212,13 @@ def bundle_from_results(
                 query=result.query,
             )
         )
-        artist, title = split_track_title(result.title)
-        candidates.append(
-            TrackCandidate(
-                artist=artist,
-                title=title,
-                reasons=["normalized from bounded discovery evidence"],
-                similarity_dimensions=["scene", "production texture"],
-                evidence_ids=[evidence_id],
-                confidence=result.score if result.score is not None else 0.5,
-            )
-        )
     return ResearchBundle(
         anchors=[*request.anchor_tracks, *request.anchor_artists],
         taste_hypotheses=[],
         evidence=evidence,
-        candidates=candidates,
+        # A webpage title is evidence, not a recommendation.  Track candidates
+        # require explicit provider entities or downstream curator inference.
+        candidates=[],
         uncertainties=uncertainties,
     )
 
@@ -241,10 +239,3 @@ def merge_bundles(left: ResearchBundle, right: ResearchBundle) -> ResearchBundle
             "uncertainties": [*left.uncertainties, *right.uncertainties],
         }
     )
-
-
-def split_track_title(title: str) -> tuple[str, str]:
-    if " - " in title:
-        artist, track = title.split(" - ", 1)
-        return artist[:120], track[:160]
-    return "Unknown artist", title[:160]
