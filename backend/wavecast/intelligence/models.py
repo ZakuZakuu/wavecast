@@ -106,7 +106,14 @@ class RadioScriptBlockKind(StrEnum):
 
 
 class RadioScriptBlock(BaseModel):
-    """One spoken block in a radio-style script, before TTS materialization."""
+    """One spoken block in a radio-style script, before TTS materialization.
+
+    ``track_index`` is the zero-based playback anchor: ``TRACK_INTRO(i)`` is
+    immediately before track ``i`` and ``TRANSITION(i)`` occupies the gap after
+    track ``i`` and before track ``i + 1``.  An unindexed ``INTRO`` follows the
+    opening music; unindexed transitions are a compatibility form assigned to
+    available gaps in order.  ``OUTRO`` follows the final track.
+    """
 
     kind: RadioScriptBlockKind
     text: str = Field(min_length=1, max_length=4000)

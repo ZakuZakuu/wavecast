@@ -17,6 +17,10 @@ class ProviderSettings:
     exa_api_key: str | None = None
     tavily_api_key: str | None = None
     audius_api_key: str | None = None
+    # Audius API keys identify the application and may be used in client-safe
+    # requests.  Bearer tokens authorize backend actions and must never reach
+    # browser playback code.
+    audius_bearer_token: str | None = None
     audius_base_url: str = "https://api.audius.co/v1"
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-flash"
@@ -39,6 +43,7 @@ class ProviderSettings:
             exa_api_key=getenv("EXA_API_KEY"),
             tavily_api_key=getenv("TAVILY_API_KEY"),
             audius_api_key=getenv("AUDIUS_API_KEY"),
+            audius_bearer_token=getenv("AUDIUS_BEARER_TOKEN"),
             audius_base_url=getenv("AUDIUS_BASE_URL", "https://api.audius.co/v1"),
             deepseek_base_url=getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             deepseek_model=getenv("DEEPSEEK_MODEL", "deepseek-flash"),

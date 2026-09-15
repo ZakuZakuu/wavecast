@@ -17,10 +17,18 @@ structured `RadioScript` blocks (`intro`, `track_intro`, `transition`, `outro`).
 a `PlayableEpisode` timeline; unresolved proposals raise before any music segment is
 created, while narration blocks remain script-ready until a future TTS phase.
 
-Audius is the first read-only external adapter because its catalog and stream endpoints
-are broad and low-cost for a demo. It is optional, has no required credential in mock
-mode, and is replaceable without exposing Audius fields to episode runtime code.
+Audius is the first external adapter because its catalog and stream endpoints are broad
+and low-cost for a demo. Mock mode remains credential-free. In live mode the adapter
+keeps the app API key and backend bearer token distinct, and returns a Wavecast playback
+proxy URL so a bearer token never reaches browser code. The adapter is replaceable
+without exposing Audius fields to episode runtime code.
 `MockMusicProvider` remains the default test/local implementation.
+
+Radio block placement is deterministic: opening music may begin immediately, an
+unindexed `INTRO` follows that opening track, `TRACK_INTRO(i)` is immediately before
+track `i`, and `TRANSITION(i)` fills the gap after track `i` before track `i + 1`.
+`OUTRO` follows the final track. Unindexed transitions are compatibility syntax and are
+assigned sequentially to available gaps from the first gap.
 
 ## Consequences
 
