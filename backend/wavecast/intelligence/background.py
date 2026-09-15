@@ -69,12 +69,17 @@ class BackgroundIntelligencePipeline:
         if planning:
             planning.apply_skeleton(skeleton)
         future_script: NarrationScript | None = None
-        if skeleton.chapters:
+        target_chapter = (
+            planning.speculative_chapters[0]
+            if planning and planning.speculative_chapters
+            else (skeleton.chapters[0] if planning is None and skeleton.chapters else None)
+        )
+        if target_chapter is not None:
             trace.mark("writer_started")
             future_script = await self.writer.write(
-                skeleton.chapters[0], bundle.evidence, previous_committed_context=""
+                target_chapter, bundle.evidence, previous_committed_context=""
             )
-            trace.mark("chapter_script_ready", chapter_index=skeleton.chapters[0].index)
+            trace.mark("chapter_script_ready", chapter_index=target_chapter.index)
         trace.mark("program_skeleton_ready", chapter_count=len(skeleton.chapters))
         return BackgroundPipelineResult(
             bundle=bundle, skeleton=skeleton, future_script=future_script, trace=trace
