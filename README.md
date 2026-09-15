@@ -33,12 +33,9 @@ To run the real Postgres integration test, set `WAVECAST_TEST_DATABASE_URL` to t
 Provider mode defaults to `mock`; neither development nor CI calls paid services. To run a real probe, put credentials only in your ignored `.env`, then explicitly opt in:
 
 ```bash
-export WAVECAST_PROVIDER_MODE=live
-export DEEPSEEK_API_KEY=...
-export EXA_API_KEY=...
-export TAVILY_API_KEY=...
-uv run python scripts/live_provider_smoke.py
-uv run python scripts/live_research_probe.py \
+# Add WAVECAST_PROVIDER_MODE=live and the three API keys to .env first.
+uv run --env-file .env python scripts/live_provider_smoke.py
+uv run --env-file .env python scripts/live_research_probe.py \
   --anchor "3rd Coast - Jealousy" \
   --anchor "3rd Coast - Luv is True" \
   --json-output /tmp/wavecast-3rd-coast.json
@@ -55,7 +52,7 @@ pipeline and never connects to `EpisodeOrchestrator`.
 uv run ruff check .
 uv run mypy
 uv run pytest
-uv run pytest tests/live --run-live  # explicitly makes small paid calls
+uv run --env-file .env pytest tests/live --run-live  # explicitly makes small paid calls
 pnpm lint
 pnpm typecheck
 pnpm test:web

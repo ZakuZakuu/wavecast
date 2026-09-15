@@ -42,44 +42,44 @@ def compact_results(results: list[SearchResult]) -> list[dict[str, object]]:
 async def run(anchors: list[str]) -> ResearchProbeReport:
     settings = require_live_settings()
     ledger = UsageLedger()
-    exa = ExaSearchProvider(settings, ledger=ledger)
-    tavily = TavilySearchProvider(settings, ledger=ledger)
-    router = SearchRouter(discovery=exa, research=tavily)
-    anchor_text = " and ".join(anchors)
-    discovery_queries = [
-        f"music similar to {anchor_text}; smooth female vocals male rap jazzy house R&B lounge 2000s Korean Japanese music",
-        f"{anchor_text} related artists scenes beyond DJMAX",
-    ][:MAX_EXA_QUERIES]
-    research_queries = [
-        f"{anchor_text} DJMAX context musical style",
-        "3rd Coast Korean music group Jealousy Luv is True",
-        "2000s Korean Japanese jazzy house R&B lounge artists",
-    ][:MAX_TAVILY_QUERIES]
-    discovery = [
-        await router.search(SearchIntent.DISCOVERY, query, limit=4) for query in discovery_queries
-    ]
-    evidence = [
-        await router.search(SearchIntent.RESEARCH, query, limit=4) for query in research_queries
-    ]
-    synthesis_input = {
-        "anchors": anchors,
-        "exa_discovery": [compact_results(results) for results in discovery],
-        "tavily_evidence": [compact_results(results) for results in evidence],
-        "constraints": [
-            "Do not assume every candidate is a DJMAX artist.",
-            "Distinguish evidence from uncertainty.",
-            "Cite result URLs in evidence_references when available.",
-        ],
-    }
-    llm = DeepSeekLLMProvider(settings, ledger=ledger)
-    report = await llm.structured(
-        "Synthesize this bounded provider probe into the requested JSON report. "
-        f"Input: {json.dumps(synthesis_input, ensure_ascii=False)}",
-        ResearchProbeReport,
-    )
-    await exa.aclose()
-    await tavily.aclose()
-    await llm.client.close()
+    async with (
+        ExaSearchProvider(settings, ledger=ledger) as exa,
+        TavilySearchProvider(settings, ledger=ledger) as tavily,
+        DeepSeekLLMProvider(settings, ledger=ledger) as llm,
+    ):
+        router = SearchRouter(discovery=exa, research=tavily)
+        anchor_text = " and ".join(anchors)
+        discovery_queries = [
+            f"music similar to {anchor_text}; smooth female vocals male rap jazzy house R&B lounge 2000s Korean Japanese music",
+            f"{anchor_text} related artists scenes beyond DJMAX",
+        ][:MAX_EXA_QUERIES]
+        research_queries = [
+            f"{anchor_text} DJMAX context musical style",
+            "3rd Coast Korean music group Jealousy Luv is True",
+            "2000s Korean Japanese jazzy house R&B lounge artists",
+        ][:MAX_TAVILY_QUERIES]
+        discovery = [
+            await router.search(SearchIntent.DISCOVERY, query, limit=4)
+            for query in discovery_queries
+        ]
+        evidence = [
+            await router.search(SearchIntent.RESEARCH, query, limit=4) for query in research_queries
+        ]
+        synthesis_input = {
+            "anchors": anchors,
+            "exa_discovery": [compact_results(results) for results in discovery],
+            "tavily_evidence": [compact_results(results) for results in evidence],
+            "constraints": [
+                "Do not assume every candidate is a DJMAX artist.",
+                "Distinguish evidence from uncertainty.",
+                "Cite result URLs in evidence_references when available.",
+            ],
+        }
+        report = await llm.structured(
+            "Synthesize this bounded provider probe into the requested JSON report. "
+            f"Input: {json.dumps(synthesis_input, ensure_ascii=False)}",
+            ResearchProbeReport,
+        )
     print(json.dumps(report.model_dump(), ensure_ascii=False, indent=2))
     print(f"Usage: {ledger.totals().model_dump_json()}")
     return report

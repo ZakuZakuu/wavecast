@@ -5,6 +5,7 @@ description = "Deterministic runtime for guided listening episodes"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115,<1",
+  "httpx[socks]>=0.28,<1",
   "pydantic>=2.10,<3",
   "sqlalchemy[asyncio]>=2.0,<3",
   "asyncpg>=0.30,<1",

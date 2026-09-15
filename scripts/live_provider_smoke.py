@@ -34,22 +34,21 @@ async def run(selected: Literal["all", "deepseek", "exa", "tavily"]) -> None:
     settings = require_live_settings()
     ledger = UsageLedger()
     if selected in {"all", "deepseek"}:
-        provider = DeepSeekLLMProvider(settings, ledger=ledger)
-        result = await provider.structured('Return JSON {"status":"ok"}.', SmokeResponse)
-        print(f"DeepSeek OK: {result.model_dump_json()}")
-        await provider.client.close()
+        async with DeepSeekLLMProvider(settings, ledger=ledger) as provider:
+            result = await provider.structured('Return JSON {"status":"ok"}.', SmokeResponse)
+            print(f"DeepSeek OK: {result.model_dump_json()}")
     if selected in {"all", "exa"}:
-        provider = ExaSearchProvider(settings, ledger=ledger)
-        results = await provider.search("3rd Coast Jealousy music", limit=1)
-        print(f"Exa OK: {json.dumps([item.model_dump() for item in results], ensure_ascii=False)}")
-        await provider.aclose()
+        async with ExaSearchProvider(settings, ledger=ledger) as provider:
+            results = await provider.search("3rd Coast Jealousy music", limit=1)
+            print(
+                f"Exa OK: {json.dumps([item.model_dump() for item in results], ensure_ascii=False)}"
+            )
     if selected in {"all", "tavily"}:
-        provider = TavilySearchProvider(settings, ledger=ledger)
-        results = await provider.search("3rd Coast Jealousy DJMAX", limit=1)
-        print(
-            f"Tavily OK: {json.dumps([item.model_dump() for item in results], ensure_ascii=False)}"
-        )
-        await provider.aclose()
+        async with TavilySearchProvider(settings, ledger=ledger) as provider:
+            results = await provider.search("3rd Coast Jealousy DJMAX", limit=1)
+            print(
+                f"Tavily OK: {json.dumps([item.model_dump() for item in results], ensure_ascii=False)}"
+            )
     print(f"Usage: {ledger.totals().model_dump_json()}")
 
 

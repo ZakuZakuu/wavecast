@@ -5,13 +5,14 @@ import pytest
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.errors import (
     ProviderAuthenticationError,
+    ProviderBudgetExceededError,
     ProviderConfigurationError,
     ProviderInvalidResponseError,
     ProviderRateLimitError,
     ProviderUnavailableError,
     is_retryable,
 )
-from wavecast.providers.http import request_json
+from wavecast.providers.http import normalize_http_error, request_json
 from wavecast.providers.routing import SearchIntent, SearchRouter
 from wavecast.providers.usage import UsageEvent, UsageLedger
 
@@ -103,6 +104,11 @@ def test_http_converts_malformed_json_to_a_provider_error() -> None:
         await client.aclose()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("status_code", [432, 433])
+def test_tavily_budget_statuses_are_not_treated_as_invalid_responses(status_code: int) -> None:
+    assert isinstance(normalize_http_error("tavily", status_code), ProviderBudgetExceededError)
 
 
 def test_search_router_routes_explicit_intents_only() -> None:
