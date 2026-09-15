@@ -75,6 +75,7 @@ class DeepSeekLLMProvider:
                     response_format={"type": "json_object"},
                     max_tokens=self.settings.deepseek_max_output_tokens,
                 )
+                self._record(response, int((perf_counter() - started_at) * 1000))
                 content = response.choices[0].message.content
                 if not content:
                     raise ProviderInvalidResponseError("deepseek returned empty structured output")
@@ -84,7 +85,6 @@ class DeepSeekLLMProvider:
                     raise ProviderInvalidResponseError(
                         "deepseek structured output did not match the requested schema"
                     ) from error
-                self._record(response, int((perf_counter() - started_at) * 1000))
                 return parsed
             except ProviderError as error:
                 last_failure = error
@@ -133,6 +133,9 @@ class DeepSeekLLMProvider:
 
     def _record(self, response: Any, elapsed_ms: int) -> None:
         usage = getattr(response, "usage", None)
+        choices = getattr(response, "choices", None)
+        first_choice = choices[0] if isinstance(choices, list) and choices else None
+        details = getattr(usage, "completion_tokens_details", None)
         self.ledger.record(
             UsageEvent(
                 provider="deepseek",
@@ -141,6 +144,10 @@ class DeepSeekLLMProvider:
                 elapsed_ms=elapsed_ms,
                 input_tokens=getattr(usage, "prompt_tokens", None),
                 output_tokens=getattr(usage, "completion_tokens", None),
-                metadata={"model": self.settings.deepseek_model},
+                metadata={
+                    "model": self.settings.deepseek_model,
+                    "finish_reason": getattr(first_choice, "finish_reason", None),
+                    "reasoning_tokens": getattr(details, "reasoning_tokens", None),
+                },
             )
         )
