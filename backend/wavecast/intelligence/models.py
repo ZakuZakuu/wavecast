@@ -1,8 +1,9 @@
 """Typed intelligence contracts; provider payloads are normalized before entering these models."""
 
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NoveltyDistance(StrEnum):
@@ -38,15 +39,54 @@ class TasteHypothesis(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
 
 
-class TrackCandidate(BaseModel):
+class UnresolvedTrackError(ValueError):
+    """Raised when a proposal is used where a catalog identity is required."""
+
+
+class TrackProposal(BaseModel):
+    """An artist/title hypothesis that still needs catalog resolution."""
+
+    model_config = ConfigDict(extra="forbid")
+
     artist: str = Field(min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=160)
-    track_ref: str | None = None
     reasons: list[str] = Field(default_factory=list)
     similarity_dimensions: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0, le=1)
     novelty_distance: NoveltyDistance = NoveltyDistance.CLOSE
+
+
+class ResolvedTrack(BaseModel):
+    """The minimal catalog identity required before a track can enter playback."""
+
+    track_ref: str = Field(min_length=1, max_length=300)
+    canonical_artist: str = Field(min_length=1, max_length=120)
+    canonical_title: str = Field(min_length=1, max_length=160)
+
+
+# Compatibility name for callers that still use the former proposal type.  It is
+# deliberately an alias, so it cannot add catalog identity fields to LLM schemas.
+TrackCandidate = TrackProposal
+
+
+class ResolvedTrackCandidate(TrackProposal):
+    """A proposal enriched with catalog identity by deterministic application code."""
+
+    track_ref: str = Field(min_length=1, max_length=300)
+    canonical_artist: str = Field(min_length=1, max_length=120)
+    canonical_title: str = Field(min_length=1, max_length=160)
+
+    @property
+    def resolution_status(self) -> Literal["resolved"]:
+        return "resolved"
+
+    def resolved_track(self) -> ResolvedTrack:
+        return ResolvedTrack(
+            track_ref=self.track_ref,
+            canonical_artist=self.canonical_artist,
+            canonical_title=self.canonical_title,
+        )
 
 
 class NarrationScript(BaseModel):
@@ -58,7 +98,7 @@ class NarrationScript(BaseModel):
 
 class ChapterPlan(BaseModel):
     index: int = Field(ge=0)
-    track: TrackCandidate
+    track: TrackProposal
     narrative_role: NarrativeRole
     reason: str = Field(min_length=1, max_length=500)
     novelty_distance: NoveltyDistance
@@ -70,7 +110,7 @@ class ResearchBundle(BaseModel):
     anchors: list[str]
     taste_hypotheses: list[TasteHypothesis]
     evidence: list[Evidence]
-    candidates: list[TrackCandidate]
+    candidates: list[TrackProposal]
     uncertainties: list[str] = Field(default_factory=list)
 
 
@@ -83,8 +123,8 @@ class ProgramSkeleton(BaseModel):
 class FastStartPlan(BaseModel):
     anchor_understanding: list[str]
     immediate_taste_hypotheses: list[TasteHypothesis]
-    next_candidates: list[TrackCandidate]
-    selected_next_track: TrackCandidate | None = None
+    next_candidates: list[TrackProposal]
+    selected_next_track: TrackProposal | None = None
     first_narration: NarrationScript
     uncertainties: list[str] = Field(default_factory=list)
 

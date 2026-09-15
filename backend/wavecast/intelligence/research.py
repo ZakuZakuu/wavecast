@@ -15,7 +15,7 @@ from .models import (
     FastResearchInput,
     FastResearchResult,
     ResearchBundle,
-    TrackCandidate,
+    TrackProposal,
 )
 from .trace import GenerationTrace
 
@@ -88,7 +88,11 @@ class FastResearchService:
         bundle = bundle_from_results(request, normalized, failures)
         elapsed_ms = int((perf_counter() - started) * 1000)
         if trace:
-            trace.mark("fast_research_done", evidence_count=len(bundle.evidence))
+            trace.mark(
+                "fast_research_done",
+                evidence_count=len(bundle.evidence),
+                elapsed_ms=elapsed_ms,
+            )
         return FastResearchResult(bundle=bundle, elapsed_ms=elapsed_ms, queries=queries)
 
 
@@ -168,9 +172,18 @@ def build_fast_queries(request: FastResearchInput) -> tuple[str, str]:
 def build_background_queries(request: FastResearchInput) -> list[str]:
     anchors = ", ".join([*request.anchor_tracks, *request.anchor_artists]) or request.topic
     return [
-        f"{anchors} adjacent artists scenes and production lineage",
-        f"{request.topic} historical context and documented influences",
-        f"{anchors} groove harmony instrumentation and emotional energy",
+        (
+            f"{anchors}; close musical similarity by groove, harmony, production texture, "
+            "instrumentation, vocal treatment, rhythmic feel, and emotional energy"
+        ),
+        (
+            f"{anchors}; bridge to adjacent artists, scenes, producers, eras, and stylistic "
+            "lineage beyond the immediate artist or franchise cluster"
+        ),
+        (
+            f"{request.topic}; cross-scene music sharing the inferred sonic characteristics, "
+            f"deprioritize repeating {anchors} and obvious same-artist or same-franchise results"
+        ),
     ]
 
 
@@ -226,7 +239,7 @@ def bundle_from_results(
 def merge_bundles(left: ResearchBundle, right: ResearchBundle) -> ResearchBundle:
     evidence_by_id = {item.id: item for item in [*left.evidence, *right.evidence]}
     candidate_keys: set[tuple[str, str]] = set()
-    candidates: list[TrackCandidate] = []
+    candidates: list[TrackProposal] = []
     for candidate in [*left.candidates, *right.candidates]:
         key = (candidate.artist.lower(), candidate.title.lower())
         if key not in candidate_keys:

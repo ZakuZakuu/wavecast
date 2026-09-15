@@ -84,6 +84,7 @@ class DeepSeekLLMProvider:
             default_timeout_seconds=self.settings.deepseek_timeout_seconds,
             deep_timeout_seconds=self.settings.deepseek_deep_timeout_seconds,
             default_max_output_tokens=self.settings.deepseek_max_output_tokens,
+            deep_max_output_tokens=self.settings.deepseek_deep_max_output_tokens,
             default_max_attempts=self.max_attempts,
         )
         if transport is StructuredTransport.CHAT_JSON:

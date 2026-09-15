@@ -148,6 +148,7 @@ def test_deepseek_uses_its_own_timeout_and_bounds_one_completion(
         timeout_seconds=20,
         deepseek_timeout_seconds=90,
         deepseek_max_output_tokens=4096,
+        deepseek_deep_max_output_tokens=12288,
     )
 
     async def run() -> None:

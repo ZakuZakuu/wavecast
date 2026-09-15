@@ -51,7 +51,8 @@ pipeline and never connects to `EpisodeOrchestrator`. The scripts print only com
 Search adapters retain their short 20-second timeout. DeepSeek structured synthesis has its own
 optional, bounded configuration: `DEEPSEEK_TIMEOUT_SECONDS=20` and
 `DEEPSEEK_DEEP_TIMEOUT_SECONDS=45` for background DEEP/Curator inference, plus
-`DEEPSEEK_MAX_OUTPUT_TOKENS=4096`. These are defaults, not required environment variables; the
+`DEEPSEEK_MAX_OUTPUT_TOKENS=4096` and
+`DEEPSEEK_DEEP_MAX_OUTPUT_TOKENS=12288`. These are defaults, not required environment variables; the
 hot-path timeout remains 20 seconds, while only the background DEEP profile receives the longer
 bounded budget. The output limit bounds a single response without disabling model reasoning or
 adding another attempt.
@@ -88,6 +89,23 @@ uv run --env-file .env python scripts/live_progressive_probe.py \
 It prints TTFS, stage usage, candidate counts, a novelty-distance curve, and a compact quality
 summary. It never prints raw provider responses or reasoning text. The command is explicitly paid
 and bounded; do not run it from ordinary tests or CI.
+
+### Phase 3.5 editorial and curation quality
+
+Guided Discovery quality is evaluated separately from runtime correctness. The credential-free
+benchmark cases and typed human-review rubric live under `backend/wavecast/evals/`; they cover
+same-artist traps, game-music context, artist-to-scene bridges, and mood-driven discovery without
+prescribing exact answers. Search remains bounded at one Exa plus two Tavily background queries,
+with distinct local-similarity, scene-bridge, and cross-scene roles. Generic search results remain
+Evidence; FastStart and Curator infer candidates downstream. The opt-in evaluator runs at most two
+bounded cases and records only sanitized review artifacts:
+
+```bash
+uv run --env-file .env python scripts/live_curation_eval.py
+```
+
+Evaluation output is for human review and does not automatically claim a quality pass. Do not
+commit raw provider responses, prompts, reasoning, credentials, or unreviewed quality claims.
 
 ## Current scope
 

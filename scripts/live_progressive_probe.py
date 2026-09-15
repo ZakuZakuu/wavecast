@@ -47,7 +47,7 @@ def stage_summary(ledger: UsageLedger, stage: str) -> dict[str, object]:
 
 def sanitized_trace(trace: GenerationTrace) -> list[dict[str, object]]:
     """Expose timings and bounded counters only; never provider payloads."""
-    allowed_keys = {"fallback", "candidate_count", "chapter_count", "query_count"}
+    allowed_keys = {"fallback", "candidate_count", "chapter_count", "query_count", "elapsed_ms"}
     return [
         {
             "name": event.name,
@@ -71,6 +71,17 @@ def stage_from_trace(trace: GenerationTrace, current: str) -> str:
     if "first_script_ready" in names or "fallback_used" in names:
         return "fast_start"
     return current
+
+
+def sanitized_failure_reason(error: ProviderError) -> str:
+    message = str(error)
+    if message.startswith("invalid novelty curve values:"):
+        return message
+    if message.startswith("deepseek response was incomplete"):
+        if "max_output_tokens" in message:
+            return "incomplete:max_output_tokens"
+        return "incomplete"
+    return type(error).__name__
 
 
 def event_elapsed(trace: GenerationTrace, name: str) -> int | None:
@@ -254,7 +265,12 @@ async def run(anchors: list[str], topic: str) -> dict[str, object]:
         print(
             "FAILURE: "
             + json.dumps(
-                {"stage": failure_stage, "type": type(error).__name__}, sort_keys=True
+                {
+                    "stage": failure_stage,
+                    "type": type(error).__name__,
+                    "reason": sanitized_failure_reason(error),
+                },
+                sort_keys=True,
             )
         )
         print("TRACE: " + json.dumps(sanitized_trace(trace), sort_keys=True))

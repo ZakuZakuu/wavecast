@@ -130,6 +130,17 @@ def test_research_results_are_deduplicated_by_url_and_context_is_trimmed() -> No
     }
 
 
+def test_background_queries_have_distinct_local_bridge_and_cross_scene_roles() -> None:
+    queries = build_background_queries(request())
+
+    assert len(queries) == 3
+    assert len(set(queries)) == 3
+    assert "close musical similarity" in queries[0]
+    assert "bridge" in queries[1]
+    assert "cross-scene" in queries[2]
+    assert "same-artist" in queries[2]
+
+
 def test_background_same_provider_events_keep_distinct_stage_attribution() -> None:
     from wavecast.intelligence.models import FastResearchResult, ResearchBundle
     from wavecast.intelligence.research import BackgroundResearchService
