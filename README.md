@@ -50,8 +50,11 @@ pipeline and never connects to `EpisodeOrchestrator`. The scripts print only com
 
 Search adapters retain their short 20-second timeout. DeepSeek structured synthesis has its own
 optional, bounded configuration: `DEEPSEEK_TIMEOUT_SECONDS=20` and
+`DEEPSEEK_DEEP_TIMEOUT_SECONDS=45` for background DEEP/Curator inference, plus
 `DEEPSEEK_MAX_OUTPUT_TOKENS=4096`. These are defaults, not required environment variables; the
-output limit bounds a single response without disabling model reasoning or adding another attempt.
+hot-path timeout remains 20 seconds, while only the background DEEP profile receives the longer
+bounded budget. The output limit bounds a single response without disabling model reasoning or
+adding another attempt.
 The diagnostic 3rd Coast probe locally overrides only its DeepSeek call to a 90-second timeout;
 the reusable provider default remains 20 seconds.
 
@@ -68,6 +71,24 @@ pnpm test:web
 pnpm build
 ```
 
+### Phase 3 progressive intelligence (manual, paid opt-in)
+
+The Phase 3 pipeline keeps the episode runtime unchanged. Its fast path runs one Exa and one
+Tavily query concurrently, then one DeepSeek Responses JSON Schema call for a typed
+`FastStartPlan` under a 15-second hard deadline. A cancellable background path adds at most one
+Exa and two Tavily queries before Curator/Writer produce a broader typed arc and one future script.
+Run the sanitized live evaluation only after credential-free validation:
+
+```bash
+uv run --env-file .env python scripts/live_progressive_probe.py \
+  --anchor "3rd Coast - Jealousy" \
+  --anchor "3rd Coast - Luv is True"
+```
+
+It prints TTFS, stage usage, candidate counts, a novelty-distance curve, and a compact quality
+summary. It never prints raw provider responses or reasoning text. The command is explicitly paid
+and bounded; do not run it from ordinary tests or CI.
+
 ## Current scope
 
-Phase 1.5 adds a durable Postgres repository, listener-scoped resume, and version-polled SSE while retaining mock-mode development. Phase 2 adds independent DeepSeek, Exa, and Tavily adapters with a deterministic discovery/research router and in-memory usage ledger. Real calls remain opt-in; the episode runtime, frontend, TTS, and full agent pipeline remain unchanged until later milestones.
+Phase 1.5 adds a durable Postgres repository, listener-scoped resume, and version-polled SSE while retaining mock-mode development. Phase 2 adds independent DeepSeek, Exa, and Tavily adapters with a deterministic discovery/research router and in-memory usage ledger. Phase 3 adds a two-speed, typed progressive intelligence pipeline and TTFS tracing without wiring it into EpisodeOrchestrator or adding TTS. Real calls remain opt-in; the frontend and episode runtime remain unchanged.

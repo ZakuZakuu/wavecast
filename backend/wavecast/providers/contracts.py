@@ -2,6 +2,8 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from .profiles import InferenceProfile, StructuredTransport
+
 
 class SearchResult(BaseModel):
     title: str
@@ -33,8 +35,22 @@ class LLMProvider(Protocol):
     async def structured(self, prompt: str, output_type: type[BaseModel]) -> BaseModel: ...
 
 
+class ProgressiveLLMProvider(Protocol):
+    async def structured(
+        self,
+        prompt: str,
+        output_type: type[BaseModel],
+        *,
+        transport: StructuredTransport,
+        profile: InferenceProfile,
+        stage: str | None = None,
+    ) -> BaseModel: ...
+
+
 class SearchProvider(Protocol):
-    async def search(self, query: str, *, limit: int = 5) -> list[SearchResult]: ...
+    async def search(
+        self, query: str, *, limit: int = 5, stage: str | None = None
+    ) -> list[SearchResult]: ...
 
 
 class TTSProvider(Protocol):
