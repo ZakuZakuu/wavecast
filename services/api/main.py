@@ -3,8 +3,10 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
+from io import BytesIO
 from typing import cast
 from uuid import uuid4
+from wave import open as open_wave
 
 from anyio import to_thread
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -124,6 +126,29 @@ def operate(episode_id: str, listener_id: str, operation: Callable[[], LiveEpiso
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "mode": "postgres" if DATABASE_URL else "mock"}
+
+
+def _mock_wav(duration_seconds: int) -> bytes:
+    """Render deterministic silence so the browser can exercise real audio events."""
+    bounded_duration = max(1, min(duration_seconds, 300))
+    buffer = BytesIO()
+    with open_wave(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(1)
+        wav.setframerate(8000)
+        wav.writeframes(b"\x80" * (8000 * bounded_duration))
+    return buffer.getvalue()
+
+
+@app.get("/api/audio/mock/{kind}/{item_id:path}")
+def mock_audio(kind: str, item_id: str, duration: int = 1) -> Response:
+    if kind not in {"music", "narration"} or not item_id:
+        raise HTTPException(status_code=404, detail="Mock audio source not found")
+    return Response(
+        content=_mock_wav(duration),
+        media_type="audio/wav",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @app.get("/api/seeds", response_model=list[EpisodeSeed])

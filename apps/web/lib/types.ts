@@ -13,20 +13,33 @@ export type Seed = {
   cover: { family: string; seed: number; palette: [string, string] };
 };
 
-export type Segment = {
+type SegmentBase = {
   id: string;
   chapter_id: string;
   order: number;
-  kind: SegmentKind;
   state: SegmentState;
   planned_duration_seconds: number;
   actual_duration_seconds: number | null;
-  track_ref: string | null;
+  audio_source_url: string | null;
+  duration_seconds: number;
   title: string;
-  artist: string | null;
   narration_text: string | null;
   asset_ref: string | null;
 };
+
+export type MusicSegment = SegmentBase & {
+  kind: "MUSIC";
+  track_ref: string;
+  artist: string | null;
+};
+
+export type NarrationSegment = SegmentBase & {
+  kind: "NARRATION";
+  track_ref: null;
+  artist: null;
+};
+
+export type Segment = MusicSegment | NarrationSegment;
 
 export type LiveEpisode = {
   id: string;
