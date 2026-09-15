@@ -24,9 +24,13 @@ class CuratorService:
         committed = committed_chapters or []
         prompt = (
             "Sequence a deliberate guided-listening arc from the normalized research and "
-            "fast start. Search is complete; do not request or invent web evidence. Use the "
-            "distance curve anchor, very_close, close, bridge, discovery, surprise, resolution "
-            "where candidates support it. Preserve committed chapters conceptually.\n"
+            "fast start. Playback order is exactly chapter order. Search is complete; do not "
+            "request or invent web evidence. Set novelty_distance in monotonically increasing "
+            "order using the curve very_close, close, bridge, discovery, surprise. Any valid "
+            "prefix of that curve is allowed; the program may end before surprise. For example, "
+            "[\"close\", \"bridge\", \"discovery\"] is valid, while "
+            "[\"close\", \"surprise\", \"bridge\"] is invalid. Preserve committed "
+            "chapters exactly and place speculative chapters after that prefix.\n"
             f"Research: {bundle.model_dump_json()}\n"
             f"Fast plan: {fast_plan.model_dump_json()}\n"
             f"Committed: {[item.model_dump() for item in committed]}\n"
@@ -54,7 +58,8 @@ def ensure_distance_curve(skeleton: ProgramSkeleton) -> ProgramSkeleton:
     }
     distances = [order[chapter.novelty_distance.value] for chapter in skeleton.chapters]
     if distances != sorted(distances):
-        raise ProviderInvalidResponseError("curator returned an invalid novelty distance curve")
+        values = [chapter.novelty_distance.value for chapter in skeleton.chapters]
+        raise ProviderInvalidResponseError(f"invalid novelty curve values: {values!r}")
     # Curator order and chapter indices are part of the narrative contract.  Do not
     # sort or renumber here: committed-prefix validation relies on exact identity.
     return skeleton

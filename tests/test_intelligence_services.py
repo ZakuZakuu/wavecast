@@ -1,5 +1,6 @@
 import asyncio
 
+import pytest
 from wavecast.intelligence.curation import CuratorService
 from wavecast.intelligence.models import (
     ChapterPlan,
@@ -14,6 +15,7 @@ from wavecast.intelligence.models import (
 )
 from wavecast.intelligence.planning import PlanningSession
 from wavecast.intelligence.writer import WriterService
+from wavecast.providers.errors import ProviderInvalidResponseError
 
 
 class StructuredFixture:
@@ -86,6 +88,36 @@ def test_curator_preserves_narrative_distance_curve_without_search_dependency() 
     ]
     assert [chapter.index for chapter in result.chapters] == [0, 1]
     assert not hasattr(service, "discovery")
+
+
+def test_curator_rejects_invalid_novelty_curve_with_sanitized_values() -> None:
+    invalid = skeleton().model_copy(
+        update={
+            "chapters": [
+                skeleton().chapters[0].model_copy(
+                    update={"novelty_distance": NoveltyDistance.SURPRISE}
+                ),
+                skeleton().chapters[1].model_copy(
+                    update={"novelty_distance": NoveltyDistance.BRIDGE}
+                ),
+            ]
+        }
+    )
+    fixture = StructuredFixture(invalid)
+    service = CuratorService(fixture)
+    bundle = ResearchBundle(anchors=["Anchor"], taste_hypotheses=[], evidence=[], candidates=[])
+    fast = FastStartPlan(
+        anchor_understanding=["anchor"],
+        immediate_taste_hypotheses=[],
+        next_candidates=[],
+        first_narration=NarrationScript(text="start", intended_duration_seconds=5),
+    )
+
+    with pytest.raises(
+        ProviderInvalidResponseError,
+        match=r"invalid novelty curve values: \['surprise', 'bridge'\]",
+    ):
+        asyncio.run(service.curate(bundle, fast, desired_duration_seconds=1200))
 
 
 def test_writer_receives_only_evidence_scoped_to_chapter() -> None:
