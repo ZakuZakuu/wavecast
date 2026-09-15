@@ -3,6 +3,7 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from time import perf_counter
 from typing import Any
 
@@ -26,6 +27,7 @@ from .errors import (
     ProviderUnavailableError,
     is_retryable,
 )
+from .profiles import InferenceProfile, StructuredTransport, policy_for
 from .usage import UsageEvent, UsageLedger
 
 
@@ -53,7 +55,15 @@ class DeepSeekLLMProvider:
             max_retries=0,
         )
 
-    async def structured(self, prompt: str, output_type: type[BaseModel]) -> BaseModel:
+    async def structured(
+        self,
+        prompt: str,
+        output_type: type[BaseModel],
+        *,
+        transport: StructuredTransport = StructuredTransport.CHAT_JSON,
+        profile: InferenceProfile = InferenceProfile.BALANCED,
+        stage: str | None = None,
+    ) -> BaseModel:
         schema = json.dumps(output_type.model_json_schema(), ensure_ascii=False)
         messages = [
             {
@@ -65,18 +75,31 @@ class DeepSeekLLMProvider:
             },
             {"role": "user", "content": prompt},
         ]
+        policy = policy_for(
+            profile,
+            default_timeout_seconds=self.settings.deepseek_timeout_seconds,
+            default_max_output_tokens=self.settings.deepseek_max_output_tokens,
+            default_max_attempts=self.max_attempts,
+        )
+        if transport is StructuredTransport.CHAT_JSON:
+            policy = replace(policy, transport=transport, reasoning_effort=None)
+        attempt_limit = 1 if profile is InferenceProfile.FAST else self.max_attempts
         last_failure: ProviderError | None = None
-        for attempt in range(self.max_attempts):
+        for attempt in range(attempt_limit):
             started_at = perf_counter()
             try:
-                response = await self.client.chat.completions.create(
-                    model=self.settings.deepseek_model,
-                    messages=messages,
-                    response_format={"type": "json_object"},
-                    max_tokens=self.settings.deepseek_max_output_tokens,
+                response = await asyncio.wait_for(
+                    self._request(
+                        messages=messages,
+                        schema=output_type.model_json_schema(),
+                        output_type=output_type,
+                        policy=policy,
+                    ),
+                    timeout=policy.timeout_seconds,
                 )
-                self._record(response, int((perf_counter() - started_at) * 1000))
-                content = response.choices[0].message.content
+                elapsed_ms = int((perf_counter() - started_at) * 1000)
+                self._record(response, elapsed_ms, transport=transport, stage=stage)
+                content = self._response_content(response, transport)
                 if not content:
                     raise ProviderInvalidResponseError("deepseek returned empty structured output")
                 try:
@@ -93,6 +116,9 @@ class DeepSeekLLMProvider:
                 last_failure.__cause__ = error
             except RateLimitError as error:
                 last_failure = ProviderRateLimitError("deepseek rate limited the request")
+                last_failure.__cause__ = error
+            except TimeoutError as error:
+                last_failure = ProviderTimeoutError("deepseek timed out")
                 last_failure.__cause__ = error
             except APITimeoutError as error:
                 last_failure = ProviderTimeoutError("deepseek timed out")
@@ -120,34 +146,111 @@ class DeepSeekLLMProvider:
             if last_failure is None:
                 raise AssertionError("provider error must be set")
             retry_invalid_output = isinstance(last_failure, ProviderInvalidResponseError)
-            if attempt == self.max_attempts - 1 or (
+            if attempt == attempt_limit - 1 or (
                 not retry_invalid_output and not is_retryable(last_failure)
             ):
                 raise last_failure
             await self.sleep(0.25 * (2**attempt))
         raise AssertionError("bounded structured loop must return or raise")
 
+    async def _request(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        schema: dict[str, Any],
+        output_type: type[BaseModel],
+        policy: Any,
+    ) -> Any:
+        if policy.transport is StructuredTransport.CHAT_JSON:
+            return await self.client.chat.completions.create(
+                model=self.settings.deepseek_model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                max_tokens=policy.max_output_tokens,
+            )
+        kwargs: dict[str, Any] = {
+            "model": self.settings.deepseek_model,
+            "input": messages,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": output_type.__name__,
+                    "schema": schema,
+                }
+            },
+            "max_output_tokens": policy.max_output_tokens,
+        }
+        if policy.reasoning_effort == "none":
+            kwargs["reasoning"] = {"effort": "none"}
+        elif policy.reasoning_effort is not None:
+            kwargs["output_config"] = {"effort": policy.reasoning_effort}
+        return await self.client.responses.create(**kwargs)
+
+    @staticmethod
+    def _response_content(response: Any, transport: StructuredTransport) -> str | None:
+        if transport is StructuredTransport.CHAT_JSON:
+            content = response.choices[0].message.content
+            return content if isinstance(content, str) else None
+        status = getattr(response, "status", "completed")
+        if status in {"failed", "incomplete"}:
+            reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
+            suffix = f" ({reason})" if reason else ""
+            raise ProviderInvalidResponseError(f"deepseek response was {status}{suffix}")
+        output_text = getattr(response, "output_text", None)
+        if isinstance(output_text, str) and output_text:
+            return output_text
+        for item in getattr(response, "output", []) or []:
+            if getattr(item, "type", None) != "message":
+                continue
+            for part in getattr(item, "content", []) or []:
+                if getattr(part, "type", None) == "output_text":
+                    text = getattr(part, "text", None)
+                    if isinstance(text, str) and text:
+                        return text
+        return None
+
     async def aclose(self) -> None:
         if self._owns_client:
             await self.client.close()
 
-    def _record(self, response: Any, elapsed_ms: int) -> None:
+    def _record(
+        self,
+        response: Any,
+        elapsed_ms: int,
+        *,
+        transport: StructuredTransport,
+        stage: str | None,
+    ) -> None:
         usage = getattr(response, "usage", None)
         choices = getattr(response, "choices", None)
         first_choice = choices[0] if isinstance(choices, list) and choices else None
-        details = getattr(usage, "completion_tokens_details", None)
+        details = getattr(usage, "completion_tokens_details", None) or getattr(
+            usage, "output_tokens_details", None
+        )
+        input_tokens = getattr(usage, "prompt_tokens", None)
+        if input_tokens is None:
+            input_tokens = getattr(usage, "input_tokens", None)
+        output_tokens = getattr(usage, "completion_tokens", None)
+        if output_tokens is None:
+            output_tokens = getattr(usage, "output_tokens", None)
+        metadata: dict[str, Any] = {
+            "model": self.settings.deepseek_model,
+            "transport": transport.value,
+            "finish_reason": getattr(first_choice, "finish_reason", None)
+            or getattr(response, "status", None),
+            "reasoning_tokens": getattr(details, "reasoning_tokens", None),
+        }
+        if stage is not None:
+            metadata["stage"] = stage
         self.ledger.record(
             UsageEvent(
                 provider="deepseek",
                 operation="structured",
-                request_id=getattr(response, "_request_id", None),
+                request_id=getattr(response, "_request_id", None)
+                or getattr(response, "id", None),
                 elapsed_ms=elapsed_ms,
-                input_tokens=getattr(usage, "prompt_tokens", None),
-                output_tokens=getattr(usage, "completion_tokens", None),
-                metadata={
-                    "model": self.settings.deepseek_model,
-                    "finish_reason": getattr(first_choice, "finish_reason", None),
-                    "reasoning_tokens": getattr(details, "reasoning_tokens", None),
-                },
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                metadata=metadata,
             )
         )

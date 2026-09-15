@@ -113,6 +113,7 @@ def test_deepseek_records_usage_before_empty_content_is_rejected() -> None:
         assert ledger.totals().output_tokens == 3
         assert ledger.events[0].metadata == {
             "model": "deepseek-flash",
+            "transport": "chat_json",
             "finish_reason": "stop",
             "reasoning_tokens": 2,
         }

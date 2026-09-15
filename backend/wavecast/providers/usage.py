@@ -38,13 +38,27 @@ class UsageLedger:
     def record(self, event: UsageEvent) -> None:
         self.events.append(event)
 
+    def annotate_latest(self, provider: str, operation: str, **metadata: Any) -> None:
+        """Attach deterministic stage labels without copying provider payloads."""
+        for event in reversed(self.events):
+            if event.provider == provider and event.operation == operation:
+                event.metadata.update(metadata)
+                return
+
     def totals(self) -> UsageTotals:
+        return self._totals(self.events)
+
+    def totals_for_stage(self, stage: str) -> UsageTotals:
+        return self._totals([event for event in self.events if event.metadata.get("stage") == stage])
+
+    @staticmethod
+    def _totals(events: list[UsageEvent]) -> UsageTotals:
         return UsageTotals(
-            event_count=len(self.events),
-            input_tokens=sum(event.input_tokens or 0 for event in self.events),
-            output_tokens=sum(event.output_tokens or 0 for event in self.events),
-            search_queries=sum(event.search_queries or 0 for event in self.events),
-            search_credits=sum(event.search_credits or 0 for event in self.events),
-            actual_cost_usd=sum(event.actual_cost_usd or 0 for event in self.events),
-            estimated_cost_usd=sum(event.estimated_cost_usd or 0 for event in self.events),
+            event_count=len(events),
+            input_tokens=sum(event.input_tokens or 0 for event in events),
+            output_tokens=sum(event.output_tokens or 0 for event in events),
+            search_queries=sum(event.search_queries or 0 for event in events),
+            search_credits=sum(event.search_credits or 0 for event in events),
+            actual_cost_usd=sum(event.actual_cost_usd or 0 for event in events),
+            estimated_cost_usd=sum(event.estimated_cost_usd or 0 for event in events),
         )

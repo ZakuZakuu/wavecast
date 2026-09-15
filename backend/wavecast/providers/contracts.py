@@ -2,6 +2,8 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from .profiles import InferenceProfile, StructuredTransport
+
 
 class SearchResult(BaseModel):
     title: str
@@ -31,6 +33,18 @@ class AudioAsset(BaseModel):
 
 class LLMProvider(Protocol):
     async def structured(self, prompt: str, output_type: type[BaseModel]) -> BaseModel: ...
+
+
+class ProgressiveLLMProvider(Protocol):
+    async def structured(
+        self,
+        prompt: str,
+        output_type: type[BaseModel],
+        *,
+        transport: StructuredTransport,
+        profile: InferenceProfile,
+        stage: str | None = None,
+    ) -> BaseModel: ...
 
 
 class SearchProvider(Protocol):

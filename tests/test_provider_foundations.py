@@ -232,3 +232,30 @@ def test_usage_ledger_aggregates_known_values_without_inventing_cost() -> None:
     assert totals.search_credits == 2
     assert totals.actual_cost_usd == 0.01
     assert totals.estimated_cost_usd == 0
+
+
+def test_usage_ledger_aggregates_by_stage() -> None:
+    ledger = UsageLedger()
+    ledger.record(
+        UsageEvent(
+            provider="deepseek",
+            operation="structured",
+            elapsed_ms=12,
+            input_tokens=11,
+            output_tokens=7,
+            metadata={"stage": "fast_start"},
+        )
+    )
+    ledger.record(
+        UsageEvent(
+            provider="tavily",
+            operation="search",
+            elapsed_ms=12,
+            search_queries=1,
+            search_credits=2,
+            metadata={"stage": "background_research"},
+        )
+    )
+
+    assert ledger.totals_for_stage("fast_start").output_tokens == 7
+    assert ledger.totals_for_stage("background_research").search_credits == 2
