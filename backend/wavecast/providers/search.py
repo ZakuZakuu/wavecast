@@ -25,9 +25,9 @@ class ExaSearchProvider:
     ) -> None:
         self.settings = settings
         self.ledger = ledger or UsageLedger()
+        self.api_key = settings.credential_for("exa")
         self.client = client or httpx.AsyncClient(timeout=settings.timeout_seconds)
         self._owns_client = client is None
-        self.api_key = settings.credential_for("exa")
 
     async def search(self, query: str, *, limit: int = 5) -> list[SearchResult]:
         started_at = perf_counter()
@@ -119,9 +119,9 @@ class TavilySearchProvider:
     ) -> None:
         self.settings = settings
         self.ledger = ledger or UsageLedger()
+        self.api_key = settings.credential_for("tavily")
         self.client = client or httpx.AsyncClient(timeout=settings.timeout_seconds)
         self._owns_client = client is None
-        self.api_key = settings.credential_for("tavily")
         self.search_depth = search_depth
 
     async def search(
@@ -142,6 +142,7 @@ class TavilySearchProvider:
                 "search_depth": depth,
                 "include_answer": False,
                 "include_raw_content": False,
+                "include_usage": True,
                 "max_results": limit,
             },
         )
