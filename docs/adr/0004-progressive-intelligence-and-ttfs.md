@@ -51,4 +51,6 @@ raw provider payload or reasoning text is persisted.
 The first script can be delivered with partial or no research while background work improves the
 arc. Fast-path fallback is intentionally modest and factual-safe. TTFS is observable without
 claiming TTFA. The pipeline is not yet connected to EpisodeOrchestrator and does not generate TTS;
-the next milestone will connect a future `NarrationScript` to MiniMax and an AUDIO_READY segment.
+the next milestone introduces provider-neutral real music assets and deterministic radio-script
+composition; TTS remains a later milestone and will convert script blocks into AUDIO_READY
+narration segments.

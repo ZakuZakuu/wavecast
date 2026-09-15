@@ -5,7 +5,7 @@ from __future__ import annotations
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 
 from .fast_start import FastStructuredProvider
-from .models import ChapterPlan, Evidence, NarrationScript
+from .models import ChapterPlan, Evidence, NarrationScript, RadioScript
 
 
 class WriterService:
@@ -20,12 +20,14 @@ class WriterService:
         previous_committed_context: str = "",
         next_track_metadata: str = "",
         host_style: str = "warm, concise, spoken",
-    ) -> NarrationScript:
+    ) -> RadioScript | NarrationScript:
         scoped = [item for item in evidence if item.id in set(chapter.evidence_ids)]
         prompt = (
-            "Write a short spoken transition for this chapter. Use only the scoped evidence; "
-            "keep factual claims separately identified by evidence IDs, avoid citation language "
-            "in the spoken text, and do not browse or change the selected track.\n"
+            "Write a structured radio script for this chapter, not an article. Use only the "
+            "scoped evidence; keep factual claims separately identified by evidence IDs, avoid "
+            "citation language in spoken text, and do not browse or change the selected track. "
+            "Return ordered blocks using only intro, track_intro, transition, or outro. Each "
+            "block must be concise, speakable, and independently timed.\n"
             f"Chapter: {chapter.model_dump_json()}\n"
             f"Evidence: {[item.model_dump() for item in scoped]}\n"
             f"Previous context: {previous_committed_context[:1000]}\n"
@@ -34,11 +36,11 @@ class WriterService:
         )
         result = await self.llm.structured(
             prompt,
-            NarrationScript,
+            RadioScript,
             transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
             profile=InferenceProfile.BALANCED,
             stage="writer",
         )
-        if not isinstance(result, NarrationScript):
+        if not isinstance(result, (RadioScript, NarrationScript)):
             raise TypeError("writer returned an unexpected output model")
         return result

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
-import { formatSeconds, isSeekAllowed, playbackAnchor, reconcileBrowserPosition, segmentStart } from "../lib/playback";
+import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
 import { AudioPlayer } from "./audio-player";
@@ -125,6 +125,7 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
   const currentOffset = current
     ? Math.max(0, browserPosition - segmentStart(localEpisode, current.id))
     : 0;
+  const upcoming = current ? nextVisibleSegment(localEpisode) : undefined;
   return (
     <main className="shell player-shell">
       <AudioPlayer
@@ -140,6 +141,7 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
         <p className="eyebrow">{current?.kind === "MUSIC" ? "NOW PLAYING" : "HOST ON MIC"}</p>
         <h1>{current?.title}</h1>
         <p>{current?.artist ?? current?.narration_text ?? "正在准备下一段"}</p>
+        <p className="eyebrow">接下来：{upcoming?.title ?? "正在准备"}{upcoming?.artist ? ` · ${upcoming.artist}` : ""}</p>
         <div className="controls">
           {localEpisode.is_playing
             ? <button onClick={() => void pausePlayback()}>暂停</button>
