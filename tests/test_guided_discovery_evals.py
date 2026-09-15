@@ -91,6 +91,7 @@ def test_review_bundle_marks_catalog_resolved_candidates_deterministically() -> 
             first_narration=NarrationScript(text="Start here.", intended_duration_seconds=5),
         ),
         None,
+        resolved_candidates=[resolved],
     )
 
     assert report.candidates[0].resolution_status == "resolved"

@@ -8,7 +8,6 @@ from wavecast.providers.contracts import MusicProvider, TrackMetadata
 from .models import (
     ResolvedTrack,
     ResolvedTrackCandidate,
-    TrackCandidate,
     TrackProposal,
     UnresolvedTrackError,
 )
@@ -29,7 +28,7 @@ def _resolved_track(metadata: TrackMetadata) -> ResolvedTrack | None:
 
 
 async def resolve_track_proposal(
-    provider: MusicProvider, proposal: TrackProposal | TrackCandidate
+    provider: MusicProvider, proposal: TrackProposal
 ) -> ResolvedTrack | None:
     """Resolve an artist/title proposal against the existing MusicProvider seam.
 
@@ -37,12 +36,6 @@ async def resolve_track_proposal(
     canonical values.  A webpage title or event listing therefore remains evidence or
     an unresolved proposal; it is never promoted by string heuristics.
     """
-
-    if isinstance(proposal, TrackCandidate) and proposal.track_ref:
-        try:
-            return _resolved_track(await provider.resolve_track(proposal.track_ref))
-        except (KeyError, ValueError):
-            return None
 
     results = await provider.search(proposal.title)
     for metadata in results:
@@ -54,22 +47,13 @@ async def resolve_track_proposal(
 
 
 async def resolve_track_candidate(
-    provider: MusicProvider, proposal: TrackProposal | TrackCandidate
+    provider: MusicProvider, proposal: TrackProposal
 ) -> ResolvedTrackCandidate | None:
     """Return the proposal enriched with stable catalog identity when available."""
 
     resolved = await resolve_track_proposal(provider, proposal)
     if resolved is None:
         return None
-    if isinstance(proposal, TrackCandidate):
-        return ResolvedTrackCandidate(
-            **proposal.model_dump(
-                exclude={"track_ref", "canonical_artist", "canonical_title"}
-            ),
-            track_ref=resolved.track_ref,
-            canonical_artist=resolved.canonical_artist,
-            canonical_title=resolved.canonical_title,
-        )
     return ResolvedTrackCandidate(
         **proposal.model_dump(),
         track_ref=resolved.track_ref,
@@ -79,7 +63,7 @@ async def resolve_track_candidate(
 
 
 def music_segment_from_track(
-    track: ResolvedTrack | TrackProposal | TrackCandidate,
+    track: ResolvedTrack | ResolvedTrackCandidate,
     *,
     chapter_id: str,
     order: int,
@@ -90,7 +74,7 @@ def music_segment_from_track(
 
     if isinstance(track, ResolvedTrack):
         resolved = track
-    elif isinstance(track, TrackCandidate) and track.is_resolved:
+    elif isinstance(track, ResolvedTrackCandidate):
         resolved = track.resolved_track()
     else:
         raise UnresolvedTrackError("unresolved track proposal cannot enter the audio timeline")

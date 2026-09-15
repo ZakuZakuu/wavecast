@@ -15,7 +15,7 @@ from .models import (
     FastResearchInput,
     FastResearchResult,
     ResearchBundle,
-    TrackCandidate,
+    TrackProposal,
 )
 from .trace import GenerationTrace
 
@@ -239,7 +239,7 @@ def bundle_from_results(
 def merge_bundles(left: ResearchBundle, right: ResearchBundle) -> ResearchBundle:
     evidence_by_id = {item.id: item for item in [*left.evidence, *right.evidence]}
     candidate_keys: set[tuple[str, str]] = set()
-    candidates: list[TrackCandidate] = []
+    candidates: list[TrackProposal] = []
     for candidate in [*left.candidates, *right.candidates]:
         key = (candidate.artist.lower(), candidate.title.lower())
         if key not in candidate_keys:
