@@ -51,7 +51,11 @@ class DeepSeekLLMProvider:
         self.client: Any = client or AsyncOpenAI(
             api_key=settings.credential_for("deepseek"),
             base_url=settings.deepseek_base_url,
-            timeout=settings.deepseek_timeout_seconds,
+            # Per-profile asyncio.wait_for calls enforce the actual budget.  The
+            # transport cap must be no shorter than the bounded DEEP profile.
+            timeout=max(
+                settings.deepseek_timeout_seconds, settings.deepseek_deep_timeout_seconds
+            ),
             max_retries=0,
         )
 
@@ -78,6 +82,7 @@ class DeepSeekLLMProvider:
         policy = policy_for(
             profile,
             default_timeout_seconds=self.settings.deepseek_timeout_seconds,
+            deep_timeout_seconds=self.settings.deepseek_deep_timeout_seconds,
             default_max_output_tokens=self.settings.deepseek_max_output_tokens,
             default_max_attempts=self.max_attempts,
         )

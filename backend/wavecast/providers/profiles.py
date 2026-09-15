@@ -28,6 +28,7 @@ def policy_for(
     profile: InferenceProfile,
     *,
     default_timeout_seconds: float,
+    deep_timeout_seconds: float | None = None,
     default_max_output_tokens: int,
     default_max_attempts: int,
 ) -> InferencePolicy:
@@ -42,7 +43,7 @@ def policy_for(
     if profile is InferenceProfile.DEEP:
         return InferencePolicy(
             transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
-            timeout_seconds=default_timeout_seconds,
+            timeout_seconds=deep_timeout_seconds or default_timeout_seconds,
             max_output_tokens=max(default_max_output_tokens, 8192),
             max_attempts=default_max_attempts,
             reasoning_effort="high",
