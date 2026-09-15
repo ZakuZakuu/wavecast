@@ -29,7 +29,9 @@ class ExaSearchProvider:
         self.client = client or httpx.AsyncClient(timeout=settings.timeout_seconds)
         self._owns_client = client is None
 
-    async def search(self, query: str, *, limit: int = 5) -> list[SearchResult]:
+    async def search(
+        self, query: str, *, limit: int = 5, stage: str | None = None
+    ) -> list[SearchResult]:
         started_at = perf_counter()
         payload, response = await request_json(
             self.client,
@@ -70,6 +72,7 @@ class ExaSearchProvider:
                 metadata={
                     "resolved_search_type": payload.get("resolvedSearchType"),
                     "result_count": len(normalized),
+                    **({"stage": stage} if stage is not None else {}),
                 },
             )
         )
@@ -125,7 +128,12 @@ class TavilySearchProvider:
         self.search_depth = search_depth
 
     async def search(
-        self, query: str, *, limit: int = 5, search_depth: SearchDepth | None = None
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        search_depth: SearchDepth | None = None,
+        stage: str | None = None,
     ) -> list[SearchResult]:
         depth = search_depth or self.search_depth
         started_at = perf_counter()
@@ -167,7 +175,11 @@ class TavilySearchProvider:
                 elapsed_ms=int((perf_counter() - started_at) * 1000),
                 search_queries=1,
                 search_credits=float(credits) if isinstance(credits, (int, float)) else None,
-                metadata={"search_depth": depth, "result_count": len(normalized)},
+                metadata={
+                    "search_depth": depth,
+                    "result_count": len(normalized),
+                    **({"stage": stage} if stage is not None else {}),
+                },
             )
         )
         return normalized

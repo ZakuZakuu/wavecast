@@ -5,6 +5,7 @@ from .contracts import (
     LLMProvider,
     MusicProvider,
     ObjectStorageProvider,
+    ProgressiveLLMProvider,
     SearchProvider,
     TTSProvider,
 )
@@ -17,6 +18,7 @@ from .fakes import (
     FakeSearchProvider,
     FakeTTSProvider,
 )
+from .profiles import InferenceProfile, StructuredTransport
 from .routing import SearchIntent, SearchRouter
 from .search import ExaSearchProvider, TavilySearchProvider
 from .usage import UsageEvent, UsageLedger
@@ -32,13 +34,16 @@ __all__ = [
     "FakeSearchProvider",
     "FakeTTSProvider",
     "LLMProvider",
+    "InferenceProfile",
     "MusicProvider",
     "ObjectStorageProvider",
+    "ProgressiveLLMProvider",
     "ProviderError",
     "ProviderSettings",
     "SearchProvider",
     "SearchIntent",
     "SearchRouter",
+    "StructuredTransport",
     "TavilySearchProvider",
     "TTSProvider",
     "UsageEvent",

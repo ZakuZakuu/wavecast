@@ -6,7 +6,10 @@ from .contracts import AudioAsset, SearchResult, TrackMetadata
 
 
 class FakeSearchProvider:
-    async def search(self, query: str, *, limit: int = 5) -> list[SearchResult]:
+    async def search(
+        self, query: str, *, limit: int = 5, stage: str | None = None
+    ) -> list[SearchResult]:
+        del stage
         return [
             SearchResult(
                 title=f"Mock research for {query}",

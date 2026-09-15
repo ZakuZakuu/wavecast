@@ -42,6 +42,20 @@ def test_deepseek_timeout_is_independent_from_search_timeout(
 
     assert settings.timeout_seconds == 20
     assert settings.deepseek_timeout_seconds == 20
+    assert settings.deepseek_deep_timeout_seconds == 45
+
+
+def test_deep_timeout_can_be_configured_without_changing_hot_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WAVECAST_PROVIDER_MODE", "live")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
+    monkeypatch.setenv("DEEPSEEK_DEEP_TIMEOUT_SECONDS", "47")
+
+    settings = ProviderSettings.from_env()
+
+    assert settings.deepseek_timeout_seconds == 20
+    assert settings.deepseek_deep_timeout_seconds == 47
 
 
 def test_search_providers_keep_the_shared_short_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -232,3 +246,30 @@ def test_usage_ledger_aggregates_known_values_without_inventing_cost() -> None:
     assert totals.search_credits == 2
     assert totals.actual_cost_usd == 0.01
     assert totals.estimated_cost_usd == 0
+
+
+def test_usage_ledger_aggregates_by_stage() -> None:
+    ledger = UsageLedger()
+    ledger.record(
+        UsageEvent(
+            provider="deepseek",
+            operation="structured",
+            elapsed_ms=12,
+            input_tokens=11,
+            output_tokens=7,
+            metadata={"stage": "fast_start"},
+        )
+    )
+    ledger.record(
+        UsageEvent(
+            provider="tavily",
+            operation="search",
+            elapsed_ms=12,
+            search_queries=1,
+            search_credits=2,
+            metadata={"stage": "background_research"},
+        )
+    )
+
+    assert ledger.totals_for_stage("fast_start").output_tokens == 7
+    assert ledger.totals_for_stage("background_research").search_credits == 2
