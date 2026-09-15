@@ -20,6 +20,10 @@ Phase 3 has two deterministic application-owned paths:
   queries, then invokes a separate Curator and Writer over typed models to produce a broader
   `ProgramSkeleton` and one future `NarrationScript`. It never owns Episode lifecycle or spending
   decisions.
+- Search normalization produces `Evidence` only. Generic Exa/Tavily webpage results do not become
+  `TrackCandidate` records by title parsing. Candidate and taste inference belongs downstream to
+  the FastStart planner and Curator; a future provider that returns explicit track entities or
+  MusicProvider metadata may create candidates at that boundary.
 
 DeepSeek exposes provider-neutral `InferenceProfile.FAST`, `BALANCED`, and `DEEP` policies. FAST
 uses Responses JSON Schema, disables thinking with the documented `reasoning.effort=none`, bounds
@@ -39,8 +43,8 @@ raw provider payload or reasoning text is persisted.
   runtime responsibilities.
 - Add a queue or general agent framework: deferred; inline async orchestration is sufficient for
   the bounded Phase 3 evaluation.
-- Treat search results as recommendations: rejected; search produces evidence and candidates,
-  while Curator remains the only sequencing service.
+- Treat search results as recommendations: rejected; generic search produces evidence only, while
+  FastStart and Curator infer candidates from that evidence and own sequencing.
 
 ## Consequences
 
