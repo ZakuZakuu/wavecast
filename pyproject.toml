@@ -5,10 +5,12 @@ description = "Deterministic runtime for guided listening episodes"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115,<1",
+  "httpx[socks]>=0.28,<1",
   "pydantic>=2.10,<3",
   "sqlalchemy[asyncio]>=2.0,<3",
   "asyncpg>=0.30,<1",
   "alembic>=1.14,<2",
+  "openai>=1.0,<3",
   "uvicorn[standard]>=0.32,<1",
 ]
 
@@ -34,6 +36,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["backend", "."]
+markers = [
+  "live: makes an explicitly opted-in paid provider request",
+]
 
 [tool.ruff]
 line-length = 100
