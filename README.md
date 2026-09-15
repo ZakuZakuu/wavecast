@@ -49,9 +49,11 @@ DeepSeek synthesis request. It is a manual provider-quality evaluation, not the 
 pipeline and never connects to `EpisodeOrchestrator`. The scripts print only compact normalized summaries and usage totals; provider secrets and raw provider responses are not written to the repository.
 
 Search adapters retain their short 20-second timeout. DeepSeek structured synthesis has its own
-optional, bounded configuration: `DEEPSEEK_TIMEOUT_SECONDS=90` and
+optional, bounded configuration: `DEEPSEEK_TIMEOUT_SECONDS=20` and
 `DEEPSEEK_MAX_OUTPUT_TOKENS=4096`. These are defaults, not required environment variables; the
 output limit bounds a single response without disabling model reasoning or adding another attempt.
+The diagnostic 3rd Coast probe locally overrides only its DeepSeek call to a 90-second timeout;
+the reusable provider default remains 20 seconds.
 
 ## Validation
 

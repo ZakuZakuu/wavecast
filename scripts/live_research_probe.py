@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from wavecast.providers.config import ProviderSettings
@@ -16,6 +17,7 @@ from wavecast.providers.usage import UsageLedger
 
 MAX_EXA_QUERIES = 2
 MAX_TAVILY_QUERIES = 3
+DIAGNOSTIC_DEEPSEEK_TIMEOUT_SECONDS = 90.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -81,7 +83,11 @@ async def run(anchors: list[str]) -> ResearchProbeReport:
         }
         # This evaluation is intentionally one physical synthesis call: retrying it would distort
         # the fixed research budget and hide a quality/latency result.
-        llm = DeepSeekLLMProvider(settings, ledger=ledger, max_attempts=1)
+        llm = DeepSeekLLMProvider(
+            replace(settings, deepseek_timeout_seconds=DIAGNOSTIC_DEEPSEEK_TIMEOUT_SECONDS),
+            ledger=ledger,
+            max_attempts=1,
+        )
         report = await llm.structured(
             "Synthesize this bounded provider probe into the requested JSON report. "
             f"Input: {json.dumps(synthesis_input, ensure_ascii=False)}",

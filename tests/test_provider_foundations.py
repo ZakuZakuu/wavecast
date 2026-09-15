@@ -36,12 +36,12 @@ def test_deepseek_timeout_is_independent_from_search_timeout(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
     monkeypatch.setenv("EXA_API_KEY", "test")
     monkeypatch.setenv("TAVILY_API_KEY", "test")
-    monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", "90")
+    monkeypatch.delenv("DEEPSEEK_TIMEOUT_SECONDS", raising=False)
 
     settings = ProviderSettings.from_env()
 
     assert settings.timeout_seconds == 20
-    assert settings.deepseek_timeout_seconds == 90
+    assert settings.deepseek_timeout_seconds == 20
 
 
 def test_search_providers_keep_the_shared_short_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

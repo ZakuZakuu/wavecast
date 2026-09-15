@@ -20,8 +20,9 @@ or raw page body, caller-selectable `basic`/`advanced` depth, and `include_usage
 usage is available to the ledger.
 
 Search requests retain the shared short 20-second timeout. DeepSeek structured inference has a
-separate optional `DEEPSEEK_TIMEOUT_SECONDS` configuration with a 90-second default, because a
-bounded synthesis request is materially heavier than a discovery request. A separate optional
+separate optional `DEEPSEEK_TIMEOUT_SECONDS` configuration with a production-safe 20-second
+default. Because the bounded diagnostic synthesis request is materially heavier than a discovery
+request, the 3rd Coast probe locally overrides only that call to 90 seconds. A separate optional
 `DEEPSEEK_MAX_OUTPUT_TOKENS` defaults to 4096 and is sent as `max_tokens` on the one structured
 completion request. These settings do not disable model reasoning, add search rounds, or add a
 retry. The 3rd Coast probe explicitly uses one physical DeepSeek synthesis attempt so its fixed

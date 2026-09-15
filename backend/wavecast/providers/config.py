@@ -20,7 +20,7 @@ class ProviderSettings:
     deepseek_model: str = "deepseek-flash"
     # Search remains deliberately short. Structured synthesis can be materially larger.
     timeout_seconds: float = 20.0
-    deepseek_timeout_seconds: float = 90.0
+    deepseek_timeout_seconds: float = 20.0
     deepseek_max_output_tokens: int = 4096
     max_attempts: int = 2
 
@@ -37,7 +37,7 @@ class ProviderSettings:
             deepseek_base_url=getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             deepseek_model=getenv("DEEPSEEK_MODEL", "deepseek-flash"),
             deepseek_timeout_seconds=_positive_float_from_env(
-                "DEEPSEEK_TIMEOUT_SECONDS", default=90.0
+                "DEEPSEEK_TIMEOUT_SECONDS", default=20.0
             ),
             deepseek_max_output_tokens=_positive_int_from_env(
                 "DEEPSEEK_MAX_OUTPUT_TOKENS", default=4096

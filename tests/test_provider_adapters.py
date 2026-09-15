@@ -25,8 +25,16 @@ class FakeCompletions:
         output = self.outputs[self.calls]
         self.calls += 1
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=output))],
-            usage=SimpleNamespace(prompt_tokens=7, completion_tokens=3),
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=output), finish_reason="stop"
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=7,
+                completion_tokens=3,
+                completion_tokens_details=SimpleNamespace(reasoning_tokens=2),
+            ),
             _request_id="deepseek-request",
         )
 
@@ -58,8 +66,8 @@ def test_deepseek_parses_typed_json_and_records_token_usage() -> None:
 
         assert result == StructuredAnswer(answer="ok")
         assert completions.calls == 2
-        assert ledger.totals().input_tokens == 7
-        assert ledger.totals().output_tokens == 3
+        assert ledger.totals().input_tokens == 14
+        assert ledger.totals().output_tokens == 6
 
     asyncio.run(run())
 
@@ -70,11 +78,44 @@ def test_deepseek_rejects_malformed_json_after_bounded_retry() -> None:
 
     async def run() -> None:
         client, completions = fake_deepseek_client(["not-json", "still-not-json"])
-        provider = DeepSeekLLMProvider(live_settings(), client=client, sleep=no_sleep)
+        ledger = UsageLedger()
+        provider = DeepSeekLLMProvider(
+            live_settings(), client=client, ledger=ledger, sleep=no_sleep
+        )
 
         with pytest.raises(ProviderInvalidResponseError):
             await provider.structured("tiny test", StructuredAnswer)
         assert completions.calls == 2
+        assert ledger.totals().input_tokens == 14
+        assert ledger.totals().output_tokens == 6
+        assert all(event.metadata["finish_reason"] == "stop" for event in ledger.events)
+        assert all(event.metadata["reasoning_tokens"] == 2 for event in ledger.events)
+
+    asyncio.run(run())
+
+
+def test_deepseek_records_usage_before_empty_content_is_rejected() -> None:
+    async def run() -> None:
+        client, completions = fake_deepseek_client([""])
+        ledger = UsageLedger()
+        settings = ProviderSettings(
+            mode="live", deepseek_api_key="test", deepseek_timeout_seconds=20
+        )
+        provider = DeepSeekLLMProvider(
+            settings, client=client, ledger=ledger, max_attempts=1
+        )
+
+        with pytest.raises(ProviderInvalidResponseError):
+            await provider.structured("tiny test", StructuredAnswer)
+
+        assert completions.calls == 1
+        assert ledger.totals().input_tokens == 7
+        assert ledger.totals().output_tokens == 3
+        assert ledger.events[0].metadata == {
+            "model": "deepseek-flash",
+            "finish_reason": "stop",
+            "reasoning_tokens": 2,
+        }
 
     asyncio.run(run())
 
