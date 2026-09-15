@@ -43,6 +43,8 @@ def test_deepseek_timeout_is_independent_from_search_timeout(
     assert settings.timeout_seconds == 20
     assert settings.deepseek_timeout_seconds == 20
     assert settings.deepseek_deep_timeout_seconds == 45
+    assert settings.deepseek_max_output_tokens == 4096
+    assert settings.deepseek_deep_max_output_tokens == 12288
 
 
 def test_deep_timeout_can_be_configured_without_changing_hot_path(
@@ -51,11 +53,13 @@ def test_deep_timeout_can_be_configured_without_changing_hot_path(
     monkeypatch.setenv("WAVECAST_PROVIDER_MODE", "live")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
     monkeypatch.setenv("DEEPSEEK_DEEP_TIMEOUT_SECONDS", "47")
+    monkeypatch.setenv("DEEPSEEK_DEEP_MAX_OUTPUT_TOKENS", "14000")
 
     settings = ProviderSettings.from_env()
 
     assert settings.deepseek_timeout_seconds == 20
     assert settings.deepseek_deep_timeout_seconds == 47
+    assert settings.deepseek_deep_max_output_tokens == 14000
 
 
 def test_search_providers_keep_the_shared_short_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
