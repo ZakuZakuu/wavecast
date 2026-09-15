@@ -88,7 +88,11 @@ class FastResearchService:
         bundle = bundle_from_results(request, normalized, failures)
         elapsed_ms = int((perf_counter() - started) * 1000)
         if trace:
-            trace.mark("fast_research_done", evidence_count=len(bundle.evidence))
+            trace.mark(
+                "fast_research_done",
+                evidence_count=len(bundle.evidence),
+                elapsed_ms=elapsed_ms,
+            )
         return FastResearchResult(bundle=bundle, elapsed_ms=elapsed_ms, queries=queries)
 
 

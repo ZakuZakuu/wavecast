@@ -68,7 +68,8 @@ class FakeMusicProvider:
             ),
         }
 
-    async def search(self, query: str) -> list[TrackMetadata]:
+    async def search(self, query: str, *, limit: int = 5) -> list[TrackMetadata]:
+        del limit
         return [
             track
             for track in self._tracks.values()
