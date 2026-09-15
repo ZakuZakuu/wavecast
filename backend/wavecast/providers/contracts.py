@@ -1,3 +1,4 @@
+from enum import StrEnum
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
@@ -24,11 +25,33 @@ class TrackMetadata(BaseModel):
     artist: str
     duration_seconds: int
     playable: bool
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AudioAssetType(StrEnum):
+    MUSIC = "MUSIC"
+    NARRATION = "NARRATION"
 
 
 class AudioAsset(BaseModel):
-    asset_ref: str
-    duration_seconds: int
+    """Provider-neutral playback asset shared by music and narration adapters."""
+
+    asset_id: str = Field(min_length=1)
+    asset_type: AudioAssetType
+    provider: str = Field(min_length=1)
+    playback_url: str = Field(min_length=1)
+    duration: int = Field(gt=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def asset_ref(self) -> str:
+        """Compatibility alias for the pre-Phase-4.2 TTS contract."""
+        return self.asset_id
+
+    @property
+    def duration_seconds(self) -> int:
+        """Compatibility alias for runtime segment duration handling."""
+        return self.duration
 
 
 class AudioSource(BaseModel):
@@ -75,11 +98,21 @@ class TTSProvider(Protocol):
 
 
 class MusicProvider(Protocol):
+    """Catalog and playback boundary consumed by deterministic composition code."""
+
     async def search(self, query: str) -> list[TrackMetadata]: ...
 
     async def resolve_track(self, track_ref: str) -> TrackMetadata: ...
 
     async def get_stream_source(self, track_ref: str) -> str: ...
+
+    async def resolve_track_proposal(self, proposal: Any) -> Any: ...
+
+    async def resolve_proposal(self, proposal: Any) -> Any: ...
+
+    async def get_playback_asset(self, track: Any) -> AudioAsset: ...
+
+    async def playback_asset(self, track: Any) -> AudioAsset: ...
 
 
 class AudioAnalysisProvider(Protocol):
