@@ -1,22 +1,60 @@
-from collections.abc import Callable
+import asyncio
+import json
+import os
+import re
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import cast
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from anyio import to_thread
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from wavecast.models.episode import CoverParams, EpisodeSeed, LiveEpisode
-from wavecast.orchestration.episode import (
-    EpisodeOrchestrator,
-    EpisodeRuntimeError,
-    InMemoryEpisodeRepository,
-)
+from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
+from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
+from wavecast.storage import EpisodeConcurrencyError, PostgresEpisodeRepository
+from wavecast.storage.episodes import EpisodeRepository
 
-app = FastAPI(title="Wavecast API", version="0.1.0")
+LISTENER_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+DATABASE_URL = os.getenv("WAVECAST_DATABASE_URL")
+repository: EpisodeRepository = (
+    PostgresEpisodeRepository(DATABASE_URL) if DATABASE_URL else InMemoryEpisodeRepository()
+)
+orchestrator = EpisodeOrchestrator(repository)
+scheduler = InlineGenerationScheduler(orchestrator)
+
+
+def configure_runtime(episode_repository: EpisodeRepository) -> None:
+    """Explicit injection seam for Postgres API integration tests and application setup."""
+    global repository, orchestrator, scheduler
+    repository = episode_repository
+    orchestrator = EpisodeOrchestrator(repository)
+    scheduler = InlineGenerationScheduler(orchestrator)
+
+app = FastAPI(title="Wavecast API", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def anonymous_listener(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    proposed = request.headers.get("x-wavecast-listener") or request.cookies.get(
+        "wavecast_listener"
+    )
+    listener_id = proposed if proposed and LISTENER_PATTERN.fullmatch(proposed) else uuid4().hex
+    request.state.listener_id = listener_id
+    response = await call_next(request)
+    response.set_cookie("wavecast_listener", listener_id, httponly=True, samesite="lax")
+    return response
+
 
 SEEDS = [
     EpisodeSeed(
@@ -41,20 +79,7 @@ SEEDS = [
         opening_track_artist="Mira Fields",
         cover=CoverParams(family="waveform", seed=414, palette=("#2b1649", "#55e6c1")),
     ),
-    EpisodeSeed(
-        id="boss-choir",
-        title="游戏最终 Boss 为什么总爱用合唱？",
-        topic="游戏配乐中的合唱与决战感",
-        short_description="从空间、仪式感到压迫感，拆开最终战配乐的声音语言。",
-        estimated_duration_seconds=26 * 60,
-        opening_track_ref="mock:opening",
-        opening_track_title="Neon First Light",
-        opening_track_artist="Mira Fields",
-        cover=CoverParams(family="archive", seed=987, palette=("#3d261b", "#ffc857")),
-    ),
 ]
-
-orchestrator = EpisodeOrchestrator(InMemoryEpisodeRepository())
 
 
 class SeekRequest(BaseModel):
@@ -65,31 +90,40 @@ class ReplaceRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
 
 
-class TickRequest(BaseModel):
-    elapsed_seconds: int = Field(ge=0, le=60)
-
-
 class BufferRequest(BaseModel):
     target_chapters: int = Field(default=2, ge=1, le=2)
 
 
-def get_episode_or_404(episode_id: str) -> LiveEpisode:
+class PlaybackCheckpointRequest(BaseModel):
+    position_seconds: int = Field(ge=0)
+
+
+def listener(request: Request) -> str:
+    return cast(str, request.state.listener_id)
+
+
+def owned(episode_id: str, listener_id: str) -> None:
     try:
-        return orchestrator.get(episode_id)
+        orchestrator.get(episode_id, listener_id)
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
     except EpisodeRuntimeError as error:
         raise HTTPException(status_code=404, detail="Episode not found") from error
 
 
-def operate(operation: Callable[[], LiveEpisode]) -> LiveEpisode:
+def operate(episode_id: str, listener_id: str, operation: Callable[[], LiveEpisode]) -> LiveEpisode:
+    owned(episode_id, listener_id)
     try:
         return operation()
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
     except EpisodeRuntimeError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "mode": "mock"}
+    return {"status": "ok", "mode": "postgres" if DATABASE_URL else "mock"}
 
 
 @app.get("/api/seeds", response_model=list[EpisodeSeed])
@@ -98,75 +132,119 @@ def list_seeds() -> list[EpisodeSeed]:
 
 
 @app.post("/api/episodes/from-seed/{seed_id}", response_model=LiveEpisode)
-def create_episode(seed_id: str) -> LiveEpisode:
+def create_episode(seed_id: str, request: Request) -> LiveEpisode:
     seed = next((candidate for candidate in SEEDS if candidate.id == seed_id), None)
     if seed is None:
         raise HTTPException(status_code=404, detail="Episode seed not found")
-    return orchestrator.start_or_resume(seed)
+    try:
+        return orchestrator.start_or_resume(seed, listener(request))
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode creation raced; retry") from error
 
 
 @app.get("/api/episodes/{episode_id}", response_model=LiveEpisode)
-def episode(episode_id: str) -> LiveEpisode:
-    return get_episode_or_404(episode_id)
-
-
-@app.post("/api/episodes/{episode_id}/advance", response_model=LiveEpisode)
-def advance(episode_id: str) -> LiveEpisode:
-    return operate(lambda: orchestrator.ensure_buffer(episode_id))
+def episode(episode_id: str, request: Request) -> LiveEpisode:
+    owned(episode_id, listener(request))
+    return orchestrator.get(episode_id)
 
 
 @app.post("/api/episodes/{episode_id}/ensure-buffer", response_model=LiveEpisode)
-def ensure_buffer(episode_id: str, request: BufferRequest) -> LiveEpisode:
+def ensure_buffer(episode_id: str, request: Request, body: BufferRequest) -> LiveEpisode:
     return operate(
-        lambda: orchestrator.ensure_buffer(episode_id, target_chapters=request.target_chapters)
+        episode_id,
+        listener(request),
+        lambda: scheduler.ensure_buffer(episode_id, target_chapters=body.target_chapters),
     )
 
 
-@app.post("/api/episodes/{episode_id}/tick", response_model=LiveEpisode)
-def tick(episode_id: str, request: TickRequest) -> LiveEpisode:
-    return operate(lambda: orchestrator.tick(episode_id, elapsed_seconds=request.elapsed_seconds))
+@app.post("/api/episodes/{episode_id}/advance", response_model=LiveEpisode)
+def advance_compatibility(episode_id: str, request: Request) -> LiveEpisode:
+    return operate(episode_id, listener(request), lambda: scheduler.ensure_buffer(episode_id))
 
 
 @app.post("/api/episodes/{episode_id}/heartbeat", response_model=LiveEpisode)
-def heartbeat(episode_id: str) -> LiveEpisode:
-    return operate(lambda: orchestrator.heartbeat(episode_id))
+def heartbeat(episode_id: str, request: Request) -> LiveEpisode:
+    return operate(episode_id, listener(request), lambda: orchestrator.heartbeat(episode_id))
+
+
+@app.post("/api/episodes/{episode_id}/completed", response_model=LiveEpisode)
+def completed(episode_id: str, request: Request) -> LiveEpisode:
+    return operate(
+        episode_id, listener(request), lambda: orchestrator.complete_current_segment(episode_id)
+    )
 
 
 @app.post("/api/episodes/{episode_id}/seek", response_model=LiveEpisode)
-def seek(episode_id: str, request: SeekRequest) -> LiveEpisode:
-    return operate(lambda: orchestrator.seek(episode_id, request.position_seconds))
+def seek(episode_id: str, request: Request, body: SeekRequest) -> LiveEpisode:
+    return operate(
+        episode_id, listener(request), lambda: orchestrator.seek(episode_id, body.position_seconds)
+    )
 
 
-@app.post("/api/episodes/{episode_id}/commit/{segment_id}", response_model=LiveEpisode)
-def commit(episode_id: str, segment_id: str) -> LiveEpisode:
-    return operate(lambda: orchestrator.commit_segment(episode_id, segment_id))
+@app.post("/api/episodes/{episode_id}/playback-checkpoint", response_model=LiveEpisode)
+def playback_checkpoint(
+    episode_id: str, request: Request, body: PlaybackCheckpointRequest
+) -> LiveEpisode:
+    return operate(
+        episode_id,
+        listener(request),
+        lambda: orchestrator.checkpoint_playback(episode_id, body.position_seconds),
+    )
 
 
 @app.post("/api/episodes/{episode_id}/next", response_model=LiveEpisode)
-def next_playable(episode_id: str) -> LiveEpisode:
-    return operate(lambda: orchestrator.next_playable(episode_id))
+def next_playable(episode_id: str, request: Request) -> LiveEpisode:
+    return operate(episode_id, listener(request), lambda: orchestrator.next_playable(episode_id))
 
 
 @app.post("/api/episodes/{episode_id}/leave", response_model=LiveEpisode)
-def leave(episode_id: str) -> LiveEpisode:
-    return operate(lambda: orchestrator.leave(episode_id))
+def leave(episode_id: str, request: Request) -> LiveEpisode:
+    return operate(episode_id, listener(request), lambda: orchestrator.leave(episode_id))
 
 
 @app.post("/api/episodes/{episode_id}/pause", response_model=LiveEpisode)
-def pause(episode_id: str) -> LiveEpisode:
-    return operate(lambda: orchestrator.pause(episode_id))
+def pause(episode_id: str, request: Request) -> LiveEpisode:
+    return operate(episode_id, listener(request), lambda: orchestrator.pause(episode_id))
 
 
 @app.post("/api/episodes/{episode_id}/resume", response_model=LiveEpisode)
-def resume(episode_id: str) -> LiveEpisode:
-    return operate(lambda: orchestrator.resume(episode_id))
+def resume(episode_id: str, request: Request) -> LiveEpisode:
+    return operate(episode_id, listener(request), lambda: orchestrator.resume(episode_id))
 
 
 @app.post("/api/episodes/{episode_id}/materialize", response_model=LiveEpisode)
-def materialize(episode_id: str) -> LiveEpisode:
-    return operate(lambda: orchestrator.materialize_all(episode_id))
+def materialize(episode_id: str, request: Request) -> LiveEpisode:
+    return operate(episode_id, listener(request), lambda: orchestrator.materialize_all(episode_id))
 
 
 @app.post("/api/episodes/{episode_id}/replan", response_model=LiveEpisode)
-def replan(episode_id: str, request: ReplaceRequest) -> LiveEpisode:
-    return operate(lambda: orchestrator.replace_speculative_music(episode_id, request.title))
+def replan(episode_id: str, request: Request, body: ReplaceRequest) -> LiveEpisode:
+    return operate(
+        episode_id,
+        listener(request),
+        lambda: orchestrator.replace_speculative_music(episode_id, body.title),
+    )
+
+
+@app.get("/api/episodes/{episode_id}/events")
+async def episode_events(
+    episode_id: str, request: Request, once: bool = False
+) -> StreamingResponse:
+    listener_id = listener(request)
+    await to_thread.run_sync(owned, episode_id, listener_id)
+
+    async def stream() -> AsyncIterator[str]:
+        version = -1
+        while not await request.is_disconnected():
+            current = await to_thread.run_sync(orchestrator.get, episode_id, listener_id)
+            if current.version != version:
+                version = current.version
+                payload = json.dumps(current.model_dump(mode="json"), ensure_ascii=False)
+                yield f"id: {version}\nevent: episode_state_changed\ndata: {payload}\n\n"
+                if once:
+                    return
+            await asyncio.sleep(0.25)
+
+    return StreamingResponse(
+        stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+    )
