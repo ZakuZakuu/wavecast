@@ -1,7 +1,7 @@
 """Exa and Tavily search adapters normalized to the Wavecast search contract."""
 
 from time import perf_counter
-from typing import Any, Literal, Self
+from typing import Any, Literal
 
 import httpx
 
@@ -25,9 +25,9 @@ class ExaSearchProvider:
     ) -> None:
         self.settings = settings
         self.ledger = ledger or UsageLedger()
+        self.api_key = settings.credential_for("exa")
         self.client = client or httpx.AsyncClient(timeout=settings.timeout_seconds)
         self._owns_client = client is None
-        self.api_key = settings.credential_for("exa")
 
     async def search(self, query: str, *, limit: int = 5) -> list[SearchResult]:
         started_at = perf_counter()
@@ -79,12 +79,6 @@ class ExaSearchProvider:
         if self._owns_client:
             await self.client.aclose()
 
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *_args: object) -> None:
-        await self.aclose()
-
     @staticmethod
     def _normalize(item: dict[str, Any], query: str, request_id: str | None) -> SearchResult:
         highlights = item.get("highlights")
@@ -125,9 +119,9 @@ class TavilySearchProvider:
     ) -> None:
         self.settings = settings
         self.ledger = ledger or UsageLedger()
+        self.api_key = settings.credential_for("tavily")
         self.client = client or httpx.AsyncClient(timeout=settings.timeout_seconds)
         self._owns_client = client is None
-        self.api_key = settings.credential_for("tavily")
         self.search_depth = search_depth
 
     async def search(
@@ -181,12 +175,6 @@ class TavilySearchProvider:
     async def aclose(self) -> None:
         if self._owns_client:
             await self.client.aclose()
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *_args: object) -> None:
-        await self.aclose()
 
     @staticmethod
     def _normalize(item: dict[str, Any], query: str, request_id: str | None) -> SearchResult:

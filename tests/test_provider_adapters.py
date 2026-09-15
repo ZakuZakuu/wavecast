@@ -158,40 +158,6 @@ def test_tavily_normalizes_results_and_usage() -> None:
     asyncio.run(run())
 
 
-def test_provider_context_managers_close_owned_clients_on_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class CloseableOpenAIClient:
-        def __init__(self) -> None:
-            self.closed = False
-
-        async def close(self) -> None:
-            self.closed = True
-
-    async def run() -> None:
-        exa = ExaSearchProvider(live_settings())
-        tavily = TavilySearchProvider(live_settings())
-        try:
-            async with exa, tavily:
-                raise RuntimeError("probe failed")
-        except RuntimeError:
-            pass
-        assert exa.client.is_closed
-        assert tavily.client.is_closed
-
-    fake_client = CloseableOpenAIClient()
-    monkeypatch.setattr("wavecast.providers.deepseek.AsyncOpenAI", lambda **_kwargs: fake_client)
-    asyncio.run(run())
-
-    async def close_deepseek() -> None:
-        async with DeepSeekLLMProvider(live_settings()):
-            raise RuntimeError("probe failed")
-
-    with pytest.raises(RuntimeError):
-        asyncio.run(close_deepseek())
-    assert fake_client.closed
-
-
 def json_loads(content: bytes) -> dict[str, object]:
     import json
 

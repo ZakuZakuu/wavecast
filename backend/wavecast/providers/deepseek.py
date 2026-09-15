@@ -1,11 +1,10 @@
 """DeepSeek inference adapter; prompts and agent workflow deliberately stay outside it."""
 
 import asyncio
-import inspect
 import json
 from collections.abc import Awaitable, Callable
 from time import perf_counter
-from typing import Any, Self
+from typing import Any
 
 from openai import (
     APIConnectionError,
@@ -124,19 +123,8 @@ class DeepSeekLLMProvider:
         raise AssertionError("bounded structured loop must return or raise")
 
     async def aclose(self) -> None:
-        if not self._owns_client:
-            return
-        close = getattr(self.client, "close", None)
-        if close is not None:
-            result = close()
-            if inspect.isawaitable(result):
-                await result
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *_args: object) -> None:
-        await self.aclose()
+        if self._owns_client:
+            await self.client.close()
 
     def _record(self, response: Any, elapsed_ms: int) -> None:
         usage = getattr(response, "usage", None)

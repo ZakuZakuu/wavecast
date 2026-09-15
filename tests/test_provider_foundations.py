@@ -12,7 +12,7 @@ from wavecast.providers.errors import (
     ProviderUnavailableError,
     is_retryable,
 )
-from wavecast.providers.http import normalize_http_error, request_json
+from wavecast.providers.http import request_json
 from wavecast.providers.routing import SearchIntent, SearchRouter
 from wavecast.providers.usage import UsageEvent, UsageLedger
 
@@ -88,6 +88,33 @@ def test_http_does_not_retry_authentication_errors() -> None:
     assert attempts == 1
 
 
+@pytest.mark.parametrize("status_code", [432, 433])
+def test_tavily_usage_limits_are_budget_exceeded(status_code: int) -> None:
+    attempts = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(status_code, json={"detail": "usage limit reached"})
+
+    async def run() -> None:
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            with pytest.raises(ProviderBudgetExceededError):
+                await request_json(
+                    client,
+                    provider="tavily",
+                    method="POST",
+                    url="https://example.test",
+                    max_attempts=2,
+                )
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+    assert attempts == 1
+
+
 def test_http_converts_malformed_json_to_a_provider_error() -> None:
     async def run() -> None:
         client = httpx.AsyncClient(
@@ -104,11 +131,6 @@ def test_http_converts_malformed_json_to_a_provider_error() -> None:
         await client.aclose()
 
     asyncio.run(run())
-
-
-@pytest.mark.parametrize("status_code", [432, 433])
-def test_tavily_budget_statuses_are_not_treated_as_invalid_responses(status_code: int) -> None:
-    assert isinstance(normalize_http_error("tavily", status_code), ProviderBudgetExceededError)
 
 
 def test_search_router_routes_explicit_intents_only() -> None:

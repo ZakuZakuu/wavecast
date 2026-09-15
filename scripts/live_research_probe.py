@@ -28,7 +28,9 @@ def parse_args() -> argparse.Namespace:
 def require_live_settings() -> ProviderSettings:
     settings = ProviderSettings.from_env()
     if settings.mode != "live":
-        raise ProviderConfigurationError("set WAVECAST_PROVIDER_MODE=live for the research probe")
+        raise ProviderConfigurationError(
+            "set WAVECAST_PROVIDER_MODE=live in the local .env and run with uv --env-file"
+        )
     return settings
 
 
@@ -42,11 +44,12 @@ def compact_results(results: list[SearchResult]) -> list[dict[str, object]]:
 async def run(anchors: list[str]) -> ResearchProbeReport:
     settings = require_live_settings()
     ledger = UsageLedger()
-    async with (
-        ExaSearchProvider(settings, ledger=ledger) as exa,
-        TavilySearchProvider(settings, ledger=ledger) as tavily,
-        DeepSeekLLMProvider(settings, ledger=ledger) as llm,
-    ):
+    exa: ExaSearchProvider | None = None
+    tavily: TavilySearchProvider | None = None
+    llm: DeepSeekLLMProvider | None = None
+    try:
+        exa = ExaSearchProvider(settings, ledger=ledger)
+        tavily = TavilySearchProvider(settings, ledger=ledger)
         router = SearchRouter(discovery=exa, research=tavily)
         anchor_text = " and ".join(anchors)
         discovery_queries = [
@@ -63,7 +66,8 @@ async def run(anchors: list[str]) -> ResearchProbeReport:
             for query in discovery_queries
         ]
         evidence = [
-            await router.search(SearchIntent.RESEARCH, query, limit=4) for query in research_queries
+            await router.search(SearchIntent.RESEARCH, query, limit=4)
+            for query in research_queries
         ]
         synthesis_input = {
             "anchors": anchors,
@@ -75,14 +79,27 @@ async def run(anchors: list[str]) -> ResearchProbeReport:
                 "Cite result URLs in evidence_references when available.",
             ],
         }
+        llm = DeepSeekLLMProvider(settings, ledger=ledger)
         report = await llm.structured(
             "Synthesize this bounded provider probe into the requested JSON report. "
             f"Input: {json.dumps(synthesis_input, ensure_ascii=False)}",
             ResearchProbeReport,
         )
-    print(json.dumps(report.model_dump(), ensure_ascii=False, indent=2))
-    print(f"Usage: {ledger.totals().model_dump_json()}")
-    return report
+        print(
+            "Research probe OK: "
+            f"{len(report.candidate_tracks)} candidate track(s), "
+            f"{len(report.candidate_artists)} candidate artist(s), "
+            f"{len(report.uncertainties)} uncertainty item(s)"
+        )
+        print(f"Usage: {ledger.totals().model_dump_json()}")
+        return report
+    finally:
+        if llm is not None:
+            await llm.aclose()
+        if tavily is not None:
+            await tavily.aclose()
+        if exa is not None:
+            await exa.aclose()
 
 
 if __name__ == "__main__":
