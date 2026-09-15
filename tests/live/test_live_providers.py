@@ -24,29 +24,26 @@ def _live_settings() -> ProviderSettings:
 
 def test_live_deepseek_tiny_structured_response() -> None:
     async def run() -> None:
-        provider = DeepSeekLLMProvider(_live_settings())
-        result = await provider.structured('Return JSON {"ok": true}.', TinyResponse)
-        assert result.ok is True
-        await provider.client.close()
+        async with DeepSeekLLMProvider(_live_settings()) as provider:
+            result = await provider.structured('Return JSON {"ok": true}.', TinyResponse)
+            assert result.ok is True
 
     asyncio.run(run())
 
 
 def test_live_exa_small_search() -> None:
     async def run() -> None:
-        provider = ExaSearchProvider(_live_settings())
-        results = await provider.search("3rd Coast Jealousy music", limit=1)
-        assert results
-        await provider.aclose()
+        async with ExaSearchProvider(_live_settings()) as provider:
+            results = await provider.search("3rd Coast Jealousy music", limit=1)
+            assert results
 
     asyncio.run(run())
 
 
 def test_live_tavily_basic_small_search() -> None:
     async def run() -> None:
-        provider = TavilySearchProvider(_live_settings())
-        results = await provider.search("3rd Coast Jealousy DJMAX", limit=1)
-        assert results
-        await provider.aclose()
+        async with TavilySearchProvider(_live_settings()) as provider:
+            results = await provider.search("3rd Coast Jealousy DJMAX", limit=1)
+            assert results
 
     asyncio.run(run())

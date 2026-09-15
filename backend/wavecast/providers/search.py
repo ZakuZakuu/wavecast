@@ -1,7 +1,7 @@
 """Exa and Tavily search adapters normalized to the Wavecast search contract."""
 
 from time import perf_counter
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 import httpx
 
@@ -79,6 +79,12 @@ class ExaSearchProvider:
         if self._owns_client:
             await self.client.aclose()
 
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        await self.aclose()
+
     @staticmethod
     def _normalize(item: dict[str, Any], query: str, request_id: str | None) -> SearchResult:
         highlights = item.get("highlights")
@@ -142,6 +148,7 @@ class TavilySearchProvider:
                 "search_depth": depth,
                 "include_answer": False,
                 "include_raw_content": False,
+                "include_usage": True,
                 "max_results": limit,
             },
         )
@@ -174,6 +181,12 @@ class TavilySearchProvider:
     async def aclose(self) -> None:
         if self._owns_client:
             await self.client.aclose()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        await self.aclose()
 
     @staticmethod
     def _normalize(item: dict[str, Any], query: str, request_id: str | None) -> SearchResult:

@@ -16,18 +16,21 @@ adapters under `wavecast.providers`. They depend only on the existing `LLMProvid
 async client and JSON mode, validates the requested output model, and makes at most one retry for
 retryable transport/provider failures or malformed structured output. Exa uses `POST /search` with
 `type=auto` and lightweight highlights. Tavily uses Search with explicit `general` topic, no answer
-or raw page body, and a caller-selectable `basic`/`advanced` depth.
+or raw page body, explicit usage reporting, and a caller-selectable `basic`/`advanced` depth.
 
 `SearchRouter` is deterministic: `DISCOVERY` selects Exa and `RESEARCH` selects Tavily. `EXACT`
 is explicitly reserved for a later Serper adapter. Provider SDK/HTTP errors are mapped to Wavecast
 provider errors, and short exponential backoff is limited to 429s, temporary unavailable responses,
-and timeouts.
+and timeouts. Tavily's documented 432/433 package and pay-as-you-go usage limits are normalized as
+`ProviderBudgetExceededError`, never as a generic malformed response.
 
 An in-memory `UsageLedger` records provider-neutral events. It records tokens for DeepSeek, actual
 Exa cost when returned, and Tavily credits when returned; it never invents an amount from missing
 provider data. `WAVECAST_PROVIDER_MODE=mock` remains the credential-free default. Live unit tests,
 smoke tests, and the bounded 3rd Coast research probe require explicit live configuration and the
-`--run-live` switch. They are not invoked by CI.
+`--run-live` switch. Their documented commands use `uv run --env-file .env`, so credentials stay in
+the ignored local file rather than shell history. Providers own and close their async clients through
+async context managers even when a probe fails. Live checks are not invoked by CI.
 
 These adapters, router, and probe do not connect to `EpisodeOrchestrator`, alter the durable runtime,
 generate narration, or implement agent roles.

@@ -24,7 +24,7 @@ def normalize_http_error(provider: str, status_code: int, detail: str = "") -> P
         message = f"{message}: {detail[:240]}"
     if status_code in {401, 403}:
         return ProviderAuthenticationError(message)
-    if status_code == 402:
+    if status_code == 402 or (provider == "tavily" and status_code in {432, 433}):
         return ProviderBudgetExceededError(message)
     if status_code == 429:
         return ProviderRateLimitError(message)
