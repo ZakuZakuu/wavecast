@@ -89,6 +89,23 @@ It prints TTFS, stage usage, candidate counts, a novelty-distance curve, and a c
 summary. It never prints raw provider responses or reasoning text. The command is explicitly paid
 and bounded; do not run it from ordinary tests or CI.
 
+### Phase 3.5 editorial and curation quality
+
+Guided Discovery quality is evaluated separately from runtime correctness. The credential-free
+benchmark cases and typed human-review rubric live under `backend/wavecast/evals/`; they cover
+same-artist traps, game-music context, artist-to-scene bridges, and mood-driven discovery without
+prescribing exact answers. Search remains bounded at one Exa plus two Tavily background queries,
+with distinct local-similarity, scene-bridge, and cross-scene roles. Generic search results remain
+Evidence; FastStart and Curator infer candidates downstream. The opt-in evaluator runs at most two
+bounded cases and records only sanitized review artifacts:
+
+```bash
+uv run --env-file .env python scripts/live_curation_eval.py
+```
+
+Evaluation output is for human review and does not automatically claim a quality pass. Do not
+commit raw provider responses, prompts, reasoning, credentials, or unreviewed quality claims.
+
 ## Current scope
 
 Phase 1.5 adds a durable Postgres repository, listener-scoped resume, and version-polled SSE while retaining mock-mode development. Phase 2 adds independent DeepSeek, Exa, and Tavily adapters with a deterministic discovery/research router and in-memory usage ledger. Phase 3 adds a two-speed, typed progressive intelligence pipeline and TTFS tracing without wiring it into EpisodeOrchestrator or adding TTS. Real calls remain opt-in; the frontend and episode runtime remain unchanged.

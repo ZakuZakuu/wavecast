@@ -168,9 +168,18 @@ def build_fast_queries(request: FastResearchInput) -> tuple[str, str]:
 def build_background_queries(request: FastResearchInput) -> list[str]:
     anchors = ", ".join([*request.anchor_tracks, *request.anchor_artists]) or request.topic
     return [
-        f"{anchors} adjacent artists scenes and production lineage",
-        f"{request.topic} historical context and documented influences",
-        f"{anchors} groove harmony instrumentation and emotional energy",
+        (
+            f"{anchors}; close musical similarity by groove, harmony, production texture, "
+            "instrumentation, vocal treatment, rhythmic feel, and emotional energy"
+        ),
+        (
+            f"{anchors}; bridge to adjacent artists, scenes, producers, eras, and stylistic "
+            "lineage beyond the immediate artist or franchise cluster"
+        ),
+        (
+            f"{request.topic}; cross-scene music sharing the inferred sonic characteristics, "
+            f"deprioritize repeating {anchors} and obvious same-artist or same-franchise results"
+        ),
     ]
 
 
