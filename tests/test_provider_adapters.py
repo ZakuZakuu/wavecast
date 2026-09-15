@@ -126,6 +126,7 @@ def test_tavily_normalizes_results_and_usage() -> None:
         assert payload["search_depth"] == "advanced"
         assert payload["include_answer"] is False
         assert payload["include_raw_content"] is False
+        assert payload["include_usage"] is True
         return httpx.Response(
             200,
             json={
