@@ -190,7 +190,7 @@ async def audius_audio(track_id: str, request: Request) -> StreamingResponse:
 
     async def body() -> AsyncIterator[bytes]:
         try:
-            async for chunk in upstream.aiter_bytes():
+            async for chunk in upstream.aiter_raw():
                 yield chunk
         finally:
             await upstream.aclose()
