@@ -33,7 +33,7 @@ class GenerationTrace:
     @property
     def time_to_first_script_ms(self) -> int | None:
         for event in self.events:
-            if event.name == "fast_plan_ready":
+            if event.name == "first_script_ready":
                 return event.elapsed_from_start_ms
         return None
 

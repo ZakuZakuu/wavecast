@@ -43,10 +43,10 @@ def test_background_pipeline_stops_before_paid_work_when_cancelled() -> None:
     called = False
 
     class NeverSearch(SearchFixture):
-        async def search(self, query: str, *, limit: int = 5):
+        async def search(self, query: str, *, limit: int = 5, stage: str | None = None):
             nonlocal called
             called = True
-            return await super().search(query, limit=limit)
+            return await super().search(query, limit=limit, stage=stage)
 
     cancel = asyncio.Event()
     cancel.set()

@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from time import perf_counter
 from typing import Any
@@ -138,11 +138,6 @@ class DeepSeekLLMProvider:
                         f"deepseek request failed with HTTP {error.status_code}"
                     )
                 last_failure.__cause__ = error
-            except (AttributeError, IndexError, TypeError) as error:
-                last_failure = ProviderInvalidResponseError(
-                    "deepseek returned an incomplete completion payload"
-                )
-                last_failure.__cause__ = error
             if last_failure is None:
                 raise AssertionError("provider error must be set")
             retry_invalid_output = isinstance(last_failure, ProviderInvalidResponseError)
@@ -180,31 +175,39 @@ class DeepSeekLLMProvider:
             },
             "max_output_tokens": policy.max_output_tokens,
         }
-        if policy.reasoning_effort == "none":
-            kwargs["reasoning"] = {"effort": "none"}
-        elif policy.reasoning_effort is not None:
-            kwargs["output_config"] = {"effort": policy.reasoning_effort}
+        if policy.reasoning_effort is not None:
+            kwargs["reasoning"] = {"effort": policy.reasoning_effort}
         return await self.client.responses.create(**kwargs)
 
     @staticmethod
     def _response_content(response: Any, transport: StructuredTransport) -> str | None:
         if transport is StructuredTransport.CHAT_JSON:
-            content = response.choices[0].message.content
+            choices = _field(response, "choices", [])
+            first_choice = choices[0] if isinstance(choices, (list, tuple)) and choices else None
+            content = _field(_field(first_choice, "message"), "content")
             return content if isinstance(content, str) else None
-        status = getattr(response, "status", "completed")
+
+        status = _field(response, "status", "completed")
         if status in {"failed", "incomplete"}:
-            reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
+            reason = _field(_field(response, "incomplete_details"), "reason")
             suffix = f" ({reason})" if reason else ""
             raise ProviderInvalidResponseError(f"deepseek response was {status}{suffix}")
-        output_text = getattr(response, "output_text", None)
-        if isinstance(output_text, str) and output_text:
-            return output_text
-        for item in getattr(response, "output", []) or []:
-            if getattr(item, "type", None) != "message":
+
+        # Parse the explicit Responses payload.  The SDK's output_text convenience
+        # property is intentionally not used: compatibility payloads can make it
+        # raise even when output.message.content contains valid text.
+        output = _field(response, "output", [])
+        if not isinstance(output, (list, tuple)):
+            return None
+        for item in output:
+            if _field(item, "type") != "message":
                 continue
-            for part in getattr(item, "content", []) or []:
-                if getattr(part, "type", None) == "output_text":
-                    text = getattr(part, "text", None)
+            content_items = _field(item, "content", [])
+            if not isinstance(content_items, (list, tuple)):
+                continue
+            for part in content_items:
+                if _field(part, "type") == "output_text":
+                    text = _field(part, "text")
                     if isinstance(text, str) and text:
                         return text
         return None
@@ -221,24 +224,24 @@ class DeepSeekLLMProvider:
         transport: StructuredTransport,
         stage: str | None,
     ) -> None:
-        usage = getattr(response, "usage", None)
-        choices = getattr(response, "choices", None)
-        first_choice = choices[0] if isinstance(choices, list) and choices else None
-        details = getattr(usage, "completion_tokens_details", None) or getattr(
-            usage, "output_tokens_details", None
+        usage = _field(response, "usage")
+        choices = _field(response, "choices", [])
+        first_choice = choices[0] if isinstance(choices, (list, tuple)) and choices else None
+        details = _field(usage, "completion_tokens_details") or _field(
+            usage, "output_tokens_details"
         )
-        input_tokens = getattr(usage, "prompt_tokens", None)
+        input_tokens = _field(usage, "prompt_tokens")
         if input_tokens is None:
-            input_tokens = getattr(usage, "input_tokens", None)
-        output_tokens = getattr(usage, "completion_tokens", None)
+            input_tokens = _field(usage, "input_tokens")
+        output_tokens = _field(usage, "completion_tokens")
         if output_tokens is None:
-            output_tokens = getattr(usage, "output_tokens", None)
+            output_tokens = _field(usage, "output_tokens")
         metadata: dict[str, Any] = {
             "model": self.settings.deepseek_model,
             "transport": transport.value,
-            "finish_reason": getattr(first_choice, "finish_reason", None)
-            or getattr(response, "status", None),
-            "reasoning_tokens": getattr(details, "reasoning_tokens", None),
+            "finish_reason": _field(first_choice, "finish_reason")
+            or _field(response, "status"),
+            "reasoning_tokens": _field(details, "reasoning_tokens"),
         }
         if stage is not None:
             metadata["stage"] = stage
@@ -246,11 +249,17 @@ class DeepSeekLLMProvider:
             UsageEvent(
                 provider="deepseek",
                 operation="structured",
-                request_id=getattr(response, "_request_id", None)
-                or getattr(response, "id", None),
+                request_id=_field(response, "_request_id") or _field(response, "id"),
                 elapsed_ms=elapsed_ms,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 metadata=metadata,
             )
         )
+
+
+def _field(value: Any, name: str, default: Any = None) -> Any:
+    """Read SDK objects and dict-like compatibility payloads without coercion."""
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default) if value is not None else default

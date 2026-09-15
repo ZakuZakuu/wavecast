@@ -14,7 +14,9 @@ class SearchIntent(StrEnum):
 
 
 class SearchCallable(Protocol):
-    async def search(self, query: str, *, limit: int = 5) -> list[SearchResult]: ...
+    async def search(
+        self, query: str, *, limit: int = 5, stage: str | None = None
+    ) -> list[SearchResult]: ...
 
 
 class SearchRouter:

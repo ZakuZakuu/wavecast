@@ -33,11 +33,32 @@ def response_settings() -> ProviderSettings:
     return ProviderSettings(mode="live", deepseek_api_key="test")
 
 
+class RaisingOutputTextResponse:
+    id = "response-property"
+    status = "completed"
+    usage = SimpleNamespace(input_tokens=7, output_tokens=4)
+    output = [
+        SimpleNamespace(
+            type="message",
+            content=[SimpleNamespace(type="output_text", text='{"answer":"from output"}')],
+        )
+    ]
+
+    @property
+    def output_text(self) -> str:
+        raise TypeError("SDK convenience property cannot parse compatibility payload")
+
+
 def test_responses_json_schema_validates_and_maps_fast_profile() -> None:
     response = SimpleNamespace(
         id="response-1",
         status="completed",
-        output_text='{"answer":"ready"}',
+        output=[
+            SimpleNamespace(
+                type="message",
+                content=[SimpleNamespace(type="output_text", text='{"answer":"ready"}')],
+            )
+        ],
         usage=SimpleNamespace(
             input_tokens=11,
             output_tokens=8,
@@ -71,6 +92,87 @@ def test_responses_json_schema_validates_and_maps_fast_profile() -> None:
     assert ledger.events[0].metadata["transport"] == "responses_json_schema"
     assert ledger.events[0].metadata["stage"] == "fast_start"
     assert ledger.events[0].metadata["reasoning_tokens"] == 0
+
+
+@pytest.mark.parametrize(
+    ("profile", "effort"),
+    [
+        (InferenceProfile.FAST, "none"),
+        (InferenceProfile.BALANCED, "low"),
+        (InferenceProfile.DEEP, "high"),
+    ],
+)
+def test_responses_reasoning_profiles_use_exact_request_shape(
+    profile: InferenceProfile, effort: str
+) -> None:
+    response = SimpleNamespace(
+        id="response-profile",
+        status="completed",
+        output=[
+            SimpleNamespace(
+                type="message",
+                content=[SimpleNamespace(type="output_text", text='{"answer":"ok"}')],
+            )
+        ],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+    )
+    client, responses = response_client(response)
+
+    async def run() -> None:
+        provider = DeepSeekLLMProvider(response_settings(), client=client, max_attempts=1)
+        assert await provider.structured(
+            "tiny test", ResponseAnswer,
+            transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
+            profile=profile,
+        ) == ResponseAnswer(answer="ok")
+
+    asyncio.run(run())
+    request = responses.calls[0]
+    assert request["reasoning"] == {"effort": effort}
+    assert "output_config" not in request
+
+
+def test_responses_output_is_source_of_truth_when_output_text_property_raises() -> None:
+    client, responses = response_client(RaisingOutputTextResponse())
+
+    async def run() -> ResponseAnswer:
+        provider = DeepSeekLLMProvider(response_settings(), client=client, max_attempts=1)
+        return await provider.structured(
+            "tiny test",
+            ResponseAnswer,
+            transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
+            profile=InferenceProfile.FAST,
+        )
+
+    assert asyncio.run(run()) == ResponseAnswer(answer="from output")
+    assert len(responses.calls) == 1
+
+
+def test_responses_output_text_null_is_a_normalized_empty_response() -> None:
+    response = {
+        "id": "response-null",
+        "status": "completed",
+        "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": None}]}
+        ],
+        "usage": {"input_tokens": 3, "output_tokens": 2},
+    }
+    client, responses = response_client(response)  # type: ignore[arg-type]
+    ledger = UsageLedger()
+
+    async def run() -> None:
+        provider = DeepSeekLLMProvider(response_settings(), client=client, ledger=ledger)
+        with pytest.raises(ProviderInvalidResponseError, match="empty structured output"):
+            await provider.structured(
+                "tiny test",
+                ResponseAnswer,
+                transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
+                profile=InferenceProfile.FAST,
+            )
+
+    asyncio.run(run())
+    assert len(responses.calls) == 1
+    assert ledger.totals().input_tokens == 3
 
 
 def test_responses_empty_output_records_usage_before_normalized_failure() -> None:

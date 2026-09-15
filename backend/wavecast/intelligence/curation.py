@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 
 from .fast_start import FastStructuredProvider
@@ -50,11 +51,10 @@ def ensure_distance_curve(skeleton: ProgramSkeleton) -> ProgramSkeleton:
         "bridge": 3,
         "discovery": 4,
         "surprise": 5,
-        "resolution": 6,
     }
-    chapters = sorted(
-        skeleton.chapters,
-        key=lambda chapter: (order.get(chapter.novelty_distance.value, 99), chapter.index),
-    )
-    renumbered = [chapter.model_copy(update={"index": index}) for index, chapter in enumerate(chapters)]
-    return skeleton.model_copy(update={"chapters": renumbered})
+    distances = [order[chapter.novelty_distance.value] for chapter in skeleton.chapters]
+    if distances != sorted(distances):
+        raise ProviderInvalidResponseError("curator returned an invalid novelty distance curve")
+    # Curator order and chapter indices are part of the narrative contract.  Do not
+    # sort or renumber here: committed-prefix validation relies on exact identity.
+    return skeleton

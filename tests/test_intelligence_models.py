@@ -41,7 +41,7 @@ def test_fast_start_plan_keeps_evidence_and_novelty_typed() -> None:
 def test_generation_trace_derives_time_to_first_script() -> None:
     trace = GenerationTrace(request_id="request-1")
     trace.mark("fast_research_started")
-    trace.mark("fast_plan_ready", candidate_count=2)
+    trace.mark("first_script_ready", fallback=False, candidate_count=2)
 
     assert trace.time_to_first_script_ms is not None
     assert trace.time_to_first_script_ms >= 0
