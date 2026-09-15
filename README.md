@@ -30,21 +30,23 @@ To run the real Postgres integration test, set `WAVECAST_TEST_DATABASE_URL` to t
 
 ### Phase 2 provider probes (explicitly opt-in)
 
-Provider mode defaults to `mock`; neither development nor CI calls paid services. To run a real probe, put credentials only in your ignored `.env`, then explicitly opt in:
+Provider mode defaults to `mock`; neither development nor CI calls paid services. To run a real probe, copy `.env.example` to the gitignored local `.env`, set `WAVECAST_PROVIDER_MODE=live`, and fill only the local `DEEPSEEK_API_KEY`, `EXA_API_KEY`, and `TAVILY_API_KEY`. Never commit `.env` and do not put provider keys into shell history.
+
+Run every paid command with uv's explicit env-file loading:
 
 ```bash
-# Add WAVECAST_PROVIDER_MODE=live and the three API keys to .env first.
 uv run --env-file .env python scripts/live_provider_smoke.py
 uv run --env-file .env python scripts/live_research_probe.py \
   --anchor "3rd Coast - Jealousy" \
   --anchor "3rd Coast - Luv is True" \
   --json-output /tmp/wavecast-3rd-coast.json
+uv run --env-file .env pytest tests/live --run-live
 ```
 
 The smoke command also accepts `--provider deepseek`, `--provider exa`, or `--provider tavily`.
 The bounded 3rd Coast probe makes at most two Exa searches, three Tavily searches, and one
 DeepSeek synthesis request. It is a manual provider-quality evaluation, not the production agent
-pipeline and never connects to `EpisodeOrchestrator`.
+pipeline and never connects to `EpisodeOrchestrator`. The scripts print only compact normalized summaries and usage totals; provider secrets and raw provider responses are not written to the repository.
 
 ## Validation
 
