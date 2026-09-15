@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 from hashlib import sha1
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from pydantic import BaseModel
 
 from .contracts import AudioAsset, AudioAssetType, AudioSource, SearchResult, TrackMetadata
+
+if TYPE_CHECKING:
+    from wavecast.intelligence.models import ResolvedTrack
 
 
 class FakeSearchProvider:
@@ -120,42 +126,17 @@ class FakeMusicProvider:
     async def resolve_track(self, track_ref: str) -> TrackMetadata:
         return self._tracks[track_ref]
 
-    async def get_stream_source(self, track_ref: str) -> str:
-        await self.resolve_track(track_ref)
-        return f"fake-music://{track_ref}"
-
-    async def resolve_track_proposal(self, proposal: object) -> object | None:
-        artist = getattr(proposal, "artist", "").casefold()
-        title = getattr(proposal, "title", "").casefold()
-        for track in self._tracks.values():
-            if track.artist.casefold() == artist and track.title.casefold() == title:
-                from wavecast.intelligence.models import ResolvedTrack
-
-                return ResolvedTrack(
-                    track_ref=track.track_ref,
-                    canonical_artist=track.artist,
-                    canonical_title=track.title,
-                )
-        return None
-
-    async def resolve_proposal(self, proposal: object) -> object | None:
-        return await self.resolve_track_proposal(proposal)
-
-    async def get_playback_asset(self, track: object) -> AudioAsset:
-        track_ref = getattr(track, "track_ref", "")
+    async def get_playback_asset(self, resolved_track: ResolvedTrack) -> AudioAsset:
+        track_ref = resolved_track.track_ref
         metadata = await self.resolve_track(track_ref)
-        playback_url = await self.get_stream_source(track_ref)
         return AudioAsset(
             asset_id=metadata.track_ref,
             asset_type=AudioAssetType.MUSIC,
             provider="fake-music",
-            playback_url=playback_url,
+            playback_url=f"fake-music://{track_ref}",
             duration=metadata.duration_seconds,
             metadata=metadata.model_dump(),
         )
-
-    async def playback_asset(self, track: object) -> AudioAsset:
-        return await self.get_playback_asset(track)
 
 
 class MockMusicProvider(FakeMusicProvider):
@@ -165,8 +146,8 @@ class MockMusicProvider(FakeMusicProvider):
         super().__init__()
         self.base_url = base_url.rstrip("/")
 
-    async def get_playback_asset(self, track: object) -> AudioAsset:
-        metadata = await self.resolve_track(getattr(track, "track_ref", ""))
+    async def get_playback_asset(self, resolved_track: ResolvedTrack) -> AudioAsset:
+        metadata = await self.resolve_track(resolved_track.track_ref)
         playback_url = f"{self.base_url}/music/{quote(metadata.track_ref, safe='')}?duration={metadata.duration_seconds}"
         return AudioAsset(
             asset_id=metadata.track_ref,
@@ -176,9 +157,6 @@ class MockMusicProvider(FakeMusicProvider):
             duration=metadata.duration_seconds,
             metadata=metadata.model_dump(),
         )
-
-    async def playback_asset(self, track: object) -> AudioAsset:
-        return await self.get_playback_asset(track)
 
 
 class FakeCoverRenderer:

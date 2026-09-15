@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel, Field
 
 from .profiles import InferenceProfile, StructuredTransport
+
+if TYPE_CHECKING:
+    from wavecast.intelligence.models import ResolvedTrack
 
 
 class SearchResult(BaseModel):
@@ -98,21 +103,18 @@ class TTSProvider(Protocol):
 
 
 class MusicProvider(Protocol):
-    """Catalog and playback boundary consumed by deterministic composition code."""
+    """Catalog and playback boundary consumed by deterministic composition code.
 
-    async def search(self, query: str) -> list[TrackMetadata]: ...
+    Proposal matching intentionally lives in ``intelligence.resolution``.  A
+    provider only exposes catalog primitives and receives a resolved identity
+    when composition asks for a playable asset.
+    """
+
+    async def search(self, query: str, *, limit: int = 5) -> list[TrackMetadata]: ...
 
     async def resolve_track(self, track_ref: str) -> TrackMetadata: ...
 
-    async def get_stream_source(self, track_ref: str) -> str: ...
-
-    async def resolve_track_proposal(self, proposal: Any) -> Any: ...
-
-    async def resolve_proposal(self, proposal: Any) -> Any: ...
-
-    async def get_playback_asset(self, track: Any) -> AudioAsset: ...
-
-    async def playback_asset(self, track: Any) -> AudioAsset: ...
+    async def get_playback_asset(self, resolved_track: ResolvedTrack) -> AudioAsset: ...
 
 
 class AudioAnalysisProvider(Protocol):

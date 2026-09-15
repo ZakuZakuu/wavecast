@@ -1,14 +1,14 @@
-"""Audius read-only music catalog adapter.
+"""Audius catalog adapter with server-owned playback credentials.
 
-The adapter deliberately exposes only the provider-neutral ``MusicProvider`` contract.
-Audius identifiers and response fields are normalized before they reach composition or
-episode runtime code.  Read-only API access works without credentials; an optional key
-can be supplied later for higher rate limits.
+Audius API keys identify an application and are sent as the ``api_key`` request
+parameter. A bearer token is a separate backend-only credential and is sent in
+``Authorization``. Browser playback receives a Wavecast proxy URL, never either
+credential.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import httpx
@@ -17,6 +17,9 @@ from .config import ProviderSettings
 from .contracts import AudioAsset, AudioAssetType, TrackMetadata
 from .errors import ProviderInvalidResponseError
 from .http import request_json
+
+if TYPE_CHECKING:
+    from wavecast.intelligence.models import ResolvedTrack
 
 
 class AudiusMusicProvider:
@@ -32,11 +35,17 @@ class AudiusMusicProvider:
         client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
+        bearer_token: str | None = None,
+        playback_proxy_base_url: str = "/api/audio/audius",
     ) -> None:
         settings = settings or ProviderSettings()
         self.settings = settings
         self.base_url = (base_url or settings.audius_base_url or self.default_base_url).rstrip("/")
-        self.api_key = api_key or settings.audius_api_key
+        self.api_key = settings.audius_api_key if api_key is None else api_key
+        self.bearer_token = (
+            settings.audius_bearer_token if bearer_token is None else bearer_token
+        )
+        self.playback_proxy_base_url = playback_proxy_base_url.rstrip("/")
         self.client = client or httpx.AsyncClient(timeout=settings.timeout_seconds)
         self._owns_client = client is None
 
@@ -62,30 +71,8 @@ class AudiusMusicProvider:
             raise ProviderInvalidResponseError("audius returned no track metadata")
         return self._normalize_track(item)
 
-    async def resolve_track_proposal(self, proposal: object) -> object | None:
-        """Resolve an artist/title proposal only against canonical catalog metadata."""
-        artist = _normalized_name(getattr(proposal, "artist", ""))
-        title = _normalized_name(getattr(proposal, "title", ""))
-        if not artist or not title:
-            return None
-        for metadata in await self.search(f"{artist} {title}", limit=5):
-            if _normalized_name(metadata.artist) == artist and _normalized_name(metadata.title) == title:
-                from wavecast.intelligence.models import ResolvedTrack
-
-                return ResolvedTrack(
-                    track_ref=metadata.track_ref,
-                    canonical_artist=metadata.artist,
-                    canonical_title=metadata.title,
-                )
-        return None
-
-    async def resolve_proposal(self, proposal: object) -> object | None:
-        return await self.resolve_track_proposal(proposal)
-
-    async def get_playback_asset(self, track: object) -> AudioAsset:
-        track_ref = getattr(track, "track_ref", None)
-        if not isinstance(track_ref, str) or not track_ref:
-            raise ProviderInvalidResponseError("audius playback requires a resolved track")
+    async def get_playback_asset(self, resolved_track: ResolvedTrack) -> AudioAsset:
+        track_ref = resolved_track.track_ref
         metadata = await self.resolve_track(track_ref)
         if not metadata.playable:
             raise ProviderInvalidResponseError("audius track has no playable duration")
@@ -94,35 +81,27 @@ class AudiusMusicProvider:
             asset_id=metadata.track_ref,
             asset_type=AudioAssetType.MUSIC,
             provider=self.provider_name,
-            playback_url=f"{self.base_url}/tracks/{quote(audius_id, safe='')}/stream",
+            # A browser audio element cannot safely carry a backend bearer token.
+            playback_url=f"{self.playback_proxy_base_url}/{quote(audius_id, safe='')}",
             duration=metadata.duration_seconds,
             metadata=metadata.metadata,
         )
-
-    async def playback_asset(self, track: object) -> AudioAsset:
-        return await self.get_playback_asset(track)
-
-    async def get_stream_source(self, track_ref: str) -> str:
-        from wavecast.intelligence.models import ResolvedTrack
-
-        return (
-            await self.get_playback_asset(
-                ResolvedTrack(
-                    track_ref=track_ref,
-                    canonical_artist="Unknown",
-                    canonical_title="Unknown",
-                )
-            )
-        ).playback_url
 
     async def aclose(self) -> None:
         if self._owns_client:
             await self.client.aclose()
 
-    async def _request(self, path: str, *, params: dict[str, object] | None = None) -> dict[str, Any]:
+    async def _request(
+        self, path: str, *, params: dict[str, object] | None = None
+    ) -> dict[str, Any]:
         headers = {"Accept": "application/json"}
+        request_params = dict(params or {})
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            # The official SDK appends api_key to the request URL. It is not a
+            # bearer token and must never be placed in Authorization.
+            request_params["api_key"] = self.api_key
+        if self.bearer_token:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
         payload, _ = await request_json(
             self.client,
             provider=self.provider_name,
@@ -130,7 +109,7 @@ class AudiusMusicProvider:
             url=f"{self.base_url}{path}",
             max_attempts=1,
             headers=headers,
-            params=params,
+            params=request_params,
         )
         return payload
 
@@ -159,7 +138,3 @@ class AudiusMusicProvider:
 
 def _provider_id(track_ref: str) -> str:
     return track_ref.removeprefix("audius:")
-
-
-def _normalized_name(value: object) -> str:
-    return " ".join(value.casefold().split()) if isinstance(value, str) else ""

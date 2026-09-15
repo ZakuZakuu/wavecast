@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
-from typing import cast
+from collections.abc import Sequence
 
 from wavecast.intelligence.models import (
     NarrationScript,
@@ -31,31 +30,80 @@ class EpisodeComposer:
 
     async def compose(
         self,
-        tracks: Sequence[ResolvedTrack | ResolvedTrackCandidate | object],
+        tracks: Sequence[ResolvedTrack | ResolvedTrackCandidate],
         script: RadioScript | NarrationScript | Sequence[RadioScriptBlock],
     ) -> PlayableEpisode:
         blocks = _script_blocks(script)
         resolved_assets: list[tuple[ResolvedTrack, AudioAsset]] = []
         for candidate in tracks:
             resolved = _resolved_identity(candidate)
-            asset = await _playback_asset(self.music_provider, resolved)
+            asset = await self.music_provider.get_playback_asset(resolved)
             if asset.asset_type is not AudioAssetType.MUSIC:
                 raise ValueError("music provider returned a non-music asset")
             resolved_assets.append((resolved, asset))
 
         segments: list[MusicSegment | NarrationSegment] = []
         order = 0
-        unassigned_transition = [
-            block for block in blocks if block.kind is RadioScriptBlockKind.TRANSITION and block.track_index is None
-        ]
         used_blocks: set[int] = set()
+
+        # Radio block placement is deliberately explicit:
+        # - track intros sit immediately before their indexed track;
+        # - opening music is emitted before an unindexed INTRO;
+        # - INTRO(i) and TRANSITION(i) sit in the gap after track i;
+        # - unindexed transitions are compatibility syntax assigned to gaps in
+        #   order, starting with the first gap;
+        # - OUTRO follows the final track.
+        unindexed_track_intros = [
+            index
+            for index, block in enumerate(blocks)
+            if block.kind is RadioScriptBlockKind.TRACK_INTRO and block.track_index is None
+        ]
+        unindexed_transitions = [
+            index
+            for index, block in enumerate(blocks)
+            if block.kind is RadioScriptBlockKind.TRANSITION and block.track_index is None
+        ]
+        explicit_intro_targets = {
+            block.track_index
+            for block in blocks
+            if block.kind is RadioScriptBlockKind.TRACK_INTRO
+            and block.track_index is not None
+        }
+        unindexed_intro_targets = iter(
+            index for index in range(len(resolved_assets)) if index not in explicit_intro_targets
+        )
+        unindexed_intro_by_block = {
+            block_index: next(unindexed_intro_targets, None)
+            for block_index in unindexed_track_intros
+        }
+        explicit_transition_targets = {
+            block.track_index
+            for block in blocks
+            if block.kind is RadioScriptBlockKind.TRANSITION
+            and block.track_index is not None
+            and block.track_index < len(resolved_assets) - 1
+        }
+        fallback_gap_targets = iter(
+            index for index in range(max(0, len(resolved_assets) - 1))
+            if index not in explicit_transition_targets
+        )
+        unindexed_transition_by_block = {
+            block_index: next(fallback_gap_targets, None)
+            for block_index in unindexed_transitions
+        }
 
         for track_index, (track, asset) in enumerate(resolved_assets):
             for block_index, block in enumerate(blocks):
-                if block.kind is RadioScriptBlockKind.TRACK_INTRO and (
-                    block.track_index == track_index
-                    or (block.track_index is None and track_index == 0)
-                ):
+                is_indexed_intro = (
+                    block.kind is RadioScriptBlockKind.TRACK_INTRO
+                    and block.track_index == track_index
+                )
+                is_sequential_intro = (
+                    block.kind is RadioScriptBlockKind.TRACK_INTRO
+                    and block.track_index is None
+                    and unindexed_intro_by_block.get(block_index) == track_index
+                )
+                if is_indexed_intro or is_sequential_intro:
                     segments.append(_narration_segment(block, order, track_index + 1))
                     order += 1
                     used_blocks.add(block_index)
@@ -91,13 +139,7 @@ class EpisodeComposer:
                     block.track_index == track_index
                     or (
                         block.track_index is None
-                        and track_index > 0
-                        and block
-                        is (
-                            unassigned_transition[track_index - 1]
-                            if track_index - 1 < len(unassigned_transition)
-                            else None
-                        )
+                        and unindexed_transition_by_block.get(block_index) == track_index
                     )
                 ):
                     segments.append(_narration_segment(block, order, track_index + 1))
@@ -119,20 +161,12 @@ class EpisodeComposer:
         return PlayableEpisode(segments=segments)
 
 
-def _resolved_identity(candidate: object) -> ResolvedTrack:
+def _resolved_identity(candidate: ResolvedTrack | ResolvedTrackCandidate) -> ResolvedTrack:
     if isinstance(candidate, ResolvedTrack):
         return candidate
     if isinstance(candidate, ResolvedTrackCandidate):
         return candidate.resolved_track()
     raise UnresolvedTrackError("unresolved track proposal cannot enter a playable episode")
-
-
-async def _playback_asset(provider: MusicProvider, track: ResolvedTrack) -> AudioAsset:
-    resolver = cast(
-        Callable[[ResolvedTrack], Awaitable[AudioAsset]],
-        getattr(provider, "get_playback_asset", None) or getattr(provider, "playback_asset"),
-    )
-    return await resolver(track)
 
 
 def _script_blocks(

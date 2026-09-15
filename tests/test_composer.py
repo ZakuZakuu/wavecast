@@ -39,14 +39,99 @@ def test_composer_creates_a_playable_radio_timeline() -> None:
     assert [segment.kind.value for segment in episode.segments] == [
         "MUSIC",
         "NARRATION",
-        "MUSIC",
         "NARRATION",
+        "MUSIC",
     ]
     assert episode.segments[0].audio_source_url is not None
     assert episode.segments[0].state.value == "AUDIO_READY"
     assert episode.segments[1].narration_text == "Welcome to the night."
-    assert episode.segments[-1].narration_text == "Now we widen the frame."
+    assert episode.segments[2].narration_text == "Now we widen the frame."
+    assert episode.segments[3].track_ref == "mock:bridge"
     assert episode.duration_seconds == 61
+
+
+def test_composer_assigns_multiple_intros_and_transitions_to_their_gaps() -> None:
+    tracks = [
+        ResolvedTrack(
+            track_ref="mock:opening",
+            canonical_artist="Mira Fields",
+            canonical_title="Neon First Light",
+        ),
+        ResolvedTrack(
+            track_ref="mock:bridge",
+            canonical_artist="Signal Garden",
+            canonical_title="Midnight Transfer",
+        ),
+        ResolvedTrack(
+            track_ref="mock:resolution",
+            canonical_artist="Southbound FM",
+            canonical_title="Daybreak in Stereo",
+        ),
+    ]
+    script = RadioScript(
+        blocks=[
+            RadioScriptBlock(
+                kind=RadioScriptBlockKind.TRACK_INTRO,
+                text="Opening track context.",
+                duration_seconds=4,
+                track_index=0,
+            ),
+            RadioScriptBlock(
+                kind=RadioScriptBlockKind.INTRO,
+                text="After the opening track.",
+                duration_seconds=4,
+            ),
+            RadioScriptBlock(
+                kind=RadioScriptBlockKind.TRANSITION,
+                text="First gap.",
+                duration_seconds=4,
+                track_index=0,
+            ),
+            RadioScriptBlock(
+                kind=RadioScriptBlockKind.TRACK_INTRO,
+                text="Bridge track context.",
+                duration_seconds=4,
+                track_index=1,
+            ),
+            RadioScriptBlock(
+                kind=RadioScriptBlockKind.TRANSITION,
+                text="Second gap fallback.",
+                duration_seconds=4,
+            ),
+            RadioScriptBlock(
+                kind=RadioScriptBlockKind.TRACK_INTRO,
+                text="Resolution track context.",
+                duration_seconds=4,
+                track_index=2,
+            ),
+        ]
+    )
+
+    episode = asyncio.run(EpisodeComposer(MockMusicProvider()).compose(tracks, script))
+
+    assert [segment.kind.value for segment in episode.segments] == [
+        "NARRATION",
+        "MUSIC",
+        "NARRATION",
+        "NARRATION",
+        "NARRATION",
+        "MUSIC",
+        "NARRATION",
+        "NARRATION",
+        "MUSIC",
+    ]
+    assert [segment.narration_text for segment in episode.segments if segment.narration_text] == [
+        "Opening track context.",
+        "After the opening track.",
+        "First gap.",
+        "Bridge track context.",
+        "Second gap fallback.",
+        "Resolution track context.",
+    ]
+    assert episode.segments[2].narration_text == "After the opening track."
+    assert episode.segments[3].narration_text == "First gap."
+    assert episode.segments[4].narration_text == "Bridge track context."
+    assert episode.segments[6].narration_text == "Second gap fallback."
 
 
 def test_composer_rejects_unresolved_proposals_before_playback() -> None:
