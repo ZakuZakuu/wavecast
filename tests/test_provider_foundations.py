@@ -14,6 +14,7 @@ from wavecast.providers.errors import (
 )
 from wavecast.providers.http import request_json
 from wavecast.providers.routing import SearchIntent, SearchRouter
+from wavecast.providers.search import ExaSearchProvider, TavilySearchProvider
 from wavecast.providers.usage import UsageEvent, UsageLedger
 
 
@@ -26,6 +27,43 @@ def test_mock_mode_is_credential_free(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.mode == "mock"
     with pytest.raises(ProviderConfigurationError):
         settings.credential_for("deepseek")
+
+
+def test_deepseek_timeout_is_independent_from_search_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WAVECAST_PROVIDER_MODE", "live")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
+    monkeypatch.setenv("EXA_API_KEY", "test")
+    monkeypatch.setenv("TAVILY_API_KEY", "test")
+    monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", "90")
+
+    settings = ProviderSettings.from_env()
+
+    assert settings.timeout_seconds == 20
+    assert settings.deepseek_timeout_seconds == 90
+
+
+def test_search_providers_keep_the_shared_short_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    created_timeouts: list[float] = []
+
+    class CapturingClient:
+        def __init__(self, *, timeout: float) -> None:
+            created_timeouts.append(timeout)
+
+    monkeypatch.setattr("wavecast.providers.search.httpx.AsyncClient", CapturingClient)
+    settings = ProviderSettings(
+        mode="live",
+        exa_api_key="test",
+        tavily_api_key="test",
+        timeout_seconds=17,
+        deepseek_timeout_seconds=90,
+    )
+
+    ExaSearchProvider(settings)
+    TavilySearchProvider(settings)
+
+    assert created_timeouts == [17, 17]
 
 
 def test_only_retryable_provider_errors_are_retried() -> None:

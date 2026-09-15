@@ -3,10 +3,11 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from openai import APITimeoutError
 from pydantic import BaseModel
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.deepseek import DeepSeekLLMProvider
-from wavecast.providers.errors import ProviderInvalidResponseError
+from wavecast.providers.errors import ProviderInvalidResponseError, ProviderTimeoutError
 from wavecast.providers.search import ExaSearchProvider, TavilySearchProvider
 from wavecast.providers.usage import UsageLedger
 
@@ -74,6 +75,69 @@ def test_deepseek_rejects_malformed_json_after_bounded_retry() -> None:
         with pytest.raises(ProviderInvalidResponseError):
             await provider.structured("tiny test", StructuredAnswer)
         assert completions.calls == 2
+
+    asyncio.run(run())
+
+
+def test_deepseek_uses_its_own_timeout_and_bounds_one_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    openai_options: dict[str, object] = {}
+    completion_options: list[dict[str, object]] = []
+
+    class CapturingCompletions:
+        async def create(self, **kwargs: object) -> SimpleNamespace:
+            completion_options.append(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content='{"answer": "ok"}'))],
+                usage=SimpleNamespace(prompt_tokens=7, completion_tokens=3),
+                _request_id="deepseek-request",
+            )
+
+    class CapturingOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            openai_options.update(kwargs)
+            self.chat = SimpleNamespace(completions=CapturingCompletions())
+
+    monkeypatch.setattr("wavecast.providers.deepseek.AsyncOpenAI", CapturingOpenAI)
+    settings = ProviderSettings(
+        mode="live",
+        deepseek_api_key="test",
+        timeout_seconds=20,
+        deepseek_timeout_seconds=90,
+        deepseek_max_output_tokens=4096,
+    )
+
+    async def run() -> None:
+        provider = DeepSeekLLMProvider(settings)
+        assert await provider.structured("tiny test", StructuredAnswer) == StructuredAnswer(answer="ok")
+
+    asyncio.run(run())
+    assert openai_options["timeout"] == 90
+    assert completion_options[0]["max_tokens"] == 4096
+    assert len(completion_options) == 1
+
+
+def test_deepseek_timeout_remains_normalized_without_an_extra_attempt() -> None:
+    class TimeoutCompletions:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def create(self, **_kwargs: object) -> SimpleNamespace:
+            self.calls += 1
+            raise APITimeoutError(httpx.Request("POST", "https://api.deepseek.com/chat/completions"))
+
+    async def run() -> None:
+        completions = TimeoutCompletions()
+        client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+        settings = ProviderSettings(
+            mode="live", deepseek_api_key="test", deepseek_timeout_seconds=90
+        )
+        provider = DeepSeekLLMProvider(settings, client=client, max_attempts=1)
+
+        with pytest.raises(ProviderTimeoutError):
+            await provider.structured("tiny test", StructuredAnswer)
+        assert completions.calls == 1
 
     asyncio.run(run())
 

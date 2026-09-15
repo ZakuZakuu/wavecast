@@ -19,6 +19,15 @@ retryable transport/provider failures or malformed structured output. Exa uses `
 or raw page body, caller-selectable `basic`/`advanced` depth, and `include_usage=true` so real credit
 usage is available to the ledger.
 
+Search requests retain the shared short 20-second timeout. DeepSeek structured inference has a
+separate optional `DEEPSEEK_TIMEOUT_SECONDS` configuration with a 90-second default, because a
+bounded synthesis request is materially heavier than a discovery request. A separate optional
+`DEEPSEEK_MAX_OUTPUT_TOKENS` defaults to 4096 and is sent as `max_tokens` on the one structured
+completion request. These settings do not disable model reasoning, add search rounds, or add a
+retry. The 3rd Coast probe explicitly uses one physical DeepSeek synthesis attempt so its fixed
+evaluation budget cannot be obscured by a retry; existing bounded retry semantics elsewhere remain
+unchanged.
+
 `SearchRouter` is deterministic: `DISCOVERY` selects Exa and `RESEARCH` selects Tavily. `EXACT`
 is explicitly reserved for a later Serper adapter. Provider SDK/HTTP errors are mapped to Wavecast
 provider errors, and short exponential backoff is limited to 429s, temporary unavailable responses,

@@ -1,6 +1,7 @@
 """Explicit, secret-safe provider configuration."""
 
 from dataclasses import dataclass
+from math import isfinite
 from os import getenv
 from typing import Literal, cast
 
@@ -17,7 +18,10 @@ class ProviderSettings:
     tavily_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-flash"
+    # Search remains deliberately short. Structured synthesis can be materially larger.
     timeout_seconds: float = 20.0
+    deepseek_timeout_seconds: float = 90.0
+    deepseek_max_output_tokens: int = 4096
     max_attempts: int = 2
 
     @classmethod
@@ -32,6 +36,12 @@ class ProviderSettings:
             tavily_api_key=getenv("TAVILY_API_KEY"),
             deepseek_base_url=getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             deepseek_model=getenv("DEEPSEEK_MODEL", "deepseek-flash"),
+            deepseek_timeout_seconds=_positive_float_from_env(
+                "DEEPSEEK_TIMEOUT_SECONDS", default=90.0
+            ),
+            deepseek_max_output_tokens=_positive_int_from_env(
+                "DEEPSEEK_MAX_OUTPUT_TOKENS", default=4096
+            ),
         )
 
     def credential_for(self, provider: Literal["deepseek", "exa", "tavily"]) -> str:
@@ -47,3 +57,29 @@ class ProviderSettings:
         if not key:
             raise ProviderConfigurationError(f"{provider} requires its API key in live mode")
         return key
+
+
+def _positive_float_from_env(name: str, *, default: float) -> float:
+    value = getenv(name)
+    if value is None:
+        return default
+    try:
+        configured = float(value)
+    except ValueError as error:
+        raise ProviderConfigurationError(f"{name} must be a positive number") from error
+    if not isfinite(configured) or configured <= 0:
+        raise ProviderConfigurationError(f"{name} must be a positive number")
+    return configured
+
+
+def _positive_int_from_env(name: str, *, default: int) -> int:
+    value = getenv(name)
+    if value is None:
+        return default
+    try:
+        configured = int(value)
+    except ValueError as error:
+        raise ProviderConfigurationError(f"{name} must be a positive integer") from error
+    if configured <= 0:
+        raise ProviderConfigurationError(f"{name} must be a positive integer")
+    return configured

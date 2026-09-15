@@ -79,7 +79,9 @@ async def run(anchors: list[str]) -> ResearchProbeReport:
                 "Cite result URLs in evidence_references when available.",
             ],
         }
-        llm = DeepSeekLLMProvider(settings, ledger=ledger)
+        # This evaluation is intentionally one physical synthesis call: retrying it would distort
+        # the fixed research budget and hide a quality/latency result.
+        llm = DeepSeekLLMProvider(settings, ledger=ledger, max_attempts=1)
         report = await llm.structured(
             "Synthesize this bounded provider probe into the requested JSON report. "
             f"Input: {json.dumps(synthesis_input, ensure_ascii=False)}",
