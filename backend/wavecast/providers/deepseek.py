@@ -37,15 +37,19 @@ class DeepSeekLLMProvider:
         ledger: UsageLedger | None = None,
         client: Any | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        max_attempts: int | None = None,
     ) -> None:
         self.settings = settings
         self.ledger = ledger or UsageLedger()
         self.sleep = sleep
+        self.max_attempts = max_attempts if max_attempts is not None else settings.max_attempts
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts must be at least one")
         self._owns_client = client is None
         self.client: Any = client or AsyncOpenAI(
             api_key=settings.credential_for("deepseek"),
             base_url=settings.deepseek_base_url,
-            timeout=settings.timeout_seconds,
+            timeout=settings.deepseek_timeout_seconds,
             max_retries=0,
         )
 
@@ -62,13 +66,14 @@ class DeepSeekLLMProvider:
             {"role": "user", "content": prompt},
         ]
         last_failure: ProviderError | None = None
-        for attempt in range(self.settings.max_attempts):
+        for attempt in range(self.max_attempts):
             started_at = perf_counter()
             try:
                 response = await self.client.chat.completions.create(
                     model=self.settings.deepseek_model,
                     messages=messages,
                     response_format={"type": "json_object"},
+                    max_tokens=self.settings.deepseek_max_output_tokens,
                 )
                 content = response.choices[0].message.content
                 if not content:
@@ -115,7 +120,7 @@ class DeepSeekLLMProvider:
             if last_failure is None:
                 raise AssertionError("provider error must be set")
             retry_invalid_output = isinstance(last_failure, ProviderInvalidResponseError)
-            if attempt == self.settings.max_attempts - 1 or (
+            if attempt == self.max_attempts - 1 or (
                 not retry_invalid_output and not is_retryable(last_failure)
             ):
                 raise last_failure

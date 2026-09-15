@@ -48,6 +48,11 @@ The bounded 3rd Coast probe makes at most two Exa searches, three Tavily searche
 DeepSeek synthesis request. It is a manual provider-quality evaluation, not the production agent
 pipeline and never connects to `EpisodeOrchestrator`. The scripts print only compact normalized summaries and usage totals; provider secrets and raw provider responses are not written to the repository.
 
+Search adapters retain their short 20-second timeout. DeepSeek structured synthesis has its own
+optional, bounded configuration: `DEEPSEEK_TIMEOUT_SECONDS=90` and
+`DEEPSEEK_MAX_OUTPUT_TOKENS=4096`. These are defaults, not required environment variables; the
+output limit bounds a single response without disabling model reasoning or adding another attempt.
+
 ## Validation
 
 ```bash
