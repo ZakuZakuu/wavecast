@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
@@ -74,6 +75,7 @@ class Segment(BaseModel):
     planned_duration_seconds: int = Field(gt=0)
     actual_duration_seconds: int | None = Field(default=None, gt=0)
     track_ref: str | None = None
+    audio_source_url: str | None = None
     title: str
     artist: str | None = None
     narration_text: str | None = None
@@ -89,6 +91,7 @@ class Segment(BaseModel):
             raise ValueError("narration segments cannot have a track_ref")
         return self
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def duration_seconds(self) -> int:
         return self.actual_duration_seconds or self.planned_duration_seconds
@@ -106,6 +109,21 @@ class Segment(BaseModel):
         return self.state is not SegmentState.SKIPPED
 
 
+class MusicSegment(Segment):
+    """A timeline segment backed by a playable music source."""
+
+    kind: Literal[SegmentKind.MUSIC] = SegmentKind.MUSIC
+    track_ref: str
+    audio_source_url: str | None = None
+
+
+class NarrationSegment(Segment):
+    """A timeline segment backed by generated or mock narration audio."""
+
+    kind: Literal[SegmentKind.NARRATION] = SegmentKind.NARRATION
+    audio_source_url: str | None = None
+
+
 class LiveEpisode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     seed_id: str
@@ -114,7 +132,7 @@ class LiveEpisode(BaseModel):
     state: EpisodeState = EpisodeState.STARTED
     generation_mode: GenerationMode = GenerationMode.PROGRESSIVE
     program_estimated_duration_seconds: int = Field(gt=0)
-    segments: list[Segment]
+    segments: list[MusicSegment | NarrationSegment]
     current_segment_id: str | None = None
     playback_position_seconds: int = Field(default=0, ge=0)
     is_listener_active: bool = True
