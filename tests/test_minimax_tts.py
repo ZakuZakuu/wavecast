@@ -57,6 +57,21 @@ def test_live_mode_with_incomplete_configuration_never_uses_mock_tts(
     asyncio.run(run())
 
 
+def test_minimax_probe_loads_repository_env_as_source_of_truth(monkeypatch) -> None:
+    import scripts.minimax_tts_probe as probe
+
+    calls: list[tuple[object, bool]] = []
+    monkeypatch.setattr(
+        probe,
+        "load_dotenv",
+        lambda path, *, override: calls.append((path, override)),
+    )
+
+    probe._load_probe_environment()
+
+    assert calls == [(probe._PROJECT_ROOT / ".env", True)]
+
+
 def test_tts_cache_key_is_stable_and_cue_sensitive(tmp_path) -> None:
     provider = MiniMaxTTSProvider(
         settings(), storage=LocalObjectStorageProvider(tmp_path / "audio")
