@@ -84,9 +84,12 @@ def test_fast_planner_uses_one_responses_fast_call() -> None:
     ].index("fast_planner_started")
     assert result.trace.fast_research_elapsed_ms is not None
     assert result.trace.fast_planner_started_ms is not None
+    plan_events = [event for event in result.trace.events if event.name == "research_plan_ready"]
+    assert plan_events[0].metadata["research_facet_count"] == 0
+    assert plan_events[0].metadata["planned_background_query_count"] == 0
 
 
-def test_fast_prompt_distinguishes_surface_and_deeper_taste_dimensions() -> None:
+def test_fast_prompt_is_topic_adaptive_and_declares_research_planning() -> None:
     planner = FastStartPlanner(RecordingLLM())
     research = FastResearchResult(
         bundle=ResearchBundle(anchors=[], taste_hypotheses=[], evidence=[], candidates=[]),
@@ -96,8 +99,10 @@ def test_fast_prompt_distinguishes_surface_and_deeper_taste_dimensions() -> None
 
     prompt = planner._prompt(input_request(), research)
 
-    assert "female vocal, male rap, or upbeat" in prompt
-    assert "groove, harmonic language, production texture" in prompt
+    assert "career, a creative work" in prompt
+    assert "history/context, or discovery" in prompt
+    assert "ResearchPlan" in prompt
+    assert "Do not force similarity" in prompt
 
 
 def test_fast_path_deadline_returns_safe_fallback_without_retry() -> None:

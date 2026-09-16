@@ -42,7 +42,15 @@ def _load_probe_environment() -> None:
 
 
 def _safe_trace(result) -> list[dict[str, object]]:
-    allowed = {"fallback", "candidate_count", "chapter_count", "query_count", "elapsed_ms"}
+    allowed = {
+        "fallback",
+        "candidate_count",
+        "chapter_count",
+        "query_count",
+        "elapsed_ms",
+        "research_facet_count",
+        "planned_background_query_count",
+    }
     return [
         {
             "name": event.name,
@@ -66,6 +74,26 @@ def _report(result) -> dict[str, object]:
             "ttfs_ms": result.trace.time_to_first_script_ms,
             "taste_dimensions": [
                 hypothesis.dimension for hypothesis in result.fast_plan.immediate_taste_hypotheses
+            ],
+        },
+        "research_plan": {
+            "central_question": result.fast_plan.research_plan.central_question,
+            "facets": [
+                {
+                    "id": facet.id,
+                    "label": facet.label,
+                    "question": facet.question,
+                    "priority": facet.priority,
+                }
+                for facet in result.fast_plan.research_plan.facets
+            ],
+            "background_queries": [
+                {
+                    "intent": query.intent.value,
+                    "facet_ids": list(query.facet_ids),
+                    "query": query.query,
+                }
+                for query in result.fast_plan.research_plan.background_queries
             ],
         },
         "tracks": [

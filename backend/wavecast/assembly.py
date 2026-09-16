@@ -38,6 +38,7 @@ from wavecast.intelligence.models import (
 from wavecast.intelligence.research import (
     BackgroundResearchService,
     FastResearchService,
+    generic_research_plan,
 )
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.intelligence.trace import GenerationTrace
@@ -515,6 +516,9 @@ class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
                 first_narration=NarrationScript(
                     text="从熟悉的夜色律动出发，我们先听见第一束光，再把路径慢慢打开。",
                     intended_duration_seconds=8,
+                ),
+                research_plan=generic_research_plan(
+                    FastResearchInput(topic="guided listening", desired_duration_seconds=900)
                 ),
             )
         if output_type is ProgramSkeleton:

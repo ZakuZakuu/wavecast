@@ -14,9 +14,8 @@ from .models import (
     FastStartPlan,
     NarrationScript,
     ResearchBundle,
-    TasteHypothesis,
 )
-from .research import FastResearchService
+from .research import FastResearchService, generic_research_plan
 from .trace import GenerationTrace
 
 FastStructuredProvider = ProgressiveLLMProvider
@@ -48,6 +47,11 @@ class FastStartPlanner:
                 raise TypeError("fast planner returned an unexpected output model")
             if trace:
                 trace.mark(
+                    "research_plan_ready",
+                    research_facet_count=len(plan.research_plan.facets),
+                    planned_background_query_count=len(plan.research_plan.background_queries),
+                )
+                trace.mark(
                     "first_script_ready",
                     fallback=False,
                     candidate_count=len(plan.next_candidates),
@@ -59,6 +63,11 @@ class FastStartPlanner:
             plan = deterministic_fallback(request, research)
             if trace:
                 trace.mark(
+                    "research_plan_ready",
+                    research_facet_count=len(plan.research_plan.facets),
+                    planned_background_query_count=len(plan.research_plan.background_queries),
+                )
+                trace.mark(
                     "first_script_ready",
                     fallback=True,
                     candidate_count=len(plan.next_candidates),
@@ -68,15 +77,18 @@ class FastStartPlanner:
     @staticmethod
     def _prompt(request: FastResearchInput, research: FastResearchResult) -> str:
         return (
-            "Create one FastStartPlan for a guided-listening episode. Use only the normalized "
-            "evidence below. Separate evidence, hypotheses, and uncertainty. Prefer groove, "
-            "harmony, production texture, instrumentation, vocal style, rhythmic feel, era, "
-            "scene, and emotional energy over generic genre tags. Distinguish surface "
-            "descriptors such as female vocal, male rap, or upbeat from deeper explanatory "
-            "dimensions such as groove, harmonic language, production texture, instrument "
-            "palette, vocal interaction, rhythmic placement, era-specific sound, and scene "
-            "aesthetics whenever the evidence supports them. Choose a small immediate direction "
-            "and write one spoken first narration; never invent unsupported facts.\n"
+            "Create one FastStartPlan for this listener request. Use only normalized evidence "
+            "below and keep evidence, hypotheses, and uncertainty separate. Do not assume the "
+            "request is a music-discovery prompt: it may ask about a career, a creative work, "
+            "analysis, history/context, or discovery. Interpret the actual topic and anchors. "
+            "Taste hypotheses may be empty when the request does not support them. Choose a "
+            "small immediate direction and write one spoken first narration without unsupported "
+            "facts. Also produce a ResearchPlan: state the central question, define open-ended "
+            "facets with stable IDs, and propose zero to three bounded background queries. "
+            "Each query must declare DISCOVERY, RESEARCH, or EXACT intent, facet IDs, and a "
+            "short rationale. Search intent is operational routing, not a show-type classifier. "
+            "Do not force similarity, novelty, genre, or sonic dimensions when the request does "
+            "not ask for them.\n"
             f"Request: {request.model_dump_json()}\n"
             f"Research: {research.bundle.model_dump_json()}"
         )
@@ -88,23 +100,18 @@ def deterministic_fallback(
     anchor = request.anchor_tracks[0] if request.anchor_tracks else request.topic
     return FastStartPlan(
         anchor_understanding=[f"Continue from the known anchor: {anchor}"],
-        immediate_taste_hypotheses=[
-            TasteHypothesis(
-                dimension="listening direction",
-                interpretation="Follow rhythm, texture, and atmosphere before adding stronger novelty.",
-                confidence=0.4,
-            )
-        ],
+        immediate_taste_hypotheses=[],
         next_candidates=research.bundle.candidates[:3],
         selected_next_track=None,
         first_narration=NarrationScript(
             text=(
-                f"先从 {anchor} 开始。接下来我们先沿着节奏、质感和氛围往外走，"
-                "再决定下一步要靠近，还是转向一个新的方向。"
+                f"先从 {anchor} 开始。接下来我们会围绕这个请求整理可靠背景，"
+                "再根据证据决定下一步。"
             ),
             intended_duration_seconds=10,
         ),
         uncertainties=["Fast research or structured planning was unavailable; no factual claim was added."],
+        research_plan=generic_research_plan(request),
     )
 
 
@@ -145,10 +152,16 @@ class FastPathCoordinator:
                 queries=[],
             )
             trace.mark("fallback_used", reason="deadline")
+            fallback_plan = deterministic_fallback(request, research)
+            trace.mark(
+                "research_plan_ready",
+                research_facet_count=len(fallback_plan.research_plan.facets),
+                planned_background_query_count=len(fallback_plan.research_plan.background_queries),
+            )
             trace.mark("first_script_ready", fallback=True, candidate_count=0)
             return FastPathResult(
                 research=research,
-                plan=deterministic_fallback(request, research),
+                plan=fallback_plan,
                 trace=trace,
                 elapsed_ms=int((perf_counter() - started) * 1000),
             )
