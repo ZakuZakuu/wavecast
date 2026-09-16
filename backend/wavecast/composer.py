@@ -92,13 +92,23 @@ class EpisodeComposer:
             and block.track_index is not None
             and block.track_index < len(resolved_assets) - 1
         }
-        fallback_gap_targets = iter(
-            index for index in range(max(0, len(resolved_assets) - 1))
+        fallback_gap_targets = [
+            index
+            for index in range(max(0, len(resolved_assets) - 1))
             if index not in explicit_transition_targets
-        )
+        ]
+        if not fallback_gap_targets:
+            # If every gap already has an indexed transition, additional
+            # narrative beats still belong to the final available gap rather
+            # than being pushed after the episode.
+            fallback_gap_targets = list(range(max(0, len(resolved_assets) - 1)))
         unindexed_transition_by_block = {
-            block_index: next(fallback_gap_targets, None)
-            for block_index in unindexed_transitions
+            block_index: (
+                fallback_gap_targets[min(position, len(fallback_gap_targets) - 1)]
+                if fallback_gap_targets
+                else None
+            )
+            for position, block_index in enumerate(unindexed_transitions)
         }
 
         for track_index, (track, asset) in enumerate(resolved_assets):

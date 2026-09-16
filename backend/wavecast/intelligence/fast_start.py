@@ -107,11 +107,14 @@ def deterministic_fallback(
 ) -> FastStartPlan:
     anchor = request.anchor_tracks[0] if request.anchor_tracks else request.topic
     language = resolve_output_language(request.output_language, request.topic)
-    narration = (
-        f"先从 {anchor} 开始。接下来我们会围绕这个请求整理可靠背景，再根据证据决定下一步。"
-        if language is OutputLanguage.ZH_CN
-        else f"We will start with {anchor}, then use the available evidence to decide where to go next."
-    )
+    if language is OutputLanguage.ZH_CN:
+        narration = f"先从 {anchor} 开始。接下来我们会围绕这个请求整理可靠背景，再根据证据决定下一步。"
+    elif language is OutputLanguage.JA_JP:
+        narration = f"まず {anchor} から始めます。次に、利用できる根拠をもとに進む方向を決めます。"
+    else:
+        narration = (
+            f"We will start with {anchor}, then use the available evidence to decide where to go next."
+        )
     return FastStartPlan(
         anchor_understanding=[f"Continue from the known anchor: {anchor}"],
         immediate_taste_hypotheses=[],

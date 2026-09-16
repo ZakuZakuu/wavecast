@@ -227,6 +227,50 @@ def test_composer_can_render_a_narration_only_episode() -> None:
     assert episode.segments[0].narration_text == "Context before any song."
 
 
+def test_composer_keeps_multiple_narration_beats_in_one_music_gap() -> None:
+    tracks = [
+        ResolvedTrack(
+            track_ref="mock:opening",
+            canonical_artist="Mira Fields",
+            canonical_title="Neon First Light",
+        ),
+        ResolvedTrack(
+            track_ref="mock:bridge",
+            canonical_artist="Signal Garden",
+            canonical_title="Midnight Transfer",
+        ),
+    ]
+    episode = asyncio.run(
+        EpisodeComposer(MockMusicProvider()).compose(
+            tracks,
+            RadioScript(
+                blocks=[
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.TRANSITION,
+                        text="Narration A",
+                        duration_seconds=3,
+                    ),
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.TRANSITION,
+                        text="Narration B",
+                        duration_seconds=3,
+                    ),
+                ]
+            ),
+        )
+    )
+
+    assert [
+        (segment.kind.value, segment.narration_text or segment.track_ref)
+        for segment in episode.segments
+    ] == [
+        ("MUSIC", "mock:opening"),
+        ("NARRATION", "Narration A"),
+        ("NARRATION", "Narration B"),
+        ("MUSIC", "mock:bridge"),
+    ]
+
+
 def test_composer_preserves_visible_and_tts_text() -> None:
     episode = asyncio.run(
         EpisodeComposer(MockMusicProvider()).compose(
