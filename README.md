@@ -48,6 +48,15 @@ The bounded 3rd Coast probe makes at most two Exa searches, three Tavily searche
 DeepSeek synthesis request. It is a manual provider-quality evaluation, not the production agent
 pipeline and never connects to `EpisodeOrchestrator`. The scripts print only compact normalized summaries and usage totals; provider secrets and raw provider responses are not written to the repository.
 
+The opt-in MiniMax narration probe loads the repository-local `.env` itself, so it can be run
+directly without exporting provider variables or passing `--env-file`:
+
+```bash
+uv run python scripts/minimax_tts_probe.py --run-live
+```
+
+For this probe only, values from `.env` take precedence over stale exported provider variables.
+
 Search adapters retain their short 20-second timeout. DeepSeek structured synthesis has its own
 optional, bounded configuration: `DEEPSEEK_TIMEOUT_SECONDS=20` and
 `DEEPSEEK_DEEP_TIMEOUT_SECONDS=45` for background DEEP/Curator inference, plus

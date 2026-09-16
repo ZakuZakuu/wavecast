@@ -12,8 +12,10 @@ import argparse
 import asyncio
 import re
 import sys
+from pathlib import Path
 from time import perf_counter
 
+from dotenv import load_dotenv
 from wavecast.narration import render_narration
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
@@ -22,6 +24,17 @@ from wavecast.storage import LocalObjectStorageProvider
 
 TEXT = "今晚，我们从一首歌开始，听见城市夜色的回声。"
 _SAFE_STATUS_PATTERN = re.compile(r"(?:HTTP|status)\s+(\d{3,4})\b", re.IGNORECASE)
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_probe_environment() -> None:
+    """Load the repository-local .env for this explicitly opt-in probe.
+
+    The probe is a local diagnostic command, so the checked-out .env is the
+    source of truth and takes precedence over stale exported provider values.
+    CI has no .env file and remains credential-free.
+    """
+    load_dotenv(_PROJECT_ROOT / ".env", override=True)
 
 
 async def _run_probe(settings: ProviderSettings) -> None:
@@ -63,6 +76,7 @@ def main() -> int:
     if not args.run_live:
         raise SystemExit("pass --run-live explicitly; no provider calls were made")
 
+    _load_probe_environment()
     settings = ProviderSettings.from_env()
     if settings.mode != "live":
         raise SystemExit("set WAVECAST_PROVIDER_MODE=live before running the probe")
