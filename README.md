@@ -139,9 +139,10 @@ mock music or narration in live mode.
 ### Phase 4.6 adaptive research planning
 
 FastStart now emits a topic-adaptive `ResearchPlan` in the same structured call as the first
-script. The plan contains an open central question, bounded facets, and zero to three planned
-queries. The deterministic background stage routes `DISCOVERY` to Exa and `RESEARCH`/`EXACT` to
-Tavily, deduplicates fast queries, and stays within one Exa plus two Tavily calls. Generic search
+script. The plan contains an open central question, bounded facets, and a defensively bounded
+pool of zero to eight proposed queries. The deterministic background stage routes `DISCOVERY` to
+Exa and `RESEARCH`/`EXACT` to Tavily, deduplicates fast queries, and executes at most one Exa plus
+two Tavily calls. Generic search
 results remain safe `Evidence` with facet/intent provenance; they do not become track proposals by
 webpage title. Curator receives the plan and adapts its chapter beats to the request rather than
 assuming a fixed discovery arc. The episode probe reports only sanitized plan metadata. No live

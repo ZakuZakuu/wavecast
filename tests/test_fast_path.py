@@ -85,8 +85,8 @@ def test_fast_planner_uses_one_responses_fast_call() -> None:
     assert result.trace.fast_research_elapsed_ms is not None
     assert result.trace.fast_planner_started_ms is not None
     plan_events = [event for event in result.trace.events if event.name == "research_plan_ready"]
-    assert plan_events[0].metadata["research_facet_count"] == 0
-    assert plan_events[0].metadata["planned_background_query_count"] == 0
+    assert plan_events[0].metadata["research_facet_count"] == 1
+    assert plan_events[0].metadata["planned_background_query_count"] == 3
 
 
 def test_fast_prompt_is_topic_adaptive_and_declares_research_planning() -> None:

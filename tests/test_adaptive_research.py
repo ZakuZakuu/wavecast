@@ -186,6 +186,86 @@ def test_background_never_exceeds_one_exa_and_two_tavily_calls() -> None:
     assert tavily_calls == ["research", "exact"]
 
 
+def test_larger_proposal_pool_is_trimmed_only_at_execution_boundary() -> None:
+    async def run() -> tuple[list[str], list[str]]:
+        exa = RecordingSearch("exa")
+        tavily = RecordingSearch("tavily")
+        service = BackgroundResearchService(discovery=exa, research=tavily, deadline_seconds=0.2)
+        await service.run(
+            request(),
+            _fast_path_result(
+                plan(
+                    PlannedResearchQuery(
+                        query="discovery-1", intent=SearchIntent.DISCOVERY, rationale="first"
+                    ),
+                    PlannedResearchQuery(
+                        query="discovery-2", intent=SearchIntent.DISCOVERY, rationale="second"
+                    ),
+                    PlannedResearchQuery(
+                        query="research-1", intent=SearchIntent.RESEARCH, rationale="third"
+                    ),
+                    PlannedResearchQuery(
+                        query="exact-1", intent=SearchIntent.EXACT, rationale="fourth"
+                    ),
+                    PlannedResearchQuery(
+                        query="research-2", intent=SearchIntent.RESEARCH, rationale="fifth"
+                    ),
+                )
+            ),
+        )
+        return exa.calls, tavily.calls
+
+    exa_calls, tavily_calls = asyncio.run(run())
+    assert exa_calls == ["discovery-1"]
+    assert tavily_calls == ["research-1", "exact-1"]
+
+
+def test_omitted_research_plan_is_normalized_to_generic_plan() -> None:
+    class OmittedPlanLLM:
+        async def structured(self, _prompt: str, _output_type: type[object], **_: object) -> object:
+            return FastStartPlan(
+                anchor_understanding=[],
+                immediate_taste_hypotheses=[],
+                next_candidates=[],
+                first_narration=NarrationScript(text="fixture", intended_duration_seconds=5),
+            )
+
+    result = asyncio.run(
+        FastStartPlanner(OmittedPlanLLM()).plan(
+            request(),
+            fast_result(ResearchPlan(central_question="unused")),
+        )
+    )
+
+    assert result.research_plan.facets[0].id == "context"
+    assert request().topic in result.research_plan.central_question
+    assert result.research_plan.background_queries
+
+
+def test_explicit_empty_research_plan_remains_intentionally_empty() -> None:
+    explicit = ResearchPlan(central_question="No background evidence is needed.")
+
+    class ExplicitPlanLLM:
+        async def structured(self, _prompt: str, _output_type: type[object], **_: object) -> object:
+            return FastStartPlan(
+                anchor_understanding=[],
+                immediate_taste_hypotheses=[],
+                next_candidates=[],
+                first_narration=NarrationScript(text="fixture", intended_duration_seconds=5),
+                research_plan=explicit,
+            )
+
+    result = asyncio.run(
+        FastStartPlanner(ExplicitPlanLLM()).plan(
+            request(),
+            fast_result(ResearchPlan(central_question="unused")),
+        )
+    )
+
+    assert result.research_plan == explicit
+    assert result.research_plan.background_queries == []
+
+
 def test_background_cancellation_stops_in_flight_planned_queries() -> None:
     async def run() -> tuple[asyncio.Event, object]:
         cancel = asyncio.Event()
