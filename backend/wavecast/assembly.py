@@ -9,6 +9,7 @@ deterministic catalog-resolution boundary first.
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from time import perf_counter
 from uuid import uuid4
@@ -80,7 +81,7 @@ class LiveEpisodeAssemblyRequest(BaseModel):
     topic: str = Field(min_length=1, max_length=300)
     anchor_tracks: list[str] = Field(default_factory=list, max_length=8)
     desired_duration_seconds: int = Field(default=900, gt=0)
-    max_tracks: int = Field(default=4, ge=1, le=8)
+    max_tracks: int = Field(default=4, ge=2, le=8)
     listener_taste_context: str | None = Field(default=None, max_length=1000)
 
 
@@ -375,34 +376,48 @@ def _assemble_radio_script(
     """Place chapter scripts once, preserving chapter order and gap semantics."""
     blocks: list[RadioScriptBlock] = []
     opening_intro_seen = False
+    track_intro_targets: set[int] = set()
+    transition_targets: set[int] = set()
     outro_added = False
     for chapter_index, script in enumerate(scripts):
         for block in _script_blocks(script):
             if block.kind is RadioScriptBlockKind.INTRO:
-                if opening_intro_seen:
+                # Only chapter zero owns the episode opening.  A later INTRO
+                # is chapter-local narration, not a second opening anchor, and
+                # is ignored until positional intro semantics exist.
+                if chapter_index != 0 or opening_intro_seen:
                     continue
                 opening_intro_seen = True
                 blocks.append(block.model_copy(update={"track_index": None}))
             elif block.kind is RadioScriptBlockKind.TRACK_INTRO:
+                target = block.track_index if block.track_index is not None else chapter_index
+                if target < 0 or target >= track_count or target in track_intro_targets:
+                    continue
+                if target == 0 and chapter_index != 0:
+                    continue
                 # The opening track is the immediate playback promise.  If a
                 # writer emits both an opening INTRO and TRACK_INTRO(0), keep
                 # one spoken block after that music rather than delaying the
                 # first playable asset with duplicate narration.
-                if chapter_index == 0 and opening_intro_seen:
+                if target == 0 and opening_intro_seen:
                     continue
-                if chapter_index == 0:
+                if target == 0:
                     opening_intro_seen = True
+                    track_intro_targets.add(target)
                     blocks.append(
                         block.model_copy(
                             update={"kind": RadioScriptBlockKind.INTRO, "track_index": None}
                         )
                     )
                     continue
-                blocks.append(block.model_copy(update={"track_index": chapter_index}))
+                track_intro_targets.add(target)
+                blocks.append(block.model_copy(update={"track_index": target}))
             elif block.kind is RadioScriptBlockKind.TRANSITION:
-                if chapter_index >= track_count - 1:
+                target = block.track_index if block.track_index is not None else chapter_index
+                if target < 0 or target >= track_count - 1 or target in transition_targets:
                     continue
-                blocks.append(block.model_copy(update={"track_index": chapter_index}))
+                transition_targets.add(target)
+                blocks.append(block.model_copy(update={"track_index": target}))
             elif block.kind is RadioScriptBlockKind.OUTRO:
                 if chapter_index != track_count - 1 or outro_added:
                     continue
@@ -442,6 +457,25 @@ def _duration_summary(episode: PlayableEpisode) -> AssemblyDurationSummary:
     )
 
 
+def _mock_writer_chapter_index(prompt: str) -> int:
+    marker = "Chapter: "
+    if marker not in prompt:
+        return 0
+    serialized = prompt.split(marker, 1)[1].split("\nEvidence:", 1)[0]
+    try:
+        value = json.loads(serialized).get("index", 0)
+    except (TypeError, ValueError):
+        return 0
+    return value if isinstance(value, int) and value >= 0 else 0
+
+
+def _mock_next_track_metadata(prompt: str) -> str:
+    marker = "Next track metadata: "
+    if marker not in prompt:
+        return ""
+    return prompt.split(marker, 1)[1].split("\nHost style:", 1)[0].strip()
+
+
 class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
     """Deterministic structured provider used by the zero-credential factory."""
 
@@ -452,12 +486,9 @@ class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
         ("Southbound FM", "Afterimage Avenue", NoveltyDistance.DISCOVERY),
     )
 
-    def __init__(self) -> None:
-        self._writer_index = 0
-
     async def structured(
         self,
-        _prompt: str,
+        prompt: str,
         output_type: type[BaseModel],
         *,
         transport: StructuredTransport,
@@ -501,8 +532,7 @@ class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
                 estimated_duration_seconds=900,
             )
         if output_type is RadioScript:
-            index = self._writer_index
-            self._writer_index += 1
+            index = _mock_writer_chapter_index(prompt)
             blocks: list[RadioScriptBlock] = []
             if index == 0:
                 blocks.append(
@@ -519,7 +549,7 @@ class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
                     duration_seconds=4,
                 )
             )
-            if index == len(self._tracks) - 1:
+            if not _mock_next_track_metadata(prompt):
                 blocks.append(
                     RadioScriptBlock(
                         kind=RadioScriptBlockKind.OUTRO,
