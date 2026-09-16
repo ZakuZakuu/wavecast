@@ -242,7 +242,9 @@ def test_trackless_chapter_intro_is_not_promoted_to_episode_opening() -> None:
         RadioScriptBlockKind.TRANSITION,
     ]
     assert script.blocks[1].text == "trackless story beat"
-    assert script.blocks[1].track_index is None
+    # With one playable track, a later narration-only INTRO belongs after the
+    # final track rather than remaining unanchored or moving into the opening.
+    assert script.blocks[1].track_index == 0
 
 
 def test_registry_closes_each_unique_provider_once() -> None:
@@ -409,6 +411,72 @@ def test_two_consecutive_narrative_chapters_share_one_music_gap() -> None:
         "Narration A",
         "Narration B",
         "mock:bridge",
+    ]
+
+
+def test_final_narrative_chapter_anchors_after_final_music_track() -> None:
+    script = _assemble_radio_script(
+        [
+            RadioScript(blocks=[]),
+            RadioScript(blocks=[]),
+            RadioScript(blocks=[block(RadioScriptBlockKind.TRANSITION, "Final beat")]),
+        ],
+        track_count=2,
+        chapter_music_indices=[0, 1, None],
+    )
+    tracks = [
+        ResolvedTrack(
+            track_ref="mock:opening",
+            canonical_artist="Mira Fields",
+            canonical_title="Neon First Light",
+        ),
+        ResolvedTrack(
+            track_ref="mock:bridge",
+            canonical_artist="Signal Garden",
+            canonical_title="Midnight Transfer",
+        ),
+    ]
+
+    episode = asyncio.run(EpisodeComposer(MockMusicProvider()).compose(tracks, script))
+
+    assert [segment.narration_text or segment.track_ref for segment in episode.segments] == [
+        "mock:opening",
+        "mock:bridge",
+        "Final beat",
+    ]
+
+
+def test_final_narrative_chapters_preserve_order_after_final_music_track() -> None:
+    script = _assemble_radio_script(
+        [
+            RadioScript(blocks=[]),
+            RadioScript(blocks=[]),
+            RadioScript(blocks=[block(RadioScriptBlockKind.TRANSITION, "Ending A")]),
+            RadioScript(blocks=[block(RadioScriptBlockKind.TRANSITION, "Ending B")]),
+        ],
+        track_count=2,
+        chapter_music_indices=[0, 1, None, None],
+    )
+    tracks = [
+        ResolvedTrack(
+            track_ref="mock:opening",
+            canonical_artist="Mira Fields",
+            canonical_title="Neon First Light",
+        ),
+        ResolvedTrack(
+            track_ref="mock:bridge",
+            canonical_artist="Signal Garden",
+            canonical_title="Midnight Transfer",
+        ),
+    ]
+
+    episode = asyncio.run(EpisodeComposer(MockMusicProvider()).compose(tracks, script))
+
+    assert [segment.narration_text or segment.track_ref for segment in episode.segments] == [
+        "mock:opening",
+        "mock:bridge",
+        "Ending A",
+        "Ending B",
     ]
 
 

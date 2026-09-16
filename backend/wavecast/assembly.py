@@ -600,9 +600,15 @@ def _script_track_index(
 def _previous_music_index(
     chapter_index: int, chapter_music_indices: list[int | None], track_count: int
 ) -> int | None:
+    """Return the nearest playable track before a narrative-only chapter.
+
+    The final music track is a valid anchor here: a trailing narrative beat
+    belongs after that track, whereas ordinary indexed transitions still use
+    their separate gap validation above.
+    """
     for index in range(min(chapter_index - 1, len(chapter_music_indices) - 1), -1, -1):
         music_index = chapter_music_indices[index]
-        if music_index is not None and music_index < track_count - 1:
+        if music_index is not None and 0 <= music_index < track_count:
             return music_index
     return None
 
