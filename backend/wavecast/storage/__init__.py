@@ -1,3 +1,4 @@
+from .assets import LocalObjectStorageProvider, StoredObject
 from .episodes import (
     EpisodeConcurrencyError,
     EpisodeNotFoundError,
@@ -10,4 +11,6 @@ __all__ = [
     "EpisodeNotFoundError",
     "EpisodeRepository",
     "PostgresEpisodeRepository",
+    "LocalObjectStorageProvider",
+    "StoredObject",
 ]

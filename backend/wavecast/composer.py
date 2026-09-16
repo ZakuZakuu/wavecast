@@ -196,4 +196,5 @@ def _narration_segment(block: RadioScriptBlock, order: int, chapter_number: int)
         planned_duration_seconds=block.intended_duration_seconds,
         title=block.kind.value.replace("_", " ").title(),
         narration_text=block.text,
+        tts_cues=list(block.tts_cues),
     )
