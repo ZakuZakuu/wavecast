@@ -30,6 +30,33 @@ def test_minimax_mock_mode_does_not_require_credentials(tmp_path) -> None:
     asyncio.run(run())
 
 
+@pytest.mark.parametrize(
+    ("api_key", "voice_id"),
+    [(None, "test-voice"), ("minimax-secret", None)],
+)
+def test_live_mode_with_incomplete_configuration_never_uses_mock_tts(
+    tmp_path, api_key: str | None, voice_id: str | None
+) -> None:
+    async def run() -> None:
+        from wavecast.providers.fakes import MockTTSProvider
+
+        from services.api.main import _build_tts_provider
+
+        provider = _build_tts_provider(
+            ProviderSettings(
+                mode="live", minimax_api_key=api_key, minimax_tts_voice_id=voice_id
+            ),
+            LocalObjectStorageProvider(tmp_path / "audio"),
+        )
+        assert isinstance(provider, MiniMaxTTSProvider)
+        assert not isinstance(provider, MockTTSProvider)
+        with pytest.raises(ProviderConfigurationError):
+            await provider.synthesize("No fallback", cues=[])
+        await provider.aclose()
+
+    asyncio.run(run())
+
+
 def test_tts_cache_key_is_stable_and_cue_sensitive(tmp_path) -> None:
     provider = MiniMaxTTSProvider(
         settings(), storage=LocalObjectStorageProvider(tmp_path / "audio")

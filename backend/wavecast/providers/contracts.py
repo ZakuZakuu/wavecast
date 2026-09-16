@@ -122,7 +122,7 @@ class AudioAnalysisProvider(Protocol):
 
 
 class ObjectStorageProvider(Protocol):
-    def put(
+    async def put(
         self,
         key: str,
         content: bytes,
@@ -130,7 +130,7 @@ class ObjectStorageProvider(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> str: ...
 
-    def get(self, key: str) -> Any | None: ...
+    async def get(self, key: str) -> Any | None: ...
 
     def url_for(self, key: str) -> str: ...
 

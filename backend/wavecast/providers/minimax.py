@@ -68,21 +68,21 @@ class MiniMaxTTSProvider:
         cache_key = self.cache_key(text, cues)
         lock = self._locks.setdefault(cache_key, asyncio.Lock())
         async with lock:
-            cached = self.storage.get(cache_key)
-            if cached is not None:
-                duration = _stored_duration(cached.metadata)
-                if duration is not None:
-                    self._record_usage(
-                        started_at,
-                        len(text),
-                        success=True,
-                        cache_hit=True,
-                        metadata={"cache_key": cache_key, "duration_seconds": duration},
-                    )
-                    return self._asset(cache_key, duration, cached.metadata, cache_hit=True)
-
             try:
                 api_key, voice_id = self._credentials()
+                cached = await self.storage.get(cache_key)
+                if cached is not None:
+                    duration = _stored_duration(cached.metadata)
+                    if duration is not None:
+                        self._record_usage(
+                            started_at,
+                            len(text),
+                            success=True,
+                            cache_hit=True,
+                            metadata={"cache_key": cache_key, "duration_seconds": duration},
+                        )
+                        return self._asset(cache_key, duration, cached.metadata, cache_hit=True)
+
                 payload, _response = await request_json(
                     self.client,
                     provider=self.provider_name,
@@ -98,7 +98,7 @@ class MiniMaxTTSProvider:
                 audio_bytes, extra_info = _decode_response(payload)
                 duration = _duration_seconds(audio_bytes, extra_info)
                 usage_characters = _usage_characters(extra_info, text)
-                url = self.storage.put(
+                url = await self.storage.put(
                     cache_key,
                     audio_bytes,
                     "audio/mpeg",
