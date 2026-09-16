@@ -24,7 +24,9 @@ from .fakes import (
     FakeTTSProvider,
     MockAudioProvider,
     MockMusicProvider,
+    MockTTSProvider,
 )
+from .minimax import MiniMaxTTSProvider
 from .netease import NeteaseMusicProvider
 from .profiles import InferenceProfile, StructuredTransport
 from .qqmusic import QQMusicProvider
@@ -58,6 +60,8 @@ __all__ = [
     "FakeTTSProvider",
     "MockAudioProvider",
     "MockMusicProvider",
+    "MockTTSProvider",
+    "MiniMaxTTSProvider",
     "MusicProviderRegistry",
     "MusicRetrievalService",
     "NeteaseMusicProvider",

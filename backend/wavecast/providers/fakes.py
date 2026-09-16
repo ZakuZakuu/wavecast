@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import asyncio
+import math
 from hashlib import sha1
+from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import quote
+from wave import open as open_wave
 
 from pydantic import BaseModel
 
-from .contracts import AudioAsset, AudioAssetType, AudioSource, SearchResult, TrackMetadata
+from wavecast.narration import CUE_RENDERING_VERSION
+
+from .contracts import (
+    AudioAsset,
+    AudioAssetType,
+    AudioSource,
+    ObjectStorageProvider,
+    SearchResult,
+    TrackMetadata,
+)
+from .tts_cache import build_tts_cache_key
 
 if TYPE_CHECKING:
     from wavecast.intelligence.models import ResolvedTrack
@@ -48,6 +62,86 @@ class FakeTTSProvider:
             duration=max(8, len(text) // 6),
             metadata={"cues": list(cues)},
         )
+
+
+class MockTTSProvider:
+    """Credential-free TTS with the same storage-backed materialization path."""
+
+    provider_name = "mock-tts"
+    model = "mock-speech"
+    voice_id = "mock-narrator"
+    speed = 1.0
+    language_boost = "auto"
+    audio_settings = {"sample_rate": 8000, "bitrate": 128000, "format": "wav", "channel": 1}
+
+    def __init__(self, storage: ObjectStorageProvider | None = None) -> None:
+        if storage is None:
+            from wavecast.storage.assets import LocalObjectStorageProvider
+
+            storage = LocalObjectStorageProvider()
+        self.storage = storage
+        self._locks: dict[str, asyncio.Lock] = {}
+        self.calls = 0
+
+    def cache_key(self, rendered_text: str, cues: list[str] | tuple[str, ...]) -> str:
+        return build_tts_cache_key(
+            provider=self.provider_name,
+            model=self.model,
+            voice_id=self.voice_id,
+            speed=self.speed,
+            language_boost=self.language_boost,
+            audio_settings=self.audio_settings,
+            rendered_text=rendered_text,
+            recognized_cues=cues,
+            rendering_version=CUE_RENDERING_VERSION,
+            extension="wav",
+        )
+
+    async def synthesize(self, text: str, *, cues: list[str]) -> AudioAsset:
+        cache_key = self.cache_key(text, cues)
+        lock = self._locks.setdefault(cache_key, asyncio.Lock())
+        async with lock:
+            cached = await self.storage.get(cache_key)
+            if cached is not None:
+                return self._asset(cache_key, cached.metadata.get("duration_seconds", 1), True)
+            self.calls += 1
+            duration = max(1, min(300, math.ceil(len(text) / 12)))
+            content = _mock_narration_wav(duration)
+            url = await self.storage.put(
+                cache_key,
+                content,
+                "audio/wav",
+                metadata={"duration_seconds": duration, "provider": self.provider_name},
+            )
+            return AudioAsset(
+                asset_id=cache_key,
+                asset_type=AudioAssetType.NARRATION,
+                provider=self.provider_name,
+                playback_url=url,
+                duration=duration,
+                metadata={"cache_key": cache_key, "cache_hit": False},
+            )
+
+    def _asset(self, cache_key: str, duration: object, cache_hit: bool) -> AudioAsset:
+        seconds = duration if isinstance(duration, int) and duration > 0 else 1
+        return AudioAsset(
+            asset_id=cache_key,
+            asset_type=AudioAssetType.NARRATION,
+            provider=self.provider_name,
+            playback_url=self.storage.url_for(cache_key),
+            duration=seconds,
+            metadata={"cache_key": cache_key, "cache_hit": cache_hit},
+        )
+
+
+def _mock_narration_wav(duration_seconds: int) -> bytes:
+    buffer = BytesIO()
+    with open_wave(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(1)
+        wav.setframerate(8000)
+        wav.writeframes(b"\x80" * (8000 * duration_seconds))
+    return buffer.getvalue()
 
 
 class MockAudioProvider:

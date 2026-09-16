@@ -13,6 +13,7 @@ class UsageEvent(BaseModel):
     elapsed_ms: int = Field(ge=0)
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
+    usage_characters: int | None = Field(default=None, ge=0)
     search_queries: int | None = Field(default=None, ge=0)
     search_credits: float | None = Field(default=None, ge=0)
     actual_cost_usd: float | None = Field(default=None, ge=0)
@@ -25,6 +26,7 @@ class UsageTotals(BaseModel):
     event_count: int
     input_tokens: int
     output_tokens: int
+    usage_characters: int
     reasoning_tokens: int
     search_queries: int
     search_credits: float
@@ -51,6 +53,7 @@ class UsageLedger:
             event_count=len(events),
             input_tokens=sum(event.input_tokens or 0 for event in events),
             output_tokens=sum(event.output_tokens or 0 for event in events),
+            usage_characters=sum(event.usage_characters or 0 for event in events),
             reasoning_tokens=sum(
                 value
                 for event in events
