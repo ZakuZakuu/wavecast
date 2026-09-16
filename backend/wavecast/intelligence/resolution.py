@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from wavecast.models.episode import MusicSegment, SegmentKind, SegmentState
 from wavecast.providers.contracts import MusicProvider, TrackMetadata
+from wavecast.providers.retrieval import MusicRetrievalService
 
 from .models import (
     ResolvedTrack,
@@ -60,6 +61,41 @@ async def resolve_track_candidate(
         canonical_artist=resolved.canonical_artist,
         canonical_title=resolved.canonical_title,
     )
+
+
+async def resolve_track_proposal_across_providers(
+    retrieval: MusicRetrievalService,
+    proposal: TrackProposal,
+    *,
+    limit: int = 10,
+) -> ResolvedTrack | None:
+    """Resolve a proposal through deterministic multi-catalog retrieval.
+
+    Exact artist and full-title identity checks remain mandatory.  Retrieval may
+    rank base-title/version alternatives, but it cannot silently promote a
+    near-match or an unqualified provider reference into the episode timeline.
+    """
+    query = f"{proposal.artist} {proposal.title}"
+    candidates = await retrieval.search(
+        query,
+        requested_artist=proposal.artist,
+        requested_title=proposal.title,
+        limit=limit,
+    )
+    for candidate in candidates:
+        if not candidate.playable:
+            continue
+        if not candidate.track_ref.startswith(f"{candidate.provider}:"):
+            continue
+        if _same_catalog_name(candidate.artist, proposal.artist) and _same_catalog_name(
+            candidate.title, proposal.title
+        ):
+            return ResolvedTrack(
+                track_ref=candidate.track_ref,
+                canonical_artist=candidate.artist,
+                canonical_title=candidate.title,
+            )
+    return None
 
 
 def music_segment_from_track(
