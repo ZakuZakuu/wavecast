@@ -166,3 +166,134 @@ def test_composer_preserves_provider_neutral_tts_cues() -> None:
 
     narration = next(segment for segment in episode.segments if segment.narration_text)
     assert narration.tts_cues == ["pause_short", "breath"]
+
+
+def test_composer_keeps_narration_only_blocks_without_music_substitution() -> None:
+    tracks = [
+        ResolvedTrack(
+            track_ref="mock:opening",
+            canonical_artist="Mira Fields",
+            canonical_title="Neon First Light",
+        ),
+        None,
+        ResolvedTrack(
+            track_ref="mock:bridge",
+            canonical_artist="Signal Garden",
+            canonical_title="Midnight Transfer",
+        ),
+    ]
+    episode = asyncio.run(
+        EpisodeComposer(MockMusicProvider()).compose(
+            tracks,
+            RadioScript(
+                blocks=[
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.TRANSITION,
+                        text="This is a story beat without a track.",
+                        duration_seconds=4,
+                    )
+                ]
+            ),
+        )
+    )
+
+    assert [segment.track_ref for segment in episode.segments if segment.kind.value == "MUSIC"] == [
+        "mock:opening",
+        "mock:bridge",
+    ]
+    assert any(
+        segment.narration_text == "This is a story beat without a track."
+        for segment in episode.segments
+    )
+
+
+def test_composer_can_render_a_narration_only_episode() -> None:
+    episode = asyncio.run(
+        EpisodeComposer(MockMusicProvider()).compose(
+            [None],
+            RadioScript(
+                blocks=[
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.TRANSITION,
+                        text="Context before any song.",
+                        duration_seconds=4,
+                    )
+                ]
+            ),
+        )
+    )
+
+    assert len(episode.segments) == 1
+    assert episode.segments[0].narration_text == "Context before any song."
+
+
+def test_composer_keeps_multiple_narration_beats_in_one_music_gap() -> None:
+    tracks = [
+        ResolvedTrack(
+            track_ref="mock:opening",
+            canonical_artist="Mira Fields",
+            canonical_title="Neon First Light",
+        ),
+        ResolvedTrack(
+            track_ref="mock:bridge",
+            canonical_artist="Signal Garden",
+            canonical_title="Midnight Transfer",
+        ),
+    ]
+    episode = asyncio.run(
+        EpisodeComposer(MockMusicProvider()).compose(
+            tracks,
+            RadioScript(
+                blocks=[
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.TRANSITION,
+                        text="Narration A",
+                        duration_seconds=3,
+                    ),
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.TRANSITION,
+                        text="Narration B",
+                        duration_seconds=3,
+                    ),
+                ]
+            ),
+        )
+    )
+
+    assert [
+        (segment.kind.value, segment.narration_text or segment.track_ref)
+        for segment in episode.segments
+    ] == [
+        ("MUSIC", "mock:opening"),
+        ("NARRATION", "Narration A"),
+        ("NARRATION", "Narration B"),
+        ("MUSIC", "mock:bridge"),
+    ]
+
+
+def test_composer_preserves_visible_and_tts_text() -> None:
+    episode = asyncio.run(
+        EpisodeComposer(MockMusicProvider()).compose(
+            [
+                ResolvedTrack(
+                    track_ref="mock:opening",
+                    canonical_artist="Mira Fields",
+                    canonical_title="Neon First Light",
+                )
+            ],
+            RadioScript(
+                blocks=[
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.INTRO,
+                        text="3rd Coast",
+                        tts_text="Third Coast",
+                        duration_seconds=4,
+                    )
+                ]
+            ),
+        )
+    )
+
+    narration = next(segment for segment in episode.segments if segment.narration_text)
+    assert narration.narration_text == "3rd Coast"
+    assert narration.tts_text == "Third Coast"

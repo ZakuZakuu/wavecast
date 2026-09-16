@@ -27,6 +27,7 @@ from wavecast.intelligence.models import (
     NarrationScript,
     NarrativeRole,
     NoveltyDistance,
+    OutputLanguage,
     ProgramSkeleton,
     RadioScript,
     RadioScriptBlock,
@@ -34,6 +35,7 @@ from wavecast.intelligence.models import (
     ResolvedTrack,
     TrackProposal,
     UnresolvedTrackError,
+    resolve_output_language,
 )
 from wavecast.intelligence.research import (
     BackgroundResearchService,
@@ -83,7 +85,9 @@ class LiveEpisodeAssemblyRequest(BaseModel):
     anchor_tracks: list[str] = Field(default_factory=list, max_length=8)
     desired_duration_seconds: int = Field(default=900, gt=0)
     max_tracks: int = Field(default=4, ge=2, le=8)
+    max_chapters: int = Field(default=16, ge=2, le=32)
     listener_taste_context: str | None = Field(default=None, max_length=1000)
+    output_language: OutputLanguage = OutputLanguage.AUTO
 
 
 class UnresolvedAssemblyProposal(BaseModel):
@@ -133,7 +137,8 @@ class EpisodeAssemblyResult(BaseModel):
 class _ResolvedChapter:
     chapter: ChapterPlan
     writer_chapter: ChapterPlan
-    track: ResolvedTrack
+    track: ResolvedTrack | None
+    music_index: int | None
 
 
 class LiveEpisodeAssemblyService:
@@ -152,6 +157,7 @@ class LiveEpisodeAssemblyService:
         composer: EpisodeComposer,
         materializer: NarrationMaterializer,
         ledger: UsageLedger | None = None,
+        narration_ratio: float = 0.15,
     ) -> None:
         self.fast_path = fast_path
         self.background_pipeline = background_pipeline
@@ -159,6 +165,9 @@ class LiveEpisodeAssemblyService:
         self.composer = composer
         self.materializer = materializer
         self.ledger = ledger or UsageLedger()
+        if not 0.1 <= narration_ratio <= 0.2:
+            raise ValueError("narration_ratio must be between 0.1 and 0.2")
+        self.narration_ratio = narration_ratio
 
     async def assemble(
         self,
@@ -173,6 +182,7 @@ class LiveEpisodeAssemblyService:
             anchor_tracks=list(request.anchor_tracks),
             desired_duration_seconds=request.desired_duration_seconds,
             listener_taste_context=request.listener_taste_context,
+            output_language=request.output_language,
         )
 
         fast_started = perf_counter()
@@ -207,11 +217,15 @@ class LiveEpisodeAssemblyService:
                 bundle,
                 fast_result.plan,
                 desired_duration_seconds=request.desired_duration_seconds,
+                output_language=resolve_output_language(request.output_language, request.topic),
+                topic=request.topic,
             )
         except ProviderError as error:
             raise EpisodeAssemblyError(str(error), stage="curator") from error
         curator_ms = _elapsed_ms(curator_started)
-        chapters = list(skeleton.chapters[: request.max_tracks])
+        chapters = _select_chapters_for_music_limit(
+            skeleton.chapters, request.max_tracks, request.max_chapters
+        )
         skeleton = skeleton.model_copy(update={"chapters": chapters})
         trace.mark("program_skeleton_ready", chapter_count=len(chapters))
 
@@ -219,46 +233,62 @@ class LiveEpisodeAssemblyService:
         resolved_chapters: list[_ResolvedChapter] = []
         unresolved: list[UnresolvedAssemblyProposal] = []
         for chapter in chapters:
-            try:
-                resolved = await resolve_track_proposal_across_providers(
-                    self.retrieval, chapter.track
-                )
-            except ProviderError as error:
-                unresolved.append(
-                    UnresolvedAssemblyProposal(
-                        chapter_index=chapter.index,
-                        proposal=chapter.track,
-                        reason=f"resolution provider failed: {type(error).__name__}",
+            resolved: ResolvedTrack | None = None
+            resolution_reason: str | None = None
+            if chapter.track is not None:
+                try:
+                    resolved = await resolve_track_proposal_across_providers(
+                        self.retrieval, chapter.track
                     )
-                )
-                continue
-            if resolved is None:
-                unresolved.append(
-                    UnresolvedAssemblyProposal(
-                        chapter_index=chapter.index,
-                        proposal=chapter.track,
-                        reason="no exact playable catalog match",
+                except ProviderError as error:
+                    resolution_reason = f"resolution provider failed: {type(error).__name__}"
+                if resolved is None and resolution_reason is None:
+                    resolution_reason = "no exact playable catalog match"
+                if resolution_reason is not None:
+                    unresolved.append(
+                        UnresolvedAssemblyProposal(
+                            chapter_index=chapter.index,
+                            proposal=chapter.track,
+                            reason=resolution_reason,
+                        )
                     )
-                )
-                continue
             resolved_chapters.append(
                 _ResolvedChapter(
                     chapter=chapter,
                     writer_chapter=chapter.model_copy(
-                        update={"index": len(resolved_chapters)}
+                        update={
+                            "index": len(resolved_chapters),
+                            "track": chapter.track if resolved is not None else None,
+                        }
                     ),
                     track=resolved,
+                    music_index=None,
                 )
             )
+        music_index = 0
+        indexed_chapters: list[_ResolvedChapter] = []
+        for item in resolved_chapters:
+            indexed_chapters.append(
+                _ResolvedChapter(
+                    chapter=item.chapter,
+                    writer_chapter=item.writer_chapter,
+                    track=item.track,
+                    music_index=music_index if item.track is not None else None,
+                )
+            )
+            if item.track is not None:
+                music_index += 1
+        resolved_chapters = indexed_chapters
         resolution_ms = _elapsed_ms(resolution_started)
         trace.mark(
             "tracks_resolved",
-            resolved_count=len(resolved_chapters),
+            resolved_count=sum(item.track is not None for item in resolved_chapters),
             unresolved_count=len(unresolved),
         )
-        if len(resolved_chapters) < 2:
+        resolved_track_count = sum(item.track is not None for item in resolved_chapters)
+        if resolved_track_count < 2:
             raise EpisodeAssemblyError(
-                f"assembly requires at least two resolved tracks; got {len(resolved_chapters)}",
+                f"assembly requires at least two resolved tracks; got {resolved_track_count}",
                 stage="resolution",
             )
 
@@ -267,8 +297,11 @@ class LiveEpisodeAssemblyService:
         previous_context = ""
         for index, resolved_chapter in enumerate(resolved_chapters):
             next_metadata = ""
-            if index + 1 < len(resolved_chapters):
-                next_track = resolved_chapters[index + 1].track
+            next_track = next(
+                (item.track for item in resolved_chapters[index + 1 :] if item.track is not None),
+                None,
+            )
+            if next_track is not None:
                 next_metadata = f"{next_track.canonical_artist} — {next_track.canonical_title}"
             try:
                 script = await self.background_pipeline.writer.write(
@@ -276,18 +309,29 @@ class LiveEpisodeAssemblyService:
                     bundle.evidence,
                     previous_committed_context=previous_context,
                     next_track_metadata=next_metadata,
+                    target_duration_seconds=_narration_target_seconds(
+                        request.desired_duration_seconds,
+                        len(resolved_chapters),
+                        self.narration_ratio,
+                    ),
+                    output_language=resolve_output_language(request.output_language, request.topic),
+                    topic=request.topic,
                 )
             except ProviderError as error:
                 raise EpisodeAssemblyError(str(error), stage="writer") from error
             writer_scripts.append(script)
             previous_context = _script_text(script)
         writer_ms = _elapsed_ms(writer_started)
-        radio_script = _assemble_radio_script(writer_scripts, len(resolved_chapters))
+        radio_script = _assemble_radio_script(
+            writer_scripts,
+            resolved_track_count,
+            chapter_music_indices=[item.music_index for item in resolved_chapters],
+        )
 
         composition_started = perf_counter()
         try:
             playable_episode = await self.composer.compose(
-                [item.track for item in resolved_chapters], radio_script
+                [item.track for item in resolved_chapters if item.track is not None], radio_script
             )
         except (ProviderError, UnresolvedTrackError, ValueError) as error:
             raise EpisodeAssemblyError(str(error), stage="composition") from error
@@ -308,7 +352,7 @@ class LiveEpisodeAssemblyService:
             playable_episode=playable_episode,
             fast_plan=fast_result.plan,
             skeleton=skeleton,
-            resolved_tracks=[item.track for item in resolved_chapters],
+            resolved_tracks=[item.track for item in resolved_chapters if item.track is not None],
             unresolved_proposals=unresolved,
             radio_script=radio_script,
             timings=AssemblyTimings(
@@ -362,6 +406,29 @@ def _elapsed_ms(started: float) -> int:
     return max(0, int((perf_counter() - started) * 1000))
 
 
+def _narration_target_seconds(
+    desired_duration_seconds: int, chapter_count: int, ratio: float
+) -> int:
+    """Allocate a small, deterministic spoken budget to every narrative beat."""
+
+    return min(300, max(1, round(desired_duration_seconds * ratio / max(1, chapter_count))))
+
+
+def _select_chapters_for_music_limit(
+    chapters: list[ChapterPlan], max_tracks: int, max_chapters: int
+) -> list[ChapterPlan]:
+    """Keep every narrative-only beat while bounding track-bearing chapters."""
+
+    selected: list[ChapterPlan] = []
+    track_count = 0
+    for chapter in chapters:
+        if chapter.track is None or track_count < max_tracks:
+            selected.append(chapter)
+        if chapter.track is not None:
+            track_count += 1
+    return selected[:max_chapters]
+
+
 def _script_text(script: RadioScript | NarrationScript) -> str:
     return script.text
 
@@ -373,6 +440,7 @@ def _script_blocks(script: RadioScript | NarrationScript) -> list[RadioScriptBlo
         RadioScriptBlock(
             kind=RadioScriptBlockKind.TRANSITION,
             text=script.text,
+            tts_text=script.tts_text,
             duration_seconds=script.intended_duration_seconds,
             tts_cues=list(script.tts_cues),
             evidence_ids=list(script.evidence_ids),
@@ -381,26 +449,73 @@ def _script_blocks(script: RadioScript | NarrationScript) -> list[RadioScriptBlo
 
 
 def _assemble_radio_script(
-    scripts: list[RadioScript | NarrationScript], track_count: int
+    scripts: list[RadioScript | NarrationScript],
+    track_count: int,
+    *,
+    chapter_music_indices: list[int | None] | None = None,
 ) -> RadioScript:
     """Place chapter scripts once, preserving chapter order and gap semantics."""
+    mapping_available = chapter_music_indices is not None
+    chapter_music_indices = (
+        chapter_music_indices if chapter_music_indices is not None else list(range(len(scripts)))
+    )
     blocks: list[RadioScriptBlock] = []
     opening_intro_seen = False
     track_intro_targets: set[int] = set()
     transition_targets: set[int] = set()
     outro_added = False
     for chapter_index, script in enumerate(scripts):
+        chapter_music_index = (
+            chapter_music_indices[chapter_index]
+            if chapter_index < len(chapter_music_indices)
+            else None
+        )
         for block in _script_blocks(script):
             if block.kind is RadioScriptBlockKind.INTRO:
                 # Only chapter zero owns the episode opening.  A later INTRO
-                # is chapter-local narration, not a second opening anchor, and
-                # is ignored until positional intro semantics exist.
+                # is never promoted to that opening gap.  For a trackless beat
+                # retain its story as an unindexed transition instead.
                 if chapter_index != 0 or opening_intro_seen:
+                    if chapter_music_index is None:
+                        anchor = _previous_music_index(
+                            chapter_index, chapter_music_indices, track_count
+                        )
+                        blocks.append(
+                            block.model_copy(
+                                update={
+                                    "kind": RadioScriptBlockKind.TRANSITION,
+                                    "track_index": anchor,
+                                }
+                            )
+                        )
                     continue
                 opening_intro_seen = True
                 blocks.append(block.model_copy(update={"track_index": None}))
             elif block.kind is RadioScriptBlockKind.TRACK_INTRO:
-                target = block.track_index if block.track_index is not None else chapter_index
+                target = _script_track_index(
+                    block.track_index, chapter_music_indices, track_count, mapping_available
+                ) if block.track_index is not None else chapter_music_index
+                if target is None:
+                    # A trackless beat still has a spoken story.  Keep it as an
+                    # transition in the preceding gap when one exists.  An
+                    # explicitly indexed block remains unanchored when its
+                    # chapter has no music.
+                    anchor = (
+                        _previous_music_index(
+                            chapter_index, chapter_music_indices, track_count
+                        )
+                        if block.track_index is None and chapter_music_index is None
+                        else None
+                    )
+                    blocks.append(
+                        block.model_copy(
+                            update={
+                                "kind": RadioScriptBlockKind.TRANSITION,
+                                "track_index": anchor,
+                            }
+                        )
+                    )
+                    continue
                 if target < 0 or target >= track_count or target in track_intro_targets:
                     continue
                 if target == 0 and chapter_index != 0:
@@ -423,13 +538,31 @@ def _assemble_radio_script(
                 track_intro_targets.add(target)
                 blocks.append(block.model_copy(update={"track_index": target}))
             elif block.kind is RadioScriptBlockKind.TRANSITION:
-                target = block.track_index if block.track_index is not None else chapter_index
-                if target < 0 or target >= track_count - 1 or target in transition_targets:
+                target = _script_track_index(
+                    block.track_index, chapter_music_indices, track_count, mapping_available
+                ) if block.track_index is not None else chapter_music_index
+                if target is None:
+                    # Compatibility-form transitions are assigned to gaps by
+                    # EpisodeComposer; this also preserves narration-only beats.
+                    anchor = (
+                        _previous_music_index(
+                            chapter_index, chapter_music_indices, track_count
+                        )
+                        if block.track_index is None and chapter_music_index is None
+                        else None
+                    )
+                    blocks.append(block.model_copy(update={"track_index": anchor}))
                     continue
-                transition_targets.add(target)
+                narrative_gap = chapter_music_index is None and block.track_index is None
+                if target < 0 or target >= track_count - 1 or (
+                    target in transition_targets and not narrative_gap
+                ):
+                    continue
+                if not narrative_gap:
+                    transition_targets.add(target)
                 blocks.append(block.model_copy(update={"track_index": target}))
             elif block.kind is RadioScriptBlockKind.OUTRO:
-                if chapter_index != track_count - 1 or outro_added:
+                if chapter_index != len(scripts) - 1 or outro_added:
                     continue
                 outro_added = True
                 blocks.append(block.model_copy(update={"track_index": None}))
@@ -439,6 +572,45 @@ def _assemble_radio_script(
         evidence_ids=[evidence_id for script in scripts for evidence_id in _script_evidence_ids(script)],
         intended_duration_seconds=max(1, sum(block.intended_duration_seconds for block in blocks)),
     )
+
+
+def _script_track_index(
+    requested_index: int,
+    chapter_music_indices: list[int | None],
+    track_count: int,
+    mapping_available: bool,
+) -> int | None:
+    """Map Writer chapter indices to final playback track indices safely."""
+
+    if requested_index < 0:
+        return None
+    if mapping_available and requested_index < len(chapter_music_indices):
+        # ``None`` is meaningful: the Writer targeted a narrative-only chapter
+        # and must not silently retarget a later playable song.
+        return chapter_music_indices[requested_index]
+    if mapping_available:
+        return None
+    if requested_index < len(chapter_music_indices):
+        mapped = chapter_music_indices[requested_index]
+        if mapped is not None:
+            return mapped
+    return requested_index if requested_index < track_count else None
+
+
+def _previous_music_index(
+    chapter_index: int, chapter_music_indices: list[int | None], track_count: int
+) -> int | None:
+    """Return the nearest playable track before a narrative-only chapter.
+
+    The final music track is a valid anchor here: a trailing narrative beat
+    belongs after that track, whereas ordinary indexed transitions still use
+    their separate gap validation above.
+    """
+    for index in range(min(chapter_index - 1, len(chapter_music_indices) - 1), -1, -1):
+        music_index = chapter_music_indices[index]
+        if music_index is not None and 0 <= music_index < track_count:
+            return music_index
+    return None
 
 
 def _script_evidence_ids(script: RadioScript | NarrationScript) -> list[str]:
