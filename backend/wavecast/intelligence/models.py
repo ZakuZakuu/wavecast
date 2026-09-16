@@ -25,6 +25,57 @@ class NarrativeRole(StrEnum):
     RESOLUTION = "resolution"
 
 
+class SearchIntent(StrEnum):
+    """Operational routing intent for one bounded research query."""
+
+    DISCOVERY = "discovery"
+    RESEARCH = "research"
+    EXACT = "exact"
+
+
+class ResearchFacet(BaseModel):
+    """An open-ended question that explains why background research is needed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=80)
+    label: str = Field(min_length=1, max_length=120)
+    question: str = Field(min_length=1, max_length=500)
+    priority: int = Field(ge=0, le=100)
+    source_preferences: list[str] = Field(default_factory=list, max_length=8)
+
+
+class PlannedResearchQuery(BaseModel):
+    """One bounded query proposed by FastStart for the background stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=500)
+    intent: SearchIntent
+    facet_ids: list[str] = Field(default_factory=list, max_length=8)
+    rationale: str = Field(min_length=1, max_length=300)
+
+
+class ResearchPlan(BaseModel):
+    """Topic-adaptive research intent, independent from any provider payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    central_question: str = Field(min_length=1, max_length=500)
+    facets: list[ResearchFacet] = Field(default_factory=list, max_length=8)
+    background_queries: list[PlannedResearchQuery] = Field(default_factory=list, max_length=3)
+
+
+def empty_research_plan() -> ResearchPlan:
+    """Safe schema default for older callers that construct FastStartPlan directly."""
+
+    return ResearchPlan(
+        central_question="What evidence best answers the listener's topic?",
+        facets=[],
+        background_queries=[],
+    )
+
+
 class Evidence(BaseModel):
     id: str
     claim_or_excerpt: str = Field(min_length=1, max_length=800)
@@ -32,6 +83,9 @@ class Evidence(BaseModel):
     source_provider: str
     confidence: float = Field(ge=0, le=1)
     query: str
+    source_title: str = ""
+    facet_ids: list[str] = Field(default_factory=list, max_length=8)
+    search_intent: SearchIntent | None = None
 
 
 class TasteHypothesis(BaseModel):
@@ -198,6 +252,7 @@ class FastStartPlan(BaseModel):
     selected_next_track: TrackProposal | None = None
     first_narration: NarrationScript
     uncertainties: list[str] = Field(default_factory=list)
+    research_plan: ResearchPlan = Field(default_factory=empty_research_plan)
 
 
 class FastResearchInput(BaseModel):
