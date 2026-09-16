@@ -16,6 +16,7 @@ class ProviderSettings:
     deepseek_api_key: str | None = None
     exa_api_key: str | None = None
     tavily_api_key: str | None = None
+    minimax_api_key: str | None = None
     audius_api_key: str | None = None
     # Audius API keys identify the application and may be used in client-safe
     # requests.  Bearer tokens authorize backend actions and must never reach
@@ -44,6 +45,7 @@ class ProviderSettings:
             deepseek_api_key=getenv("DEEPSEEK_API_KEY"),
             exa_api_key=getenv("EXA_API_KEY"),
             tavily_api_key=getenv("TAVILY_API_KEY"),
+            minimax_api_key=getenv("MINIMAX_API_KEY"),
             audius_api_key=getenv("AUDIUS_API_KEY"),
             audius_bearer_token=getenv("AUDIUS_BEARER_TOKEN"),
             audius_base_url=getenv("AUDIUS_BASE_URL", "https://api.audius.co/v1"),
@@ -63,9 +65,20 @@ class ProviderSettings:
             deepseek_deep_max_output_tokens=_positive_int_from_env(
                 "DEEPSEEK_DEEP_MAX_OUTPUT_TOKENS", default=12288
             ),
+            minimax_tts_base_url=getenv("MINIMAX_TTS_BASE_URL", "https://api.minimax.io"),
+            minimax_tts_model=getenv("MINIMAX_TTS_MODEL", "speech-2.8-hd"),
+            minimax_tts_voice_id=getenv("MINIMAX_TTS_VOICE_ID"),
+            minimax_tts_speed=_positive_float_from_env("MINIMAX_TTS_SPEED", default=1.0),
+            minimax_tts_language_boost=getenv("MINIMAX_TTS_LANGUAGE_BOOST", "auto"),
         )
 
-    def credential_for(self, provider: Literal["deepseek", "exa", "tavily"]) -> str:
+    minimax_tts_base_url: str = "https://api.minimax.io"
+    minimax_tts_model: str = "speech-2.8-hd"
+    minimax_tts_voice_id: str | None = None
+    minimax_tts_speed: float = 1.0
+    minimax_tts_language_boost: str = "auto"
+
+    def credential_for(self, provider: Literal["deepseek", "exa", "tavily", "minimax"]) -> str:
         if self.mode != "live":
             raise ProviderConfigurationError(
                 f"{provider} live adapter requires WAVECAST_PROVIDER_MODE=live"
@@ -74,6 +87,7 @@ class ProviderSettings:
             "deepseek": self.deepseek_api_key,
             "exa": self.exa_api_key,
             "tavily": self.tavily_api_key,
+            "minimax": self.minimax_api_key,
         }[provider]
         if not key:
             raise ProviderConfigurationError(f"{provider} requires its API key in live mode")

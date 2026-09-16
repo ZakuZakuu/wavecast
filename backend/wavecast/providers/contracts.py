@@ -122,7 +122,17 @@ class AudioAnalysisProvider(Protocol):
 
 
 class ObjectStorageProvider(Protocol):
-    async def put(self, key: str, content: bytes, content_type: str) -> str: ...
+    def put(
+        self,
+        key: str,
+        content: bytes,
+        content_type: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> str: ...
+
+    def get(self, key: str) -> Any | None: ...
+
+    def url_for(self, key: str) -> str: ...
 
 
 class CoverRenderer(Protocol):

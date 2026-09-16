@@ -26,6 +26,8 @@ def test_mock_mode_is_credential_free(monkeypatch: pytest.MonkeyPatch) -> None:
         "TAVILY_API_KEY",
         "AUDIUS_API_KEY",
         "AUDIUS_BEARER_TOKEN",
+        "MINIMAX_API_KEY",
+        "MINIMAX_TTS_VOICE_ID",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -34,6 +36,23 @@ def test_mock_mode_is_credential_free(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.mode == "mock"
     with pytest.raises(ProviderConfigurationError):
         settings.credential_for("deepseek")
+
+
+def test_minimax_tts_configuration_is_explicit_and_optional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MINIMAX_TTS_BASE_URL", "https://minimax.test")
+    monkeypatch.setenv("MINIMAX_TTS_MODEL", "speech-2.8-hd")
+    monkeypatch.setenv("MINIMAX_TTS_VOICE_ID", "radio-voice")
+    monkeypatch.setenv("MINIMAX_TTS_SPEED", "1.1")
+
+    settings = ProviderSettings.from_env()
+
+    assert settings.minimax_api_key is None
+    assert settings.minimax_tts_base_url == "https://minimax.test"
+    assert settings.minimax_tts_model == "speech-2.8-hd"
+    assert settings.minimax_tts_voice_id == "radio-voice"
+    assert settings.minimax_tts_speed == 1.1
 
 
 def test_audius_api_key_and_bearer_token_are_separate_env_values(

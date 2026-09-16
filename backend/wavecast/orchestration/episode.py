@@ -309,6 +309,22 @@ class EpisodeOrchestrator:
         episode.last_activity_at = self.now()
         return self.repository.save(episode)
 
+    def prepare_materialization(self, episode_id: str) -> LiveEpisode:
+        """Prepare a full timeline while leaving narration network I/O external.
+
+        The API/materialization service can then await TTS for narration segments and
+        commit the final ``MATERIALIZED`` state. Existing synchronous callers keep
+        using ``materialize_all`` and the deterministic mock AudioProvider path.
+        """
+        episode = self._active_episode(episode_id)
+        episode.generation_mode = GenerationMode.FULL
+        episode.state = EpisodeState.MATERIALIZING
+        for segment in episode.timeline_segments:
+            if segment.kind is SegmentKind.MUSIC and not segment.is_audio_ready:
+                self._make_ready(segment)
+        episode.last_activity_at = self.now()
+        return self.repository.save(episode)
+
     def replace_speculative_music(self, episode_id: str, replacement_title: str) -> LiveEpisode:
         """A bounded replan seam: committed content is never changed."""
         episode = self._active_episode(episode_id)

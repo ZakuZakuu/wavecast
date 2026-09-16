@@ -122,6 +122,7 @@ class NarrationSegment(Segment):
 
     kind: Literal[SegmentKind.NARRATION] = SegmentKind.NARRATION
     audio_source_url: str | None = None
+    tts_cues: list[str] = Field(default_factory=list)
 
 
 class PlayableEpisode(BaseModel):
