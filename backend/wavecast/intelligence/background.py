@@ -6,7 +6,7 @@ import asyncio
 
 from .curation import CuratorService
 from .fast_start import FastPathResult
-from .models import FastResearchInput, NarrationScript, ProgramSkeleton, ResearchBundle
+from .models import FastResearchInput, NarrationScript, ProgramSkeleton, RadioScript, ResearchBundle
 from .planning import PlanningSession
 from .research import BackgroundResearchService
 from .trace import GenerationTrace
@@ -19,7 +19,7 @@ class BackgroundPipelineResult:
         *,
         bundle: ResearchBundle,
         skeleton: ProgramSkeleton,
-        future_script: NarrationScript | None,
+        future_script: RadioScript | NarrationScript | None,
         trace: GenerationTrace,
     ) -> None:
         self.bundle = bundle
@@ -68,7 +68,7 @@ class BackgroundIntelligencePipeline:
             return None
         if planning:
             planning.apply_skeleton(skeleton)
-        future_script: NarrationScript | None = None
+        future_script: RadioScript | NarrationScript | None = None
         target_chapter = (
             planning.speculative_chapters[0]
             if planning and planning.speculative_chapters

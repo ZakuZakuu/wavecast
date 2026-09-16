@@ -19,7 +19,14 @@ from wavecast.providers.usage import UsageEvent, UsageLedger
 
 
 def test_mock_mode_is_credential_free(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("WAVECAST_PROVIDER_MODE", "DEEPSEEK_API_KEY", "EXA_API_KEY", "TAVILY_API_KEY"):
+    for name in (
+        "WAVECAST_PROVIDER_MODE",
+        "DEEPSEEK_API_KEY",
+        "EXA_API_KEY",
+        "TAVILY_API_KEY",
+        "AUDIUS_API_KEY",
+        "AUDIUS_BEARER_TOKEN",
+    ):
         monkeypatch.delenv(name, raising=False)
 
     settings = ProviderSettings.from_env()
@@ -27,6 +34,18 @@ def test_mock_mode_is_credential_free(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.mode == "mock"
     with pytest.raises(ProviderConfigurationError):
         settings.credential_for("deepseek")
+
+
+def test_audius_api_key_and_bearer_token_are_separate_env_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUDIUS_API_KEY", "app-key")
+    monkeypatch.setenv("AUDIUS_BEARER_TOKEN", "server-token")
+
+    settings = ProviderSettings.from_env()
+
+    assert settings.audius_api_key == "app-key"
+    assert settings.audius_bearer_token == "server-token"
 
 
 def test_deepseek_timeout_is_independent_from_search_timeout(

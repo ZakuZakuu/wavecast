@@ -124,6 +124,23 @@ class NarrationSegment(Segment):
     audio_source_url: str | None = None
 
 
+class PlayableEpisode(BaseModel):
+    """A deterministic composed timeline ready for browser runtime ingestion."""
+
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    segments: list[MusicSegment | NarrationSegment]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def duration_seconds(self) -> int:
+        return sum(segment.duration_seconds for segment in self.segments if segment.is_timeline_active)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def timeline_duration_seconds(self) -> int:
+        return self.duration_seconds
+
+
 class LiveEpisode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     seed_id: str
