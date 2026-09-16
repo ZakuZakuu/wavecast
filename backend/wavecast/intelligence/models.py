@@ -1,9 +1,11 @@
 """Typed intelligence contracts; provider payloads are normalized before entering these models."""
 
+from __future__ import annotations
+
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class NoveltyDistance(StrEnum):
@@ -94,6 +96,75 @@ class NarrationScript(BaseModel):
     tts_cues: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
     intended_duration_seconds: int = Field(ge=1, le=300)
+
+
+class RadioScriptBlockKind(StrEnum):
+    INTRO = "intro"
+    TRACK_INTRO = "track_intro"
+    TRANSITION = "transition"
+    OUTRO = "outro"
+
+
+class RadioScriptBlock(BaseModel):
+    """One spoken block in a radio-style script, before TTS materialization.
+
+    ``track_index`` is the zero-based playback anchor: ``TRACK_INTRO(i)`` is
+    immediately before track ``i`` and ``TRANSITION(i)`` occupies the gap after
+    track ``i`` and before track ``i + 1``.  An unindexed ``INTRO`` follows the
+    opening music; unindexed transitions are a compatibility form assigned to
+    available gaps in order.  ``OUTRO`` follows the final track.
+    """
+
+    kind: RadioScriptBlockKind
+    text: str = Field(min_length=1, max_length=4000)
+    duration_seconds: int = Field(
+        ge=1,
+        le=300,
+        validation_alias=AliasChoices("duration_seconds", "intended_duration_seconds"),
+    )
+    tts_cues: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    track_index: int | None = Field(default=None, ge=0)
+
+    @property
+    def intended_duration_seconds(self) -> int:
+        return self.duration_seconds
+
+
+class RadioScript(BaseModel):
+    """Structured showrunner output; no audio asset or catalog identity is embedded."""
+
+    blocks: list[RadioScriptBlock] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    intended_duration_seconds: int = Field(default=1, ge=1, le=1800)
+
+    @property
+    def text(self) -> str:
+        """Compatibility view for callers that rendered one narration paragraph."""
+        return " ".join(block.text for block in self.blocks)
+
+    @property
+    def tts_cues(self) -> list[str]:
+        return [cue for block in self.blocks for cue in block.tts_cues]
+
+    @classmethod
+    def from_blocks(
+        cls,
+        blocks: list[tuple[RadioScriptBlockKind, str, int]],
+        *,
+        intended_duration_seconds: int,
+    ) -> RadioScript:
+        return cls(
+            blocks=[
+                RadioScriptBlock(
+                    kind=kind,
+                    text=text,
+                    duration_seconds=duration,
+                )
+                for kind, text, duration in blocks
+            ],
+            intended_duration_seconds=intended_duration_seconds,
+        )
 
 
 class ChapterPlan(BaseModel):

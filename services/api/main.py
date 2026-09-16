@@ -5,9 +5,11 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from io import BytesIO
 from typing import cast
+from urllib.parse import quote
 from uuid import uuid4
 from wave import open as open_wave
 
+import httpx
 from anyio import to_thread
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +18,7 @@ from pydantic import BaseModel, Field
 from wavecast.models.episode import CoverParams, EpisodeSeed, LiveEpisode
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
+from wavecast.providers.config import ProviderSettings
 from wavecast.storage import EpisodeConcurrencyError, PostgresEpisodeRepository
 from wavecast.storage.episodes import EpisodeRepository
 
@@ -148,6 +151,60 @@ def mock_audio(kind: str, item_id: str, duration: int = 1) -> Response:
         content=_mock_wav(duration),
         media_type="audio/wav",
         headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@app.get("/api/audio/audius/{track_id:path}")
+async def audius_audio(track_id: str, request: Request) -> StreamingResponse:
+    """Proxy Audius streams without putting backend credentials in the browser."""
+    settings = ProviderSettings.from_env()
+    if settings.mode != "live" or not (
+        settings.audius_api_key or settings.audius_bearer_token
+    ):
+        raise HTTPException(status_code=503, detail="Audius playback is not configured")
+
+    params: dict[str, str] = {}
+    if settings.audius_api_key:
+        params["api_key"] = settings.audius_api_key
+    headers = {"Accept": "audio/mpeg"}
+    for header_name in ("range", "if-range"):
+        if value := request.headers.get(header_name):
+            headers[header_name.title()] = value
+    if settings.audius_bearer_token:
+        headers["Authorization"] = f"Bearer {settings.audius_bearer_token}"
+
+    client = httpx.AsyncClient(timeout=settings.timeout_seconds, follow_redirects=True)
+    upstream = await client.send(
+        client.build_request(
+            "GET",
+            f"{settings.audius_base_url.rstrip('/')}/tracks/{quote(track_id, safe='')}/stream",
+            params=params,
+            headers=headers,
+        ),
+        stream=True,
+    )
+    if upstream.status_code >= 400:
+        await upstream.aclose()
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="Audius playback unavailable")
+
+    async def body() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    response_headers = {"Cache-Control": "private, max-age=60"}
+    for header_name in ("accept-ranges", "content-range", "content-length"):
+        if value := upstream.headers.get(header_name):
+            response_headers[header_name.title()] = value
+    return StreamingResponse(
+        body(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "audio/mpeg"),
+        headers=response_headers,
     )
 
 
