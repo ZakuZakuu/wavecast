@@ -16,14 +16,14 @@ an optional `ResearchPlan` containing:
 - a central question;
 - open-ended `ResearchFacet` records with stable IDs, questions, priorities,
   and source preferences;
-- up to three `PlannedResearchQuery` records with operational `SearchIntent`
+- up to eight `PlannedResearchQuery` records with operational `SearchIntent`
   (`DISCOVERY`, `RESEARCH`, or `EXACT`), facet IDs, and rationale.
 
 The deterministic search stages own the budget and routing. Fast research still
 runs exactly one Exa and one Tavily query. Background research consumes the
 FastStart plan, deduplicates against those fast queries, routes discovery to
-Exa and research/exact to Tavily, and runs no more than one Exa plus two Tavily
-queries. Plans with zero, one, two, or three usable queries are valid; provider
+Exa and research/exact to Tavily, and executes no more than one Exa plus two Tavily
+queries (three total). Plans with zero to eight proposed queries are valid; provider
 failures and cancellation remain isolated and do not trigger retries.
 
 When FastStart is unavailable, the application creates a generic topic-based

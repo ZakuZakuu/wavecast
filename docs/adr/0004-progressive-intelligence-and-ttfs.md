@@ -15,8 +15,9 @@ Phase 3 has two deterministic application-owned paths:
 - The fast path runs one bounded Exa context query and one bounded Tavily evidence query in
   parallel, deduplicates and trims normalized evidence, then makes exactly one DeepSeek Responses
   API JSON Schema call for a typed `FastStartPlan`. The plan may describe open research facets and
-  up to three background queries with operational search intent. It has a 15-second hard deadline
-  and returns a safe anchor-only narration fallback without retrying when the deadline or
+  a small proposal pool of up to eight background queries with operational search intent. The
+  application deterministically executes no more than three of them. It has a 15-second hard
+  deadline and returns a safe anchor-only narration fallback without retrying when the deadline or
   validation fails.
 - The background path is independently cancellable. It consumes the FastStart research plan,
   deduplicates against fast queries, routes `DISCOVERY` to Exa and `RESEARCH`/`EXACT` to Tavily,

@@ -63,7 +63,9 @@ class ResearchPlan(BaseModel):
 
     central_question: str = Field(min_length=1, max_length=500)
     facets: list[ResearchFacet] = Field(default_factory=list, max_length=8)
-    background_queries: list[PlannedResearchQuery] = Field(default_factory=list, max_length=3)
+    # The model accepts a small proposal pool; deterministic application code
+    # enforces the stricter provider execution budget.
+    background_queries: list[PlannedResearchQuery] = Field(default_factory=list, max_length=8)
 
 
 def empty_research_plan() -> ResearchPlan:

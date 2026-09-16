@@ -45,6 +45,8 @@ class FastStartPlanner:
             )
             if not isinstance(plan, FastStartPlan):
                 raise TypeError("fast planner returned an unexpected output model")
+            if "research_plan" not in plan.model_fields_set:
+                plan = plan.model_copy(update={"research_plan": generic_research_plan(request)})
             if trace:
                 trace.mark(
                     "research_plan_ready",
@@ -84,7 +86,8 @@ class FastStartPlanner:
             "Taste hypotheses may be empty when the request does not support them. Choose a "
             "small immediate direction and write one spoken first narration without unsupported "
             "facts. Also produce a ResearchPlan: state the central question, define open-ended "
-            "facets with stable IDs, and propose zero to three bounded background queries. "
+            "facets with stable IDs, and propose a small pool of zero to eight bounded background "
+            "queries; application code will select at most three for execution. "
             "Each query must declare DISCOVERY, RESEARCH, or EXACT intent, facet IDs, and a "
             "short rationale. Search intent is operational routing, not a show-type classifier. "
             "Do not force similarity, novelty, genre, or sonic dimensions when the request does "
