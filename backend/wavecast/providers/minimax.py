@@ -270,14 +270,14 @@ def _decode_response(payload: dict[str, Any]) -> tuple[bytes, dict[str, Any]]:
 def _duration_seconds(audio_bytes: bytes, extra_info: dict[str, Any]) -> int:
     audio_length = extra_info.get("audio_length")
     if isinstance(audio_length, (int, float)) and not isinstance(audio_length, bool):
-        return max(1, math.ceil(float(audio_length) / 1000))
+        return _nearest_second(float(audio_length) / 1000)
     duration = _mp3_duration_seconds(audio_bytes)
     if duration is None:
         raise ProviderInvalidResponseError("minimax audio duration could not be determined")
-    return duration
+    return _nearest_second(duration)
 
 
-def _mp3_duration_seconds(audio_bytes: bytes) -> int | None:
+def _mp3_duration_seconds(audio_bytes: bytes) -> float | None:
     bitrate_table = {
         3: (None, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, None),
         2: (None, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, None),
@@ -314,7 +314,12 @@ def _mp3_duration_seconds(audio_bytes: bytes) -> int | None:
         total_seconds += samples / sample_rate
         frames += 1
         offset += frame_length
-    return max(1, math.ceil(total_seconds)) if frames else None
+    return total_seconds if frames else None
+
+
+def _nearest_second(seconds: float) -> int:
+    """Map positive audio duration to the integer timeline using half-up rounding."""
+    return max(1, math.floor(seconds + 0.5))
 
 
 def _stored_duration(metadata: dict[str, Any]) -> int | None:
