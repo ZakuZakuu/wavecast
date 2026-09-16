@@ -6,7 +6,14 @@ from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 
 from .fast_start import FastStructuredProvider
-from .models import ChapterPlan, FastStartPlan, ProgramSkeleton, ResearchBundle
+from .models import (
+    ChapterPlan,
+    FastStartPlan,
+    OutputLanguage,
+    ProgramSkeleton,
+    ResearchBundle,
+    resolve_output_language,
+)
 
 
 class CuratorService:
@@ -20,6 +27,8 @@ class CuratorService:
         *,
         desired_duration_seconds: int,
         committed_chapters: list[ChapterPlan] | None = None,
+        output_language: OutputLanguage = OutputLanguage.AUTO,
+        topic: str = "",
     ) -> ProgramSkeleton:
         committed = committed_chapters or []
         prompt = (
@@ -28,9 +37,11 @@ class CuratorService:
             "career, creative-work, analysis, history/context, or music-discovery request; "
             "adapt the editorial arc to the topic rather than assuming a similarity playlist. "
             "Playback order is exactly chapter order. Search is complete; do not request or "
-            "invent web evidence. Each chapter is one narrative beat with one supporting "
+            "invent web evidence. Each chapter is one narrative beat with zero or one supporting "
             "TrackProposal; do not add unrelated artists only to manufacture novelty. Keep a "
             "stable or repeated novelty distance when a meaningful move is not justified. "
+            "A chapter is a narrative beat and may intentionally have no TrackProposal; do not "
+            "invent a track to fill a story beat. "
             "novelty_distance may start at any supported "
             "distance; distances may be skipped, and repeated distances are allowed when "
             "intended. The sequence must never move backward: very_close <= close <= bridge "
@@ -49,7 +60,8 @@ class CuratorService:
             f"Fast plan: {fast_plan.model_dump_json()}\n"
             f"Research plan: {fast_plan.research_plan.model_dump_json()}\n"
             f"Committed: {[item.model_dump() for item in committed]}\n"
-            f"Duration: {desired_duration_seconds}"
+            f"Duration: {desired_duration_seconds}\n"
+            f"Output language: {resolve_output_language(output_language, topic).value}"
         )
         skeleton = await self.llm.structured(
             prompt,
@@ -71,9 +83,17 @@ def ensure_distance_curve(skeleton: ProgramSkeleton) -> ProgramSkeleton:
         "discovery": 4,
         "surprise": 5,
     }
-    distances = [order[chapter.novelty_distance.value] for chapter in skeleton.chapters]
+    distances = [
+        order[chapter.novelty_distance.value]
+        for chapter in skeleton.chapters
+        if chapter.novelty_distance is not None
+    ]
     if distances != sorted(distances):
-        values = [chapter.novelty_distance.value for chapter in skeleton.chapters]
+        values = [
+            chapter.novelty_distance.value
+            for chapter in skeleton.chapters
+            if chapter.novelty_distance is not None
+        ]
         raise ProviderInvalidResponseError(f"invalid novelty curve values: {values!r}")
     # Curator order and chapter indices are part of the narrative contract.  Do not
     # sort or renumber here: committed-prefix validation relies on exact identity.

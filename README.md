@@ -148,6 +148,17 @@ webpage title. Curator receives the plan and adapts its chapter beats to the req
 assuming a fixed discovery arc. The episode probe reports only sanitized plan metadata. No live
 probe is part of CI.
 
+### Phase 4.7 narrative-first structure and TTS-aware writing
+
+Curator chapters are narrative beats with optional music, so an unresolved or
+absent track removes only the music asset while the story continues through
+Writer. Assembly allocates a bounded 10–20% narration budget from the requested
+program duration. Requests carry `output_language` (`auto`, `zh-CN`, `en-US`, or
+`ja-JP`); automatic selection uses the user topic. Radio blocks keep visible
+editorial `text` separate from optional pronunciation-aware `tts_text`, and the
+materializer uses the latter for TTS/cache identity without changing UI copy.
+No new provider or live probe is part of this milestone.
+
 ## Current scope
 
-Phase 1.5 adds a durable Postgres repository, listener-scoped resume, and version-polled SSE while retaining mock-mode development. Phase 2 adds independent DeepSeek, Exa, and Tavily adapters with a deterministic search router and in-memory usage ledger. Phase 3 adds a two-speed, typed progressive intelligence pipeline and TTFS tracing. Phase 3.5 hardens editorial evaluation. Phase 4 adds provider-neutral music assets, deterministic radio composition, and MiniMax narration materialization. Phase 4.5 assembles those seams into one bounded playable episode. Phase 4.6 adds topic-adaptive research planning without changing runtime, playback, or live budgets; it does not add a queue, new provider, recommendation redesign, or browser playback redesign. Real calls remain opt-in.
+Phase 1.5 adds a durable Postgres repository, listener-scoped resume, and version-polled SSE while retaining mock-mode development. Phase 2 adds independent DeepSeek, Exa, and Tavily adapters with a deterministic search router and in-memory usage ledger. Phase 3 adds a two-speed, typed progressive intelligence pipeline and TTFS tracing. Phase 3.5 hardens editorial evaluation. Phase 4 adds provider-neutral music assets, deterministic radio composition, and MiniMax narration materialization. Phase 4.5 assembles those seams into one bounded playable episode. Phase 4.6 adds topic-adaptive research planning without changing runtime, playback, or live budgets. Phase 4.7 adds narrative-first chapters, bounded narration budgeting, explicit spoken-language selection, and TTS-aware visible/synthesized text separation; it does not add a queue, new provider, recommendation redesign, or browser playback redesign. Real calls remain opt-in.

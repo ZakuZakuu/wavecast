@@ -10,6 +10,7 @@ from wavecast.assembly import (
     LiveEpisodeAssemblyService,
     MockEpisodeAssemblyLLM,
     _assemble_radio_script,
+    _mock_writer_chapter_index,
     create_episode_assembly_service,
 )
 from wavecast.composer import EpisodeComposer
@@ -20,6 +21,7 @@ from wavecast.intelligence.models import (
     ChapterPlan,
     NarrativeRole,
     NoveltyDistance,
+    OutputLanguage,
     ProgramSkeleton,
     RadioScript,
     RadioScriptBlock,
@@ -42,10 +44,12 @@ def block(
     track_index: int | None = None,
     cue: str = "",
     evidence: str = "",
+    tts_text: str | None = None,
 ) -> RadioScriptBlock:
     return RadioScriptBlock(
         kind=kind,
         text=text,
+        tts_text=tts_text,
         duration_seconds=3,
         track_index=track_index,
         tts_cues=[cue] if cue else [],
@@ -218,6 +222,28 @@ def test_radio_script_normalization_keeps_episode_anchors_in_their_owners() -> N
     assert "late chapter intro" not in script.text
 
 
+def test_trackless_chapter_intro_is_not_promoted_to_episode_opening() -> None:
+    script = _assemble_radio_script(
+        [
+            RadioScript(
+                blocks=[block(RadioScriptBlockKind.INTRO, "opening")]
+            ),
+            RadioScript(
+                blocks=[block(RadioScriptBlockKind.INTRO, "trackless story beat")]
+            ),
+        ],
+        track_count=1,
+        chapter_music_indices=[0, None],
+    )
+
+    assert [item.kind for item in script.blocks] == [
+        RadioScriptBlockKind.INTRO,
+        RadioScriptBlockKind.TRANSITION,
+    ]
+    assert script.blocks[1].text == "trackless story beat"
+    assert script.blocks[1].track_index is None
+
+
 def test_registry_closes_each_unique_provider_once() -> None:
     class ClosableProvider:
         def __init__(self) -> None:
@@ -277,7 +303,7 @@ def test_probe_asset_url_redacts_external_tokens() -> None:
     )
 
 
-def test_unresolved_proposal_is_reported_and_skipped_before_writing(tmp_path) -> None:
+def test_unresolved_proposal_is_reported_but_narrative_is_still_written(tmp_path) -> None:
     class MixedLLM(RecordingAssemblyLLM):
         async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
             if output_type is ProgramSkeleton:
@@ -306,7 +332,112 @@ def test_unresolved_proposal_is_reported_and_skipped_before_writing(tmp_path) ->
     assert len(result.unresolved_proposals) == 1
     assert result.unresolved_proposals[0].proposal.artist == "Event Listing"
     writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
-    assert len(writer_calls) == 2
+    assert len(writer_calls) == 3
+    assert any(
+        segment.narration_text == "现在进入第 2 首。"
+        for segment in result.playable_episode.segments
+    )
+
+
+def test_narrative_only_chapter_survives_writer_and_assembly(tmp_path) -> None:
+    class NarrativeOnlyLLM(RecordingAssemblyLLM):
+        async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+            if output_type is ProgramSkeleton:
+                self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
+                first = self._proposal(self._tracks[0])
+                last = self._proposal(self._tracks[1])
+                return ProgramSkeleton(
+                    thesis="A story with a beat between songs.",
+                    estimated_duration_seconds=900,
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=first,
+                            narrative_role=NarrativeRole.ANCHOR,
+                            reason="open",
+                            novelty_distance=NoveltyDistance.VERY_CLOSE,
+                            narration_goal="open",
+                        ),
+                        ChapterPlan(
+                            index=1,
+                            track=None,
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="explain the context",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="tell a context beat",
+                        ),
+                        ChapterPlan(
+                            index=2,
+                            track=last,
+                            narrative_role=NarrativeRole.RESOLUTION,
+                            reason="resolve",
+                            novelty_distance=NoveltyDistance.BRIDGE,
+                            narration_goal="close",
+                        ),
+                    ],
+                )
+            if output_type is RadioScript:
+                index = _mock_writer_chapter_index(prompt)
+                if index == 1:
+                    self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
+                    return RadioScript(
+                        blocks=[
+                            block(
+                                RadioScriptBlockKind.TRANSITION,
+                                "A narrative beat without a song.",
+                            )
+                        ]
+                    )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = NarrativeOnlyLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3)
+        )
+    )
+
+    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 3
+    assert [chapter.track is None for chapter in result.skeleton.chapters] == [False, True, False]
+    assert len(result.resolved_tracks) == 2
+    assert any(
+        segment.narration_text == "A narrative beat without a song."
+        for segment in result.playable_episode.segments
+    )
+
+
+def test_assembly_preserves_auto_language_and_duration_budget(tmp_path) -> None:
+    llm = RecordingAssemblyLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(
+                topic="藤井风的音乐背景",
+                anchor_tracks=["Neon First Light"],
+                desired_duration_seconds=600,
+                output_language=OutputLanguage.AUTO,
+            )
+        )
+    )
+    writer_prompts = [call["prompt"] for call in llm.calls if call["output_type"] is RadioScript]
+    assert writer_prompts
+    assert all("output language zh-CN" in prompt for prompt in writer_prompts)
+    assert all("Target narration duration seconds: 22" in prompt for prompt in writer_prompts)
+    assert result.duration_summary.narration_seconds >= 0
+
+
+def test_assembly_explicit_english_overrides_chinese_topic(tmp_path) -> None:
+    llm = RecordingAssemblyLLM()
+    asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(
+                topic="藤井风的音乐背景",
+                output_language=OutputLanguage.EN_US,
+            )
+        )
+    )
+    writer_prompts = [call["prompt"] for call in llm.calls if call["output_type"] is RadioScript]
+    assert writer_prompts
+    assert all("output language en-US" in prompt for prompt in writer_prompts)
 
 
 def test_middle_unresolved_chapter_is_reindexed_only_for_writer(tmp_path) -> None:

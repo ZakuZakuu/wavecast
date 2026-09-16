@@ -35,12 +35,16 @@ class EpisodeComposer:
 
     async def compose(
         self,
-        tracks: Sequence[ResolvedTrack | ResolvedTrackCandidate],
+        tracks: Sequence[ResolvedTrack | ResolvedTrackCandidate | None],
         script: RadioScript | NarrationScript | Sequence[RadioScriptBlock],
     ) -> PlayableEpisode:
         blocks = _script_blocks(script)
         resolved_assets: list[tuple[ResolvedTrack, AudioAsset]] = []
         for candidate in tracks:
+            if candidate is None:
+                # A narrative-only chapter is legal.  It contributes no music
+                # asset; its unindexed script blocks remain in the timeline.
+                continue
             resolved = _resolved_identity(candidate)
             asset = await self.music_provider.get_playback_asset(resolved)
             if asset.asset_type is not AudioAssetType.MUSIC:
@@ -184,6 +188,7 @@ def _script_blocks(
             RadioScriptBlock(
                 kind=RadioScriptBlockKind.TRANSITION,
                 text=script.text,
+                tts_text=script.tts_text,
                 duration_seconds=script.intended_duration_seconds,
                 tts_cues=list(script.tts_cues),
                 evidence_ids=list(script.evidence_ids),
@@ -201,5 +206,6 @@ def _narration_segment(block: RadioScriptBlock, order: int, chapter_number: int)
         planned_duration_seconds=block.intended_duration_seconds,
         title=block.kind.value.replace("_", " ").title(),
         narration_text=block.text,
+        tts_text=block.tts_text,
         tts_cues=list(block.tts_cues),
     )
