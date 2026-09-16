@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
+import sys
 from time import perf_counter
 
 from wavecast.narration import render_narration
@@ -19,6 +21,7 @@ from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.storage import LocalObjectStorageProvider
 
 TEXT = "今晚，我们从一首歌开始，听见城市夜色的回声。"
+_SAFE_STATUS_PATTERN = re.compile(r"(?:HTTP|status)\s+(\d{3,4})\b", re.IGNORECASE)
 
 
 async def _run_probe(settings: ProviderSettings) -> None:
@@ -39,6 +42,14 @@ async def _run_probe(settings: ProviderSettings) -> None:
     print(f"duration={asset.duration}")
     print(f"cache={'hit' if cache_hit else 'miss'}")
     print(f"browser_asset_url={asset.playback_url}")
+
+
+def _print_safe_failure(error: ProviderError) -> None:
+    """Print only a provider error class and numeric status metadata."""
+    print(f"error_type={type(error).__name__}", file=sys.stderr)
+    match = _SAFE_STATUS_PATTERN.search(str(error))
+    if match:
+        print(f"provider_status={match.group(1)}", file=sys.stderr)
 
 
 def main() -> int:
@@ -64,6 +75,7 @@ def main() -> int:
         raise SystemExit("minimax probe configuration is incomplete") from error
     except ProviderError as error:
         # Never print provider response bodies, even when an adapter error is detailed.
+        _print_safe_failure(error)
         raise SystemExit("minimax probe failed") from error
     return 0
 
