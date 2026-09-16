@@ -1,11 +1,14 @@
 import asyncio
+from typing import Any
 
 import pytest
+from pydantic import ValidationError
 from wavecast.assembly import (
     EpisodeAssemblyError,
     LiveEpisodeAssemblyRequest,
     LiveEpisodeAssemblyService,
     MockEpisodeAssemblyLLM,
+    _assemble_radio_script,
     create_episode_assembly_service,
 )
 from wavecast.composer import EpisodeComposer
@@ -18,6 +21,7 @@ from wavecast.intelligence.models import (
     NoveltyDistance,
     ProgramSkeleton,
     RadioScript,
+    RadioScriptBlock,
     RadioScriptBlockKind,
 )
 from wavecast.intelligence.research import BackgroundResearchService, FastResearchService
@@ -28,6 +32,24 @@ from wavecast.providers.registry import MusicProviderRegistry
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.usage import UsageLedger
 from wavecast.storage.assets import LocalObjectStorageProvider
+
+
+def block(
+    kind: RadioScriptBlockKind,
+    text: str,
+    *,
+    track_index: int | None = None,
+    cue: str = "",
+    evidence: str = "",
+) -> RadioScriptBlock:
+    return RadioScriptBlock(
+        kind=kind,
+        text=text,
+        duration_seconds=3,
+        track_index=track_index,
+        tts_cues=[cue] if cue else [],
+        evidence_ids=[evidence] if evidence else [],
+    )
 
 
 class RecordingAssemblyLLM(MockEpisodeAssemblyLLM):
@@ -92,6 +114,12 @@ def test_mock_factory_assembles_real_music_and_narration_assets(tmp_path, monkey
         "Daybreak in Stereo",
         "Afterimage Avenue",
     ]
+    assert [chapter.track.title for chapter in result.skeleton.chapters] == [
+        "Neon First Light",
+        "Midnight Transfer",
+        "Daybreak in Stereo",
+        "Afterimage Avenue",
+    ]
     asyncio.run(assembly.aclose())
 
 
@@ -117,6 +145,134 @@ def test_writer_runs_only_after_resolution_and_receives_next_track_context(tmp_p
             and block.track_index == len(result.resolved_tracks) - 1
         )
         for block in result.radio_script.blocks
+    )
+
+
+def test_radio_script_normalization_keeps_episode_anchors_in_their_owners() -> None:
+    script = _assemble_radio_script(
+        [
+            RadioScript(
+                blocks=[
+                    block(RadioScriptBlockKind.INTRO, "opening", cue="open", evidence="e0"),
+                    block(
+                        RadioScriptBlockKind.TRACK_INTRO,
+                        "track one intro",
+                        track_index=1,
+                        cue="track-first",
+                        evidence="e1",
+                    ),
+                    block(
+                        RadioScriptBlockKind.TRACK_INTRO,
+                        "duplicate track one intro",
+                        track_index=1,
+                        cue="track-duplicate",
+                    ),
+                    block(
+                        RadioScriptBlockKind.TRANSITION,
+                        "first gap",
+                        track_index=0,
+                        cue="gap-first",
+                        evidence="e2",
+                    ),
+                    block(
+                        RadioScriptBlockKind.TRANSITION,
+                        "duplicate first gap",
+                        track_index=0,
+                        cue="gap-duplicate",
+                    ),
+                ]
+            ),
+            RadioScript(
+                blocks=[
+                    block(RadioScriptBlockKind.INTRO, "late chapter intro", cue="late"),
+                    block(RadioScriptBlockKind.TRACK_INTRO, "duplicate by chapter"),
+                    block(RadioScriptBlockKind.TRANSITION, "second gap", cue="gap-second"),
+                ]
+            ),
+            RadioScript(
+                blocks=[
+                    block(RadioScriptBlockKind.OUTRO, "final outro", cue="outro", evidence="e3"),
+                    block(RadioScriptBlockKind.OUTRO, "duplicate outro", cue="outro-duplicate"),
+                ]
+            ),
+        ],
+        track_count=3,
+    )
+
+    assert [item.text for item in script.blocks if item.kind is RadioScriptBlockKind.INTRO] == [
+        "opening"
+    ]
+    track_intros = [item for item in script.blocks if item.kind is RadioScriptBlockKind.TRACK_INTRO]
+    assert [(item.track_index, item.text, item.tts_cues, item.evidence_ids) for item in track_intros] == [
+        (1, "track one intro", ["track-first"], ["e1"])
+    ]
+    transitions = [item for item in script.blocks if item.kind is RadioScriptBlockKind.TRANSITION]
+    assert [(item.track_index, item.text, item.tts_cues) for item in transitions] == [
+        (0, "first gap", ["gap-first"]),
+        (1, "second gap", ["gap-second"]),
+    ]
+    assert [item.text for item in script.blocks if item.kind is RadioScriptBlockKind.OUTRO] == [
+        "final outro"
+    ]
+    assert "late chapter intro" not in script.text
+
+
+def test_registry_closes_each_unique_provider_once() -> None:
+    class ClosableProvider:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def search(self, query: str, *, limit: int = 5) -> list[Any]:
+            del query, limit
+            return []
+
+        async def resolve_track(self, track_ref: str) -> Any:
+            del track_ref
+            raise AssertionError("not used")
+
+        async def get_playback_asset(self, resolved_track: Any) -> Any:
+            del resolved_track
+            raise AssertionError("not used")
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+
+    provider = ClosableProvider()
+    registry = MusicProviderRegistry({"one": provider, "alias": provider})
+
+    asyncio.run(registry.aclose())
+
+    assert provider.close_calls == 1
+
+
+def test_request_requires_two_tracks_and_mock_repeats_deterministically(tmp_path) -> None:
+    with pytest.raises(ValidationError):
+        LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=1)
+
+    assembly = service(tmp_path)
+    first = asyncio.run(assembly.assemble(LiveEpisodeAssemblyRequest(topic="fixture")))
+    second = asyncio.run(assembly.assemble(LiveEpisodeAssemblyRequest(topic="fixture")))
+
+    first_blocks = [
+        (item.kind, item.text, item.track_index, item.tts_cues)
+        for item in first.radio_script.blocks
+    ]
+    second_blocks = [
+        (item.kind, item.text, item.track_index, item.tts_cues)
+        for item in second.radio_script.blocks
+    ]
+    assert first_blocks == second_blocks
+    assert [item.canonical_title for item in first.resolved_tracks] == [
+        item.canonical_title for item in second.resolved_tracks
+    ]
+
+
+def test_probe_asset_url_redacts_external_tokens() -> None:
+    from scripts.live_episode_probe import _safe_asset_url
+
+    assert _safe_asset_url("/api/assets/audio/abc.mp3?token=local") == "/api/assets/audio/abc.mp3?token=local"
+    assert _safe_asset_url("https://cdn.example.test/audio.mp3?token=secret") == (
+        "https://cdn.example.test/[external-redacted]"
     )
 
 

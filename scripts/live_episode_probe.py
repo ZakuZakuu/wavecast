@@ -13,6 +13,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from wavecast.assembly import (
@@ -75,18 +76,38 @@ def _report(result) -> dict[str, object]:
             }
             for track in result.resolved_tracks
         ],
-        "unresolved_count": len(result.unresolved_proposals),
+        "unresolved": [
+            {
+                "chapter_index": item.chapter_index,
+                "artist": item.proposal.artist,
+                "title": item.proposal.title,
+                "reason": item.reason,
+            }
+            for item in result.unresolved_proposals
+        ],
         "segments": [
             {
                 "kind": segment.kind.value,
                 "state": segment.state.value,
                 "duration_seconds": segment.duration_seconds,
+                "asset_url": _safe_asset_url(segment.audio_source_url),
             }
             for segment in episode.segments
         ],
         "usage": result.usage.model_dump(),
         "trace": _safe_trace(result),
     }
+
+
+def _safe_asset_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    if url.startswith("/api/"):
+        return url
+    parsed = urlsplit(url)
+    if parsed.scheme and parsed.hostname:
+        return f"{parsed.scheme}://{parsed.hostname}/[external-redacted]"
+    return "[external-redacted]"
 
 
 async def _run(arguments: argparse.Namespace) -> int:
