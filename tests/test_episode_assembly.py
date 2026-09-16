@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -306,6 +307,66 @@ def test_unresolved_proposal_is_reported_and_skipped_before_writing(tmp_path) ->
     assert result.unresolved_proposals[0].proposal.artist == "Event Listing"
     writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
     assert len(writer_calls) == 2
+
+
+def test_middle_unresolved_chapter_is_reindexed_only_for_writer(tmp_path) -> None:
+    class ExplicitIndexLLM(RecordingAssemblyLLM):
+        async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+            self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
+            if output_type is ProgramSkeleton:
+                known = self._tracks[0]
+                unknown = ("Event Listing", "Festival doors 8-9-2026", NoveltyDistance.CLOSE)
+                surviving = self._tracks[2]
+                chapters = [
+                    ChapterPlan(
+                        index=index,
+                        track=self._proposal(item),
+                        narrative_role=NarrativeRole.ANCHOR,
+                        reason="fixture",
+                        novelty_distance=item[2],
+                        narration_goal="fixture",
+                    )
+                    for index, item in enumerate((known, unknown, surviving))
+                ]
+                return ProgramSkeleton(
+                    thesis="fixture", chapters=chapters, estimated_duration_seconds=900
+                )
+            if output_type is RadioScript:
+                payload = json.loads(prompt.split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0])
+                writer_index = payload["index"]
+                return RadioScript(
+                    blocks=[
+                        RadioScriptBlock(
+                            kind=RadioScriptBlockKind.TRACK_INTRO,
+                            text=f"writer track {writer_index}",
+                            duration_seconds=3,
+                            track_index=writer_index,
+                        )
+                    ]
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = ExplicitIndexLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3))
+    )
+
+    writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
+    assert '"index":1' in writer_calls[1]["prompt"]
+    assert '"index":2' not in writer_calls[1]["prompt"]
+    assert [chapter.index for chapter in result.skeleton.chapters] == [0, 1, 2]
+    assert [track.canonical_title for track in result.resolved_tracks] == [
+        "Neon First Light",
+        "Daybreak in Stereo",
+    ]
+
+    second_track_ref = result.resolved_tracks[1].track_ref
+    second_music_index = next(
+        index
+        for index, segment in enumerate(result.playable_episode.segments)
+        if segment.track_ref == second_track_ref
+    )
+    assert result.playable_episode.segments[second_music_index - 1].narration_text == "writer track 1"
 
 
 def test_fewer_than_two_resolved_tracks_is_a_typed_assembly_failure(tmp_path) -> None:

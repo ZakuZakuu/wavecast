@@ -131,6 +131,7 @@ class EpisodeAssemblyResult(BaseModel):
 @dataclass(frozen=True)
 class _ResolvedChapter:
     chapter: ChapterPlan
+    writer_chapter: ChapterPlan
     track: ResolvedTrack
 
 
@@ -239,7 +240,15 @@ class LiveEpisodeAssemblyService:
                     )
                 )
                 continue
-            resolved_chapters.append(_ResolvedChapter(chapter=chapter, track=resolved))
+            resolved_chapters.append(
+                _ResolvedChapter(
+                    chapter=chapter,
+                    writer_chapter=chapter.model_copy(
+                        update={"index": len(resolved_chapters)}
+                    ),
+                    track=resolved,
+                )
+            )
         resolution_ms = _elapsed_ms(resolution_started)
         trace.mark(
             "tracks_resolved",
@@ -262,7 +271,7 @@ class LiveEpisodeAssemblyService:
                 next_metadata = f"{next_track.canonical_artist} — {next_track.canonical_title}"
             try:
                 script = await self.background_pipeline.writer.write(
-                    resolved_chapter.chapter,
+                    resolved_chapter.writer_chapter,
                     bundle.evidence,
                     previous_committed_context=previous_context,
                     next_track_metadata=next_metadata,
