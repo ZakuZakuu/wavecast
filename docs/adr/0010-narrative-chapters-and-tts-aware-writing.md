@@ -16,6 +16,10 @@ or absent track removes only the music asset; the chapter still goes through
 Writer.  The composer accepts zero or one resolved music asset for a chapter
 and never promotes a `TrackProposal` into the timeline.  A complete episode
 still requires the existing minimum of two resolved playable tracks.
+Multiple narration blocks may share the same gap between two tracks and retain
+their source order.  `max_tracks` bounds track-bearing chapters only; it does
+not consume a slot for narrative-only beats.  A separate bounded
+`max_chapters` safety cap prevents an unbounded narrative response.
 
 The assembly service allocates a bounded spoken budget per chapter using a
 configurable default ratio of 15% of the requested duration (constrained to the
