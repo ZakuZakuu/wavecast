@@ -6,6 +6,7 @@ from wavecast.intelligence.models import (
     FastResearchResult,
     FastStartPlan,
     NarrationScript,
+    OutputLanguage,
     ResearchBundle,
 )
 from wavecast.intelligence.research import FastResearchService
@@ -119,7 +120,7 @@ def test_fast_path_deadline_returns_safe_fallback_without_retry() -> None:
     assert len(llm.calls) == 1
     assert result.trace.fallback_used
     assert result.trace.time_to_first_script_ms is not None
-    assert result.plan.first_narration.text.startswith("先从 Anchor - Opening")
+    assert result.plan.first_narration.text.startswith("We will start with Anchor - Opening")
     assert "Fixture Artist" not in result.plan.first_narration.text
     assert any(event.name == "first_script_ready" for event in result.trace.events)
     assert result.trace.fast_research_elapsed_ms is not None
@@ -141,3 +142,18 @@ def test_provider_failure_fallback_records_first_script_ready() -> None:
     ready = [event for event in result.trace.events if event.name == "first_script_ready"]
     assert len(ready) == 1
     assert ready[0].metadata["fallback"] is True
+
+
+def test_explicit_japanese_fallback_uses_japanese_narration() -> None:
+    request = input_request().model_copy(update={"output_language": OutputLanguage.JA_JP})
+    research = FastResearchResult(
+        bundle=ResearchBundle(anchors=request.anchor_tracks, taste_hypotheses=[], evidence=[], candidates=[]),
+        elapsed_ms=0,
+        queries=[],
+    )
+
+    from wavecast.intelligence.fast_start import deterministic_fallback
+
+    fallback = deterministic_fallback(request, research)
+
+    assert fallback.first_narration.text.startswith("まず")

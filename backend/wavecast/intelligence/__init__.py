@@ -12,6 +12,7 @@ from .models import (
     NarrationScript,
     NarrativeRole,
     NoveltyDistance,
+    OutputLanguage,
     PlannedResearchQuery,
     ProgramSkeleton,
     RadioScript,
@@ -27,6 +28,7 @@ from .models import (
     TrackCandidate,
     TrackProposal,
     UnresolvedTrackError,
+    resolve_output_language,
 )
 from .planning import PlanningSession
 from .research import BackgroundResearchService, FastResearchService
@@ -60,6 +62,7 @@ __all__ = [
     "RadioScriptBlockKind",
     "NarrativeRole",
     "NoveltyDistance",
+    "OutputLanguage",
     "ProgramSkeleton",
     "PlanningSession",
     "ResearchBundle",
@@ -74,6 +77,7 @@ __all__ = [
     "TrackProposal",
     "TrackCandidate",
     "UnresolvedTrackError",
+    "resolve_output_language",
     "WriterService",
     "music_segment_from_track",
     "resolve_track_proposal_across_providers",

@@ -122,6 +122,9 @@ class NarrationSegment(Segment):
 
     kind: Literal[SegmentKind.NARRATION] = SegmentKind.NARRATION
     audio_source_url: str | None = None
+    # ``narration_text`` remains the visible/editorial copy.  ``tts_text`` is
+    # an optional pronunciation-aware rendering supplied by the Writer.
+    tts_text: str | None = Field(default=None, min_length=1)
     tts_cues: list[str] = Field(default_factory=list)
 
 

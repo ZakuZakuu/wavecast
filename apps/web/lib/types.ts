@@ -24,6 +24,8 @@ type SegmentBase = {
   duration_seconds: number;
   title: string;
   narration_text: string | null;
+  /** Optional pronunciation copy; the player/UI continues to show narration_text. */
+  tts_text?: string | null;
   asset_ref: string | null;
 };
 

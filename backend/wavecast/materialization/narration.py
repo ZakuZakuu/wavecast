@@ -37,10 +37,11 @@ class NarrationMaterializer:
             raise ProviderInvalidResponseError(
                 f"narration materialization requires SCRIPT_READY, got {segment.state.value}"
             )
-        if not segment.narration_text:
+        synthesis_text = segment.tts_text or segment.narration_text
+        if not synthesis_text:
             raise ProviderInvalidResponseError("narration segment has no script text")
 
-        rendered = render_narration(segment.narration_text, segment.tts_cues)
+        rendered = render_narration(synthesis_text, segment.tts_cues)
         cache_key = _provider_cache_key(self.tts_provider, rendered.text, rendered.recognized_cues)
         lock = self._locks.setdefault(cache_key or segment.id, asyncio.Lock())
         async with lock:

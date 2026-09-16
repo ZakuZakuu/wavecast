@@ -13,7 +13,9 @@ from .models import (
     FastResearchResult,
     FastStartPlan,
     NarrationScript,
+    OutputLanguage,
     ResearchBundle,
+    resolve_output_language,
 )
 from .research import FastResearchService, generic_research_plan
 from .trace import GenerationTrace
@@ -78,6 +80,7 @@ class FastStartPlanner:
 
     @staticmethod
     def _prompt(request: FastResearchInput, research: FastResearchResult) -> str:
+        language = resolve_output_language(request.output_language, request.topic)
         return (
             "Create one FastStartPlan for this listener request. Use only normalized evidence "
             "below and keep evidence, hypotheses, and uncertainty separate. Do not assume the "
@@ -91,7 +94,9 @@ class FastStartPlanner:
             "Each query must declare DISCOVERY, RESEARCH, or EXACT intent, facet IDs, and a "
             "short rationale. Search intent is operational routing, not a show-type classifier. "
             "Do not force similarity, novelty, genre, or sonic dimensions when the request does "
-            "not ask for them.\n"
+            "not ask for them. Preserve the requested output language; `auto` is inferred from "
+            "the user's topic, not from artist or track names.\n"
+            f"Output language: {language.value}\n"
             f"Request: {request.model_dump_json()}\n"
             f"Research: {research.bundle.model_dump_json()}"
         )
@@ -101,16 +106,22 @@ def deterministic_fallback(
     request: FastResearchInput, research: FastResearchResult
 ) -> FastStartPlan:
     anchor = request.anchor_tracks[0] if request.anchor_tracks else request.topic
+    language = resolve_output_language(request.output_language, request.topic)
+    if language is OutputLanguage.ZH_CN:
+        narration = f"先从 {anchor} 开始。接下来我们会围绕这个请求整理可靠背景，再根据证据决定下一步。"
+    elif language is OutputLanguage.JA_JP:
+        narration = f"まず {anchor} から始めます。次に、利用できる根拠をもとに進む方向を決めます。"
+    else:
+        narration = (
+            f"We will start with {anchor}, then use the available evidence to decide where to go next."
+        )
     return FastStartPlan(
         anchor_understanding=[f"Continue from the known anchor: {anchor}"],
         immediate_taste_hypotheses=[],
         next_candidates=research.bundle.candidates[:3],
         selected_next_track=None,
         first_narration=NarrationScript(
-            text=(
-                f"先从 {anchor} 开始。接下来我们会围绕这个请求整理可靠背景，"
-                "再根据证据决定下一步。"
-            ),
+            text=narration,
             intended_duration_seconds=10,
         ),
         uncertainties=["Fast research or structured planning was unavailable; no factual claim was added."],

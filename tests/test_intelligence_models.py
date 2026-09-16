@@ -10,12 +10,14 @@ from wavecast.intelligence.models import (
     NarrationScript,
     NarrativeRole,
     NoveltyDistance,
+    OutputLanguage,
     ProgramSkeleton,
     ResolvedTrack,
     ResolvedTrackCandidate,
     TasteHypothesis,
     TrackCandidate,
     TrackProposal,
+    resolve_output_language,
 )
 from wavecast.intelligence.resolution import (
     UnresolvedTrackError,
@@ -54,6 +56,20 @@ def test_fast_start_plan_keeps_evidence_and_novelty_typed() -> None:
 
     assert plan.selected_next_track is not None
     assert plan.selected_next_track.novelty_distance is NoveltyDistance.BRIDGE
+
+
+def test_narrative_chapter_can_have_no_track_and_language_auto_uses_topic() -> None:
+    chapter = ChapterPlan(
+        index=0,
+        track=None,
+        narrative_role=NarrativeRole.BRIDGE,
+        reason="explain the context before the next song",
+        narration_goal="tell the story",
+    )
+
+    assert chapter.track is None
+    assert resolve_output_language(OutputLanguage.AUTO, "藤井风的音乐背景") is OutputLanguage.ZH_CN
+    assert resolve_output_language(OutputLanguage.EN_US, "藤井风的音乐背景") is OutputLanguage.EN_US
 
 
 def test_generation_trace_derives_time_to_first_script() -> None:

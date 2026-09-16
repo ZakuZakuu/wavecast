@@ -35,12 +35,16 @@ class EpisodeComposer:
 
     async def compose(
         self,
-        tracks: Sequence[ResolvedTrack | ResolvedTrackCandidate],
+        tracks: Sequence[ResolvedTrack | ResolvedTrackCandidate | None],
         script: RadioScript | NarrationScript | Sequence[RadioScriptBlock],
     ) -> PlayableEpisode:
         blocks = _script_blocks(script)
         resolved_assets: list[tuple[ResolvedTrack, AudioAsset]] = []
         for candidate in tracks:
+            if candidate is None:
+                # A narrative-only chapter is legal.  It contributes no music
+                # asset; its unindexed script blocks remain in the timeline.
+                continue
             resolved = _resolved_identity(candidate)
             asset = await self.music_provider.get_playback_asset(resolved)
             if asset.asset_type is not AudioAssetType.MUSIC:
@@ -88,13 +92,23 @@ class EpisodeComposer:
             and block.track_index is not None
             and block.track_index < len(resolved_assets) - 1
         }
-        fallback_gap_targets = iter(
-            index for index in range(max(0, len(resolved_assets) - 1))
+        fallback_gap_targets = [
+            index
+            for index in range(max(0, len(resolved_assets) - 1))
             if index not in explicit_transition_targets
-        )
+        ]
+        if not fallback_gap_targets:
+            # If every gap already has an indexed transition, additional
+            # narrative beats still belong to the final available gap rather
+            # than being pushed after the episode.
+            fallback_gap_targets = list(range(max(0, len(resolved_assets) - 1)))
         unindexed_transition_by_block = {
-            block_index: next(fallback_gap_targets, None)
-            for block_index in unindexed_transitions
+            block_index: (
+                fallback_gap_targets[min(position, len(fallback_gap_targets) - 1)]
+                if fallback_gap_targets
+                else None
+            )
+            for position, block_index in enumerate(unindexed_transitions)
         }
 
         for track_index, (track, asset) in enumerate(resolved_assets):
@@ -184,6 +198,7 @@ def _script_blocks(
             RadioScriptBlock(
                 kind=RadioScriptBlockKind.TRANSITION,
                 text=script.text,
+                tts_text=script.tts_text,
                 duration_seconds=script.intended_duration_seconds,
                 tts_cues=list(script.tts_cues),
                 evidence_ids=list(script.evidence_ids),
@@ -201,5 +216,6 @@ def _narration_segment(block: RadioScriptBlock, order: int, chapter_number: int)
         planned_duration_seconds=block.intended_duration_seconds,
         title=block.kind.value.replace("_", " ").title(),
         narration_text=block.text,
+        tts_text=block.tts_text,
         tts_cues=list(block.tts_cues),
     )
