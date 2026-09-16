@@ -1,0 +1,173 @@
+"""Small HTTP contract for optional music catalog sidecars.
+
+The sidecars are deliberately treated as external services.  This adapter does not
+embed NetEase/QQ platform protocols; both services expose the same WaveCast-facing
+JSON shape at configurable endpoints.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
+
+import httpx
+
+from .config import ProviderSettings
+from .contracts import AudioAsset, AudioAssetType, MusicProvider, TrackMetadata
+from .errors import ProviderConfigurationError, ProviderInvalidResponseError
+from .http import request_json
+
+if TYPE_CHECKING:
+    from wavecast.intelligence.models import ResolvedTrack
+
+
+class SidecarMusicProvider(MusicProvider):
+    """Provider-neutral adapter for a configured catalog HTTP sidecar."""
+
+    provider_name: str
+    track_ref_prefix: str
+
+    def __init__(
+        self,
+        settings: ProviderSettings | None = None,
+        *,
+        client: httpx.AsyncClient | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        settings = settings or ProviderSettings()
+        configured_url = base_url or self._base_url_from_settings(settings)
+        if not configured_url:
+            raise ProviderConfigurationError(
+                f"{self.provider_name} sidecar requires a configured base URL"
+            )
+        self.settings = settings
+        self.base_url = configured_url.rstrip("/")
+        self.client = client or httpx.AsyncClient(timeout=settings.timeout_seconds)
+        self._owns_client = client is None
+
+    async def search(self, query: str, *, limit: int = 5) -> list[TrackMetadata]:
+        payload = await self._request("/search", params={"query": query, "limit": limit})
+        return [self._normalize_track(item) for item in _track_items(payload)]
+
+    async def resolve_track(self, track_ref: str) -> TrackMetadata:
+        provider_id = _provider_id(track_ref, self.track_ref_prefix)
+        payload = await self._request(f"/tracks/{quote(provider_id, safe='')}")
+        items = _track_items(payload)
+        if not items:
+            raise ProviderInvalidResponseError(f"{self.provider_name} returned no track metadata")
+        return self._normalize_track(items[0])
+
+    async def get_playback_asset(self, resolved_track: ResolvedTrack) -> AudioAsset:
+        metadata = await self.resolve_track(resolved_track.track_ref)
+        playback_url = _string_value(metadata.metadata.get("playback_url"))
+        if not playback_url:
+            provider_id = _provider_id(metadata.track_ref, self.track_ref_prefix)
+            payload = await self._request(f"/tracks/{quote(provider_id, safe='')}/playback")
+            playback_url = _playback_url(payload)
+        if not playback_url or not metadata.playable:
+            raise ProviderInvalidResponseError(
+                f"{self.provider_name} returned an unplayable track asset"
+            )
+        return AudioAsset(
+            asset_id=metadata.track_ref,
+            asset_type=AudioAssetType.MUSIC,
+            provider=self.provider_name,
+            playback_url=playback_url,
+            duration=metadata.duration_seconds,
+            metadata=metadata.metadata,
+        )
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self.client.aclose()
+
+    async def _request(
+        self, path: str, *, params: dict[str, object] | None = None
+    ) -> dict[str, Any]:
+        payload, _response = await request_json(
+            self.client,
+            provider=self.provider_name,
+            method="GET",
+            url=f"{self.base_url}{path}",
+            max_attempts=1,
+            headers={"Accept": "application/json"},
+            params=params,
+        )
+        return payload
+
+    def _base_url_from_settings(self, settings: ProviderSettings) -> str | None:
+        raise NotImplementedError
+
+    def _normalize_track(self, item: dict[str, Any]) -> TrackMetadata:
+        raw_ref = _string_value(item.get("track_ref")) or _string_value(item.get("id")) or ""
+        track_ref = (
+            raw_ref
+            if raw_ref.startswith(f"{self.track_ref_prefix}:")
+            else f"{self.track_ref_prefix}:{raw_ref}"
+        )
+        artist = _string_value(item.get("artist")) or _nested_name(item.get("artists"))
+        title = _string_value(item.get("title")) or ""
+        duration = _duration(item.get("duration_seconds", item.get("duration")))
+        raw_metadata = item.get("metadata")
+        metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        for key in ("album", "playback_url", "stream_url", "version_kind", "version_label"):
+            if item.get(key) is not None:
+                metadata[key] = item[key]
+        return TrackMetadata(
+            track_ref=track_ref,
+            title=title,
+            artist=artist or "",
+            duration_seconds=duration,
+            playable=bool(item.get("playable", bool(raw_ref and title and artist and duration > 0))),
+            metadata=metadata,
+        )
+
+
+def _track_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("tracks", "results", "data"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            return [value]
+    if any(key in payload for key in ("id", "track_ref", "title")):
+        return [payload]
+    return []
+
+
+def _playback_url(payload: dict[str, Any]) -> str | None:
+    for item in _track_items(payload):
+        for key in ("playback_url", "stream_url", "url"):
+            value = _string_value(item.get(key))
+            if value:
+                return value
+    return None
+
+
+def _provider_id(track_ref: str, prefix: str) -> str:
+    return track_ref.removeprefix(f"{prefix}:")
+
+
+def _string_value(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _duration(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    if isinstance(value, str):
+        try:
+            return max(0, int(float(value)))
+        except ValueError:
+            return 0
+    return 0
+
+
+def _nested_name(value: object) -> str | None:
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        return _string_value(value[0].get("name") or value[0].get("artist"))
+    if isinstance(value, dict):
+        return _string_value(value.get("name") or value.get("artist"))
+    return None
