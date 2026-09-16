@@ -309,6 +309,29 @@ class EpisodeOrchestrator:
         episode.last_activity_at = self.now()
         return self.repository.save(episode)
 
+    def prepare_materialization(self, episode_id: str) -> LiveEpisode:
+        """Prepare a full timeline while leaving narration network I/O external.
+
+        The API/materialization service can then await TTS for narration segments and
+        commit the final ``MATERIALIZED`` state. Existing synchronous callers keep
+        using ``materialize_all`` and the deterministic mock AudioProvider path.
+        """
+        episode = self._active_episode(episode_id)
+        episode.generation_mode = GenerationMode.FULL
+        episode.state = EpisodeState.MATERIALIZING
+        for segment in episode.timeline_segments:
+            if segment.kind is SegmentKind.MUSIC and not segment.is_audio_ready:
+                self._make_ready(segment)
+            elif (
+                segment.kind is SegmentKind.NARRATION
+                and not segment.is_audio_ready
+            ):
+                if not isinstance(segment, NarrationSegment) or not segment.narration_text:
+                    raise EpisodeRuntimeError("narration segment has no script text")
+                segment.state = SegmentState.SCRIPT_READY
+        episode.last_activity_at = self.now()
+        return self.repository.save(episode)
+
     def replace_speculative_music(self, episode_id: str, replacement_title: str) -> LiveEpisode:
         """A bounded replan seam: committed content is never changed."""
         episode = self._active_episode(episode_id)
@@ -339,10 +362,9 @@ class EpisodeOrchestrator:
 
     def _make_ready(self, segment: Segment) -> None:
         if segment.kind is SegmentKind.NARRATION:
+            if not isinstance(segment, NarrationSegment) or not segment.narration_text:
+                raise EpisodeRuntimeError("narration segment has no script text")
             segment.state = SegmentState.SCRIPT_READY
-            segment.narration_text = (
-                segment.narration_text or "A short, evidence-aware transition into the next track."
-            )
             segment.state = SegmentState.AUDIO_GENERATING
             source = self.audio_provider.narration_source(
                 segment.id,
@@ -454,6 +476,7 @@ class EpisodeOrchestrator:
                 order=1,
                 planned_duration_seconds=10,
                 title="Host introduction",
+                narration_text="Welcome to this guided listening journey.",
             ),
             music(
                 id="segment-bridge",
@@ -469,6 +492,7 @@ class EpisodeOrchestrator:
                 order=3,
                 planned_duration_seconds=11,
                 title="Host connection",
+                narration_text="Now we connect the next chapter.",
             ),
             music(
                 id="segment-resolution",
@@ -484,6 +508,7 @@ class EpisodeOrchestrator:
                 order=5,
                 planned_duration_seconds=9,
                 title="Host resolution",
+                narration_text="We close with a final reflection.",
             ),
             music(
                 id="segment-finale",

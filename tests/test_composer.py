@@ -139,3 +139,30 @@ def test_composer_rejects_unresolved_proposals_before_playback() -> None:
 
     with pytest.raises(UnresolvedTrackError):
         asyncio.run(EpisodeComposer(MockMusicProvider()).compose([proposal], RadioScript(blocks=[])))
+
+
+def test_composer_preserves_provider_neutral_tts_cues() -> None:
+    episode = asyncio.run(
+        EpisodeComposer(MockMusicProvider()).compose(
+            [
+                ResolvedTrack(
+                    track_ref="mock:opening",
+                    canonical_artist="Mira Fields",
+                    canonical_title="Neon First Light",
+                )
+            ],
+            RadioScript(
+                blocks=[
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.INTRO,
+                        text="Welcome to the night.",
+                        duration_seconds=8,
+                        tts_cues=["pause_short", "breath"],
+                    )
+                ]
+            ),
+        )
+    )
+
+    narration = next(segment for segment in episode.segments if segment.narration_text)
+    assert narration.tts_cues == ["pause_short", "breath"]

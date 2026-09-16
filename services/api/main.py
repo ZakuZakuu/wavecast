@@ -15,11 +15,26 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from wavecast.models.episode import CoverParams, EpisodeSeed, LiveEpisode
+from wavecast.materialization import NarrationMaterializer
+from wavecast.models.episode import (
+    CoverParams,
+    EpisodeSeed,
+    EpisodeState,
+    LiveEpisode,
+    NarrationSegment,
+)
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
 from wavecast.providers.config import ProviderSettings
-from wavecast.storage import EpisodeConcurrencyError, PostgresEpisodeRepository
+from wavecast.providers.contracts import ObjectStorageProvider
+from wavecast.providers.errors import ProviderConfigurationError, ProviderError
+from wavecast.providers.fakes import MockTTSProvider
+from wavecast.providers.minimax import MiniMaxTTSProvider
+from wavecast.storage import (
+    EpisodeConcurrencyError,
+    LocalObjectStorageProvider,
+    PostgresEpisodeRepository,
+)
 from wavecast.storage.episodes import EpisodeRepository
 
 LISTENER_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
@@ -29,6 +44,20 @@ repository: EpisodeRepository = (
 )
 orchestrator = EpisodeOrchestrator(repository)
 scheduler = InlineGenerationScheduler(orchestrator)
+audio_storage: ObjectStorageProvider = LocalObjectStorageProvider()
+_provider_settings = ProviderSettings.from_env()
+
+
+def _build_tts_provider(
+    settings: ProviderSettings, storage: ObjectStorageProvider
+) -> MiniMaxTTSProvider | MockTTSProvider:
+    if settings.mode == "mock":
+        return MockTTSProvider(storage)
+    return MiniMaxTTSProvider(settings, storage=storage)
+
+
+_tts_provider = _build_tts_provider(_provider_settings, audio_storage)
+narration_materializer = NarrationMaterializer(_tts_provider, audio_storage)
 
 
 def configure_runtime(episode_repository: EpisodeRepository) -> None:
@@ -37,6 +66,13 @@ def configure_runtime(episode_repository: EpisodeRepository) -> None:
     repository = episode_repository
     orchestrator = EpisodeOrchestrator(repository)
     scheduler = InlineGenerationScheduler(orchestrator)
+
+
+def configure_narration_materializer(materializer: NarrationMaterializer) -> None:
+    """Injection seam for tests and deployments with alternate TTS/storage adapters."""
+    global audio_storage, narration_materializer
+    narration_materializer = materializer
+    audio_storage = materializer.storage
 
 app = FastAPI(title="Wavecast API", version="0.2.0")
 app.add_middleware(
@@ -151,6 +187,21 @@ def mock_audio(kind: str, item_id: str, duration: int = 1) -> Response:
         content=_mock_wav(duration),
         media_type="audio/wav",
         headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@app.get("/api/assets/audio/{asset_key:path}")
+async def audio_asset(asset_key: str) -> Response:
+    try:
+        stored = await audio_storage.get(asset_key)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Audio asset not found") from error
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Audio asset not found")
+    return Response(
+        content=stored.content,
+        media_type=stored.content_type,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
 
 
@@ -294,9 +345,83 @@ def resume(episode_id: str, request: Request) -> LiveEpisode:
     return operate(episode_id, listener(request), lambda: orchestrator.resume(episode_id))
 
 
+@app.post(
+    "/api/episodes/{episode_id}/segments/{segment_id}/materialize",
+    response_model=LiveEpisode,
+)
+async def materialize_narration(
+    episode_id: str, segment_id: str, request: Request
+) -> LiveEpisode:
+    listener_id = listener(request)
+    owned(episode_id, listener_id)
+    episode = orchestrator.get(episode_id, listener_id)
+    try:
+        segment = episode.segment(segment_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Segment not found") from error
+    if not isinstance(segment, NarrationSegment):
+        raise HTTPException(status_code=409, detail="Only narration segments can be materialized")
+    try:
+        await narration_materializer.materialize(segment)
+        return repository.save(episode)
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
+    except ProviderConfigurationError as error:
+        try:
+            repository.save(episode)
+        except EpisodeConcurrencyError as save_error:
+            raise HTTPException(
+                status_code=409, detail="Episode changed; reload and retry"
+            ) from save_error
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except ProviderError as error:
+        # Materializer leaves the segment SCRIPT_READY for a later retry.
+        try:
+            repository.save(episode)
+        except EpisodeConcurrencyError as save_error:
+            raise HTTPException(
+                status_code=409, detail="Episode changed; reload and retry"
+            ) from save_error
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
 @app.post("/api/episodes/{episode_id}/materialize", response_model=LiveEpisode)
-def materialize(episode_id: str, request: Request) -> LiveEpisode:
-    return operate(episode_id, listener(request), lambda: orchestrator.materialize_all(episode_id))
+async def materialize(episode_id: str, request: Request) -> LiveEpisode:
+    listener_id = listener(request)
+    owned(episode_id, listener_id)
+    episode: LiveEpisode | None = None
+    try:
+        episode = orchestrator.prepare_materialization(episode_id)
+        for segment in episode.timeline_segments:
+            if isinstance(segment, NarrationSegment) and not segment.is_audio_ready:
+                await narration_materializer.materialize(segment)
+        episode.state = EpisodeState.MATERIALIZED
+        episode.last_activity_at = orchestrator.now()
+        return repository.save(episode)
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
+    except ProviderConfigurationError as error:
+        if episode is not None:
+            episode.state = EpisodeState.STREAMING
+            try:
+                repository.save(episode)
+            except EpisodeConcurrencyError as save_error:
+                raise HTTPException(
+                    status_code=409, detail="Episode changed; reload and retry"
+                ) from save_error
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except ProviderError as error:
+        if episode is not None:
+            episode.state = EpisodeState.STREAMING
+            try:
+                repository.save(episode)
+            except EpisodeConcurrencyError as save_error:
+                raise HTTPException(
+                    status_code=409, detail="Episode changed; reload and retry"
+                ) from save_error
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except EpisodeRuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @app.post("/api/episodes/{episode_id}/replan", response_model=LiveEpisode)
