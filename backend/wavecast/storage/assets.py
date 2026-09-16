@@ -37,7 +37,7 @@ class LocalObjectStorageProvider:
         self.base_url = base_url.rstrip("/")
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def put(
+    async def put(
         self,
         key: str,
         content: bytes,
@@ -58,7 +58,7 @@ class LocalObjectStorageProvider:
         )
         return self.url_for(key)
 
-    def get(self, key: str) -> StoredObject | None:
+    async def get(self, key: str) -> StoredObject | None:
         path = self._path(key)
         if not path.is_file():
             return None

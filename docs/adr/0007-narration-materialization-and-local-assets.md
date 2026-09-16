@@ -23,12 +23,24 @@ configuration. It validates `base_resp`, decodes hex bytes, uses the documented
 millisecond `extra_info.audio_length` when present, and otherwise derives duration
 from MP3 frame headers. API usage is recorded before failures escape.
 
-`LocalObjectStorageProvider` implements the existing `ObjectStorageProvider` seam for
-development and tests. It writes content-addressed files and metadata below
+`LocalObjectStorageProvider` implements the existing asynchronous
+`ObjectStorageProvider` seam for development and tests. Its `put()` and `get()`
+operations are awaitable so a future R2/S3 adapter can perform network I/O without
+blocking the TTS path; `url_for()` remains synchronous deterministic URL
+construction. It writes content-addressed files and metadata below
 `.wavecast-data/audio`, returns `/api/assets/audio/<key>` URLs, and rejects path
-traversal. A future R2/S3 adapter can replace it. A per-process keyed lock and the
-same content-addressed key prevent duplicate TTS calls for identical provider/model/
-voice/audio/text/cue inputs.
+traversal. A per-process keyed lock and the same content-addressed key prevent
+duplicate TTS calls for identical provider/model/voice/audio/text/cue inputs.
+
+Cue rendering is versioned (`wavecast-cues-v2`). Positionless pause cues remain in
+the cache identity but are not emitted into MiniMax text until the script model
+provides safe sentence positions; only the currently safe `breath` cue is rendered.
+
+Provider selection is explicit: mock mode constructs `MockTTSProvider`, while live
+mode always constructs `MiniMaxTTSProvider`. Missing live credentials surface a
+typed configuration error at materialization rather than silently producing mock
+audio. The opt-in `scripts/minimax_tts_probe.py` is the only live smoke harness and
+is never run by CI.
 
 Mock mode uses `MockTTSProvider` with the same materializer and local storage path;
 `FakeTTSProvider` remains available for isolated contract tests. No MiniMax request is

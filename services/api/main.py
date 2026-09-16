@@ -27,7 +27,7 @@ from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationSchedule
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import ObjectStorageProvider
-from wavecast.providers.errors import ProviderError
+from wavecast.providers.errors import ProviderConfigurationError, ProviderError
 from wavecast.providers.fakes import MockTTSProvider
 from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.storage import (
@@ -46,13 +46,17 @@ orchestrator = EpisodeOrchestrator(repository)
 scheduler = InlineGenerationScheduler(orchestrator)
 audio_storage: ObjectStorageProvider = LocalObjectStorageProvider()
 _provider_settings = ProviderSettings.from_env()
-_tts_provider = (
-    MiniMaxTTSProvider(_provider_settings, storage=audio_storage)
-    if _provider_settings.mode == "live"
-    and _provider_settings.minimax_api_key
-    and _provider_settings.minimax_tts_voice_id
-    else MockTTSProvider(audio_storage)
-)
+
+
+def _build_tts_provider(
+    settings: ProviderSettings, storage: ObjectStorageProvider
+) -> MiniMaxTTSProvider | MockTTSProvider:
+    if settings.mode == "mock":
+        return MockTTSProvider(storage)
+    return MiniMaxTTSProvider(settings, storage=storage)
+
+
+_tts_provider = _build_tts_provider(_provider_settings, audio_storage)
 narration_materializer = NarrationMaterializer(_tts_provider, audio_storage)
 
 
@@ -187,9 +191,9 @@ def mock_audio(kind: str, item_id: str, duration: int = 1) -> Response:
 
 
 @app.get("/api/assets/audio/{asset_key:path}")
-def audio_asset(asset_key: str) -> Response:
+async def audio_asset(asset_key: str) -> Response:
     try:
-        stored = audio_storage.get(asset_key)
+        stored = await audio_storage.get(asset_key)
     except ValueError as error:
         raise HTTPException(status_code=404, detail="Audio asset not found") from error
     if stored is None:
@@ -362,6 +366,14 @@ async def materialize_narration(
         return repository.save(episode)
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
+    except ProviderConfigurationError as error:
+        try:
+            repository.save(episode)
+        except EpisodeConcurrencyError as save_error:
+            raise HTTPException(
+                status_code=409, detail="Episode changed; reload and retry"
+            ) from save_error
+        raise HTTPException(status_code=503, detail=str(error)) from error
     except ProviderError as error:
         # Materializer leaves the segment SCRIPT_READY for a later retry.
         try:
@@ -388,6 +400,16 @@ async def materialize(episode_id: str, request: Request) -> LiveEpisode:
         return repository.save(episode)
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
+    except ProviderConfigurationError as error:
+        if episode is not None:
+            episode.state = EpisodeState.STREAMING
+            try:
+                repository.save(episode)
+            except EpisodeConcurrencyError as save_error:
+                raise HTTPException(
+                    status_code=409, detail="Episode changed; reload and retry"
+                ) from save_error
+        raise HTTPException(status_code=503, detail=str(error)) from error
     except ProviderError as error:
         if episode is not None:
             episode.state = EpisodeState.STREAMING

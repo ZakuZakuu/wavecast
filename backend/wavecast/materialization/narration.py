@@ -31,16 +31,12 @@ class NarrationMaterializer:
     async def materialize(self, segment: NarrationSegment) -> NarrationSegment:
         if segment.kind is not SegmentKind.NARRATION:
             raise ProviderInvalidResponseError("narration materializer received a non-narration segment")
-        if segment.state in {SegmentState.COMMITTED, SegmentState.PLAYED, SegmentState.SKIPPED}:
-            raise ProviderInvalidResponseError("committed narration cannot be regenerated")
-        if segment.state is SegmentState.PLANNED:
-            segment.narration_text = (
-                segment.narration_text
-                or "A short, evidence-aware transition into the next track."
-            )
-            segment.state = SegmentState.SCRIPT_READY
         if segment.state is SegmentState.AUDIO_READY:
             return segment
+        if segment.state is not SegmentState.SCRIPT_READY:
+            raise ProviderInvalidResponseError(
+                f"narration materialization requires SCRIPT_READY, got {segment.state.value}"
+            )
         if not segment.narration_text:
             raise ProviderInvalidResponseError("narration segment has no script text")
 
@@ -49,7 +45,7 @@ class NarrationMaterializer:
         lock = self._locks.setdefault(cache_key or segment.id, asyncio.Lock())
         async with lock:
             if cache_key:
-                cached = self.storage.get(cache_key)
+                cached = await self.storage.get(cache_key)
                 cached_duration = _stored_duration(cached.metadata) if cached else None
                 if cached is not None and cached_duration is not None:
                     self._apply_asset(

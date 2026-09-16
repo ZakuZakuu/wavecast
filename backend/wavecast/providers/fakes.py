@@ -10,6 +10,8 @@ from wave import open as open_wave
 
 from pydantic import BaseModel
 
+from wavecast.narration import CUE_RENDERING_VERSION
+
 from .contracts import (
     AudioAsset,
     AudioAssetType,
@@ -91,7 +93,7 @@ class MockTTSProvider:
             audio_settings=self.audio_settings,
             rendered_text=rendered_text,
             recognized_cues=cues,
-            rendering_version="wavecast-cues-v1",
+            rendering_version=CUE_RENDERING_VERSION,
             extension="wav",
         )
 
@@ -99,13 +101,13 @@ class MockTTSProvider:
         cache_key = self.cache_key(text, cues)
         lock = self._locks.setdefault(cache_key, asyncio.Lock())
         async with lock:
-            cached = self.storage.get(cache_key)
+            cached = await self.storage.get(cache_key)
             if cached is not None:
                 return self._asset(cache_key, cached.metadata.get("duration_seconds", 1), True)
             self.calls += 1
             duration = max(1, min(300, math.ceil(len(text) / 12)))
             content = _mock_narration_wav(duration)
-            url = self.storage.put(
+            url = await self.storage.put(
                 cache_key,
                 content,
                 "audio/wav",

@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Opt-in, single-request MiniMax TTS smoke probe.
+
+This script is intentionally not part of CI.  It requires ``--run-live`` and a
+fully configured live environment before making one paid request.  The output
+contains only safe request metadata and the WaveCast browser asset URL.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+from time import perf_counter
+
+from wavecast.narration import render_narration
+from wavecast.providers.config import ProviderSettings
+from wavecast.providers.errors import ProviderConfigurationError, ProviderError
+from wavecast.providers.minimax import MiniMaxTTSProvider
+from wavecast.storage import LocalObjectStorageProvider
+
+TEXT = "今晚，我们从一首歌开始，听见城市夜色的回声。"
+
+
+async def _run_probe(settings: ProviderSettings) -> None:
+    storage = LocalObjectStorageProvider()
+    provider = MiniMaxTTSProvider(settings, storage=storage)
+    rendered = render_narration(TEXT, [])
+    started = perf_counter()
+    try:
+        asset = await provider.synthesize(rendered.text, cues=list(rendered.recognized_cues))
+    finally:
+        await provider.aclose()
+    elapsed_ms = int((perf_counter() - started) * 1000)
+    cache_hit = bool(asset.metadata.get("cache_hit", False))
+    print(f"model={settings.minimax_tts_model}")
+    print(f"voice_id={settings.minimax_tts_voice_id}")
+    print(f"chars={len(TEXT)}")
+    print(f"elapsed_ms={elapsed_ms}")
+    print(f"duration={asset.duration}")
+    print(f"cache={'hit' if cache_hit else 'miss'}")
+    print(f"browser_asset_url={asset.playback_url}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run one opt-in MiniMax TTS smoke request")
+    parser.add_argument(
+        "--run-live",
+        action="store_true",
+        help="authorize the single live MiniMax request; omitted means no request",
+    )
+    args = parser.parse_args()
+    if not args.run_live:
+        raise SystemExit("pass --run-live explicitly; no provider calls were made")
+
+    settings = ProviderSettings.from_env()
+    if settings.mode != "live":
+        raise SystemExit("set WAVECAST_PROVIDER_MODE=live before running the probe")
+    if not settings.minimax_api_key or not settings.minimax_tts_voice_id:
+        raise SystemExit("configure MINIMAX_API_KEY and MINIMAX_TTS_VOICE_ID before running the probe")
+
+    try:
+        asyncio.run(_run_probe(settings))
+    except ProviderConfigurationError as error:
+        raise SystemExit("minimax probe configuration is incomplete") from error
+    except ProviderError as error:
+        # Never print provider response bodies, even when an adapter error is detailed.
+        raise SystemExit("minimax probe failed") from error
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
