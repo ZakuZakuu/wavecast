@@ -180,6 +180,16 @@ class FastPathResult:
         self.trace = trace
         self.elapsed_ms = elapsed_ms
 
+    @property
+    def queries(self) -> list[str]:
+        """Expose fast-stage queries to cancellable background deduplication."""
+        return self.research.queries
+
+    @property
+    def bundle(self) -> ResearchBundle:
+        """Expose normalized fast evidence to the background merge stage."""
+        return self.research.bundle
+
 
 def research_anchor_bundle(request: FastResearchInput) -> ResearchBundle:
     from .research import bundle_from_results

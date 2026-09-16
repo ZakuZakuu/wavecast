@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Protocol
 
 from wavecast.intelligence.models import (
     NarrationScript,
@@ -19,13 +20,17 @@ from wavecast.models.episode import (
     PlayableEpisode,
     SegmentState,
 )
-from wavecast.providers.contracts import AudioAsset, AudioAssetType, MusicProvider
+from wavecast.providers.contracts import AudioAsset, AudioAssetType
+
+
+class PlaybackAssetProvider(Protocol):
+    async def get_playback_asset(self, resolved_track: ResolvedTrack) -> AudioAsset: ...
 
 
 class EpisodeComposer:
     """Compose an ordered timeline without allowing proposals into playback."""
 
-    def __init__(self, music_provider: MusicProvider) -> None:
+    def __init__(self, music_provider: PlaybackAssetProvider) -> None:
         self.music_provider = music_provider
 
     async def compose(
