@@ -12,14 +12,18 @@ remains a later milestone.
 
 Phase 3 has two deterministic application-owned paths:
 
-- The fast path runs one bounded Exa discovery query and one bounded Tavily research query in
+- The fast path runs one bounded Exa context query and one bounded Tavily evidence query in
   parallel, deduplicates and trims normalized evidence, then makes exactly one DeepSeek Responses
-  API JSON Schema call for a typed `FastStartPlan`. It has a 15-second hard deadline and returns a
-  safe anchor-only narration fallback without retrying when the deadline or validation fails.
-- The background path is independently cancellable. It adds at most one Exa and two Tavily
-  queries, then invokes a separate Curator and Writer over typed models to produce a broader
-  `ProgramSkeleton` and one future `NarrationScript`. It never owns Episode lifecycle or spending
-  decisions.
+  API JSON Schema call for a typed `FastStartPlan`. The plan may describe open research facets and
+  a small proposal pool of up to eight background queries with operational search intent. The
+  application deterministically executes no more than three of them. It has a 15-second hard
+  deadline and returns a safe anchor-only narration fallback without retrying when the deadline or
+  validation fails.
+- The background path is independently cancellable. It consumes the FastStart research plan,
+  deduplicates against fast queries, routes `DISCOVERY` to Exa and `RESEARCH`/`EXACT` to Tavily,
+  and adds at most one Exa and two Tavily queries. It then invokes a separate Curator and Writer
+  over typed models to produce a broader `ProgramSkeleton` and one future `NarrationScript`. It
+  never owns Episode lifecycle or spending decisions.
 - Search normalization produces `Evidence` only. Generic Exa/Tavily webpage results do not become
   `TrackCandidate` records by title parsing. Candidate and taste inference belongs downstream to
   the FastStart planner and Curator; a future provider that returns explicit track entities or

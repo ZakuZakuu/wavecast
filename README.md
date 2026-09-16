@@ -105,7 +105,7 @@ Guided Discovery quality is evaluated separately from runtime correctness. The c
 benchmark cases and typed human-review rubric live under `backend/wavecast/evals/`; they cover
 same-artist traps, game-music context, artist-to-scene bridges, and mood-driven discovery without
 prescribing exact answers. Search remains bounded at one Exa plus two Tavily background queries,
-with distinct local-similarity, scene-bridge, and cross-scene roles. Generic search results remain
+with routing selected by the topic-adaptive ResearchPlan. Generic search results remain
 Evidence; FastStart and Curator infer candidates downstream. The opt-in evaluator runs at most two
 bounded cases and records only sanitized review artifacts:
 
@@ -136,6 +136,18 @@ The probe prints only stage timings, safe usage totals, resolved catalog identit
 metadata. It fails clearly if live mode has no configured real music provider; it never substitutes
 mock music or narration in live mode.
 
+### Phase 4.6 adaptive research planning
+
+FastStart now emits a topic-adaptive `ResearchPlan` in the same structured call as the first
+script. The plan contains an open central question, bounded facets, and a defensively bounded
+pool of zero to eight proposed queries. The deterministic background stage routes `DISCOVERY` to
+Exa and `RESEARCH`/`EXACT` to Tavily, deduplicates fast queries, and executes at most one Exa plus
+two Tavily calls. Generic search
+results remain safe `Evidence` with facet/intent provenance; they do not become track proposals by
+webpage title. Curator receives the plan and adapts its chapter beats to the request rather than
+assuming a fixed discovery arc. The episode probe reports only sanitized plan metadata. No live
+probe is part of CI.
+
 ## Current scope
 
-Phase 1.5 adds a durable Postgres repository, listener-scoped resume, and version-polled SSE while retaining mock-mode development. Phase 2 adds independent DeepSeek, Exa, and Tavily adapters with a deterministic discovery/research router and in-memory usage ledger. Phase 3 adds a two-speed, typed progressive intelligence pipeline and TTFS tracing. Phase 4 adds provider-neutral music assets, deterministic radio composition, and MiniMax narration materialization. Phase 4.5 assembles those seams into one bounded playable episode; it does not add a queue, new provider, recommendation redesign, or browser playback redesign. Real calls remain opt-in.
+Phase 1.5 adds a durable Postgres repository, listener-scoped resume, and version-polled SSE while retaining mock-mode development. Phase 2 adds independent DeepSeek, Exa, and Tavily adapters with a deterministic search router and in-memory usage ledger. Phase 3 adds a two-speed, typed progressive intelligence pipeline and TTFS tracing. Phase 3.5 hardens editorial evaluation. Phase 4 adds provider-neutral music assets, deterministic radio composition, and MiniMax narration materialization. Phase 4.5 assembles those seams into one bounded playable episode. Phase 4.6 adds topic-adaptive research planning without changing runtime, playback, or live budgets; it does not add a queue, new provider, recommendation redesign, or browser playback redesign. Real calls remain opt-in.

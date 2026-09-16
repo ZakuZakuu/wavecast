@@ -3,7 +3,14 @@ import asyncio
 from wavecast.intelligence.background import BackgroundIntelligencePipeline
 from wavecast.intelligence.curation import CuratorService
 from wavecast.intelligence.fast_start import FastPathResult
-from wavecast.intelligence.models import FastResearchInput, FastStartPlan, NarrationScript
+from wavecast.intelligence.models import (
+    FastResearchInput,
+    FastStartPlan,
+    NarrationScript,
+    PlannedResearchQuery,
+    ResearchPlan,
+    SearchIntent,
+)
 from wavecast.intelligence.planning import PlanningSession
 from wavecast.intelligence.research import BackgroundResearchService, FastResearchService
 from wavecast.intelligence.trace import GenerationTrace
@@ -70,6 +77,56 @@ def test_background_pipeline_stops_before_paid_work_when_cancelled() -> None:
 
     assert result is None
     assert not called
+
+
+def test_background_pipeline_passes_adaptive_plan_to_research_service() -> None:
+    class RecordingSearch(SearchFixture):
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def search(self, query: str, *, limit: int = 5, stage: str | None = None):
+            self.calls.append(query)
+            return await super().search(query, limit=limit, stage=stage)
+
+    exa = RecordingSearch()
+    tavily = RecordingSearch()
+    custom_plan = ResearchPlan(
+        central_question="How does this specific question work?",
+        background_queries=[
+            PlannedResearchQuery(
+                query="distinctive adaptive query",
+                intent=SearchIntent.DISCOVERY,
+                rationale="fixture-only routing assertion",
+            )
+        ],
+    )
+    fast = fast_result()
+    fast.plan = fast.plan.model_copy(update={"research_plan": custom_plan})
+    writer_output = StructuredFixture(NarrationScript(text="future script", intended_duration_seconds=5))
+    curator_output = StructuredFixture(skeleton())
+    pipeline = BackgroundIntelligencePipeline(
+        research=BackgroundResearchService(
+            discovery=exa,
+            research=tavily,
+            deadline_seconds=0.2,
+        ),
+        curator=CuratorService(curator_output),
+        writer=WriterService(writer_output),
+    )
+
+    result = asyncio.run(
+        pipeline.run(
+            request(),
+            fast,
+            cancel_event=asyncio.Event(),
+            trace=GenerationTrace(request_id="adaptive-pipeline"),
+        )
+    )
+
+    assert result is not None
+    assert exa.calls == ["distinctive adaptive query"]
+    assert tavily.calls == []
+    assert all("related context and perspectives" not in query for query in exa.calls)
 
 
 def test_background_writer_targets_first_speculative_chapter_after_committed_prefix() -> None:

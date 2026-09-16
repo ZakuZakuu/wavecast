@@ -53,7 +53,7 @@ class BackgroundIntelligencePipeline:
             return None
         trace.mark("background_research_started")
         bundle = await self.research.run(
-            request, fast_result.research, cancel_event=cancel_event, trace=trace
+            request, fast_result, cancel_event=cancel_event, trace=trace
         )
         if bundle is None or cancel_event.is_set():
             return None
