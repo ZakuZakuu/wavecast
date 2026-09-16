@@ -104,6 +104,44 @@ def test_retrieval_preserves_versions_and_provider_alternatives() -> None:
     assert len(report.groups) == 3
 
 
+def test_logical_group_limit_keeps_all_provider_alternatives() -> None:
+    providers = [
+        FixtureMusicProvider(
+            name,
+            [
+                metadata(f"{name}:same-song", "Fixture Artist", "Same Song"),
+                metadata(f"{name}:same-song-live", "Fixture Artist", "Same Song (Live)"),
+            ],
+        )
+        for name in ("qqmusic", "netease", "audius")
+    ]
+
+    report = asyncio.run(
+        service(*providers).search_report(
+            "Fixture Artist Same Song",
+            requested_artist="Fixture Artist",
+            requested_title="Same Song",
+            limit=2,
+        )
+    )
+
+    assert len(report.groups) == 2
+    assert len(report.candidates) == 6
+    same_song = next(
+        group
+        for group in report.groups
+        if group.candidates[0].version_kind is VersionKind.UNKNOWN
+    )
+    live = next(
+        group
+        for group in report.groups
+        if group.candidates[0].version_kind is VersionKind.LIVE
+    )
+    expected_providers = {"qqmusic", "netease", "audius"}
+    assert {candidate.provider for candidate in same_song.candidates} == expected_providers
+    assert {candidate.provider for candidate in live.candidates} == expected_providers
+
+
 def test_retrieval_ranking_is_explainable_and_not_provider_order() -> None:
     broad = FixtureMusicProvider(
         "audius",
