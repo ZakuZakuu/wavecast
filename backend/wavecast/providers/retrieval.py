@@ -186,7 +186,17 @@ class MusicRetrievalService:
             requested_version=requested_version,
             provider_names=[name for name, _provider in ordered],
         )
-        selected_group_keys = {candidate.group_key for candidate in ranked[:limit]}
+        # A discovery slot represents a logical recording/version, not a provider
+        # copy. Select groups in rank order, then retain every source alternative.
+        selected_group_keys: list[str] = []
+        seen_group_keys: set[str] = set()
+        for candidate in ranked:
+            if candidate.group_key in seen_group_keys:
+                continue
+            seen_group_keys.add(candidate.group_key)
+            selected_group_keys.append(candidate.group_key)
+            if len(selected_group_keys) == limit:
+                break
         selected = [candidate for candidate in ranked if candidate.group_key in selected_group_keys]
         groups = _group_candidates(selected)
         return RetrievalReport(

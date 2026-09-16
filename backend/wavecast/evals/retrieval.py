@@ -38,7 +38,6 @@ RETRIEVAL_BENCHMARK_CASES: tuple[RetrievalBenchmarkCase, ...] = (
     RetrievalBenchmarkCase(
         case_id="persona-4-specialist",
         query="Persona 4 - Specialist",
-        requested_artist="Persona 4",
         requested_title="Specialist",
     ),
 )
@@ -58,6 +57,13 @@ SYNTHETIC_RETRIEVAL_FIXTURES: tuple[RetrievalFixtureTrack, ...] = (
         artist="Fixture Artist",
         title="Same Song",
         duration_seconds=181,
+    ),
+    RetrievalFixtureTrack(
+        provider="audius",
+        track_ref="audius:studio-1",
+        artist="Fixture Artist",
+        title="Same Song",
+        duration_seconds=182,
     ),
     RetrievalFixtureTrack(
         provider="audius",
