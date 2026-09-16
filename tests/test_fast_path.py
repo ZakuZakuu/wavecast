@@ -119,7 +119,7 @@ def test_fast_path_deadline_returns_safe_fallback_without_retry() -> None:
     assert len(llm.calls) == 1
     assert result.trace.fallback_used
     assert result.trace.time_to_first_script_ms is not None
-    assert result.plan.first_narration.text.startswith("先从 Anchor - Opening")
+    assert result.plan.first_narration.text.startswith("We will start with Anchor - Opening")
     assert "Fixture Artist" not in result.plan.first_narration.text
     assert any(event.name == "first_script_ready" for event in result.trace.events)
     assert result.trace.fast_research_elapsed_ms is not None

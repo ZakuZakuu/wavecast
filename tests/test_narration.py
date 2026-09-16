@@ -68,6 +68,41 @@ def test_mock_materializer_stores_browser_audio_and_is_idempotent(tmp_path) -> N
     assert provider.calls == 1
 
 
+def test_materializer_synthesizes_tts_text_but_keeps_visible_text(tmp_path) -> None:
+    class RecordingTTS:
+        def __init__(self, storage):
+            self.storage = storage
+            self.texts: list[str] = []
+
+        async def synthesize(self, text: str, *, cues: list[str]):
+            self.texts.append(text)
+            return await MockTTSProvider(self.storage).synthesize(text, cues=cues)
+
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    provider = RecordingTTS(storage)
+    segment = narration_segment()
+    segment.tts_text = "Third Coast"
+
+    asyncio.run(NarrationMaterializer(provider, storage).materialize(segment))
+
+    assert segment.narration_text == "A restrained radio introduction."
+    assert provider.texts == ["Third Coast (breath)"]
+
+
+def test_tts_cache_identity_changes_when_tts_text_changes(tmp_path) -> None:
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    provider = MockTTSProvider(storage)
+    first = narration_segment()
+    second = narration_segment()
+    second.tts_text = "Third Coast"
+
+    asyncio.run(NarrationMaterializer(provider, storage).materialize(first))
+    asyncio.run(NarrationMaterializer(provider, storage).materialize(second))
+
+    assert first.asset_ref != second.asset_ref
+    assert provider.calls == 2
+
+
 def test_materializer_returns_failed_segment_to_script_ready(tmp_path) -> None:
     class FailingProvider:
         async def synthesize(self, text: str, *, cues: list[str]):

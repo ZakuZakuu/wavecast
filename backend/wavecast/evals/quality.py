@@ -135,6 +135,23 @@ def build_review_bundle(
     arc: list[ReviewCandidate] = []
     if skeleton:
         for chapter in skeleton.chapters:
+            if chapter.track is None:
+                # Narrative-only beats remain reviewable without pretending
+                # that they are catalog-resolved candidates.
+                arc.append(
+                    ReviewCandidate(
+                        artist="",
+                        title="",
+                        similarity_dimensions=[],
+                        reasons=[chapter.reason],
+                        novelty_distance=chapter.novelty_distance,
+                        narrative_role=chapter.narrative_role,
+                        evidence_ids=list(chapter.evidence_ids),
+                        scene_cluster_rationale=chapter.reason,
+                        resolution_status="unresolved",
+                    )
+                )
+                continue
             chapter_review_candidate = review_candidate(
                 chapter.track,
                 narrative_role=chapter.narrative_role,

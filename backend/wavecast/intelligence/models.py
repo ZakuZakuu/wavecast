@@ -16,6 +16,28 @@ class NoveltyDistance(StrEnum):
     SURPRISE = "surprise"
 
 
+class OutputLanguage(StrEnum):
+    """Supported spoken-language choices for one assembled program."""
+
+    AUTO = "auto"
+    ZH_CN = "zh-CN"
+    EN_US = "en-US"
+    JA_JP = "ja-JP"
+
+
+def resolve_output_language(requested: OutputLanguage | str, topic: str) -> OutputLanguage:
+    """Resolve ``auto`` from the user topic, never from catalog metadata."""
+
+    requested = OutputLanguage(requested)
+    if requested is not OutputLanguage.AUTO:
+        return requested
+    if any("\u3040" <= character <= "\u30ff" for character in topic):
+        return OutputLanguage.JA_JP
+    if any("\u4e00" <= character <= "\u9fff" for character in topic):
+        return OutputLanguage.ZH_CN
+    return OutputLanguage.EN_US
+
+
 class NarrativeRole(StrEnum):
     ANCHOR = "anchor"
     VALIDATION = "validation"
@@ -149,6 +171,7 @@ class ResolvedTrackCandidate(TrackProposal):
 
 class NarrationScript(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
+    tts_text: str | None = Field(default=None, min_length=1, max_length=4000)
     tts_cues: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
     intended_duration_seconds: int = Field(ge=1, le=300)
@@ -173,6 +196,7 @@ class RadioScriptBlock(BaseModel):
 
     kind: RadioScriptBlockKind
     text: str = Field(min_length=1, max_length=4000)
+    tts_text: str | None = Field(default=None, min_length=1, max_length=4000)
     duration_seconds: int = Field(
         ge=1,
         le=300,
@@ -225,10 +249,10 @@ class RadioScript(BaseModel):
 
 class ChapterPlan(BaseModel):
     index: int = Field(ge=0)
-    track: TrackProposal
+    track: TrackProposal | None = None
     narrative_role: NarrativeRole
     reason: str = Field(min_length=1, max_length=500)
-    novelty_distance: NoveltyDistance
+    novelty_distance: NoveltyDistance | None = None
     evidence_ids: list[str] = Field(default_factory=list)
     narration_goal: str = Field(min_length=1, max_length=400)
 
@@ -263,6 +287,7 @@ class FastResearchInput(BaseModel):
     anchor_artists: list[str] = Field(default_factory=list)
     desired_duration_seconds: int = Field(gt=0)
     listener_taste_context: str | None = None
+    output_language: OutputLanguage = OutputLanguage.AUTO
 
 
 class FastResearchResult(BaseModel):
