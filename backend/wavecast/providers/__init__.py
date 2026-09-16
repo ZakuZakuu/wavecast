@@ -25,7 +25,18 @@ from .fakes import (
     MockAudioProvider,
     MockMusicProvider,
 )
+from .netease import NeteaseMusicProvider
 from .profiles import InferenceProfile, StructuredTransport
+from .qqmusic import QQMusicProvider
+from .registry import MusicProviderRegistry
+from .retrieval import (
+    MusicRetrievalService,
+    RetrievalFailure,
+    RetrievalReport,
+    RetrievedTrack,
+    RetrievedTrackGroup,
+    VersionKind,
+)
 from .routing import SearchIntent, SearchRouter
 from .search import ExaSearchProvider, TavilySearchProvider
 from .usage import UsageEvent, UsageLedger
@@ -47,11 +58,19 @@ __all__ = [
     "FakeTTSProvider",
     "MockAudioProvider",
     "MockMusicProvider",
+    "MusicProviderRegistry",
+    "MusicRetrievalService",
+    "NeteaseMusicProvider",
     "LLMProvider",
     "InferenceProfile",
     "MusicProvider",
     "ObjectStorageProvider",
     "ProgressiveLLMProvider",
+    "QQMusicProvider",
+    "RetrievalFailure",
+    "RetrievalReport",
+    "RetrievedTrack",
+    "RetrievedTrackGroup",
     "ProviderError",
     "ProviderSettings",
     "SearchProvider",
@@ -62,4 +81,5 @@ __all__ = [
     "TTSProvider",
     "UsageEvent",
     "UsageLedger",
+    "VersionKind",
 ]

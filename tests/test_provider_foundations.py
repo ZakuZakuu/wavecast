@@ -48,6 +48,18 @@ def test_audius_api_key_and_bearer_token_are_separate_env_values(
     assert settings.audius_bearer_token == "server-token"
 
 
+def test_music_sidecar_urls_are_optional_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NETEASE_MUSIC_API_BASE_URL", "http://netease-sidecar")
+    monkeypatch.setenv("QQ_MUSIC_API_BASE_URL", "http://qq-sidecar")
+
+    settings = ProviderSettings.from_env()
+
+    assert settings.netease_music_api_base_url == "http://netease-sidecar"
+    assert settings.qq_music_api_base_url == "http://qq-sidecar"
+
+
 def test_deepseek_timeout_is_independent_from_search_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

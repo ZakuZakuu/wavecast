@@ -22,6 +22,8 @@ class ProviderSettings:
     # browser playback code.
     audius_bearer_token: str | None = None
     audius_base_url: str = "https://api.audius.co/v1"
+    netease_music_api_base_url: str | None = None
+    qq_music_api_base_url: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-flash"
     # Search remains deliberately short. Structured synthesis can be materially larger.
@@ -45,6 +47,8 @@ class ProviderSettings:
             audius_api_key=getenv("AUDIUS_API_KEY"),
             audius_bearer_token=getenv("AUDIUS_BEARER_TOKEN"),
             audius_base_url=getenv("AUDIUS_BASE_URL", "https://api.audius.co/v1"),
+            netease_music_api_base_url=getenv("NETEASE_MUSIC_API_BASE_URL"),
+            qq_music_api_base_url=getenv("QQ_MUSIC_API_BASE_URL"),
             deepseek_base_url=getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             deepseek_model=getenv("DEEPSEEK_MODEL", "deepseek-flash"),
             deepseek_timeout_seconds=_positive_float_from_env(
