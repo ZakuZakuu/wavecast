@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from wavecast.models.episode import MusicSegment, SegmentKind, SegmentState
 from wavecast.providers.contracts import MusicProvider, TrackMetadata
+from wavecast.providers.errors import ProviderError
 from wavecast.providers.retrieval import MusicRetrievalService
 
 from .models import (
@@ -28,6 +29,34 @@ def _resolved_track(metadata: TrackMetadata) -> ResolvedTrack | None:
     )
 
 
+def _exact_identity(metadata: TrackMetadata, proposal: TrackProposal) -> bool:
+    return _same_catalog_name(metadata.artist, proposal.artist) and _same_catalog_name(
+        metadata.title, proposal.title
+    )
+
+
+async def _resolve_exact_metadata(
+    provider: MusicProvider,
+    proposal: TrackProposal,
+    metadata: TrackMetadata,
+) -> ResolvedTrack | None:
+    """Confirm exact search identity and, when needed, detail-level playability."""
+
+    if not _exact_identity(metadata, proposal):
+        return None
+    fast_path = _resolved_track(metadata)
+    if fast_path is not None:
+        return fast_path
+
+    try:
+        detailed = await provider.resolve_track(metadata.track_ref)
+    except ProviderError:
+        return None
+    if not isinstance(detailed, TrackMetadata) or not _exact_identity(detailed, proposal):
+        return None
+    return _resolved_track(detailed)
+
+
 async def resolve_track_proposal(
     provider: MusicProvider, proposal: TrackProposal
 ) -> ResolvedTrack | None:
@@ -40,10 +69,9 @@ async def resolve_track_proposal(
 
     results = await provider.search(proposal.title)
     for metadata in results:
-        if _same_catalog_name(metadata.artist, proposal.artist) and _same_catalog_name(
-            metadata.title, proposal.title
-        ):
-            return _resolved_track(metadata)
+        resolved = await _resolve_exact_metadata(provider, proposal, metadata)
+        if resolved is not None:
+            return resolved
     return None
 
 
@@ -83,18 +111,33 @@ async def resolve_track_proposal_across_providers(
         limit=limit,
     )
     for candidate in candidates:
-        if not candidate.playable:
-            continue
         if not candidate.track_ref.startswith(f"{candidate.provider}:"):
             continue
-        if _same_catalog_name(candidate.artist, proposal.artist) and _same_catalog_name(
+        if not _same_catalog_name(candidate.artist, proposal.artist) or not _same_catalog_name(
             candidate.title, proposal.title
         ):
+            continue
+        if candidate.playable:
             return ResolvedTrack(
                 track_ref=candidate.track_ref,
                 canonical_artist=candidate.artist,
                 canonical_title=candidate.title,
             )
+        try:
+            provider = retrieval.registry.provider_for_track_ref(candidate.track_ref)
+        except ProviderError:
+            continue
+        metadata = TrackMetadata(
+            track_ref=candidate.track_ref,
+            title=candidate.title,
+            artist=candidate.artist,
+            duration_seconds=candidate.duration_seconds,
+            playable=candidate.playable,
+            metadata=candidate.metadata,
+        )
+        resolved = await _resolve_exact_metadata(provider, proposal, metadata)
+        if resolved is not None:
+            return resolved
     return None
 
 
