@@ -116,6 +116,26 @@ uv run --env-file .env python scripts/live_curation_eval.py
 Evaluation output is for human review and does not automatically claim a quality pass. Do not
 commit raw provider responses, prompts, reasoning, credentials, or unreviewed quality claims.
 
+### Phase 4.5 live episode assembly (manual, paid opt-in)
+
+`LiveEpisodeAssemblyService` joins the existing fast/background intelligence path to deterministic
+catalog resolution, radio-script composition, provider music assets, and MiniMax narration
+materialization. Mock mode uses the same path with zero credentials. The live assembly probe is
+never run by CI and loads the repository-local `.env` only after explicit authorization:
+
+```bash
+uv run python scripts/live_episode_probe.py --run-live \
+  --topic "guided listening around 3rd Coast" \
+  --anchor "3rd Coast - Jealousy" \
+  --anchor "3rd Coast - Luv is True" \
+  --max-tracks 4 \
+  --json-output /tmp/wavecast-live-episode.json
+```
+
+The probe prints only stage timings, safe usage totals, resolved catalog identities, and timeline
+metadata. It fails clearly if live mode has no configured real music provider; it never substitutes
+mock music or narration in live mode.
+
 ## Current scope
 
-Phase 1.5 adds a durable Postgres repository, listener-scoped resume, and version-polled SSE while retaining mock-mode development. Phase 2 adds independent DeepSeek, Exa, and Tavily adapters with a deterministic discovery/research router and in-memory usage ledger. Phase 3 adds a two-speed, typed progressive intelligence pipeline and TTFS tracing without wiring it into EpisodeOrchestrator or adding TTS. Real calls remain opt-in; the frontend and episode runtime remain unchanged.
+Phase 1.5 adds a durable Postgres repository, listener-scoped resume, and version-polled SSE while retaining mock-mode development. Phase 2 adds independent DeepSeek, Exa, and Tavily adapters with a deterministic discovery/research router and in-memory usage ledger. Phase 3 adds a two-speed, typed progressive intelligence pipeline and TTFS tracing. Phase 4 adds provider-neutral music assets, deterministic radio composition, and MiniMax narration materialization. Phase 4.5 assembles those seams into one bounded playable episode; it does not add a queue, new provider, recommendation redesign, or browser playback redesign. Real calls remain opt-in.
