@@ -30,6 +30,7 @@ from .resolution import (
     music_segment_from_track,
     resolve_track_candidate,
     resolve_track_proposal,
+    resolve_track_proposal_across_providers,
 )
 from .trace import GenerationTrace, TraceEvent
 from .writer import WriterService
@@ -67,6 +68,7 @@ __all__ = [
     "UnresolvedTrackError",
     "WriterService",
     "music_segment_from_track",
+    "resolve_track_proposal_across_providers",
     "resolve_track_candidate",
     "resolve_track_proposal",
 ]

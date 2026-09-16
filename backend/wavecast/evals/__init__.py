@@ -9,6 +9,12 @@ from .quality import (
     ReviewCandidate,
     build_review_bundle,
 )
+from .retrieval import (
+    RETRIEVAL_BENCHMARK_CASES,
+    SYNTHETIC_RETRIEVAL_FIXTURES,
+    RetrievalBenchmarkCase,
+    RetrievalFixtureTrack,
+)
 
 __all__ = [
     "GUIDED_DISCOVERY_CASES",
@@ -16,6 +22,10 @@ __all__ = [
     "GuidedDiscoveryReview",
     "QualityDimension",
     "QualityRubric",
+    "RETRIEVAL_BENCHMARK_CASES",
+    "SYNTHETIC_RETRIEVAL_FIXTURES",
+    "RetrievalBenchmarkCase",
+    "RetrievalFixtureTrack",
     "ReviewCandidate",
     "build_review_bundle",
 ]
