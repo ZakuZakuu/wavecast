@@ -4,7 +4,7 @@ import httpx
 import pytest
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.errors import ProviderConfigurationError, ProviderInvalidResponseError
-from wavecast.providers.minimax import MiniMaxTTSProvider
+from wavecast.providers.minimax import MiniMaxTTSProvider, _duration_seconds
 from wavecast.providers.usage import UsageLedger
 from wavecast.storage import LocalObjectStorageProvider
 
@@ -124,7 +124,7 @@ def test_minimax_payload_decodes_hex_and_records_usage(tmp_path) -> None:
     assert '"voice_id":"test-voice"' in payload
     assert '"sample_rate":32000' in payload
     assert asset.playback_url.startswith("/api/assets/audio/")
-    assert asset.duration == 3
+    assert asset.duration == 2
     assert ledger.events[0].provider == "minimax"
     assert ledger.events[0].operation == "tts"
     assert ledger.events[0].usage_characters == 12
@@ -193,3 +193,21 @@ def test_minimax_cache_hit_does_not_make_second_request(tmp_path) -> None:
     first, second = asyncio.run(run())
     assert calls == 1
     assert first.asset_id == second.asset_id
+
+
+@pytest.mark.parametrize(
+    ("audio_length_ms", "expected_seconds"),
+    [(4087, 4), (4500, 5), (5000, 5), (250, 1)],
+)
+def test_minimax_duration_uses_nearest_integer_second(
+    audio_length_ms: int, expected_seconds: int
+) -> None:
+    assert _duration_seconds(b"", {"audio_length": audio_length_ms}) == expected_seconds
+
+
+def test_minimax_mp3_frame_fallback_uses_nearest_integer_second(monkeypatch) -> None:
+    import wavecast.providers.minimax as minimax
+
+    monkeypatch.setattr(minimax, "_mp3_duration_seconds", lambda _audio: 4.087)
+
+    assert _duration_seconds(b"not-used", {}) == 4
