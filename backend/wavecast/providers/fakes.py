@@ -210,12 +210,12 @@ class FakeMusicProvider:
         }
 
     async def search(self, query: str, *, limit: int = 5) -> list[TrackMetadata]:
-        del limit
+        terms = [term for term in query.casefold().split() if term]
         return [
             track
             for track in self._tracks.values()
-            if query.lower() in f"{track.title} {track.artist}".lower()
-        ]
+            if all(term in f"{track.title} {track.artist}".casefold() for term in terms)
+        ][:limit]
 
     async def resolve_track(self, track_ref: str) -> TrackMetadata:
         return self._tracks[track_ref]

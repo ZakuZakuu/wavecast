@@ -26,6 +26,16 @@ class SearchCallable(Protocol):
     ) -> list[SearchResult]: ...
 
 
+class FastResultLike(Protocol):
+    """Shared view used by fast and background stages for normalized evidence."""
+
+    @property
+    def bundle(self) -> ResearchBundle: ...
+
+    @property
+    def queries(self) -> list[str]: ...
+
+
 FAST_RESEARCH_DEADLINE_SECONDS = 4.5
 BACKGROUND_RESEARCH_DEADLINE_SECONDS = 8.0
 
@@ -115,7 +125,7 @@ class BackgroundResearchService:
     async def run(
         self,
         request: FastResearchInput,
-        fast_result: FastResearchResult,
+        fast_result: FastResearchResult | FastResultLike,
         *,
         cancel_event: asyncio.Event | None = None,
         trace: GenerationTrace | None = None,

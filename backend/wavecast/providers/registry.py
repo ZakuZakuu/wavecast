@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from inspect import isawaitable
 from typing import TYPE_CHECKING
 
 from .contracts import AudioAsset, MusicProvider, TrackMetadata
@@ -57,3 +58,17 @@ class MusicProviderRegistry:
         return await self.provider_for_track_ref(resolved_track.track_ref).get_playback_asset(
             resolved_track
         )
+
+    async def aclose(self) -> None:
+        """Close each unique configured provider client at most once."""
+        closed: set[int] = set()
+        for provider in self.providers.values():
+            if id(provider) in closed:
+                continue
+            closed.add(id(provider))
+            close = getattr(provider, "aclose", None)
+            if not callable(close):
+                continue
+            result = close()
+            if isawaitable(result):
+                await result
