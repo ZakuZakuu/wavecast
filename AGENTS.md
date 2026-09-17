@@ -15,14 +15,20 @@ Your default behavior should be highly autonomous: inspect the repo, infer the n
 Read these before making non-trivial changes:
 
 1. `AGENTS.md`
-2. `docs/CODEX_HANDOFF.md`
-3. Any relevant ADRs under `docs/adr/`
-4. Existing tests and schemas
+2. `docs/PROJECT_STATE.md` for the current milestone, branch/main state, and
+   immediate next task
+3. `docs/CODEX_HANDOFF.md` for the long-lived product and architecture contract
+4. Any relevant ADRs under `docs/adr/`
+5. Existing tests and schemas
 
 If implementation and docs disagree, do not silently redefine the product. Preserve established domain semantics and either:
 
 - fix the implementation if the docs are clearly authoritative, or
 - add/update an ADR when a design change is genuinely justified.
+
+After a consequential milestone, architecture, provider, or runtime change,
+update `docs/PROJECT_STATE.md` so a fresh session can recover the active state
+without duplicating the long-lived handoff or ADRs.
 
 ---
 
