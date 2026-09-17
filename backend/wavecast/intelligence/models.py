@@ -184,6 +184,36 @@ class RadioScriptBlockKind(StrEnum):
     OUTRO = "outro"
 
 
+class NarrationSlotPlacement(StrEnum):
+    """A concrete adjacency location in the resolved playback sequence."""
+
+    BEFORE_TRACK = "before_track"
+    AFTER_TRACK = "after_track"
+    AFTER_FINAL_TRACK = "after_final_track"
+
+
+class NarrationSlotContext(BaseModel):
+    """Typed context for one real narration slot in final playback order.
+
+    A chapter may expose more than one slot (for example a track intro before
+    its track and a transition after it).  Numeric playback placement remains
+    application-owned; Writer receives only the slot's allowed block kinds and
+    the exact adjacent resolved tracks.
+    """
+
+    slot_id: str = Field(default="legacy", min_length=1, max_length=120)
+    chapter_index: int = Field(ge=0)
+    placement: NarrationSlotPlacement = NarrationSlotPlacement.AFTER_TRACK
+    allowed_block_kinds: list[RadioScriptBlockKind] = Field(
+        default_factory=lambda: list(RadioScriptBlockKind), min_length=1, max_length=4
+    )
+    chapter_track: ResolvedTrack | None = None
+    just_played_track: ResolvedTrack | None = None
+    upcoming_track: ResolvedTrack | None = None
+    is_opening: bool = False
+    is_final: bool = False
+
+
 class RadioScriptBlock(BaseModel):
     """One spoken block in a radio-style script, before TTS materialization.
 

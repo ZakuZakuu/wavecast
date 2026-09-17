@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
+
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 
 from .fast_start import FastStructuredProvider
@@ -9,6 +12,7 @@ from .models import (
     ChapterPlan,
     Evidence,
     NarrationScript,
+    NarrationSlotContext,
     OutputLanguage,
     RadioScript,
     resolve_output_language,
@@ -30,9 +34,32 @@ class WriterService:
         target_duration_seconds: int | None = None,
         output_language: OutputLanguage = OutputLanguage.AUTO,
         topic: str = "",
+        slot_context: NarrationSlotContext | None = None,
+        slot_contexts: Sequence[NarrationSlotContext] | None = None,
     ) -> RadioScript | NarrationScript:
         scoped = [item for item in evidence if item.id in set(chapter.evidence_ids)]
         selected_language = resolve_output_language(output_language, topic or chapter.reason)
+        if slot_context is not None and slot_contexts is not None:
+            raise ValueError("pass slot_context or slot_contexts, not both")
+        if slot_context is not None:
+            slot_contexts = [slot_context]
+        playback_context = (
+            [context.model_dump(mode="json") for context in slot_contexts]
+            if slot_contexts is not None
+            else [
+                {
+                    "slot_id": "legacy",
+                    "chapter_index": chapter.index,
+                    "placement": "after_track",
+                    "allowed_block_kinds": ["intro", "track_intro", "transition", "outro"],
+                    "chapter_track": None,
+                    "just_played_track": None,
+                    "upcoming_track": next_track_metadata or None,
+                    "is_opening": chapter.index == 0,
+                    "is_final": False,
+                }
+            ]
+        )
         prompt = (
             "Write a structured radio script for this chapter, not an article. Use only the "
             "scoped evidence; keep factual claims separately identified by evidence IDs, avoid "
@@ -44,10 +71,23 @@ class WriterService:
             "Keep `text` as the listener-visible copy and optionally provide `tts_text` when "
             "spoken pronunciation should differ. For example, display `3rd Coast` but use "
             "`Third Coast` for TTS. Do not use broad regex or dictionary substitutions. "
+            "The application has assigned the narration slot below from resolved playback "
+            "state. Use `just_played_track` for references such as ‘刚才这首’ and "
+            "`upcoming_track` for references such as ‘下一首’; a null value means no such "
+            "track exists. Do not infer adjacency from the chapter index, and do not assign "
+            "or guess a numeric `track_index`; the application places every block. "
+            "For each returned block, use only a kind listed in exactly one matching "
+            "slot's `allowed_block_kinds`; a block kind is the typed placement contract, "
+            "not a free editorial hint. "
             f"Write in output language {selected_language.value}.\n"
             f"Chapter: {chapter.model_dump_json()}\n"
             f"Evidence: {[item.model_dump() for item in scoped]}\n"
             f"Previous context: {previous_committed_context[:1000]}\n"
+            f"Narration slot contexts: {json.dumps(playback_context, ensure_ascii=False)}\n"
+            # Keep the old projection for compatibility with fixture callers;
+            # it is explicitly not authoritative when typed slot contexts are present.
+            "The following legacy field is informational only and must not override the "
+            "resolved slot context.\n"
             f"Next track metadata: {next_track_metadata[:500]}\n"
             f"Host style: {host_style}\n"
             f"Target narration duration seconds: {target_duration_seconds or 'use chapter context'}"
@@ -61,4 +101,13 @@ class WriterService:
         )
         if not isinstance(result, (RadioScript, NarrationScript)):
             raise TypeError("writer returned an unexpected output model")
+        if isinstance(result, RadioScript):
+            # Numeric playback placement is application-owned.  Strip any
+            # compatibility field emitted by an older/faulty structured model
+            # before assembly normalizes the parsed blocks into this slot.
+            result = result.model_copy(
+                update={
+                    "blocks": [block.model_copy(update={"track_index": None}) for block in result.blocks]
+                }
+            )
         return result

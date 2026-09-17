@@ -25,7 +25,7 @@ For each bounded request it:
 4. reports unresolved proposals and skips them, failing with a typed
    `EpisodeAssemblyError` when fewer than two playable tracks remain;
 5. invokes Writer only after resolution, passing prior script context and the
-   next resolved track metadata;
+   typed resolved narration-slot context described in ADR 0011;
 6. normalizes the returned radio blocks once, keeping opening music first,
    indexed track intros in their gaps, transitions between tracks, and one
    final outro;

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import Counter
 from dataclasses import dataclass
 from time import perf_counter
 from uuid import uuid4
@@ -25,6 +26,8 @@ from wavecast.intelligence.models import (
     FastResearchInput,
     FastStartPlan,
     NarrationScript,
+    NarrationSlotContext,
+    NarrationSlotPlacement,
     NarrativeRole,
     NoveltyDistance,
     OutputLanguage,
@@ -78,6 +81,10 @@ class EpisodeAssemblyError(RuntimeError):
         self.stage = stage
 
 
+class NarrationPlacementError(ValueError):
+    """A parsed Writer block cannot be assigned to a deterministic slot."""
+
+
 class LiveEpisodeAssemblyRequest(BaseModel):
     """Provider-neutral input for one bounded episode assembly run."""
 
@@ -118,6 +125,16 @@ class AssemblyDurationSummary(BaseModel):
     narration_ratio: float = Field(ge=0, le=1)
 
 
+class WriterChapterDiagnostic(BaseModel):
+    """Safe parsed/normalized Writer data for one application chapter."""
+
+    chapter_index: int = Field(ge=0)
+    available_slots: list[NarrationSlotContext] = Field(default_factory=list)
+    parsed_blocks: list[RadioScriptBlock] = Field(default_factory=list)
+    normalized_blocks: list[RadioScriptBlock] = Field(default_factory=list)
+    normalized_slot_contexts: list[NarrationSlotContext] = Field(default_factory=list)
+
+
 class EpisodeAssemblyResult(BaseModel):
     """Sanitized, inspectable output of one assembly run."""
 
@@ -131,6 +148,7 @@ class EpisodeAssemblyResult(BaseModel):
     usage: UsageTotals
     duration_summary: AssemblyDurationSummary
     trace: GenerationTrace
+    writer_chapters: list[WriterChapterDiagnostic] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -226,6 +244,10 @@ class LiveEpisodeAssemblyService:
         chapters = _select_chapters_for_music_limit(
             skeleton.chapters, request.max_tracks, request.max_chapters
         )
+        # Curator indices are provider output, not stable application identity.
+        # Normalize the selected narrative sequence before exposing it to the
+        # rest of assembly or to Writer.
+        chapters = _normalize_chapters(chapters)
         skeleton = skeleton.model_copy(update={"chapters": chapters})
         trace.mark("program_skeleton_ready", chapter_count=len(chapters))
 
@@ -292,13 +314,20 @@ class LiveEpisodeAssemblyService:
                 stage="resolution",
             )
 
+        slot_contexts = _build_narration_slot_contexts(resolved_chapters)
         writer_started = perf_counter()
         writer_scripts: list[RadioScript | NarrationScript] = []
         previous_context = ""
         for index, resolved_chapter in enumerate(resolved_chapters):
+            chapter_slots = slot_contexts[index]
             next_metadata = ""
             next_track = next(
-                (item.track for item in resolved_chapters[index + 1 :] if item.track is not None),
+                (
+                    slot.upcoming_track
+                    for slot in chapter_slots
+                    if slot.placement is not NarrationSlotPlacement.BEFORE_TRACK
+                    and slot.upcoming_track is not None
+                ),
                 None,
             )
             if next_track is not None:
@@ -316,17 +345,22 @@ class LiveEpisodeAssemblyService:
                     ),
                     output_language=resolve_output_language(request.output_language, request.topic),
                     topic=request.topic,
+                    slot_contexts=chapter_slots,
                 )
             except ProviderError as error:
                 raise EpisodeAssemblyError(str(error), stage="writer") from error
             writer_scripts.append(script)
             previous_context = _script_text(script)
         writer_ms = _elapsed_ms(writer_started)
-        radio_script = _assemble_radio_script(
-            writer_scripts,
-            resolved_track_count,
-            chapter_music_indices=[item.music_index for item in resolved_chapters],
-        )
+        try:
+            radio_script, writer_chapters = _assemble_writer_scripts(
+                writer_scripts,
+                resolved_track_count,
+                chapter_music_indices=[item.music_index for item in resolved_chapters],
+                slot_contexts=slot_contexts,
+            )
+        except NarrationPlacementError as error:
+            raise EpisodeAssemblyError(str(error), stage="writer_normalization") from error
 
         composition_started = perf_counter()
         try:
@@ -336,6 +370,7 @@ class LiveEpisodeAssemblyService:
         except (ProviderError, UnresolvedTrackError, ValueError) as error:
             raise EpisodeAssemblyError(str(error), stage="composition") from error
         composition_ms = _elapsed_ms(composition_started)
+        _assert_narration_blocks_materialized(radio_script, playable_episode)
 
         narration_started = perf_counter()
         try:
@@ -368,6 +403,7 @@ class LiveEpisodeAssemblyService:
             usage=self.ledger.totals(),
             duration_summary=duration_summary,
             trace=trace,
+            writer_chapters=writer_chapters,
         )
 
     async def run(
@@ -427,6 +463,297 @@ def _select_chapters_for_music_limit(
         if chapter.track is not None:
             track_count += 1
     return selected[:max_chapters]
+
+
+def _normalize_chapters(chapters: list[ChapterPlan]) -> list[ChapterPlan]:
+    """Assign contiguous application identity without mutating Curator models."""
+
+    return [chapter.model_copy(update={"index": index}) for index, chapter in enumerate(chapters)]
+
+
+def _build_narration_slot_contexts(
+    chapters: list[_ResolvedChapter],
+) -> list[list[NarrationSlotContext]]:
+    """Derive one or more truthful Writer slots for each chapter.
+
+    A track-bearing chapter can own a before-track intro and an after-track
+    transition.  Narrative-only chapters own the gap after the nearest prior
+    playable track (including the final-track boundary).  The returned
+    contexts never contain numeric playback indices; those remain an assembly
+    concern.
+    """
+
+    contexts: list[list[NarrationSlotContext]] = []
+    for index, item in enumerate(chapters):
+        just_played = next(
+            (candidate.track for candidate in reversed(chapters[:index]) if candidate.track is not None),
+            None,
+        )
+        upcoming = next(
+            (candidate.track for candidate in chapters[index + 1 :] if candidate.track is not None),
+            None,
+        )
+        is_final = index == len(chapters) - 1
+        chapter_slots: list[NarrationSlotContext] = []
+        if item.track is not None and item.music_index is not None and just_played is not None:
+            chapter_slots.append(
+                NarrationSlotContext(
+                    slot_id=f"chapter-{item.chapter.index}:before-track",
+                    chapter_index=item.chapter.index,
+                    placement=NarrationSlotPlacement.BEFORE_TRACK,
+                    allowed_block_kinds=[RadioScriptBlockKind.TRACK_INTRO],
+                    chapter_track=item.track,
+                    just_played_track=just_played,
+                    upcoming_track=item.track,
+                )
+            )
+
+        if item.track is not None:
+            chapter_slots.append(
+                NarrationSlotContext(
+                    slot_id=f"chapter-{item.chapter.index}:after-track",
+                    chapter_index=item.chapter.index,
+                    placement=(
+                        NarrationSlotPlacement.AFTER_FINAL_TRACK
+                        if is_final
+                        else NarrationSlotPlacement.AFTER_TRACK
+                    ),
+                    allowed_block_kinds=(
+                        [RadioScriptBlockKind.TRANSITION, RadioScriptBlockKind.OUTRO]
+                        if is_final
+                        else (
+                            [RadioScriptBlockKind.INTRO, RadioScriptBlockKind.TRANSITION]
+                            if index == 0
+                            else [RadioScriptBlockKind.TRANSITION]
+                        )
+                    ),
+                    chapter_track=item.track,
+                    just_played_track=item.track,
+                    upcoming_track=upcoming,
+                    is_opening=index == 0,
+                    is_final=is_final,
+                )
+            )
+        elif just_played is not None:
+            chapter_slots.append(
+                NarrationSlotContext(
+                    slot_id=f"chapter-{item.chapter.index}:after-previous",
+                    chapter_index=item.chapter.index,
+                    placement=(
+                        NarrationSlotPlacement.AFTER_FINAL_TRACK
+                        if is_final and upcoming is None
+                        else NarrationSlotPlacement.AFTER_TRACK
+                    ),
+                    allowed_block_kinds=[RadioScriptBlockKind.TRANSITION, RadioScriptBlockKind.OUTRO],
+                    chapter_track=None,
+                    just_played_track=just_played,
+                    upcoming_track=upcoming,
+                    is_final=is_final and upcoming is None,
+                )
+            )
+        elif upcoming is not None:
+            # Immediate playback starts the first playable track even when the
+            # first narrative chapter is trackless.  Therefore this chapter's
+            # spoken slot is after that opening track, not before it.
+            upcoming_position = next(
+                position
+                for position in range(index + 1, len(chapters))
+                if chapters[position].track is not None
+            )
+            following = next(
+                (
+                    candidate.track
+                    for candidate in chapters[upcoming_position + 1 :]
+                    if candidate.track is not None
+                ),
+                None,
+            )
+            chapter_slots.append(
+                NarrationSlotContext(
+                    slot_id=f"chapter-{item.chapter.index}:after-opening",
+                    chapter_index=item.chapter.index,
+                    placement=NarrationSlotPlacement.AFTER_TRACK,
+                    allowed_block_kinds=[RadioScriptBlockKind.INTRO, RadioScriptBlockKind.TRANSITION],
+                    chapter_track=None,
+                    just_played_track=upcoming,
+                    upcoming_track=following,
+                    is_opening=True,
+                )
+            )
+        contexts.append(chapter_slots)
+    return contexts
+
+
+def _assemble_writer_scripts(
+    scripts: list[RadioScript | NarrationScript],
+    track_count: int,
+    *,
+    chapter_music_indices: list[int | None],
+    slot_contexts: list[list[NarrationSlotContext]],
+) -> tuple[RadioScript, list[WriterChapterDiagnostic]]:
+    """Place parsed Writer blocks into deterministic resolved narration slots."""
+
+    if len(scripts) != len(slot_contexts) or len(scripts) != len(chapter_music_indices):
+        raise NarrationPlacementError(
+            "writer output count does not match the resolved chapter slot count"
+        )
+
+    blocks: list[RadioScriptBlock] = []
+    diagnostics: list[WriterChapterDiagnostic] = []
+    opening_intro_seen = False
+    final_outro_seen = False
+
+    for chapter_index, (script, contexts) in enumerate(zip(scripts, slot_contexts, strict=True)):
+        parsed_blocks = _script_blocks(script)
+        normalized: list[RadioScriptBlock] = []
+        current_music_index = chapter_music_indices[chapter_index]
+        previous_music_index = next(
+            (
+                chapter_music_indices[prior]
+                for prior in range(chapter_index - 1, -1, -1)
+                if chapter_music_indices[prior] is not None
+            ),
+            None,
+        )
+        normalized_slots: list[NarrationSlotContext] = []
+        track_intro_seen = False
+        for block_index, block in enumerate(parsed_blocks):
+            context = next(
+                (
+                    candidate
+                    for candidate in contexts
+                    if block.kind in candidate.allowed_block_kinds
+                ),
+                None,
+            )
+            if context is None:
+                raise NarrationPlacementError(
+                    "writer block has no deterministic narration slot "
+                    f"(chapter={chapter_index}, block={block_index}, kind={block.kind.value})"
+                )
+            placed = _place_writer_block_in_slot(
+                block,
+                context=context,
+                current_music_index=current_music_index,
+                previous_music_index=previous_music_index,
+                opening_intro_seen=opening_intro_seen,
+                final_outro_seen=final_outro_seen,
+                track_intro_seen=track_intro_seen,
+            )
+            normalized.append(placed)
+            normalized_slots.append(context)
+            if placed.kind is RadioScriptBlockKind.INTRO:
+                opening_intro_seen = True
+            if placed.kind is RadioScriptBlockKind.OUTRO:
+                final_outro_seen = True
+            if placed.kind is RadioScriptBlockKind.TRACK_INTRO:
+                track_intro_seen = True
+        diagnostics.append(
+            WriterChapterDiagnostic(
+                chapter_index=contexts[0].chapter_index if contexts else chapter_index,
+                available_slots=contexts,
+                parsed_blocks=parsed_blocks,
+                normalized_blocks=normalized,
+                normalized_slot_contexts=normalized_slots,
+            )
+        )
+        blocks.extend(normalized)
+
+    return (
+        RadioScript(
+            blocks=blocks,
+            evidence_ids=[
+                evidence_id
+                for script in scripts
+                for evidence_id in _script_evidence_ids(script)
+            ],
+            intended_duration_seconds=max(
+                1, sum(block.intended_duration_seconds for block in blocks)
+            ),
+        ),
+        diagnostics,
+    )
+
+
+def _place_writer_block_in_slot(
+    block: RadioScriptBlock,
+    *,
+    context: NarrationSlotContext,
+    current_music_index: int | None,
+    previous_music_index: int | None,
+    opening_intro_seen: bool,
+    final_outro_seen: bool,
+    track_intro_seen: bool,
+) -> RadioScriptBlock:
+    """Convert one Writer block into an application-owned playback anchor."""
+
+    if context.placement is NarrationSlotPlacement.BEFORE_TRACK:
+        if current_music_index is None:
+            # Leading INTRO is intentionally unindexed: Composer keeps opening
+            # music first and places it immediately after that music.
+            if block.kind is RadioScriptBlockKind.INTRO:
+                return block.model_copy(update={"track_index": None})
+            raise NarrationPlacementError(
+                f"slot {context.slot_id} cannot place {block.kind.value} before a missing track"
+            )
+        if block.kind is RadioScriptBlockKind.TRACK_INTRO and not track_intro_seen:
+            return block.model_copy(update={"track_index": current_music_index})
+        # A duplicate track intro remains audible in the same gap without
+        # claiming another before-track anchor.
+        if block.kind is RadioScriptBlockKind.TRACK_INTRO:
+            return block.model_copy(
+                update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": current_music_index}
+            )
+        raise NarrationPlacementError(
+            f"slot {context.slot_id} cannot place {block.kind.value} before its track"
+        )
+
+    anchor = current_music_index
+    if anchor is None:
+        anchor = previous_music_index
+    if anchor is None and context.is_opening:
+        # The first narrative chapter may be trackless, but immediate playback
+        # still guarantees that the first resolved music track plays first.
+        anchor = 0
+    if context.placement in {
+        NarrationSlotPlacement.AFTER_TRACK,
+        NarrationSlotPlacement.AFTER_FINAL_TRACK,
+    } and anchor is None:
+        raise NarrationPlacementError(f"slot {context.slot_id} has no playable preceding track")
+
+    if block.kind is RadioScriptBlockKind.INTRO:
+        if context.is_opening and not opening_intro_seen:
+            return block.model_copy(update={"track_index": None})
+        return block.model_copy(update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": anchor})
+    if block.kind is RadioScriptBlockKind.TRANSITION:
+        return block.model_copy(update={"track_index": anchor})
+    if block.kind is RadioScriptBlockKind.OUTRO:
+        if context.is_final and not final_outro_seen:
+            return block.model_copy(update={"track_index": None})
+        return block.model_copy(update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": anchor})
+    if block.kind is RadioScriptBlockKind.TRACK_INTRO:
+        return block.model_copy(update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": anchor})
+    raise NarrationPlacementError(f"unsupported Writer block kind: {block.kind.value}")
+
+
+def _assert_narration_blocks_materialized(
+    radio_script: RadioScript,
+    playable_episode: PlayableEpisode,
+) -> None:
+    """Fail explicitly if composition silently drops any generated narration."""
+
+    expected = Counter(block.text for block in radio_script.blocks)
+    actual = Counter(
+        segment.narration_text
+        for segment in playable_episode.segments
+        if isinstance(segment, NarrationSegment)
+    )
+    if expected != actual:
+        raise EpisodeAssemblyError(
+            "normalized Writer narration does not match final timeline "
+            f"(normalized={sum(expected.values())}, timeline={sum(actual.values())})",
+            stage="composition",
+        )
 
 
 def _script_text(script: RadioScript | NarrationScript) -> str:
@@ -658,6 +985,17 @@ def _mock_next_track_metadata(prompt: str) -> str:
     return prompt.split(marker, 1)[1].split("\nHost style:", 1)[0].strip()
 
 
+def _mock_chapter_has_no_track(prompt: str) -> bool:
+    marker = "Chapter: "
+    if marker not in prompt:
+        return False
+    serialized = prompt.split(marker, 1)[1].split("\nEvidence:", 1)[0]
+    try:
+        return json.loads(serialized).get("track") is None
+    except (TypeError, ValueError):
+        return False
+
+
 class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
     """Deterministic structured provider used by the zero-credential factory."""
 
@@ -719,6 +1057,17 @@ class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
         if output_type is RadioScript:
             index = _mock_writer_chapter_index(prompt)
             blocks: list[RadioScriptBlock] = []
+            if _mock_chapter_has_no_track(prompt):
+                return RadioScript(
+                    blocks=[
+                        RadioScriptBlock(
+                            kind=RadioScriptBlockKind.TRANSITION,
+                            text=f"现在进入第 {index + 1} 首。",
+                            duration_seconds=4,
+                        )
+                    ],
+                    intended_duration_seconds=4,
+                )
             if index == 0:
                 blocks.append(
                     RadioScriptBlock(
@@ -727,13 +1076,14 @@ class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
                         duration_seconds=5,
                     )
                 )
-            blocks.append(
-                RadioScriptBlock(
-                    kind=RadioScriptBlockKind.TRACK_INTRO,
-                    text=f"现在进入第 {index + 1} 首。",
-                    duration_seconds=4,
+            if index > 0:
+                blocks.append(
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.TRACK_INTRO,
+                        text=f"现在进入第 {index + 1} 首。",
+                        duration_seconds=4,
+                    )
                 )
-            )
             if not _mock_next_track_metadata(prompt):
                 blocks.append(
                     RadioScriptBlock(
