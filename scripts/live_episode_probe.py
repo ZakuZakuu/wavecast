@@ -73,6 +73,24 @@ def _safe_trace(result) -> list[dict[str, object]]:
 
 def _report(result) -> dict[str, object]:
     episode = result.playable_episode
+    writer_chapters = [
+        {
+            "chapter_index": item.chapter_index,
+            "available_slots": [
+                _safe_slot_context(slot) for slot in item.available_slots
+            ],
+            "parsed_blocks": [
+                _safe_script_block(block) for block in item.parsed_blocks
+            ],
+            "normalized_blocks": [
+                _safe_script_block(block) for block in item.normalized_blocks
+            ],
+            "normalized_slot_contexts": [
+                _safe_slot_context(slot) for slot in item.normalized_slot_contexts
+            ],
+        }
+        for item in result.writer_chapters
+    ]
     return {
         "status": "ok",
         "timings": result.timings.model_dump(),
@@ -132,6 +150,54 @@ def _report(result) -> dict[str, object]:
         ],
         "usage": result.usage.model_dump(),
         "trace": _safe_trace(result),
+        "writer_chapters": writer_chapters,
+        "writer_counts": {
+            "generated_blocks": sum(
+                len(item.parsed_blocks) for item in result.writer_chapters
+            ),
+            "normalized_blocks": sum(
+                len(item.normalized_blocks) for item in result.writer_chapters
+            ),
+            "final_timeline_narration_segments": sum(
+                segment.kind.value == "NARRATION" for segment in episode.segments
+            ),
+        },
+    }
+
+
+def _safe_track(track) -> dict[str, str] | None:
+    if track is None:
+        return None
+    return {
+        "track_ref": track.track_ref,
+        "artist": track.canonical_artist,
+        "title": track.canonical_title,
+    }
+
+
+def _safe_script_block(block) -> dict[str, object]:
+    return {
+        "kind": block.kind.value,
+        "text": block.text,
+        "tts_text": block.tts_text,
+        "duration_seconds": block.intended_duration_seconds,
+        "track_index": block.track_index,
+        "tts_cues": list(block.tts_cues),
+        "evidence_ids": list(block.evidence_ids),
+    }
+
+
+def _safe_slot_context(context) -> dict[str, object]:
+    return {
+        "slot_id": context.slot_id,
+        "chapter_index": context.chapter_index,
+        "placement": context.placement.value,
+        "allowed_block_kinds": [kind.value for kind in context.allowed_block_kinds],
+        "chapter_track": _safe_track(context.chapter_track),
+        "just_played_track": _safe_track(context.just_played_track),
+        "upcoming_track": _safe_track(context.upcoming_track),
+        "is_opening": context.is_opening,
+        "is_final": context.is_final,
     }
 
 
