@@ -999,6 +999,17 @@ repo/
 
 Use Python `uv` and frontend `pnpm` unless the existing environment strongly favors another standard tool.
 
+## Live-probe startup rule
+
+When an explicitly authorized live probe is requested, start the configured
+local music chain before declaring music readiness unavailable: run the local
+NetEase-compatible upstream on port `3000`, start the `wavecast-music-dev`
+sidecar on port `3101`, then verify `/health` and `/ready`. A stopped local
+process is an operational step to fix, not by itself a product or credential
+blocker. Stop only when the configured source/API has changed, startup
+genuinely fails, or the required credentials/network are actually unavailable.
+Keep the probe's existing bounded, no-retry, and cost rules.
+
 Do not create unnecessary microservices. `api` and `worker` can share the same Python package/domain code.
 
 ---
