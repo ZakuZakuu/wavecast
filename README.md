@@ -2,6 +2,8 @@
 
 Wavecast is an AI-native guided-listening radio product. The first vertical slice deliberately runs entirely on deterministic fake providers: opening music is immediately playable, while future narration and tracks become available incrementally.
 
+For a fast project handoff, start with [the current project state](docs/PROJECT_STATE.md), then read the [long-lived Codex handoff](docs/CODEX_HANDOFF.md). Architecture decisions are recorded in [`docs/adr/`](docs/adr/).
+
 ## Development
 
 Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), Node 24+, and pnpm 10+.
