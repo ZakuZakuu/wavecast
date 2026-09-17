@@ -49,6 +49,7 @@ class FastStartPlanner:
                 raise TypeError("fast planner returned an unexpected output model")
             if "research_plan" not in plan.model_fields_set:
                 plan = plan.model_copy(update={"research_plan": generic_research_plan(request)})
+                plan._research_plan_omitted = True
             if trace:
                 trace.mark(
                     "research_plan_ready",

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, PrivateAttr
 
 
 class NoveltyDistance(StrEnum):
@@ -53,6 +54,40 @@ class SearchIntent(StrEnum):
     DISCOVERY = "discovery"
     RESEARCH = "research"
     EXACT = "exact"
+
+
+class EvidenceSourceCategory(StrEnum):
+    """Conservative provenance categories, not authority scores."""
+
+    UNKNOWN = "unknown"
+    REFERENCE = "reference"
+    VIDEO = "video"
+    NEWS = "news"
+    COMMUNITY = "community"
+    INSTITUTIONAL = "institutional"
+    CATALOG = "catalog"
+
+
+class ClaimType(StrEnum):
+    """The epistemic role of a Writer/Curator statement."""
+
+    FACT = "fact"
+    CORRELATION = "correlation"
+    CAUSAL = "causal"
+    INTERPRETATION = "editorial_interpretation"
+    UNCERTAINTY = "uncertainty"
+
+
+class ClaimSupport(BaseModel):
+    """A typed statement-to-evidence link owned by the application contract."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim_type: ClaimType
+    claim: str = Field(min_length=1, max_length=500)
+    evidence_ids: list[Annotated[str, Field(min_length=1, max_length=120)]] = Field(
+        min_length=1, max_length=8
+    )
 
 
 class ResearchFacet(BaseModel):
@@ -104,6 +139,10 @@ class Evidence(BaseModel):
     id: str
     claim_or_excerpt: str = Field(min_length=1, max_length=800)
     source_url: str
+    canonical_url: str = ""
+    source_domain: str = ""
+    source_category: EvidenceSourceCategory = EvidenceSourceCategory.UNKNOWN
+    source_preference_rank: int | None = Field(default=None, ge=0)
     source_provider: str
     confidence: float = Field(ge=0, le=1)
     query: str
@@ -234,6 +273,7 @@ class RadioScriptBlock(BaseModel):
     )
     tts_cues: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
+    claim_support: list[ClaimSupport] = Field(default_factory=list, max_length=8)
     track_index: int | None = Field(default=None, ge=0)
 
     @property
@@ -284,6 +324,7 @@ class ChapterPlan(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
     novelty_distance: NoveltyDistance | None = None
     evidence_ids: list[str] = Field(default_factory=list)
+    claim_support: list[ClaimSupport] = Field(default_factory=list, max_length=8)
     narration_goal: str = Field(min_length=1, max_length=400)
 
 
@@ -292,6 +333,7 @@ class ResearchBundle(BaseModel):
     taste_hypotheses: list[TasteHypothesis]
     evidence: list[Evidence]
     candidates: list[TrackProposal]
+    research_plan: ResearchPlan | None = None
     uncertainties: list[str] = Field(default_factory=list)
 
 
@@ -309,6 +351,18 @@ class FastStartPlan(BaseModel):
     first_narration: NarrationScript
     uncertainties: list[str] = Field(default_factory=list)
     research_plan: ResearchPlan = Field(default_factory=empty_research_plan)
+    _research_plan_omitted: bool = PrivateAttr(default=True)
+
+    def model_post_init(self, __context: object) -> None:
+        self._research_plan_omitted = "research_plan" not in self.model_fields_set
+
+    def model_copy(
+        self, *, update: Mapping[str, Any] | None = None, deep: bool = False
+    ) -> Self:
+        copied = super().model_copy(update=update, deep=deep)
+        if update is not None and "research_plan" in update:
+            copied._research_plan_omitted = False
+        return copied
 
 
 class FastResearchInput(BaseModel):

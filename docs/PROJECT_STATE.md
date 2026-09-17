@@ -1,6 +1,6 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-17
+**Last updated:** 2026-09-18
 
 ## Product reminder
 
@@ -11,16 +11,14 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 4.8.1 — Editorial correctness / narration-slot
-  integrity is in progress; the next planned milestones remain 4.8.2 Research
-  quality and 4.8.3 Program timing.
-- **Main:** `c289d0a1b54ef3c53de0cecad431d9615fbd392d` (merge of documentation hygiene PR #16, with live-music
-  preflight work from PR #15). The working tree on main was clean when this state
-  was recorded.
-- **Immediate work:** keep deterministic script/track placement aligned with
-  resolved playback adjacency, prevent narration loss, and expose sanitized
-  Writer-to-timeline diagnostics. Research source quality belongs to Phase
-  4.8.2; timing/budget redesign belongs to Phase 4.8.3.
+- **Current milestone:** Phase 4.8.2 — Research quality (implementation in
+  progress on a feature branch; no live providers are being run).
+- **Main:** `650537b4cd4637c212244255c79d2b53750a1e23` (merged PR #18, safe
+  live-failure diagnostics). Main is clean before the current Phase 4.8.2
+  working changes.
+- **Immediate work:** preserve the existing 4.8.1 playback-slot contract while
+  making background research topic-adaptive, provenance-aware, and safely
+  diagnosable. Timing/playback changes remain deferred to Phase 4.8.3.
 
 ## Completed implementation
 
@@ -55,6 +53,16 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
   playback placement, normalizes chapter identity, fails explicitly on
   impossible narration placement, preserves multiple ordered blocks in a gap,
   and reports parsed/normalized Writer blocks safely.
+- **Phase 4.8.2 (in progress):** background research can regenerate one
+  bounded typed `ResearchPlan` after a FastStart fallback, while retaining the
+  deterministic one-Exa/two-Tavily execution cap. URLs are canonicalized before
+  evidence deduplication and IDs; Evidence carries conservative provenance
+  category/domain/preference metadata. Curator and Writer outputs can attach
+  typed fact/correlation/causal/editorial-interpretation/uncertainty support
+  records scoped to evidence IDs. Successful probe diagnostics expose the
+  actual plan, provenance summaries, skeleton metadata, stage usage, and safe
+  provider events. No raw prompts, responses, reasoning, credentials, or signed
+  URLs are emitted.
 
 ## Invariants to preserve
 
@@ -125,11 +133,11 @@ kept in the repository.
 
 ## Phase 4.8 plan
 
-1. **4.8.1 — Editorial correctness (next):** preserve playback order and
+1. **4.8.1 — Editorial correctness (complete):** preserve playback order and
    chapter semantics, align transition/intro/outro references with actual track
    indices, keep narration-only beats in place, and flag unsupported claims for
    review.
-2. **4.8.2 — Research quality:** improve evidence source quality and provenance,
+2. **4.8.2 — Research quality (current):** improve evidence source quality and provenance,
    query/facet usefulness, candidate grounding, and uncertainty reporting without
    expanding search budgets.
 3. **4.8.3 — Program timing:** improve target-duration adherence, narration
@@ -149,7 +157,9 @@ credentials, or signed playback URLs.
 
 - Long-lived product/architecture contract: [`CODEX_HANDOFF.md`](CODEX_HANDOFF.md)
 - Architecture decisions: [`docs/adr/`](adr/), especially
-  [ADR 0011](adr/0011-deterministic-narration-slot-context.md) for this phase
+  [ADR 0009](adr/0009-adaptive-research-planning.md) for adaptive research and
+  [ADR 0011](adr/0011-deterministic-narration-slot-context.md) for the prior
+  editorial-slot phase
 - Recent milestones: [PR #10](https://github.com/ZakuZakuu/wavecast/pull/10),
   [PR #11](https://github.com/ZakuZakuu/wavecast/pull/11),
   [PR #13](https://github.com/ZakuZakuu/wavecast/pull/13),
