@@ -189,3 +189,10 @@ start the configured local music chain (NetEase-compatible upstream on port
 processes are not already running. Stop only when the configured source/API
 has changed, startup genuinely fails, or the required credentials/network are
 actually unavailable.
+
+Failed live probes must leave a sanitized structured diagnostic with stage,
+mapped cause/reason, usage totals, and safe provider-event summaries. Routine,
+reversible operational faults (for example, a stopped local service) should be
+fixed autonomously. Block only for missing authority or credentials,
+destructive actions, external provider/API changes, or a genuine
+product/architecture decision.

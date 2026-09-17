@@ -25,7 +25,18 @@ from wavecast.assembly import (
     create_episode_assembly_service,
 )
 from wavecast.providers.config import ProviderSettings
-from wavecast.providers.errors import ProviderConfigurationError, ProviderError
+from wavecast.providers.errors import (
+    ProviderAuthenticationError,
+    ProviderBudgetExceededError,
+    ProviderConfigurationError,
+    ProviderError,
+    ProviderInvalidResponseError,
+    ProviderOutputLimitError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+    ProviderUnavailableError,
+)
+from wavecast.providers.usage import UsageEvent, UsageLedger
 
 if __package__:
     from scripts.music_preflight import MusicPreflightError, preflight_music
@@ -69,6 +80,107 @@ def _safe_trace(result) -> list[dict[str, object]]:
         }
         for event in result.trace.events
     ]
+
+
+_KNOWN_PROVIDER_ERRORS = (
+    ProviderTimeoutError,
+    ProviderRateLimitError,
+    ProviderAuthenticationError,
+    ProviderConfigurationError,
+    ProviderUnavailableError,
+    ProviderBudgetExceededError,
+    ProviderOutputLimitError,
+    ProviderInvalidResponseError,
+    ProviderError,
+)
+
+
+def _nearest_provider_cause(error: EpisodeAssemblyError) -> ProviderError | None:
+    cause = error.__cause__
+    while cause is not None:
+        if isinstance(cause, _KNOWN_PROVIDER_ERRORS):
+            return cause
+        cause = cause.__cause__
+    return None
+
+
+def _failure_reason_code(stage: str, cause: ProviderError | None) -> str:
+    if isinstance(cause, ProviderTimeoutError):
+        return "provider_timeout"
+    if isinstance(cause, ProviderRateLimitError):
+        return "provider_rate_limit"
+    if isinstance(cause, ProviderAuthenticationError):
+        return "provider_authentication"
+    if isinstance(cause, ProviderConfigurationError):
+        return "provider_configuration"
+    if isinstance(cause, ProviderUnavailableError):
+        return "provider_unavailable"
+    if isinstance(cause, ProviderBudgetExceededError):
+        return "provider_budget_exceeded"
+    if isinstance(cause, ProviderOutputLimitError):
+        return "provider_output_limit"
+    if isinstance(cause, ProviderInvalidResponseError):
+        message = str(cause).lower()
+        if "invalid novelty curve" in message and stage == "curator":
+            return "curator_novelty_curve_invalid"
+        if "empty structured output" in message:
+            return "empty_structured_output"
+        if "incomplete" in message or "max_output_tokens" in message:
+            return "provider_incomplete"
+        return "structured_output_invalid"
+    return "unknown_provider_failure"
+
+
+def _safe_usage_event(event: UsageEvent) -> dict[str, object]:
+    metadata = event.metadata
+
+    def metadata_value(name: str) -> object:
+        value = metadata.get(name)
+        return value if value is None or isinstance(value, (bool, int, float, str)) else None
+
+    stage = metadata.get("stage")
+    return {
+        "provider": event.provider,
+        "operation": event.operation,
+        "stage": stage if isinstance(stage, str) else None,
+        "elapsed_ms": event.elapsed_ms,
+        "input_tokens": event.input_tokens,
+        "output_tokens": event.output_tokens,
+        "usage_characters": event.usage_characters,
+        "search_queries": event.search_queries,
+        "search_credits": event.search_credits,
+        "actual_cost_usd": event.actual_cost_usd,
+        "estimated_cost_usd": event.estimated_cost_usd,
+        "model": metadata_value("model"),
+        "transport": metadata_value("transport"),
+        "finish_reason": metadata_value("finish_reason"),
+        "reasoning_tokens": metadata_value("reasoning_tokens"),
+    }
+
+
+def _usage_diagnostics(ledger: UsageLedger) -> dict[str, object]:
+    stages: dict[str, dict[str, object]] = {}
+    for event in ledger.events:
+        stage = event.metadata.get("stage")
+        if isinstance(stage, str) and stage and stage not in stages:
+            stages[stage] = ledger.totals_for_stage(stage).model_dump()
+    return {
+        "usage": ledger.totals().model_dump(),
+        "usage_by_stage": stages,
+        "provider_events": [_safe_usage_event(event) for event in ledger.events],
+    }
+
+
+def _failure_report(error: EpisodeAssemblyError, ledger: UsageLedger) -> dict[str, object]:
+    cause = _nearest_provider_cause(error)
+    return {
+        "status": "failed",
+        "stage": error.stage,
+        "error_type": type(error).__name__,
+        "cause_type": type(cause).__name__ if cause is not None else "UnknownError",
+        "reason_code": _failure_reason_code(error.stage, cause),
+        **_usage_diagnostics(ledger),
+    }
 
 
 def _report(result) -> dict[str, object]:
@@ -242,7 +354,7 @@ async def _run(arguments: argparse.Namespace) -> int:
         )
         report = _report(result)
     except EpisodeAssemblyError as error:
-        report = {"status": "failed", "stage": error.stage, "error_type": type(error).__name__}
+        report = _failure_report(error, service.ledger)
         if arguments.json_output:
             arguments.json_output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
         print(json.dumps(report, ensure_ascii=False))
