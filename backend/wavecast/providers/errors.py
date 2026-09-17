@@ -29,6 +29,12 @@ class ProviderInvalidResponseError(ProviderError):
     pass
 
 
+class ProviderOutputLimitError(ProviderInvalidResponseError):
+    """The provider stopped before producing a complete structured response."""
+
+    pass
+
+
 class ProviderBudgetExceededError(ProviderError):
     pass
 
