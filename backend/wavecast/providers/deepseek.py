@@ -22,6 +22,7 @@ from .errors import (
     ProviderAuthenticationError,
     ProviderError,
     ProviderInvalidResponseError,
+    ProviderOutputLimitError,
     ProviderRateLimitError,
     ProviderTimeoutError,
     ProviderUnavailableError,
@@ -146,6 +147,12 @@ class DeepSeekLLMProvider:
                 last_failure.__cause__ = error
             if last_failure is None:
                 raise AssertionError("provider error must be set")
+            # Retrying the identical request cannot recover a response that hit
+            # the provider's output cap.  The usage event was recorded before
+            # content validation, so callers can surface the bounded failure
+            # without spending another identical attempt.
+            if isinstance(last_failure, ProviderOutputLimitError):
+                raise last_failure
             retry_invalid_output = isinstance(last_failure, ProviderInvalidResponseError)
             if attempt == attempt_limit - 1 or (
                 not retry_invalid_output and not is_retryable(last_failure)
@@ -194,9 +201,15 @@ class DeepSeekLLMProvider:
             return content if isinstance(content, str) else None
 
         status = _field(response, "status", "completed")
+        status = status if isinstance(status, str) else "completed"
         if status in {"failed", "incomplete"}:
             reason = _field(_field(response, "incomplete_details"), "reason")
-            suffix = f" ({reason})" if reason else ""
+            normalized_reason = _normalize_incomplete_reason(reason)
+            if status == "incomplete" and normalized_reason == "max_output_tokens":
+                raise ProviderOutputLimitError(
+                    "deepseek response was incomplete (max_output_tokens)"
+                )
+            suffix = f" ({normalized_reason})" if normalized_reason else ""
             raise ProviderInvalidResponseError(f"deepseek response was {status}{suffix}")
 
         # Parse the explicit Responses payload.  The SDK's output_text convenience
@@ -269,3 +282,13 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
     if isinstance(value, Mapping):
         return value.get(name, default)
     return getattr(value, name, default) if value is not None else default
+
+
+def _normalize_incomplete_reason(value: Any) -> str | None:
+    """Keep only safe, stable incomplete reasons for provider diagnostics."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower().replace("-", "_")
+    if normalized in {"max_output_tokens", "max_output_token", "max_tokens", "length"}:
+        return "max_output_tokens"
+    return None

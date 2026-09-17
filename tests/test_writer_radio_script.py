@@ -11,6 +11,7 @@ from wavecast.intelligence.models import (
     TrackProposal,
 )
 from wavecast.intelligence.writer import WriterService
+from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 
 
 class RadioWriterFixture:
@@ -91,3 +92,28 @@ def test_writer_prompt_is_tts_aware_and_receives_budget_and_language() -> None:
     assert "output language zh-CN" in recorder.prompt
     assert "Target narration duration seconds: 42" in recorder.prompt
     assert "display `3rd Coast`" in recorder.prompt
+
+
+def test_writer_uses_synthesis_profile() -> None:
+    class ProfileRecorder(RadioWriterFixture):
+        def __init__(self) -> None:
+            self.kwargs: dict[str, object] = {}
+
+        async def structured(self, _prompt: str, _output_type: type[object], **kwargs: object) -> object:
+            self.kwargs = kwargs
+            return RadioScript.from_blocks([], intended_duration_seconds=1)
+
+    recorder = ProfileRecorder()
+    chapter = ChapterPlan(
+        index=0,
+        track=None,
+        narrative_role=NarrativeRole.BRIDGE,
+        reason="synthesis",
+        narration_goal="connect",
+    )
+
+    asyncio.run(WriterService(recorder).write(chapter, []))
+
+    assert recorder.kwargs["transport"] is StructuredTransport.RESPONSES_JSON_SCHEMA
+    assert recorder.kwargs["profile"] is InferenceProfile.SYNTHESIS
+    assert recorder.kwargs["stage"] == "writer"
