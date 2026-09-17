@@ -4,6 +4,9 @@
 No provider call is made unless ``--run-live`` is supplied.  The report contains
 only stage timings, usage totals, catalog identities and timeline metadata; it
 never prints prompts, narration text, provider payloads or credentials.
+
+Before constructing any live research, LLM, or TTS provider, the probe checks
+the configured music sidecar readiness and resolves every explicit anchor.
 """
 
 from __future__ import annotations
@@ -23,6 +26,11 @@ from wavecast.assembly import (
 )
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
+
+if __package__:
+    from scripts.music_preflight import MusicPreflightError, preflight_music
+else:  # pragma: no cover - exercised by direct opt-in script execution
+    from music_preflight import MusicPreflightError, preflight_music
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -142,6 +150,20 @@ async def _run(arguments: argparse.Namespace) -> int:
     settings = ProviderSettings.from_env()
     if settings.mode != "live":
         raise ProviderConfigurationError("set WAVECAST_PROVIDER_MODE=live in the local .env")
+
+    try:
+        await preflight_music(settings, arguments.anchor)
+    except MusicPreflightError as error:
+        report = {
+            "status": "preflight_failed",
+            "stage": "music_readiness",
+            "reason": str(error),
+        }
+        if arguments.json_output:
+            arguments.json_output.write_text(json.dumps(report, ensure_ascii=False) + "\n")
+        print(json.dumps(report, ensure_ascii=False))
+        return 2
+
     service = create_episode_assembly_service(settings)
     try:
         result = await service.assemble(
