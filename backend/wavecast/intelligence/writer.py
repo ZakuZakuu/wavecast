@@ -56,7 +56,7 @@ class WriterService:
             prompt,
             RadioScript,
             transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
-            profile=InferenceProfile.BALANCED,
+            profile=InferenceProfile.SYNTHESIS,
             stage="writer",
         )
         if not isinstance(result, (RadioScript, NarrationScript)):
