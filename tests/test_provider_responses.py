@@ -5,7 +5,7 @@ import pytest
 from pydantic import BaseModel
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.deepseek import DeepSeekLLMProvider
-from wavecast.providers.errors import ProviderInvalidResponseError
+from wavecast.providers.errors import ProviderInvalidResponseError, ProviderOutputLimitError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.usage import UsageLedger
 
@@ -22,6 +22,16 @@ class FakeResponses:
     async def create(self, **kwargs: object) -> SimpleNamespace:
         self.calls.append(kwargs)
         return self.response
+
+
+class SequencedResponses:
+    def __init__(self, responses: list[SimpleNamespace]) -> None:
+        self.responses = responses
+        self.calls: list[dict[str, object]] = []
+
+    async def create(self, **kwargs: object) -> SimpleNamespace:
+        self.calls.append(kwargs)
+        return self.responses[len(self.calls) - 1]
 
 
 def response_client(response: SimpleNamespace) -> tuple[SimpleNamespace, FakeResponses]:
@@ -99,6 +109,7 @@ def test_responses_json_schema_validates_and_maps_fast_profile() -> None:
     [
         (InferenceProfile.FAST, "none", 2048),
         (InferenceProfile.BALANCED, "low", 4096),
+        (InferenceProfile.SYNTHESIS, "none", 4096),
         (InferenceProfile.DEEP, "high", 12288),
     ],
 )
@@ -207,7 +218,7 @@ def test_responses_empty_output_records_usage_before_normalized_failure() -> Non
     assert ledger.events[0].metadata["reasoning_tokens"] == 17
 
 
-def test_responses_incomplete_output_is_normalized_without_retry() -> None:
+def test_responses_max_output_incomplete_records_usage_and_does_not_retry() -> None:
     response = SimpleNamespace(
         id="response-incomplete",
         status="incomplete",
@@ -220,14 +231,12 @@ def test_responses_incomplete_output_is_normalized_without_retry() -> None:
 
     async def run() -> None:
         provider = DeepSeekLLMProvider(response_settings(), client=client, ledger=ledger)
-        with pytest.raises(
-            ProviderInvalidResponseError, match=r"incomplete \(max_output_tokens\)"
-        ):
+        with pytest.raises(ProviderOutputLimitError, match=r"incomplete \(max_output_tokens\)"):
             await provider.structured(
                 "tiny test",
                 ResponseAnswer,
                 transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
-                profile=InferenceProfile.FAST,
+                profile=InferenceProfile.SYNTHESIS,
             )
 
     asyncio.run(run())
@@ -235,6 +244,50 @@ def test_responses_incomplete_output_is_normalized_without_retry() -> None:
     assert ledger.events[0].request_id == "response-incomplete"
     assert ledger.totals().input_tokens == 3
     assert ledger.totals().output_tokens == 4
+
+
+def test_responses_malformed_json_keeps_bounded_retry_behavior() -> None:
+    responses = SequencedResponses(
+        [
+            SimpleNamespace(
+                id="response-malformed",
+                status="completed",
+                output=[
+                    SimpleNamespace(
+                        type="message",
+                        content=[SimpleNamespace(type="output_text", text="not-json")],
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=2, output_tokens=1),
+            ),
+            SimpleNamespace(
+                id="response-recovered",
+                status="completed",
+                output=[
+                    SimpleNamespace(
+                        type="message",
+                        content=[SimpleNamespace(type="output_text", text='{"answer":"ok"}')],
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=2, output_tokens=1),
+            ),
+        ]
+    )
+    client = SimpleNamespace(responses=responses)
+    ledger = UsageLedger()
+
+    async def run() -> None:
+        provider = DeepSeekLLMProvider(response_settings(), client=client, ledger=ledger)
+        assert await provider.structured(
+            "tiny test",
+            ResponseAnswer,
+            transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
+            profile=InferenceProfile.SYNTHESIS,
+        ) == ResponseAnswer(answer="ok")
+
+    asyncio.run(run())
+    assert len(responses.calls) == 2
+    assert len(ledger.events) == 2
 
 
 def test_responses_failed_status_is_normalized_and_usage_is_kept() -> None:

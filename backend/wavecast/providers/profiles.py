@@ -12,6 +12,7 @@ class StructuredTransport(StrEnum):
 class InferenceProfile(StrEnum):
     FAST = "fast"
     BALANCED = "balanced"
+    SYNTHESIS = "synthesis"
     DEEP = "deep"
 
 
@@ -48,6 +49,14 @@ def policy_for(
             max_output_tokens=deep_max_output_tokens or default_max_output_tokens,
             max_attempts=default_max_attempts,
             reasoning_effort="high",
+        )
+    if profile is InferenceProfile.SYNTHESIS:
+        return InferencePolicy(
+            transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
+            timeout_seconds=default_timeout_seconds,
+            max_output_tokens=default_max_output_tokens,
+            max_attempts=default_max_attempts,
+            reasoning_effort="none",
         )
     return InferencePolicy(
         transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
