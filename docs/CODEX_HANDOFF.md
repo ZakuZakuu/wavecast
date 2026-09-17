@@ -1238,4 +1238,3 @@ The first PR is successful if a reviewer can run the project locally and observe
 - no real API keys are required.
 
 Once this passes review, proceed to real provider integration and the actual research/curation/writer pipeline.
-
