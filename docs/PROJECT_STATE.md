@@ -49,10 +49,12 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 - **Phase 4.7.2:** live-probe music preflight. The local music chain now has a
   distinct readiness check, and probes resolve required anchors before any
   Exa, Tavily, DeepSeek, or MiniMax work is constructed.
-- **Phase 4.8.1 (in progress):** Writer receives resolved
-  `NarrationSlotContext` adjacency; application code owns numeric playback
-  placement, normalizes chapter identity, fails explicitly on impossible
-  narration placement, and reports parsed/normalized Writer blocks safely.
+- **Phase 4.8.1 (in progress):** Writer receives typed, final-playback
+  `NarrationSlotContext` values per narration slot (including distinct
+  before-track and after-track contexts); application code owns numeric
+  playback placement, normalizes chapter identity, fails explicitly on
+  impossible narration placement, preserves multiple ordered blocks in a gap,
+  and reports parsed/normalized Writer blocks safely.
 
 ## Invariants to preserve
 
@@ -70,7 +72,9 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 - Search normalization produces Evidence. Candidate inference belongs to
   FastStart/Curator, and catalog identity is supplied only by resolution.
 - Narration placement is derived after resolution from actual playable
-  adjacency; Curator/Writer chapter numbers are never playback anchors.
+  adjacency; each Writer block must match a typed slot allowlist, and
+  Curator/Writer chapter numbers are never playback anchors. `parsed_blocks`
+  diagnostics are normalized application models, not raw provider payloads.
 - Mock mode is the default. Paid/network probes are explicit, bounded, and
   never part of ordinary tests or CI.
 

@@ -76,14 +76,17 @@ def _report(result) -> dict[str, object]:
     writer_chapters = [
         {
             "chapter_index": item.chapter_index,
-            "chapter_track": _safe_track(item.chapter_track),
-            "just_played_track": _safe_track(item.just_played_track),
-            "upcoming_track": _safe_track(item.upcoming_track),
-            "raw_structured_blocks": [
-                _safe_script_block(block) for block in item.raw_structured_blocks
+            "available_slots": [
+                _safe_slot_context(slot) for slot in item.available_slots
+            ],
+            "parsed_blocks": [
+                _safe_script_block(block) for block in item.parsed_blocks
             ],
             "normalized_blocks": [
                 _safe_script_block(block) for block in item.normalized_blocks
+            ],
+            "normalized_slot_contexts": [
+                _safe_slot_context(slot) for slot in item.normalized_slot_contexts
             ],
         }
         for item in result.writer_chapters
@@ -150,7 +153,7 @@ def _report(result) -> dict[str, object]:
         "writer_chapters": writer_chapters,
         "writer_counts": {
             "generated_blocks": sum(
-                len(item.raw_structured_blocks) for item in result.writer_chapters
+                len(item.parsed_blocks) for item in result.writer_chapters
             ),
             "normalized_blocks": sum(
                 len(item.normalized_blocks) for item in result.writer_chapters
@@ -181,6 +184,20 @@ def _safe_script_block(block) -> dict[str, object]:
         "track_index": block.track_index,
         "tts_cues": list(block.tts_cues),
         "evidence_ids": list(block.evidence_ids),
+    }
+
+
+def _safe_slot_context(context) -> dict[str, object]:
+    return {
+        "slot_id": context.slot_id,
+        "chapter_index": context.chapter_index,
+        "placement": context.placement.value,
+        "allowed_block_kinds": [kind.value for kind in context.allowed_block_kinds],
+        "chapter_track": _safe_track(context.chapter_track),
+        "just_played_track": _safe_track(context.just_played_track),
+        "upcoming_track": _safe_track(context.upcoming_track),
+        "is_opening": context.is_opening,
+        "is_final": context.is_final,
     }
 
 

@@ -172,4 +172,7 @@ def test_writer_receives_resolved_slot_context_and_strips_numeric_placement() ->
     assert '"canonical_title": "Second Song"' in fixture.prompt
     assert '"canonical_title": "Third Song"' in fixture.prompt
     assert '"chapter_track": null' in fixture.prompt
+    assert '"slot_id": "legacy"' in fixture.prompt
+    assert '"allowed_block_kinds"' in fixture.prompt
+    assert "Narration slot contexts:" in fixture.prompt
     assert "numeric `track_index`" in fixture.prompt
