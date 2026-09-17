@@ -703,16 +703,19 @@ def test_writer_uses_resolved_narration_slots_for_sparse_playback_sequence(tmp_p
 
     assert len(result.writer_chapters) == 5
     middle_context = result.writer_chapters[2]
-    assert middle_context.chapter_track is None
-    assert middle_context.just_played_track is not None
-    assert middle_context.just_played_track.canonical_title == "Midnight Transfer"
-    assert middle_context.upcoming_track is not None
-    assert middle_context.upcoming_track.canonical_title == "Daybreak in Stereo"
+    assert len(middle_context.available_slots) == 1
+    middle_slot = middle_context.available_slots[0]
+    assert middle_slot.chapter_track is None
+    assert middle_slot.just_played_track is not None
+    assert middle_slot.just_played_track.canonical_title == "Midnight Transfer"
+    assert middle_slot.upcoming_track is not None
+    assert middle_slot.upcoming_track.canonical_title == "Daybreak in Stereo"
     final_context = result.writer_chapters[4]
-    assert final_context.just_played_track is not None
-    assert final_context.just_played_track.canonical_title == "Daybreak in Stereo"
-    assert final_context.upcoming_track is None
-    assert sum(len(item.raw_structured_blocks) for item in result.writer_chapters) == 5
+    final_slot = final_context.available_slots[0]
+    assert final_slot.just_played_track is not None
+    assert final_slot.just_played_track.canonical_title == "Daybreak in Stereo"
+    assert final_slot.upcoming_track is None
+    assert sum(len(item.parsed_blocks) for item in result.writer_chapters) == 5
     assert sum(len(item.normalized_blocks) for item in result.writer_chapters) == 5
     assert sum(segment.kind.value == "NARRATION" for segment in result.playable_episode.segments) == 5
     assert [segment.narration_text for segment in result.playable_episode.segments if segment.narration_text] == [
@@ -722,6 +725,164 @@ def test_writer_uses_resolved_narration_slots_for_sparse_playback_sequence(tmp_p
         "slot 3",
         "slot 4",
     ]
+
+
+def test_writer_slots_match_each_final_playback_adjacency_and_preserve_blocks(tmp_path) -> None:
+    class AdjacencyLLM(RecordingAssemblyLLM):
+        async def structured(
+            self, prompt: str, output_type: type[object], **kwargs: object
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                known = [self._tracks[0], self._tracks[1], self._tracks[2]]
+                unknown = ("Event Listing", "unresolved beat", NoveltyDistance.CLOSE)
+                chapters = [
+                    ChapterPlan(
+                        index=index,
+                        track=self._proposal(item) if item is not None else None,
+                        narrative_role=(
+                            NarrativeRole.ANCHOR if index == 0 else NarrativeRole.RESOLUTION
+                        ),
+                        reason=f"beat {index}",
+                        novelty_distance=(
+                            item[2] if item is not None else NoveltyDistance.BRIDGE
+                        ),
+                        narration_goal=f"explain beat {index}",
+                    )
+                    for index, item in enumerate((known[0], known[1], unknown, known[2]))
+                ]
+                return ProgramSkeleton(thesis="adjacency", chapters=chapters, estimated_duration_seconds=900)
+            if output_type is RadioScript:
+                chapter = json.loads(prompt.split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0])
+                self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
+                index = chapter["index"]
+                if index == 0:
+                    blocks = [block(RadioScriptBlockKind.INTRO, "after A")]
+                elif index == 1:
+                    blocks = [
+                        block(RadioScriptBlockKind.TRACK_INTRO, "before B"),
+                        block(RadioScriptBlockKind.TRANSITION, "after B"),
+                    ]
+                elif index == 2:
+                    blocks = [block(RadioScriptBlockKind.TRANSITION, "unresolved middle")]
+                else:
+                    blocks = [
+                        block(RadioScriptBlockKind.TRACK_INTRO, "before C"),
+                        block(RadioScriptBlockKind.OUTRO, "after C"),
+                    ]
+                return RadioScript(blocks=blocks, intended_duration_seconds=6)
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = AdjacencyLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=4)
+        )
+    )
+
+    diagnostics = result.writer_chapters
+    middle_prompt = next(
+        call["prompt"]
+        for call in llm.calls
+        if call["output_type"] is RadioScript and '"index":1' in call["prompt"]
+    )
+    assert 'chapter-1:before-track' in middle_prompt
+    assert 'chapter-1:after-track' in middle_prompt
+    opening_after = diagnostics[0].normalized_slot_contexts[0]
+    assert opening_after.just_played_track is not None
+    assert opening_after.just_played_track.canonical_title == "Neon First Light"
+    assert opening_after.upcoming_track is not None
+    assert opening_after.upcoming_track.canonical_title == "Midnight Transfer"
+
+    middle = diagnostics[1]
+    before_b, after_b = middle.normalized_slot_contexts
+    assert before_b.just_played_track is not None
+    assert before_b.just_played_track.canonical_title == "Neon First Light"
+    assert before_b.upcoming_track is not None
+    assert before_b.upcoming_track.canonical_title == "Midnight Transfer"
+    assert after_b.just_played_track is not None
+    assert after_b.just_played_track.canonical_title == "Midnight Transfer"
+    assert after_b.upcoming_track is not None
+    assert after_b.upcoming_track.canonical_title == "Daybreak in Stereo"
+
+    unresolved = diagnostics[2].normalized_slot_contexts[0]
+    assert unresolved.just_played_track is not None
+    assert unresolved.just_played_track.canonical_title == "Midnight Transfer"
+    assert unresolved.upcoming_track is not None
+    assert unresolved.upcoming_track.canonical_title == "Daybreak in Stereo"
+
+    final = diagnostics[3].normalized_slot_contexts[1]
+    assert final.just_played_track is not None
+    assert final.just_played_track.canonical_title == "Daybreak in Stereo"
+    assert final.upcoming_track is None
+    assert result.radio_script.blocks[-1].kind is RadioScriptBlockKind.OUTRO
+
+    narration = [
+        segment.narration_text
+        for segment in result.playable_episode.segments
+        if segment.narration_text is not None
+    ]
+    assert narration == ["after A", "before B", "after B", "unresolved middle", "before C", "after C"]
+    assert len(narration) == sum(len(item.parsed_blocks) for item in diagnostics)
+
+
+def test_leading_narrative_slot_uses_opening_music_as_just_played(tmp_path) -> None:
+    class LeadingNarrativeLLM(RecordingAssemblyLLM):
+        async def structured(
+            self, prompt: str, output_type: type[object], **kwargs: object
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                return ProgramSkeleton(
+                    thesis="opening narrative",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=None,
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="opening setup",
+                            narration_goal="set the scene",
+                        ),
+                        ChapterPlan(
+                            index=1,
+                            track=self._proposal(self._tracks[0]),
+                            narrative_role=NarrativeRole.ANCHOR,
+                            reason="first song",
+                            narration_goal="introduce the song",
+                        ),
+                        ChapterPlan(
+                            index=2,
+                            track=self._proposal(self._tracks[1]),
+                            narrative_role=NarrativeRole.RESOLUTION,
+                            reason="close",
+                            narration_goal="close the route",
+                        ),
+                    ],
+                    estimated_duration_seconds=900,
+                )
+            if output_type is RadioScript:
+                chapter = json.loads(prompt.split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0])
+                if chapter["track"] is None:
+                    kind, text = RadioScriptBlockKind.INTRO, "lead"
+                elif chapter["index"] == 1:
+                    kind, text = RadioScriptBlockKind.TRANSITION, "after opening"
+                else:
+                    kind, text = RadioScriptBlockKind.OUTRO, "outro"
+                return RadioScript(blocks=[block(kind, text)], intended_duration_seconds=3)
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = LeadingNarrativeLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=2)
+        )
+    )
+
+    opening = result.writer_chapters[0].normalized_slot_contexts[0]
+    assert opening.just_played_track is not None
+    assert opening.just_played_track.canonical_title == "Neon First Light"
+    assert opening.upcoming_track is not None
+    assert opening.upcoming_track.canonical_title == "Midnight Transfer"
+    assert result.playable_episode.segments[0].track_ref == result.resolved_tracks[0].track_ref
+    assert result.playable_episode.segments[1].narration_text == "lead"
 
 
 def test_assembly_preserves_auto_language_and_duration_budget(tmp_path) -> None:
@@ -783,10 +944,16 @@ def test_middle_unresolved_chapter_keeps_narrative_writer_order(tmp_path) -> Non
             if output_type is RadioScript:
                 payload = json.loads(prompt.split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0])
                 writer_index = payload["index"]
+                if payload["track"] is None:
+                    kind = RadioScriptBlockKind.TRANSITION
+                elif writer_index == 0:
+                    kind = RadioScriptBlockKind.INTRO
+                else:
+                    kind = RadioScriptBlockKind.TRACK_INTRO
                 return RadioScript(
                     blocks=[
                         RadioScriptBlock(
-                            kind=RadioScriptBlockKind.TRACK_INTRO,
+                            kind=kind,
                             text=f"writer track {writer_index}",
                             duration_seconds=3,
                             track_index=writer_index,
