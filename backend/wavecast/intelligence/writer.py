@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 
 from .fast_start import FastStructuredProvider
@@ -9,6 +11,7 @@ from .models import (
     ChapterPlan,
     Evidence,
     NarrationScript,
+    NarrationSlotContext,
     OutputLanguage,
     RadioScript,
     resolve_output_language,
@@ -30,9 +33,29 @@ class WriterService:
         target_duration_seconds: int | None = None,
         output_language: OutputLanguage = OutputLanguage.AUTO,
         topic: str = "",
+        slot_context: NarrationSlotContext | None = None,
     ) -> RadioScript | NarrationScript:
         scoped = [item for item in evidence if item.id in set(chapter.evidence_ids)]
         selected_language = resolve_output_language(output_language, topic or chapter.reason)
+        playback_context = (
+            slot_context.model_dump(
+                mode="json",
+                exclude={
+                    "chapter_music_index",
+                    "just_played_music_index",
+                    "upcoming_music_index",
+                },
+            )
+            if slot_context is not None
+            else {
+                "chapter_index": chapter.index,
+                "chapter_track": None,
+                "just_played_track": None,
+                "upcoming_track": next_track_metadata or None,
+                "is_opening": chapter.index == 0,
+                "is_final": False,
+            }
+        )
         prompt = (
             "Write a structured radio script for this chapter, not an article. Use only the "
             "scoped evidence; keep factual claims separately identified by evidence IDs, avoid "
@@ -44,10 +67,20 @@ class WriterService:
             "Keep `text` as the listener-visible copy and optionally provide `tts_text` when "
             "spoken pronunciation should differ. For example, display `3rd Coast` but use "
             "`Third Coast` for TTS. Do not use broad regex or dictionary substitutions. "
+            "The application has assigned the narration slot below from resolved playback "
+            "state. Use `just_played_track` for references such as ‘刚才这首’ and "
+            "`upcoming_track` for references such as ‘下一首’; a null value means no such "
+            "track exists. Do not infer adjacency from the chapter index, and do not assign "
+            "or guess a numeric `track_index`; the application places every block. "
             f"Write in output language {selected_language.value}.\n"
             f"Chapter: {chapter.model_dump_json()}\n"
             f"Evidence: {[item.model_dump() for item in scoped]}\n"
             f"Previous context: {previous_committed_context[:1000]}\n"
+            f"Narration slot context: {json.dumps(playback_context, ensure_ascii=False)}\n"
+            # Keep the old projection for compatibility with fixture callers;
+            # it is explicitly not authoritative when slot_context is present.
+            "The following legacy field is informational only and must not override the "
+            "resolved slot context.\n"
             f"Next track metadata: {next_track_metadata[:500]}\n"
             f"Host style: {host_style}\n"
             f"Target narration duration seconds: {target_duration_seconds or 'use chapter context'}"
@@ -61,4 +94,13 @@ class WriterService:
         )
         if not isinstance(result, (RadioScript, NarrationScript)):
             raise TypeError("writer returned an unexpected output model")
+        if isinstance(result, RadioScript):
+            # Numeric playback placement is application-owned.  Strip any
+            # compatibility field emitted by an older/faulty structured model
+            # before assembly normalizes the parsed blocks into this slot.
+            result = result.model_copy(
+                update={
+                    "blocks": [block.model_copy(update={"track_index": None}) for block in result.blocks]
+                }
+            )
         return result

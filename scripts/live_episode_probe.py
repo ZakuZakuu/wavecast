@@ -73,6 +73,21 @@ def _safe_trace(result) -> list[dict[str, object]]:
 
 def _report(result) -> dict[str, object]:
     episode = result.playable_episode
+    writer_chapters = [
+        {
+            "chapter_index": item.chapter_index,
+            "chapter_track": _safe_track(item.chapter_track),
+            "just_played_track": _safe_track(item.just_played_track),
+            "upcoming_track": _safe_track(item.upcoming_track),
+            "raw_structured_blocks": [
+                _safe_script_block(block) for block in item.raw_structured_blocks
+            ],
+            "normalized_blocks": [
+                _safe_script_block(block) for block in item.normalized_blocks
+            ],
+        }
+        for item in result.writer_chapters
+    ]
     return {
         "status": "ok",
         "timings": result.timings.model_dump(),
@@ -132,6 +147,40 @@ def _report(result) -> dict[str, object]:
         ],
         "usage": result.usage.model_dump(),
         "trace": _safe_trace(result),
+        "writer_chapters": writer_chapters,
+        "writer_counts": {
+            "generated_blocks": sum(
+                len(item.raw_structured_blocks) for item in result.writer_chapters
+            ),
+            "normalized_blocks": sum(
+                len(item.normalized_blocks) for item in result.writer_chapters
+            ),
+            "final_timeline_narration_segments": sum(
+                segment.kind.value == "NARRATION" for segment in episode.segments
+            ),
+        },
+    }
+
+
+def _safe_track(track) -> dict[str, str] | None:
+    if track is None:
+        return None
+    return {
+        "track_ref": track.track_ref,
+        "artist": track.canonical_artist,
+        "title": track.canonical_title,
+    }
+
+
+def _safe_script_block(block) -> dict[str, object]:
+    return {
+        "kind": block.kind.value,
+        "text": block.text,
+        "tts_text": block.tts_text,
+        "duration_seconds": block.intended_duration_seconds,
+        "track_index": block.track_index,
+        "tts_cues": list(block.tts_cues),
+        "evidence_ids": list(block.evidence_ids),
     }
 
 

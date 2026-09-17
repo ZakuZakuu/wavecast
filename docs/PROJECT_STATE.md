@@ -11,14 +11,16 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 4.7.2 is complete; the next implementation task
-  is **Phase 4.8.1 — Editorial correctness**.
-- **Main:** `879467ebad6803b4c9bdf507e30f88afe1c0da3c`, merged live-music
-  preflight work (PR #15). The working tree on main was clean when this state
+- **Current milestone:** Phase 4.8.1 — Editorial correctness / narration-slot
+  integrity is in progress; the next planned milestones remain 4.8.2 Research
+  quality and 4.8.3 Program timing.
+- **Main:** `c289d0a1b54ef3c53de0cecad431d9615fbd392d` (merge of documentation hygiene PR #16, with live-music
+  preflight work from PR #15). The working tree on main was clean when this state
   was recorded.
-- **Immediate next work:** review and fix deterministic script/track placement,
-  narrative references, evidence support, and other editorial correctness
-  issues surfaced by the latest benchmark. Do not broaden provider or UI scope.
+- **Immediate work:** keep deterministic script/track placement aligned with
+  resolved playback adjacency, prevent narration loss, and expose sanitized
+  Writer-to-timeline diagnostics. Research source quality belongs to Phase
+  4.8.2; timing/budget redesign belongs to Phase 4.8.3.
 
 ## Completed implementation
 
@@ -47,6 +49,10 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 - **Phase 4.7.2:** live-probe music preflight. The local music chain now has a
   distinct readiness check, and probes resolve required anchors before any
   Exa, Tavily, DeepSeek, or MiniMax work is constructed.
+- **Phase 4.8.1 (in progress):** Writer receives resolved
+  `NarrationSlotContext` adjacency; application code owns numeric playback
+  placement, normalizes chapter identity, fails explicitly on impossible
+  narration placement, and reports parsed/normalized Writer blocks safely.
 
 ## Invariants to preserve
 
@@ -63,6 +69,8 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
   when its target buffer is satisfied or the listener becomes inactive.
 - Search normalization produces Evidence. Candidate inference belongs to
   FastStart/Curator, and catalog identity is supplied only by resolution.
+- Narration placement is derived after resolution from actual playable
+  adjacency; Curator/Writer chapter numbers are never playback anchors.
 - Mock mode is the default. Paid/network probes are explicit, bounded, and
   never part of ordinary tests or CI.
 
@@ -136,7 +144,8 @@ credentials, or signed playback URLs.
 ## Pointers and validation
 
 - Long-lived product/architecture contract: [`CODEX_HANDOFF.md`](CODEX_HANDOFF.md)
-- Architecture decisions: [`docs/adr/`](adr/)
+- Architecture decisions: [`docs/adr/`](adr/), especially
+  [ADR 0011](adr/0011-deterministic-narration-slot-context.md) for this phase
 - Recent milestones: [PR #10](https://github.com/ZakuZakuu/wavecast/pull/10),
   [PR #11](https://github.com/ZakuZakuu/wavecast/pull/11),
   [PR #13](https://github.com/ZakuZakuu/wavecast/pull/13),
