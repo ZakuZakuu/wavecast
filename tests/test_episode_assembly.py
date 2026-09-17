@@ -615,6 +615,115 @@ def test_narrative_only_chapter_survives_writer_and_assembly(tmp_path) -> None:
     )
 
 
+def test_writer_uses_resolved_narration_slots_for_sparse_playback_sequence(tmp_path) -> None:
+    class SlotFixtureLLM(RecordingAssemblyLLM):
+        async def structured(
+            self, prompt: str, output_type: type[object], **kwargs: object
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                known = [self._tracks[0], self._tracks[1], self._tracks[2]]
+                unknown = ("Event Listing", "STAY piano cover", NoveltyDistance.CLOSE)
+                chapters = [
+                    ChapterPlan(
+                        index=index,
+                        track=self._proposal(item) if item is not None else None,
+                        narrative_role=(
+                            NarrativeRole.ANCHOR
+                            if index == 0
+                            else NarrativeRole.RESOLUTION
+                            if index == 4
+                            else NarrativeRole.BRIDGE
+                        ),
+                        reason=f"beat {index}",
+                        novelty_distance=(
+                            item[2] if item is not None else NoveltyDistance.CLOSE
+                        ),
+                        narration_goal=f"explain beat {index}",
+                    )
+                    for index, item in enumerate(
+                        (known[0], known[1], unknown, known[2], None)
+                    )
+                ]
+                chapters[-1] = chapters[-1].model_copy(
+                    update={"index": 6, "novelty_distance": NoveltyDistance.DISCOVERY}
+                )
+                # Deliberately sparse Curator identity; application code must
+                # normalize it before returning the skeleton and calling Writer.
+                return ProgramSkeleton(
+                    thesis="resolved tracks with a narrative-only middle and ending",
+                    chapters=chapters,
+                    estimated_duration_seconds=900,
+                )
+            if output_type is RadioScript:
+                chapter = json.loads(prompt.split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0])
+                self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
+                return RadioScript(
+                    blocks=[
+                        RadioScriptBlock(
+                            kind=RadioScriptBlockKind.TRANSITION,
+                            text=f"slot {chapter['index']}",
+                            duration_seconds=3,
+                        )
+                    ]
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = SlotFixtureLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=4)
+        )
+    )
+
+    assert [chapter.index for chapter in result.skeleton.chapters] == [0, 1, 2, 3, 4]
+    assert result.skeleton.chapters[2].track is not None
+    assert result.unresolved_proposals[0].chapter_index == 2
+    assert [track.canonical_title for track in result.resolved_tracks] == [
+        "Neon First Light",
+        "Midnight Transfer",
+        "Daybreak in Stereo",
+    ]
+    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 5
+
+    middle_prompt = next(
+        call["prompt"]
+        for call in llm.calls
+        if call["output_type"] is RadioScript and '"index":2' in call["prompt"]
+    )
+    assert '"track":null' in middle_prompt
+    assert "Midnight Transfer" in middle_prompt
+    assert "Daybreak in Stereo" in middle_prompt
+    final_prompt = next(
+        call["prompt"]
+        for call in llm.calls
+        if call["output_type"] is RadioScript and '"index":4' in call["prompt"]
+    )
+    assert "Daybreak in Stereo" in final_prompt
+    assert '"upcoming_track": null' in final_prompt
+
+    assert len(result.writer_chapters) == 5
+    middle_context = result.writer_chapters[2]
+    assert middle_context.chapter_track is None
+    assert middle_context.just_played_track is not None
+    assert middle_context.just_played_track.canonical_title == "Midnight Transfer"
+    assert middle_context.upcoming_track is not None
+    assert middle_context.upcoming_track.canonical_title == "Daybreak in Stereo"
+    final_context = result.writer_chapters[4]
+    assert final_context.just_played_track is not None
+    assert final_context.just_played_track.canonical_title == "Daybreak in Stereo"
+    assert final_context.upcoming_track is None
+    assert sum(len(item.raw_structured_blocks) for item in result.writer_chapters) == 5
+    assert sum(len(item.normalized_blocks) for item in result.writer_chapters) == 5
+    assert sum(segment.kind.value == "NARRATION" for segment in result.playable_episode.segments) == 5
+    assert [segment.narration_text for segment in result.playable_episode.segments if segment.narration_text] == [
+        "slot 0",
+        "slot 1",
+        "slot 2",
+        "slot 3",
+        "slot 4",
+    ]
+
+
 def test_assembly_preserves_auto_language_and_duration_budget(tmp_path) -> None:
     llm = RecordingAssemblyLLM()
     result = asyncio.run(

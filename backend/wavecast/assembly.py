@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import Counter
 from dataclasses import dataclass
 from time import perf_counter
 from uuid import uuid4
@@ -25,6 +26,7 @@ from wavecast.intelligence.models import (
     FastResearchInput,
     FastStartPlan,
     NarrationScript,
+    NarrationSlotContext,
     NarrativeRole,
     NoveltyDistance,
     OutputLanguage,
@@ -78,6 +80,10 @@ class EpisodeAssemblyError(RuntimeError):
         self.stage = stage
 
 
+class NarrationPlacementError(ValueError):
+    """A parsed Writer block cannot be assigned to a deterministic slot."""
+
+
 class LiveEpisodeAssemblyRequest(BaseModel):
     """Provider-neutral input for one bounded episode assembly run."""
 
@@ -118,6 +124,17 @@ class AssemblyDurationSummary(BaseModel):
     narration_ratio: float = Field(ge=0, le=1)
 
 
+class WriterChapterDiagnostic(BaseModel):
+    """Safe parsed/normalized Writer data for one application chapter."""
+
+    chapter_index: int = Field(ge=0)
+    chapter_track: ResolvedTrack | None = None
+    just_played_track: ResolvedTrack | None = None
+    upcoming_track: ResolvedTrack | None = None
+    raw_structured_blocks: list[RadioScriptBlock] = Field(default_factory=list)
+    normalized_blocks: list[RadioScriptBlock] = Field(default_factory=list)
+
+
 class EpisodeAssemblyResult(BaseModel):
     """Sanitized, inspectable output of one assembly run."""
 
@@ -131,6 +148,7 @@ class EpisodeAssemblyResult(BaseModel):
     usage: UsageTotals
     duration_summary: AssemblyDurationSummary
     trace: GenerationTrace
+    writer_chapters: list[WriterChapterDiagnostic] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -226,6 +244,10 @@ class LiveEpisodeAssemblyService:
         chapters = _select_chapters_for_music_limit(
             skeleton.chapters, request.max_tracks, request.max_chapters
         )
+        # Curator indices are provider output, not stable application identity.
+        # Normalize the selected narrative sequence before exposing it to the
+        # rest of assembly or to Writer.
+        chapters = _normalize_chapters(chapters)
         skeleton = skeleton.model_copy(update={"chapters": chapters})
         trace.mark("program_skeleton_ready", chapter_count=len(chapters))
 
@@ -292,15 +314,14 @@ class LiveEpisodeAssemblyService:
                 stage="resolution",
             )
 
+        slot_contexts = _build_narration_slot_contexts(resolved_chapters)
         writer_started = perf_counter()
         writer_scripts: list[RadioScript | NarrationScript] = []
         previous_context = ""
         for index, resolved_chapter in enumerate(resolved_chapters):
+            slot_context = slot_contexts[index]
             next_metadata = ""
-            next_track = next(
-                (item.track for item in resolved_chapters[index + 1 :] if item.track is not None),
-                None,
-            )
+            next_track = slot_context.upcoming_track
             if next_track is not None:
                 next_metadata = f"{next_track.canonical_artist} — {next_track.canonical_title}"
             try:
@@ -316,17 +337,22 @@ class LiveEpisodeAssemblyService:
                     ),
                     output_language=resolve_output_language(request.output_language, request.topic),
                     topic=request.topic,
+                    slot_context=slot_context,
                 )
             except ProviderError as error:
                 raise EpisodeAssemblyError(str(error), stage="writer") from error
             writer_scripts.append(script)
             previous_context = _script_text(script)
         writer_ms = _elapsed_ms(writer_started)
-        radio_script = _assemble_radio_script(
-            writer_scripts,
-            resolved_track_count,
-            chapter_music_indices=[item.music_index for item in resolved_chapters],
-        )
+        try:
+            radio_script, writer_chapters = _assemble_writer_scripts(
+                writer_scripts,
+                resolved_track_count,
+                chapter_music_indices=[item.music_index for item in resolved_chapters],
+                slot_contexts=slot_contexts,
+            )
+        except NarrationPlacementError as error:
+            raise EpisodeAssemblyError(str(error), stage="writer_normalization") from error
 
         composition_started = perf_counter()
         try:
@@ -336,6 +362,7 @@ class LiveEpisodeAssemblyService:
         except (ProviderError, UnresolvedTrackError, ValueError) as error:
             raise EpisodeAssemblyError(str(error), stage="composition") from error
         composition_ms = _elapsed_ms(composition_started)
+        _assert_narration_blocks_materialized(radio_script, playable_episode)
 
         narration_started = perf_counter()
         try:
@@ -368,6 +395,7 @@ class LiveEpisodeAssemblyService:
             usage=self.ledger.totals(),
             duration_summary=duration_summary,
             trace=trace,
+            writer_chapters=writer_chapters,
         )
 
     async def run(
@@ -427,6 +455,218 @@ def _select_chapters_for_music_limit(
         if chapter.track is not None:
             track_count += 1
     return selected[:max_chapters]
+
+
+def _normalize_chapters(chapters: list[ChapterPlan]) -> list[ChapterPlan]:
+    """Assign contiguous application identity without mutating Curator models."""
+
+    return [chapter.model_copy(update={"index": index}) for index, chapter in enumerate(chapters)]
+
+
+def _build_narration_slot_contexts(
+    chapters: list[_ResolvedChapter],
+) -> list[NarrationSlotContext]:
+    """Derive Writer adjacency from resolved playback order, not chapter numbers."""
+
+    contexts: list[NarrationSlotContext] = []
+    for index, item in enumerate(chapters):
+        just_played = next(
+            (candidate.track for candidate in reversed(chapters[:index]) if candidate.track is not None),
+            None,
+        )
+        just_played_music_index = next(
+            (
+                candidate.music_index
+                for candidate in reversed(chapters[:index])
+                if candidate.track is not None
+            ),
+            None,
+        )
+        upcoming = next(
+            (candidate.track for candidate in chapters[index + 1 :] if candidate.track is not None),
+            None,
+        )
+        upcoming_music_index = next(
+            (
+                candidate.music_index
+                for candidate in chapters[index + 1 :]
+                if candidate.track is not None
+            ),
+            None,
+        )
+        contexts.append(
+            NarrationSlotContext(
+                chapter_index=item.chapter.index,
+                chapter_track=item.track,
+                just_played_track=just_played,
+                upcoming_track=upcoming,
+                chapter_music_index=item.music_index,
+                just_played_music_index=just_played_music_index,
+                upcoming_music_index=upcoming_music_index,
+                is_opening=index == 0,
+                is_final=index == len(chapters) - 1,
+            )
+        )
+    return contexts
+
+
+def _assemble_writer_scripts(
+    scripts: list[RadioScript | NarrationScript],
+    track_count: int,
+    *,
+    chapter_music_indices: list[int | None],
+    slot_contexts: list[NarrationSlotContext],
+) -> tuple[RadioScript, list[WriterChapterDiagnostic]]:
+    """Place parsed Writer blocks into deterministic resolved narration slots."""
+
+    if len(scripts) != len(slot_contexts) or len(scripts) != len(chapter_music_indices):
+        raise NarrationPlacementError(
+            "writer output count does not match the resolved chapter slot count"
+        )
+
+    blocks: list[RadioScriptBlock] = []
+    diagnostics: list[WriterChapterDiagnostic] = []
+    opening_intro_seen = False
+    final_outro_seen = False
+
+    for chapter_index, (script, context) in enumerate(zip(scripts, slot_contexts, strict=True)):
+        raw_blocks = _script_blocks(script)
+        normalized: list[RadioScriptBlock] = []
+        current_music_index = chapter_music_indices[chapter_index]
+        previous_music_index = context.just_played_music_index
+        for block_index, block in enumerate(raw_blocks):
+            placed = _place_writer_block(
+                block,
+                chapter_index=chapter_index,
+                current_music_index=current_music_index,
+                previous_music_index=previous_music_index,
+                track_count=track_count,
+                is_final=context.is_final,
+                opening_intro_seen=opening_intro_seen,
+                final_outro_seen=final_outro_seen,
+            )
+            if placed is None:
+                raise NarrationPlacementError(
+                    "writer block has no deterministic narration slot "
+                    f"(chapter={chapter_index}, block={block_index}, kind={block.kind.value})"
+                )
+            normalized.append(placed)
+            if placed.kind is RadioScriptBlockKind.INTRO:
+                opening_intro_seen = True
+            if placed.kind is RadioScriptBlockKind.OUTRO:
+                final_outro_seen = True
+        diagnostics.append(
+            WriterChapterDiagnostic(
+                chapter_index=context.chapter_index,
+                chapter_track=context.chapter_track,
+                just_played_track=context.just_played_track,
+                upcoming_track=context.upcoming_track,
+                raw_structured_blocks=raw_blocks,
+                normalized_blocks=normalized,
+            )
+        )
+        blocks.extend(normalized)
+
+    return (
+        RadioScript(
+            blocks=blocks,
+            evidence_ids=[
+                evidence_id
+                for script in scripts
+                for evidence_id in _script_evidence_ids(script)
+            ],
+            intended_duration_seconds=max(
+                1, sum(block.intended_duration_seconds for block in blocks)
+            ),
+        ),
+        diagnostics,
+    )
+
+
+def _place_writer_block(
+    block: RadioScriptBlock,
+    *,
+    chapter_index: int,
+    current_music_index: int | None,
+    previous_music_index: int | None,
+    track_count: int,
+    is_final: bool,
+    opening_intro_seen: bool,
+    final_outro_seen: bool,
+) -> RadioScriptBlock | None:
+    """Convert one Writer block into an application-owned playback anchor."""
+
+    if block.kind is RadioScriptBlockKind.INTRO:
+        if chapter_index == 0 and not opening_intro_seen:
+            return block.model_copy(update={"track_index": None})
+        anchor = previous_music_index if previous_music_index is not None else current_music_index
+        if anchor is None and track_count:
+            anchor = 0
+        if anchor is None:
+            return None
+        return block.model_copy(
+            update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": anchor}
+        )
+
+    if block.kind is RadioScriptBlockKind.TRACK_INTRO:
+        if current_music_index is not None:
+            if current_music_index == 0 and chapter_index == 0:
+                if not opening_intro_seen:
+                    return block.model_copy(
+                        update={"kind": RadioScriptBlockKind.INTRO, "track_index": None}
+                    )
+                return block.model_copy(
+                    update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": 0}
+                )
+            return block.model_copy(update={"track_index": current_music_index})
+        if previous_music_index is None:
+            return None
+        return block.model_copy(
+            update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": previous_music_index}
+        )
+
+    if block.kind is RadioScriptBlockKind.TRANSITION:
+        anchor = current_music_index if current_music_index is not None else previous_music_index
+        if anchor is None and track_count:
+            # A leading narrative-only beat cannot precede the cold-open music
+            # in this MVP; retain it in the first deterministic post-opening gap.
+            anchor = 0
+        if anchor is None:
+            return None
+        return block.model_copy(update={"track_index": anchor})
+
+    if block.kind is RadioScriptBlockKind.OUTRO:
+        if is_final and not final_outro_seen:
+            return block.model_copy(update={"track_index": None})
+        anchor = current_music_index if current_music_index is not None else previous_music_index
+        if anchor is None and track_count:
+            anchor = track_count - 1
+        if anchor is None:
+            return None
+        return block.model_copy(
+            update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": anchor}
+        )
+    return None
+
+
+def _assert_narration_blocks_materialized(
+    radio_script: RadioScript,
+    playable_episode: PlayableEpisode,
+) -> None:
+    """Fail explicitly if composition silently drops any generated narration."""
+
+    expected = Counter(block.text for block in radio_script.blocks)
+    actual = Counter(
+        segment.narration_text
+        for segment in playable_episode.segments
+        if isinstance(segment, NarrationSegment)
+    )
+    if expected != actual:
+        raise EpisodeAssemblyError(
+            "normalized Writer narration does not match final timeline "
+            f"(normalized={sum(expected.values())}, timeline={sum(actual.values())})",
+            stage="composition",
+        )
 
 
 def _script_text(script: RadioScript | NarrationScript) -> str:

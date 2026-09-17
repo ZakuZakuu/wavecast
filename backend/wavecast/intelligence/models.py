@@ -145,6 +145,26 @@ class ResolvedTrack(BaseModel):
     canonical_title: str = Field(min_length=1, max_length=160)
 
 
+class NarrationSlotContext(BaseModel):
+    """Resolved playback adjacency for one Writer narration slot.
+
+    Chapter indices identify the application-normalized narrative sequence only;
+    they are never interpreted by the Writer as playback indices.  The
+    deterministic assembly layer computes the resolved neighbors after catalog
+    resolution and owns the final numeric placement.
+    """
+
+    chapter_index: int = Field(ge=0)
+    chapter_track: ResolvedTrack | None = None
+    just_played_track: ResolvedTrack | None = None
+    upcoming_track: ResolvedTrack | None = None
+    chapter_music_index: int | None = Field(default=None, ge=0)
+    just_played_music_index: int | None = Field(default=None, ge=0)
+    upcoming_music_index: int | None = Field(default=None, ge=0)
+    is_opening: bool = False
+    is_final: bool = False
+
+
 # Compatibility name for callers that still use the former proposal type.  It is
 # deliberately an alias, so it cannot add catalog identity fields to LLM schemas.
 TrackCandidate = TrackProposal

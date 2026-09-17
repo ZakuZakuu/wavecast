@@ -3,11 +3,14 @@ import asyncio
 from wavecast.intelligence.models import (
     ChapterPlan,
     Evidence,
+    NarrationSlotContext,
     NarrativeRole,
     NoveltyDistance,
     OutputLanguage,
     RadioScript,
+    RadioScriptBlock,
     RadioScriptBlockKind,
+    ResolvedTrack,
     TrackProposal,
 )
 from wavecast.intelligence.writer import WriterService
@@ -117,3 +120,56 @@ def test_writer_uses_synthesis_profile() -> None:
     assert recorder.kwargs["transport"] is StructuredTransport.RESPONSES_JSON_SCHEMA
     assert recorder.kwargs["profile"] is InferenceProfile.SYNTHESIS
     assert recorder.kwargs["stage"] == "writer"
+
+
+def test_writer_receives_resolved_slot_context_and_strips_numeric_placement() -> None:
+    class PlacementFixture:
+        def __init__(self) -> None:
+            self.prompt = ""
+
+        async def structured(self, prompt: str, _output_type: type[object], **_kwargs: object) -> object:
+            self.prompt = prompt
+            return RadioScript(
+                blocks=[
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.TRANSITION,
+                        text="slot-aware narration",
+                        duration_seconds=4,
+                        track_index=99,
+                    )
+                ]
+            )
+
+    fixture = PlacementFixture()
+    chapter = ChapterPlan(
+        index=2,
+        track=None,
+        narrative_role=NarrativeRole.BRIDGE,
+        reason="unresolved narrative beat",
+        narration_goal="connect the two playable songs",
+    )
+    context = NarrationSlotContext(
+        chapter_index=2,
+        chapter_track=None,
+        just_played_track=ResolvedTrack(
+            track_ref="mock:second",
+            canonical_artist="Second Artist",
+            canonical_title="Second Song",
+        ),
+        upcoming_track=ResolvedTrack(
+            track_ref="mock:third",
+            canonical_artist="Third Artist",
+            canonical_title="Third Song",
+        ),
+    )
+
+    result = asyncio.run(
+        WriterService(fixture).write(chapter, [], slot_context=context)
+    )
+
+    assert result.blocks[0].track_index is None  # type: ignore[union-attr]
+    assert '"chapter_index": 2' in fixture.prompt
+    assert '"canonical_title": "Second Song"' in fixture.prompt
+    assert '"canonical_title": "Third Song"' in fixture.prompt
+    assert '"chapter_track": null' in fixture.prompt
+    assert "numeric `track_index`" in fixture.prompt
