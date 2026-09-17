@@ -181,3 +181,18 @@ uv run python scripts/live_episode_probe.py --run-live \
 
 The live command is bounded and explicitly opt-in; never run it from CI or an
 ordinary credential-free test run.
+
+Operational rule for future live runs: when a live probe is requested, first
+start the configured local music chain (NetEase-compatible upstream on port
+3000, then `wavecast-music-dev` on port 3101) and verify both `/health` and
+`/ready`. Do not report the probe as blocked merely because those local
+processes are not already running. Stop only when the configured source/API
+has changed, startup genuinely fails, or the required credentials/network are
+actually unavailable.
+
+Failed live probes must leave a sanitized structured diagnostic with stage,
+mapped cause/reason, usage totals, and safe provider-event summaries. Routine,
+reversible operational faults (for example, a stopped local service) should be
+fixed autonomously. Block only for missing authority or credentials,
+destructive actions, external provider/API changes, or a genuine
+product/architecture decision.
