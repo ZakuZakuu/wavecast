@@ -1,7 +1,7 @@
 """Small in-memory, provider-independent accounting for a single run."""
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -32,6 +32,12 @@ class UsageTotals(BaseModel):
     search_credits: float
     actual_cost_usd: float
     estimated_cost_usd: float
+
+
+class UsageDiagnostics(TypedDict):
+    usage: dict[str, object]
+    usage_by_stage: dict[str, dict[str, object]]
+    provider_events: list[dict[str, object]]
 
 
 class UsageLedger:
@@ -65,3 +71,45 @@ class UsageLedger:
             actual_cost_usd=sum(event.actual_cost_usd or 0 for event in events),
             estimated_cost_usd=sum(event.estimated_cost_usd or 0 for event in events),
         )
+
+
+def safe_usage_event(event: UsageEvent) -> dict[str, object]:
+    """Return only bounded metadata suitable for a diagnostic report."""
+
+    metadata = event.metadata
+
+    def metadata_value(name: str) -> object:
+        value = metadata.get(name)
+        return value if value is None or isinstance(value, (bool, int, float, str)) else None
+
+    stage = metadata.get("stage")
+    return {
+        "provider": event.provider,
+        "operation": event.operation,
+        "stage": stage if isinstance(stage, str) else None,
+        "elapsed_ms": event.elapsed_ms,
+        "input_tokens": event.input_tokens,
+        "output_tokens": event.output_tokens,
+        "usage_characters": event.usage_characters,
+        "search_queries": event.search_queries,
+        "search_credits": event.search_credits,
+        "actual_cost_usd": event.actual_cost_usd,
+        "estimated_cost_usd": event.estimated_cost_usd,
+        "model": metadata_value("model"),
+        "transport": metadata_value("transport"),
+        "finish_reason": metadata_value("finish_reason"),
+        "reasoning_tokens": metadata_value("reasoning_tokens"),
+    }
+
+
+def usage_diagnostics(ledger: UsageLedger) -> UsageDiagnostics:
+    stages: dict[str, dict[str, object]] = {}
+    for event in ledger.events:
+        stage = event.metadata.get("stage")
+        if isinstance(stage, str) and stage and stage not in stages:
+            stages[stage] = ledger.totals_for_stage(stage).model_dump()
+    return {
+        "usage": ledger.totals().model_dump(),
+        "usage_by_stage": stages,
+        "provider_events": [safe_usage_event(event) for event in ledger.events],
+    }
