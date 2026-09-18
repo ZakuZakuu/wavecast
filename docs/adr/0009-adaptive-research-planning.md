@@ -88,3 +88,21 @@ The live probe's successful report exposes the selected research plan,
 provenance summaries, program-skeleton metadata, usage by stage, and safe
 provider event summaries. Prompts, provider payloads, reasoning text,
 credentials, and signed URLs remain excluded.
+
+## Phase 4.8.2.1 extension: Curator contract diagnostics
+
+Provider structured-schema parsing remains distinct from application-owned
+Curator contract validation. A parsed Curator skeleton first normalizes
+unknown or duplicate evidence references deterministically: chapter, claim
+support, and track-proposal references retain only existing IDs in their
+allowed scope. Strict scope and novelty-curve invariants then run on the
+normalized model; failures use stable Curator reason codes rather than provider
+error-string parsing. An empty normalized chapter evidence scope is allowed and
+is surfaced to Writer as a constraint against concrete factual, causal, date,
+statistical, or biographical claims.
+
+When Curator fails, the assembly boundary carries a safe pre-Curator snapshot
+containing FastStart/TTFS state, the selected research plan and bounded query
+metadata, provenance-only evidence, trace timings, usage by stage, and safe
+provider-event summaries. It never carries prompts, raw responses, hidden
+reasoning, credentials, or signed playback URLs.

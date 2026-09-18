@@ -160,6 +160,21 @@ def test_background_planner_regenerates_after_fast_fallback_and_routes_its_plan(
     ]
     assert bundle.research_plan == _adaptive_plan()
     assert any(event.name == "background_research_plan_regenerated" for event in trace.events)
+    selected = next(event for event in trace.events if event.name == "background_started")
+    assert selected.metadata["selected_queries"] == [
+        {
+            "provider": "tavily",
+            "query": "early activity primary interview",
+            "intent": "research",
+            "facet_ids": ["origins"],
+        },
+        {
+            "provider": "tavily",
+            "query": "audience expansion exact references",
+            "intent": "exact",
+            "facet_ids": ["breakout"],
+        },
+    ]
 
 
 def test_background_planner_failure_uses_generic_plan_without_blocking_search() -> None:
@@ -519,24 +534,24 @@ def test_curator_claim_support_must_use_chapter_scoped_evidence() -> None:
         async def structured(self, _prompt: str, _output_type: type[object], **_kwargs: object) -> object:
             return skeleton
 
-    with pytest.raises(ProviderInvalidResponseError, match="claim support"):
-        asyncio.run(
-            CuratorService(Fixture()).curate(
-                ResearchBundle(
-                    anchors=[],
-                    taste_hypotheses=[],
-                    evidence=[_evidence("e1")],
-                    candidates=[],
-                ),
-                FastStartPlan(
-                    anchor_understanding=[],
-                    immediate_taste_hypotheses=[],
-                    next_candidates=[],
-                    first_narration=NarrationScript(text="start", intended_duration_seconds=5),
-                ),
-                desired_duration_seconds=60,
-            )
+    result = asyncio.run(
+        CuratorService(Fixture()).curate(
+            ResearchBundle(
+                anchors=[],
+                taste_hypotheses=[],
+                evidence=[_evidence("e1")],
+                candidates=[],
+            ),
+            FastStartPlan(
+                anchor_understanding=[],
+                immediate_taste_hypotheses=[],
+                next_candidates=[],
+                first_narration=NarrationScript(text="start", intended_duration_seconds=5),
+            ),
+            desired_duration_seconds=60,
         )
+    )
+    assert result.chapters[0].claim_support == []
 
 
 def test_writer_claim_support_rejects_unknown_or_out_of_scope_evidence() -> None:

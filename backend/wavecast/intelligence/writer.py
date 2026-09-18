@@ -44,6 +44,13 @@ class WriterService:
             raise ValueError("pass slot_context or slot_contexts, not both")
         if slot_context is not None:
             slot_contexts = [slot_context]
+        empty_scope_instruction = (
+            "The evidence scope is empty. Do not make concrete factual, causal, date, "
+            "statistical, or biographical claims. Keep narration to supportable transition, "
+            "track adjacency, clearly marked editorial framing, or explicit uncertainty."
+            if not scoped
+            else ""
+        )
         playback_context = (
             [context.model_dump(mode="json") for context in slot_contexts]
             if slot_contexts is not None
@@ -83,6 +90,7 @@ class WriterService:
             "editorial interpretation, and uncertainty in `claim_support`; every support "
             "record must cite one or more IDs from this chapter's scoped evidence, and a "
             "correlation must not be phrased as proven causation. "
+            f"{empty_scope_instruction}\n"
             f"Write in output language {selected_language.value}.\n"
             f"Chapter: {chapter.model_dump_json()}\n"
             f"Evidence: {[item.model_dump() for item in scoped]}\n"

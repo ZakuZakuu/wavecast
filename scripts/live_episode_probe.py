@@ -24,6 +24,7 @@ from wavecast.assembly import (
     LiveEpisodeAssemblyRequest,
     create_episode_assembly_service,
 )
+from wavecast.intelligence.curation import CuratorContractError
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.errors import (
     ProviderAuthenticationError,
@@ -69,6 +70,12 @@ def _safe_trace(result) -> list[dict[str, object]]:
         "elapsed_ms",
         "research_facet_count",
         "planned_background_query_count",
+        "plan_source",
+        "selected_queries",
+        "chapter_index",
+        "reference_kind",
+        "dropped_reference_count",
+        "remaining_reference_count",
     }
     return [
         {
@@ -95,16 +102,24 @@ _KNOWN_PROVIDER_ERRORS = (
 )
 
 
-def _nearest_provider_cause(error: EpisodeAssemblyError) -> ProviderError | None:
+def _nearest_known_cause(error: EpisodeAssemblyError) -> ProviderError | CuratorContractError | None:
     cause = error.__cause__
     while cause is not None:
-        if isinstance(cause, _KNOWN_PROVIDER_ERRORS):
+        if isinstance(cause, _KNOWN_PROVIDER_ERRORS) or isinstance(cause, CuratorContractError):
             return cause
         cause = cause.__cause__
     return None
 
 
-def _failure_reason_code(stage: str, cause: ProviderError | None) -> str:
+def _failure_reason_code(
+    stage: str,
+    cause: ProviderError | CuratorContractError | None,
+    explicit_reason_code: str | None = None,
+) -> str:
+    if explicit_reason_code:
+        return explicit_reason_code
+    if isinstance(cause, CuratorContractError):
+        return cause.reason_code
     if isinstance(cause, ProviderTimeoutError):
         return "provider_timeout"
     if isinstance(cause, ProviderRateLimitError):
@@ -120,13 +135,8 @@ def _failure_reason_code(stage: str, cause: ProviderError | None) -> str:
     if isinstance(cause, ProviderOutputLimitError):
         return "provider_output_limit"
     if isinstance(cause, ProviderInvalidResponseError):
-        message = str(cause).lower()
-        if "invalid novelty curve" in message and stage == "curator":
-            return "curator_novelty_curve_invalid"
-        if "empty structured output" in message:
-            return "empty_structured_output"
-        if "incomplete" in message or "max_output_tokens" in message:
-            return "provider_incomplete"
+        if stage == "curator":
+            return "curator_schema_invalid"
         return "structured_output_invalid"
     return "unknown_provider_failure"
 
@@ -142,15 +152,18 @@ def _usage_diagnostics(ledger: UsageLedger) -> dict[str, object]:
 
 
 def _failure_report(error: EpisodeAssemblyError, ledger: UsageLedger) -> dict[str, object]:
-    cause = _nearest_provider_cause(error)
-    return {
+    cause = _nearest_known_cause(error)
+    report: dict[str, object] = {
         "status": "failed",
         "stage": error.stage,
         "error_type": type(error).__name__,
         "cause_type": type(cause).__name__ if cause is not None else "UnknownError",
-        "reason_code": _failure_reason_code(error.stage, cause),
+        "reason_code": _failure_reason_code(error.stage, cause, error.reason_code),
         **_usage_diagnostics(ledger),
     }
+    if error.diagnostics:
+        report.update(error.diagnostics)
+    return report
 
 
 def _report(result) -> dict[str, object]:

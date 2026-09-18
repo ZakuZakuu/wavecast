@@ -244,6 +244,15 @@ class BackgroundResearchService:
                 query_count=len(selected),
                 research_facet_count=len(plan.facets),
                 planned_background_query_count=len(plan.background_queries),
+                selected_queries=[
+                    {
+                        "provider": provider,
+                        "query": planned.query,
+                        "intent": planned.intent.value,
+                        "facet_ids": list(planned.facet_ids),
+                    }
+                    for provider, planned in selected
+                ],
             )
         tasks: dict[asyncio.Task[list[SearchResult]], tuple[str, PlannedResearchQuery]] = {}
         for provider, query in selected:
