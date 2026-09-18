@@ -19,6 +19,15 @@ an optional `ResearchPlan` containing:
 - up to eight `PlannedResearchQuery` records with operational `SearchIntent`
   (`DISCOVERY`, `RESEARCH`, or `EXACT`), facet IDs, and rationale.
 
+`ResearchPlan.research_mode` makes the empty-plan distinction explicit. The
+default `ADAPTIVE` mode requires useful facets/queries at the background
+boundary; omitted, generic, or structurally empty adaptive plans are sent to
+the bounded planner for regeneration. A typed
+`NO_ADDITIONAL_RESEARCH` plan must carry a human-readable
+`no_research_reason`, contains no queries, and intentionally skips planner and
+search work. This keeps compatibility defaults from silently turning an
+omitted plan into an accidental zero-query decision.
+
 The deterministic search stages own the budget and routing. Fast research still
 runs exactly one Exa and one Tavily query. Background research consumes the
 FastStart plan, deduplicates against those fast queries, routes discovery to

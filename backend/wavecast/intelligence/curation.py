@@ -84,6 +84,10 @@ def _validate_claim_support(skeleton: ProgramSkeleton, bundle: ResearchBundle) -
     available = {item.id for item in bundle.evidence}
     for chapter in skeleton.chapters:
         scoped = set(chapter.evidence_ids)
+        if not scoped <= available:
+            raise ProviderInvalidResponseError(
+                "curator chapter referenced evidence outside research bundle"
+            )
         for support in chapter.claim_support:
             referenced = set(support.evidence_ids)
             if not referenced <= scoped or not referenced <= available:

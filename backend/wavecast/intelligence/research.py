@@ -24,6 +24,7 @@ from .models import (
     ResearchBundle,
     ResearchFacet,
     ResearchPlan,
+    ResearchPlanMode,
     SearchIntent,
     TrackProposal,
 )
@@ -106,6 +107,10 @@ class BackgroundResearchPlanner:
             "or track entities. Propose zero to eight distinct queries; application code will "
             "execute at most one DISCOVERY query through Exa and two RESEARCH/EXACT queries "
             "through Tavily. Every query needs a non-empty rationale and valid facet IDs. "
+            "Use research_mode=adaptive when more evidence is useful; if no additional "
+            "background research is needed, set research_mode=no_additional_research and give "
+            "a concrete no_research_reason. An adaptive plan with no facets or queries is "
+            "incomplete and must not be used to skip planning. "
             "Keep source_preferences as preferences, not authority claims. Keep concrete "
             "fact, correlation, causal claim, editorial interpretation, and uncertainty "
             "distinct so downstream Writer/Curator stages can preserve that boundary."
@@ -330,6 +335,7 @@ class BackgroundResearchService:
             isinstance(candidate, FastStartPlan)
             and not trace_fallback
             and not candidate._research_plan_omitted
+            and not _is_generic_or_empty_plan(request, candidate.research_plan)
         ):
             if trace:
                 trace.mark(
@@ -339,6 +345,21 @@ class BackgroundResearchService:
                     planned_background_query_count=len(candidate.research_plan.background_queries),
                 )
             return normalize_research_plan(candidate.research_plan)
+
+        if (
+            isinstance(candidate, FastStartPlan)
+            and not trace_fallback
+            and candidate.research_plan.research_mode
+            is ResearchPlanMode.NO_ADDITIONAL_RESEARCH
+        ):
+            if trace:
+                trace.mark(
+                    "background_research_plan_used",
+                    plan_source="fast_start_no_additional_research",
+                    research_facet_count=len(candidate.research_plan.facets),
+                    planned_background_query_count=0,
+                )
+            return candidate.research_plan
 
         if cancel_event and cancel_event.is_set():
             return generic_research_plan(request)
@@ -403,6 +424,12 @@ class BackgroundResearchService:
         if cancel_task is not None:
             await asyncio.gather(cancel_task, return_exceptions=True)
         return planner_task.result()
+
+
+def _is_generic_or_empty_plan(request: FastResearchInput, plan: ResearchPlan) -> bool:
+    """Identify plans that lack enough intent for independent background work."""
+
+    return not plan.facets or not plan.background_queries or plan == generic_research_plan(request)
 
 
 def build_fast_queries(request: FastResearchInput) -> tuple[str, str]:
@@ -485,7 +512,7 @@ def normalize_research_plan(plan: ResearchPlan) -> ResearchPlan:
 
 
 def canonicalize_url(url: str) -> str:
-    """Canonicalize stable URL identity without dropping resource parameters."""
+    """Canonicalize safe URL identity without guessing path equivalence."""
 
     raw = url.strip()
     parsed = urlsplit(raw)
@@ -502,8 +529,6 @@ def canonicalize_url(url: str) -> str:
     default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
     netloc = hostname if port is None or default_port else f"{hostname}:{port}"
     path = parsed.path or "/"
-    if path != "/":
-        path = path.rstrip("/") or "/"
     tracking_names = {"fbclid", "gclid", "mc_cid", "mc_eid"}
     query_pairs = [
         (key, value)
@@ -550,18 +575,13 @@ def _preference_rank(
 ) -> int | None:
     if not preferences:
         return None
-    aliases = {
-        "primary": {EvidenceSourceCategory.INSTITUTIONAL, EvidenceSourceCategory.CATALOG},
-        "official": {EvidenceSourceCategory.CATALOG, EvidenceSourceCategory.INSTITUTIONAL},
-        "reference": {EvidenceSourceCategory.REFERENCE},
-        "video": {EvidenceSourceCategory.VIDEO},
-        "community": {EvidenceSourceCategory.COMMUNITY},
-        "news": {EvidenceSourceCategory.NEWS},
-        "catalog": {EvidenceSourceCategory.CATALOG},
-    }
     for index, preference in enumerate(preferences):
         token = preference.casefold().strip()
-        if category.value == token or category in aliases.get(token, set()):
+        # Only exact taxonomy names are deterministic enough to influence
+        # ordering.  Tokens such as ``primary``, ``official``, and
+        # ``interview`` require source-specific semantics that this layer does
+        # not possess, so they remain unresolved rather than implying authority.
+        if category.value == token:
             return index
     return len(preferences)
 

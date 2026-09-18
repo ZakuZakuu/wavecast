@@ -125,6 +125,8 @@ def _validate_evidence_references(
 ) -> None:
     available = {item.id for item in evidence}
     scoped = set(chapter.evidence_ids)
+    if not scoped <= available:
+        raise ProviderInvalidResponseError("writer chapter referenced unavailable evidence")
 
     def validate(ids: Sequence[str]) -> None:
         referenced = set(ids)

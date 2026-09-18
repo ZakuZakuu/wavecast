@@ -155,6 +155,7 @@ def _failure_report(error: EpisodeAssemblyError, ledger: UsageLedger) -> dict[st
 
 def _report(result) -> dict[str, object]:
     episode = result.playable_episode
+    research_plan = result.research_plan or result.fast_plan.research_plan
     writer_chapters = [
         {
             "chapter_index": item.chapter_index,
@@ -185,7 +186,9 @@ def _report(result) -> dict[str, object]:
             ],
         },
         "research_plan": {
-            "central_question": result.fast_plan.research_plan.central_question,
+            "central_question": research_plan.central_question,
+            "research_mode": research_plan.research_mode.value,
+            "no_research_reason": research_plan.no_research_reason,
             "facets": [
                 {
                     "id": facet.id,
@@ -194,7 +197,7 @@ def _report(result) -> dict[str, object]:
                     "priority": facet.priority,
                     "source_preferences": list(facet.source_preferences),
                 }
-                for facet in (result.research_plan or result.fast_plan.research_plan).facets
+                for facet in research_plan.facets
             ],
             "background_queries": [
                 {
@@ -203,7 +206,7 @@ def _report(result) -> dict[str, object]:
                     "query": query.query,
                     "rationale": query.rationale,
                 }
-                for query in (result.research_plan or result.fast_plan.research_plan).background_queries
+                for query in research_plan.background_queries
             ],
         },
         "research_evidence": [

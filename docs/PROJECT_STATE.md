@@ -47,7 +47,7 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 - **Phase 4.7.2:** live-probe music preflight. The local music chain now has a
   distinct readiness check, and probes resolve required anchors before any
   Exa, Tavily, DeepSeek, or MiniMax work is constructed.
-- **Phase 4.8.1 (in progress):** Writer receives typed, final-playback
+- **Phase 4.8.1 (complete):** Writer receives typed, final-playback
   `NarrationSlotContext` values per narration slot (including distinct
   before-track and after-track contexts); application code owns numeric
   playback placement, normalizes chapter identity, fails explicitly on
@@ -102,34 +102,27 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Latest Fujii Kaze benchmark (sanitized)
 
-The final Phase 4.7.2 biography benchmark ran once after local music readiness
-passed for both explicit anchors. No raw provider payloads or credentials are
-kept in the repository.
+The accepted Phase 4.8.1 biography benchmark ran once after local music
+readiness passed. It was recorded against commit
+`650537b4cd4637c212244255c79d2b53750a1e23`. No raw provider payloads,
+credentials, hidden reasoning, or signed URLs are kept in the repository.
 
-- FAST used deterministic fallback; `first_script_ready` / TTFS was **15,002
+- FastStart fallback was **true**; `first_script_ready` / TTFS was **15,006
   ms**.
-- Curator took **40,920 ms**, Writer **10,566 ms**, and total assembly took
-  **83,738 ms**.
-- The skeleton contained five chapters: three playable Fujii Kaze tracks, one
-  unresolved early piano-cover proposal, and one narration-only resolution
-  beat. The unresolved proposal remained out of the timeline.
-- The timeline contained five narration segments (61 actual seconds) and 828
-  music seconds, for 889 seconds total and a 6.86% narration ratio. Narration
-  was Chinese and the final outro followed the last playable track.
-- Writer usage was 18,360 input / 1,530 output / **0 reasoning** tokens across
-  five completed calls; no Writer response approached the 4,096-token limit.
-  Curator used 5,932 reasoning tokens as expected for background DEEP work.
-- Search usage was two Exa queries at `$0.014` actual cost and two Tavily
-  queries consuming two credits. MiniMax made five calls for 563 usage
-  characters.
-- Editorial result: the YouTube/coffee-shop piano-cover origin survived as a
-  narrative thread, and the international-breakout role of `死ぬのがいいわ`
-  was clear. The result still felt closer to a playlist with short host links
-  than a fully shaped radio episode. One transition's “next song” reference
-  does not align cleanly with the actual next track, and promotional claims
-  such as view counts need human source review. No unsupported gendered
-  pronoun was observed. Cross-artist discovery quality was not validated; the
-  playable set remained single-artist.
+- The assembled program had **4 resolved tracks** across **6 Writer chapters**.
+  Parsed, normalized, and final narration counts were each **10**, so no
+  silent Writer block loss was observed.
+- Music duration was **1,046 seconds**, planned narration was **152 seconds**,
+  actual narration was **202 seconds**, and total program duration was
+  **1,248 seconds** (a **16.19%** narration ratio).
+- Timings were: background **8,012 ms**, Curator **42,659 ms**, Writer
+  **10,906 ms**, and total assembly **97,923 ms**.
+- Runtime/editorial checks: previous/next playback adjacency **passed**;
+  silent Writer block loss **not observed (10 == 10 == 10)**;
+  narrative-only placement **passed**; final narration placement **passed**.
+- This validates editorial placement and timing instrumentation for the
+  benchmark. It does **not** validate cross-DJMAX discovery quality; that
+  remains a human-review item.
 
 ## Phase 4.8 plan
 
