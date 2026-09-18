@@ -263,6 +263,8 @@ class LiveEpisodeAssemblyService:
                 bundle,
                 curator_plan,
                 desired_duration_seconds=request.desired_duration_seconds,
+                max_tracks=request.max_tracks,
+                max_chapters=request.max_chapters,
                 output_language=resolve_output_language(request.output_language, request.topic),
                 topic=request.topic,
                 trace=trace,

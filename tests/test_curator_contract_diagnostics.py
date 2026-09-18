@@ -168,3 +168,10 @@ def test_writer_empty_evidence_scope_forbids_concrete_claims() -> None:
 
     assert "evidence scope is empty" in fixture.prompt
     assert "Do not make concrete factual, causal, date, statistical, or biographical claims" in fixture.prompt
+
+
+def test_program_skeleton_schema_bounds_chapter_count() -> None:
+    chapters_schema = ProgramSkeleton.model_json_schema()["properties"]["chapters"]
+
+    assert chapters_schema["minItems"] == 1
+    assert chapters_schema["maxItems"] == 32
