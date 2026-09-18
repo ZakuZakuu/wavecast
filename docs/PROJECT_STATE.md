@@ -11,11 +11,12 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 4.8.2 — Research quality (implementation in
-  progress on a feature branch; no live providers are being run).
-- **Main:** `c1f3b7d4eb57f2f9add231bd6c4420f6c83c84dd` (merged PR #19, adaptive
-  research planning). Main is clean before the current Phase 4.8.2.1 working
-  changes.
+- **Current milestone:** Phase 4.8.2 — Research quality (Curator output
+  bounding is in progress on a feature branch; no live providers are being
+  run).
+- **Main:** `fdeace50d0047f7dede1b59d52bd15bc56d6f038` (merged PR #20,
+  Curator contract diagnostics). Main is clean before the current Curator
+  output-bounding changes.
 - **Immediate work:** preserve the existing 4.8.1 playback-slot contract while
   making background research topic-adaptive, provenance-aware, and safely
   diagnosable. Timing/playback changes remain deferred to Phase 4.8.3.
@@ -63,12 +64,20 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
   actual plan, provenance summaries, skeleton metadata, stage usage, and safe
   provider events. No raw prompts, responses, reasoning, credentials, or signed
   URLs are emitted.
-- **Phase 4.8.2.1 (current):** Curator provider-schema failures are separated
-  from application contract failures with stable reason codes. Unknown Curator
-  evidence references are deterministically dropped before strict scope checks;
-  empty evidence scopes remain valid but constrain Writer to transitions,
-  adjacency, editorial framing, or explicit uncertainty. Failed assembly keeps a
-  sanitized pre-Curator research snapshot and usage ledger for diagnosis.
+- **Phase 4.8.2.1 (merged in PR #20):** Curator provider-schema failures
+  are separated from application contract failures with stable reason codes.
+  Unknown Curator evidence references are deterministically dropped before
+  strict scope checks; empty evidence scopes remain valid but constrain Writer
+  to transitions, adjacency, editorial framing, or explicit uncertainty.
+  Failed assembly keeps a sanitized pre-Curator research snapshot and usage
+  ledger for diagnosis.
+- **Current follow-up:** The first post-PR #20 Fujii Kaze regression reached
+  the Curator and was safely classified as `provider_output_limit` without a
+  retry. The next change forwards the existing `max_tracks` /
+  `max_chapters` request bounds into Curator prompting and caps the provider
+  schema's chapter array at 32 items. Phase 4.8.2 acceptance remains
+  incomplete; no second live run is authorized by this change.
+
 
 ## Invariants to preserve
 
@@ -155,6 +164,17 @@ contract rejection. The exact Curator rule is not known from the retained safe
 report. Phase 4.8.2 acceptance is therefore **not complete**; this
 4.8.2.1 work adds that distinction and preserves safe pre-Curator evidence and
 usage for any future review.
+
+## Post-PR #20 Fujii Kaze regression (sanitized)
+
+A single authorized post-merge regression ran against
+`fdeace50d0047f7dede1b59d52bd15bc56d6f038` after music readiness and both
+anchor preflights passed. Assembly failed at the Curator boundary with
+`ProviderOutputLimitError`, mapped to `provider_output_limit`. No automatic
+retry was performed, and no raw prompt, provider response, hidden reasoning,
+credential, or signed URL was retained. This confirms the PR #20 failure
+classification path but does not complete Phase 4.8.2 content-quality
+acceptance.
 
 ## Known deferred work
 

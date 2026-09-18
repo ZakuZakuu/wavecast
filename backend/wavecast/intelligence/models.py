@@ -372,7 +372,7 @@ class ResearchBundle(BaseModel):
 
 class ProgramSkeleton(BaseModel):
     thesis: str = Field(min_length=1, max_length=600)
-    chapters: list[ChapterPlan]
+    chapters: list[ChapterPlan] = Field(min_length=1, max_length=32)
     estimated_duration_seconds: int = Field(gt=0)
 
 

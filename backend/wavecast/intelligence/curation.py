@@ -43,6 +43,8 @@ class CuratorService:
         fast_plan: FastStartPlan,
         *,
         desired_duration_seconds: int,
+        max_tracks: int = 4,
+        max_chapters: int = 16,
         committed_chapters: list[ChapterPlan] | None = None,
         output_language: OutputLanguage = OutputLanguage.AUTO,
         topic: str = "",
@@ -60,6 +62,10 @@ class CuratorService:
             "stable or repeated novelty distance when a meaningful move is not justified. "
             "A chapter is a narrative beat and may intentionally have no TrackProposal; do not "
             "invent a track to fill a story beat. "
+            f"Return no more than {max_chapters} chapters total and no more than "
+            f"{max_tracks} chapters with a TrackProposal. Do not generate alternate or "
+            "unused TrackProposals. Narrative-only beats must serve the actual topic "
+            "rather than expanding the episode just to fill duration. "
             "For every factual, correlation, causal, editorial-interpretation, or uncertainty "
             "statement in a chapter, use typed claim_support with one or more evidence IDs from "
             "that chapter's evidence_ids. Keep correlation distinct from proven causation; do "
