@@ -68,6 +68,7 @@ class BackgroundIntelligencePipeline:
             curator_plan,
             desired_duration_seconds=request.desired_duration_seconds,
             committed_chapters=planning.committed_chapters if planning else [],
+            trace=trace,
         )
         if cancel_event.is_set():
             return None

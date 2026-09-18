@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from wavecast.assembly import EpisodeAssemblyError
-from wavecast.intelligence.curation import ensure_distance_curve
+from wavecast.intelligence.curation import CuratorContractError, ensure_distance_curve
 from wavecast.intelligence.models import (
     ChapterPlan,
     NarrativeRole,
@@ -19,6 +19,7 @@ from wavecast.providers.errors import (
     ProviderInvalidResponseError,
     ProviderOutputLimitError,
     ProviderRateLimitError,
+    ProviderSchemaValidationError,
     ProviderTimeoutError,
     ProviderUnavailableError,
 )
@@ -47,7 +48,8 @@ def _wrapped(cause: BaseException, *, stage: str = "curator") -> EpisodeAssembly
         (ProviderAuthenticationError("provider authentication failed"), "ProviderAuthenticationError", "provider_authentication"),
         (ProviderUnavailableError("provider unavailable"), "ProviderUnavailableError", "provider_unavailable"),
         (ProviderOutputLimitError("incomplete max output"), "ProviderOutputLimitError", "provider_output_limit"),
-        (ProviderInvalidResponseError("structured response invalid"), "ProviderInvalidResponseError", "structured_output_invalid"),
+        (ProviderSchemaValidationError("structured response invalid"), "ProviderSchemaValidationError", "curator_schema_invalid"),
+        (ProviderInvalidResponseError("provider response invalid"), "ProviderInvalidResponseError", "structured_output_invalid"),
     ],
 )
 def test_failure_report_classifies_curator_provider_failures(
@@ -97,7 +99,7 @@ def test_invalid_novelty_curve_is_classified_without_provider_text() -> None:
             ]
         }
     )
-    with pytest.raises(ProviderInvalidResponseError) as failure:
+    with pytest.raises(CuratorContractError) as failure:
         ensure_distance_curve(invalid)
 
     report = live_episode_probe._failure_report(
@@ -170,6 +172,28 @@ def test_unknown_failure_uses_stable_safe_diagnostics() -> None:
     assert report["cause_type"] == "UnknownError"
     assert report["reason_code"] == "unknown_provider_failure"
     assert "secret arbitrary" not in json.dumps(report)
+
+
+def test_curator_contract_report_preserves_safe_reason_and_snapshot() -> None:
+    error = _wrapped(
+        CuratorContractError(
+            "contract failed",
+            reason_code="curator_claim_support_scope_invalid",
+            diagnostics=[{"chapter_index": 1, "reference_kind": "claim_support"}],
+        )
+    )
+    error.reason_code = "curator_claim_support_scope_invalid"
+    error.diagnostics = {
+        "research_snapshot": {"research_plan_source": "fast_start"},
+        "curator_diagnostics": [{"chapter_index": 1, "reference_kind": "claim_support"}],
+    }
+
+    report = live_episode_probe._failure_report(error, UsageLedger())
+
+    assert report["cause_type"] == "CuratorContractError"
+    assert report["reason_code"] == "curator_claim_support_scope_invalid"
+    assert report["research_snapshot"] == {"research_plan_source": "fast_start"}
+    assert "contract failed" not in json.dumps(report)
 
 
 def test_failed_probe_writes_usage_diagnostics_from_assembly_service(

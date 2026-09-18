@@ -15,7 +15,11 @@ from .contracts import (
     TTSProvider,
 )
 from .deepseek import DeepSeekLLMProvider
-from .errors import ProviderError, ProviderOutputLimitError
+from .errors import (
+    ProviderError,
+    ProviderOutputLimitError,
+    ProviderSchemaValidationError,
+)
 from .fakes import (
     FakeCoverRenderer,
     FakeLLMProvider,
@@ -77,6 +81,7 @@ __all__ = [
     "RetrievedTrackGroup",
     "ProviderError",
     "ProviderOutputLimitError",
+    "ProviderSchemaValidationError",
     "ProviderSettings",
     "SearchProvider",
     "SearchIntent",

@@ -24,6 +24,7 @@ from .errors import (
     ProviderInvalidResponseError,
     ProviderOutputLimitError,
     ProviderRateLimitError,
+    ProviderSchemaValidationError,
     ProviderTimeoutError,
     ProviderUnavailableError,
     is_retryable,
@@ -112,7 +113,7 @@ class DeepSeekLLMProvider:
                 try:
                     parsed = output_type.model_validate_json(content)
                 except ValidationError as error:
-                    raise ProviderInvalidResponseError(
+                    raise ProviderSchemaValidationError(
                         "deepseek structured output did not match the requested schema"
                     ) from error
                 return parsed
