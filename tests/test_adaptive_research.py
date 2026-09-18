@@ -11,6 +11,7 @@ from wavecast.intelligence.models import (
     ResearchBundle,
     ResearchFacet,
     ResearchPlan,
+    ResearchPlanMode,
     SearchIntent,
 )
 from wavecast.intelligence.research import (
@@ -242,8 +243,12 @@ def test_omitted_research_plan_is_normalized_to_generic_plan() -> None:
     assert result.research_plan.background_queries
 
 
-def test_explicit_empty_research_plan_remains_intentionally_empty() -> None:
-    explicit = ResearchPlan(central_question="No background evidence is needed.")
+def test_explicit_no_additional_research_plan_remains_intentionally_empty() -> None:
+    explicit = ResearchPlan(
+        central_question="No background evidence is needed.",
+        research_mode=ResearchPlanMode.NO_ADDITIONAL_RESEARCH,
+        no_research_reason="The listener asked for a short context-free playback.",
+    )
 
     class ExplicitPlanLLM:
         async def structured(self, _prompt: str, _output_type: type[object], **_: object) -> object:

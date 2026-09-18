@@ -6,7 +6,14 @@ from collections.abc import Mapping
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    model_validator,
+)
 
 
 class NoveltyDistance(StrEnum):
@@ -54,6 +61,13 @@ class SearchIntent(StrEnum):
     DISCOVERY = "discovery"
     RESEARCH = "research"
     EXACT = "exact"
+
+
+class ResearchPlanMode(StrEnum):
+    """Whether background research should adapt, or intentionally stop."""
+
+    ADAPTIVE = "adaptive"
+    NO_ADDITIONAL_RESEARCH = "no_additional_research"
 
 
 class EvidenceSourceCategory(StrEnum):
@@ -119,10 +133,29 @@ class ResearchPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     central_question: str = Field(min_length=1, max_length=500)
+    research_mode: ResearchPlanMode = ResearchPlanMode.ADAPTIVE
+    no_research_reason: str | None = Field(default=None, min_length=1, max_length=300)
     facets: list[ResearchFacet] = Field(default_factory=list, max_length=8)
     # The model accepts a small proposal pool; deterministic application code
     # enforces the stricter provider execution budget.
     background_queries: list[PlannedResearchQuery] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_research_mode(self) -> ResearchPlan:
+        if self.research_mode is ResearchPlanMode.NO_ADDITIONAL_RESEARCH:
+            if self.no_research_reason is None:
+                raise ValueError(
+                    "no_research_reason is required when research_mode disables research"
+                )
+            if self.background_queries:
+                raise ValueError(
+                    "no-additional-research plans cannot contain background queries"
+                )
+        elif self.no_research_reason is not None:
+            raise ValueError(
+                "no_research_reason is only valid for no-additional-research plans"
+            )
+        return self
 
 
 def empty_research_plan() -> ResearchPlan:

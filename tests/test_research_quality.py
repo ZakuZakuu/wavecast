@@ -23,6 +23,7 @@ from wavecast.intelligence.models import (
     ResearchBundle,
     ResearchFacet,
     ResearchPlan,
+    ResearchPlanMode,
     SearchIntent,
     TrackProposal,
 )
@@ -201,7 +202,7 @@ def test_useful_fast_plan_does_not_trigger_background_planner() -> None:
     assert asyncio.run(run()).calls == []
 
 
-def test_explicit_empty_fast_research_plan_skips_regeneration() -> None:
+def test_effectively_empty_fast_research_plan_triggers_regeneration() -> None:
     async def run() -> tuple[PlannerFixture, ResearchBundle]:
         planner_llm = PlannerFixture()
         service = BackgroundResearchService(
@@ -220,8 +221,50 @@ def test_explicit_empty_fast_research_plan_skips_regeneration() -> None:
         return planner_llm, bundle
 
     planner_llm, bundle = asyncio.run(run())
+    assert len(planner_llm.calls) == 1
+    assert bundle.research_plan == _adaptive_plan()
+
+
+def test_explicit_no_additional_research_plan_skips_regeneration() -> None:
+    async def run() -> tuple[PlannerFixture, ResearchBundle, RecordingSearch, RecordingSearch]:
+        planner_llm = PlannerFixture()
+        exa = RecordingSearch("exa")
+        tavily = RecordingSearch("tavily")
+        service = BackgroundResearchService(
+            discovery=exa,
+            research=tavily,
+            planner=BackgroundResearchPlanner(planner_llm),
+            deadline_seconds=0.2,
+        )
+        fast = _fallback_fast(_request())
+        fast.trace.events.clear()
+        intentional = ResearchPlan(
+            central_question="intentionally empty",
+            research_mode=ResearchPlanMode.NO_ADDITIONAL_RESEARCH,
+            no_research_reason="The topic is already fully specified by the listener.",
+        )
+        fast.plan = fast.plan.model_copy(update={"research_plan": intentional})
+        bundle = await service.run(_request(), fast)
+        assert bundle is not None
+        return planner_llm, bundle, exa, tavily
+
+    planner_llm, bundle, exa, tavily = asyncio.run(run())
     assert planner_llm.calls == []
-    assert bundle.research_plan == ResearchPlan(central_question="intentionally empty")
+    assert exa.calls == []
+    assert tavily.calls == []
+    assert bundle.research_plan == ResearchPlan(
+        central_question="intentionally empty",
+        research_mode=ResearchPlanMode.NO_ADDITIONAL_RESEARCH,
+        no_research_reason="The topic is already fully specified by the listener.",
+    )
+
+
+def test_no_additional_research_mode_requires_a_reason() -> None:
+    with pytest.raises(ValueError, match="no_research_reason"):
+        ResearchPlan(
+            central_question="intentional",
+            research_mode=ResearchPlanMode.NO_ADDITIONAL_RESEARCH,
+        )
 
 
 def test_background_planner_honors_cancellation_without_search_calls() -> None:
@@ -267,7 +310,7 @@ def test_research_planner_prompt_is_topic_adaptive_and_distinguishes_claim_types
 def test_evidence_urls_are_canonicalized_before_deduplication_and_id_generation() -> None:
     first = SearchResult(
         title="Source",
-        url="HTTPS://Example.TEST/story/?utm_source=exa&b=2&a=1#section",
+        url="HTTPS://Example.TEST/story?utm_source=exa&b=2&a=1#section",
         snippet="one",
         provider="exa",
         query="q",
@@ -287,6 +330,97 @@ def test_evidence_urls_are_canonicalized_before_deduplication_and_id_generation(
     assert bundle.evidence[0].canonical_url == "https://example.test/story?a=1&b=2"
     assert bundle.evidence[0].source_domain == "example.test"
     assert bundle.evidence[0].source_category is EvidenceSourceCategory.UNKNOWN
+
+
+def test_canonicalization_does_not_merge_non_root_trailing_slash_paths() -> None:
+    results = [
+        SearchResult(
+            title="Without slash",
+            url="https://example.test/resource",
+            snippet="one",
+            provider="fixture",
+            query="q",
+        ),
+        SearchResult(
+            title="With slash",
+            url="https://example.test/resource/",
+            snippet="two",
+            provider="fixture",
+            query="q",
+        ),
+    ]
+
+    normalized = normalize_results(results)
+
+    assert [item.url for item in normalized] == [
+        "https://example.test/resource",
+        "https://example.test/resource/",
+    ]
+
+
+def test_source_preferences_do_not_invent_primary_authority() -> None:
+    plan = ResearchPlan(
+        central_question="fixture provenance",
+        facets=[
+            ResearchFacet(
+                id="context",
+                label="Context",
+                question="Which sources ground the claim?",
+                priority=80,
+                source_preferences=["primary", "interview", "reference"],
+            )
+        ],
+        background_queries=[
+            PlannedResearchQuery(
+                query="q",
+                intent=SearchIntent.RESEARCH,
+                facet_ids=["context"],
+                rationale="fixture",
+            )
+        ],
+    )
+    results = [
+        SearchResult(
+            title="Catalog",
+            url="https://musicbrainz.org/recording/1",
+            snippet="catalog",
+            provider="fixture",
+            query="q",
+            score=0.2,
+        ),
+        SearchResult(
+            title="Institution",
+            url="https://archive.example.edu/page",
+            snippet="institution",
+            provider="fixture",
+            query="q",
+            score=0.9,
+        ),
+        SearchResult(
+            title="Reference",
+            url="https://en.wikipedia.org/wiki/Example",
+            snippet="reference",
+            provider="fixture",
+            query="q",
+            score=0.4,
+        ),
+    ]
+
+    bundle = bundle_from_results(
+        _request(),
+        results,
+        [],
+        query_context={"q": plan.background_queries[0]},
+        research_plan=plan,
+    )
+
+    assert bundle.evidence[0].source_category is EvidenceSourceCategory.REFERENCE
+    assert all(
+        item.source_category is not EvidenceSourceCategory.REFERENCE
+        or item.source_preference_rank == 2
+        for item in bundle.evidence
+    )
+    assert {item.confidence for item in bundle.evidence} == {0.2, 0.4, 0.9}
 
 
 def test_source_provenance_is_conservative_and_preferences_only_rank_evidence() -> None:
@@ -399,6 +533,19 @@ def test_writer_claim_support_rejects_unknown_or_out_of_scope_evidence() -> None
                 [_evidence("e1")],
             )
         )
+
+
+def test_writer_rejects_unknown_chapter_evidence_even_without_support_metadata() -> None:
+    chapter = _chapter(evidence_ids=["ghost"])
+
+    class Fixture:
+        async def structured(self, _prompt: str, _output_type: type[object], **_kwargs: object) -> object:
+            return NarrationScript(text="unsupported", intended_duration_seconds=5)
+
+    from wavecast.intelligence.writer import WriterService
+
+    with pytest.raises(ProviderInvalidResponseError, match="unavailable evidence"):
+        asyncio.run(WriterService(Fixture()).write(chapter, []))
 
 
 def test_claim_support_requires_non_empty_evidence_ids() -> None:

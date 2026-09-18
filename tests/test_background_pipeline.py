@@ -8,6 +8,7 @@ from wavecast.intelligence.models import (
     FastStartPlan,
     NarrationScript,
     PlannedResearchQuery,
+    ResearchFacet,
     ResearchPlan,
     SearchIntent,
 )
@@ -23,6 +24,18 @@ from tests.test_intelligence_services import StructuredFixture, skeleton
 def request() -> FastResearchInput:
     return FastResearchInput(
         topic="topic", anchor_tracks=["Anchor - Track"], desired_duration_seconds=900
+    )
+
+
+def curator_fixture_skeleton_without_evidence():
+    current = skeleton()
+    return current.model_copy(
+        update={
+            "chapters": [
+                chapter.model_copy(update={"evidence_ids": []})
+                for chapter in current.chapters
+            ]
+        }
     )
 
 
@@ -92,10 +105,19 @@ def test_background_pipeline_passes_adaptive_plan_to_research_service() -> None:
     tavily = RecordingSearch()
     custom_plan = ResearchPlan(
         central_question="How does this specific question work?",
+        facets=[
+            ResearchFacet(
+                id="fixture",
+                label="Fixture context",
+                question="What evidence answers the fixture question?",
+                priority=80,
+            )
+        ],
         background_queries=[
             PlannedResearchQuery(
                 query="distinctive adaptive query",
                 intent=SearchIntent.DISCOVERY,
+                facet_ids=["fixture"],
                 rationale="fixture-only routing assertion",
             )
         ],
@@ -103,7 +125,7 @@ def test_background_pipeline_passes_adaptive_plan_to_research_service() -> None:
     fast = fast_result()
     fast.plan = fast.plan.model_copy(update={"research_plan": custom_plan})
     writer_output = StructuredFixture(NarrationScript(text="future script", intended_duration_seconds=5))
-    curator_output = StructuredFixture(skeleton())
+    curator_output = StructuredFixture(curator_fixture_skeleton_without_evidence())
     pipeline = BackgroundIntelligencePipeline(
         research=BackgroundResearchService(
             discovery=exa,
@@ -130,13 +152,14 @@ def test_background_pipeline_passes_adaptive_plan_to_research_service() -> None:
 
 
 def test_background_writer_targets_first_speculative_chapter_after_committed_prefix() -> None:
-    committed = skeleton().chapters[0]
-    speculative = skeleton().chapters[1]
+    fixture_skeleton = curator_fixture_skeleton_without_evidence()
+    committed = fixture_skeleton.chapters[0]
+    speculative = fixture_skeleton.chapters[1]
     script = NarrationScript(text="future narration", intended_duration_seconds=8)
 
     class CuratorThenWriter:
         def __init__(self) -> None:
-            self.outputs = [skeleton(), script]
+            self.outputs = [curator_fixture_skeleton_without_evidence(), script]
             self.prompts: list[str] = []
 
         async def structured(
@@ -182,10 +205,10 @@ def test_background_pipeline_does_not_write_when_all_chapters_are_committed() ->
             self, _prompt: str, _output_type: type[object], **_kwargs: object
         ) -> object:
             self.calls += 1
-            return skeleton()
+            return curator_fixture_skeleton_without_evidence()
 
     llm = CountingLLM()
-    chapters = skeleton().chapters
+    chapters = curator_fixture_skeleton_without_evidence().chapters
     planning = PlanningSession(committed_chapters=list(chapters))
     service = BackgroundIntelligencePipeline(
         research=BackgroundResearchService(

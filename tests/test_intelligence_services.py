@@ -71,7 +71,21 @@ def skeleton() -> ProgramSkeleton:
 def test_curator_preserves_narrative_distance_curve_without_search_dependency() -> None:
     fixture = StructuredFixture(skeleton())
     service = CuratorService(fixture)
-    bundle = ResearchBundle(anchors=["Anchor"], taste_hypotheses=[], evidence=[], candidates=[])
+    bundle = ResearchBundle(
+        anchors=["Anchor"],
+        taste_hypotheses=[],
+        evidence=[
+            Evidence(
+                id="e1",
+                claim_or_excerpt="fixture evidence",
+                source_url="https://example.test/e1",
+                source_provider="fixture",
+                confidence=0.8,
+                query="fixture",
+            )
+        ],
+        candidates=[],
+    )
     fast = FastStartPlan(
         anchor_understanding=["anchor"],
         immediate_taste_hypotheses=[],
@@ -110,7 +124,21 @@ def test_curator_rejects_invalid_novelty_curve_with_sanitized_values() -> None:
     )
     fixture = StructuredFixture(invalid)
     service = CuratorService(fixture)
-    bundle = ResearchBundle(anchors=["Anchor"], taste_hypotheses=[], evidence=[], candidates=[])
+    bundle = ResearchBundle(
+        anchors=["Anchor"],
+        taste_hypotheses=[],
+        evidence=[
+            Evidence(
+                id="e1",
+                claim_or_excerpt="fixture evidence",
+                source_url="https://example.test/e1",
+                source_provider="fixture",
+                confidence=0.8,
+                query="fixture",
+            )
+        ],
+        candidates=[],
+    )
     fast = FastStartPlan(
         anchor_understanding=["anchor"],
         immediate_taste_hypotheses=[],
@@ -122,6 +150,44 @@ def test_curator_rejects_invalid_novelty_curve_with_sanitized_values() -> None:
         ProviderInvalidResponseError,
         match=r"invalid novelty curve values: \['surprise', 'bridge'\]",
     ):
+        asyncio.run(service.curate(bundle, fast, desired_duration_seconds=1200))
+
+
+def test_curator_rejects_unknown_chapter_evidence_without_claim_support() -> None:
+    invalid = skeleton().model_copy(
+        update={
+            "chapters": [
+                skeleton().chapters[0].model_copy(
+                    update={"evidence_ids": ["ghost"], "claim_support": []}
+                )
+            ]
+        }
+    )
+    fixture = StructuredFixture(invalid)
+    service = CuratorService(fixture)
+    bundle = ResearchBundle(
+        anchors=["Anchor"],
+        taste_hypotheses=[],
+        evidence=[
+            Evidence(
+                id="e1",
+                claim_or_excerpt="fixture evidence",
+                source_url="https://example.test/e1",
+                source_provider="fixture",
+                confidence=0.8,
+                query="fixture",
+            )
+        ],
+        candidates=[],
+    )
+    fast = FastStartPlan(
+        anchor_understanding=["anchor"],
+        immediate_taste_hypotheses=[],
+        next_candidates=[],
+        first_narration=NarrationScript(text="start", intended_duration_seconds=5),
+    )
+
+    with pytest.raises(ProviderInvalidResponseError, match="outside research bundle"):
         asyncio.run(service.curate(bundle, fast, desired_duration_seconds=1200))
 
 
@@ -171,7 +237,21 @@ def test_committed_planning_chapter_cannot_be_rewritten() -> None:
 def test_curator_and_planning_preserve_committed_prefix_exactly() -> None:
     committed = skeleton().chapters[0]
     service = CuratorService(StructuredFixture(skeleton()))
-    bundle = ResearchBundle(anchors=["Anchor"], taste_hypotheses=[], evidence=[], candidates=[])
+    bundle = ResearchBundle(
+        anchors=["Anchor"],
+        taste_hypotheses=[],
+        evidence=[
+            Evidence(
+                id="e1",
+                claim_or_excerpt="fixture evidence",
+                source_url="https://example.test/e1",
+                source_provider="fixture",
+                confidence=0.8,
+                query="fixture",
+            )
+        ],
+        candidates=[],
+    )
     fast = FastStartPlan(
         anchor_understanding=["anchor"],
         immediate_taste_hypotheses=[],
