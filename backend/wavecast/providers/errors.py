@@ -29,6 +29,12 @@ class ProviderInvalidResponseError(ProviderError):
     pass
 
 
+class ProviderSchemaValidationError(ProviderInvalidResponseError):
+    """The provider returned JSON that failed the requested structured schema."""
+
+    pass
+
+
 class ProviderOutputLimitError(ProviderInvalidResponseError):
     """The provider stopped before producing a complete structured response."""
 

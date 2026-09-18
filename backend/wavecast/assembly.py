@@ -66,7 +66,7 @@ from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.errors import (
     ProviderConfigurationError,
     ProviderError,
-    ProviderInvalidResponseError,
+    ProviderSchemaValidationError,
 )
 from wavecast.providers.fakes import (
     FakeSearchProvider,
@@ -285,7 +285,7 @@ class LiveEpisodeAssemblyService:
                 stage="curator",
                 reason_code=(
                     "curator_schema_invalid"
-                    if isinstance(error, ProviderInvalidResponseError)
+                    if isinstance(error, ProviderSchemaValidationError)
                     else None
                 ),
                 diagnostics={
