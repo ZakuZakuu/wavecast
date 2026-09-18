@@ -1,7 +1,7 @@
 """Bounded, provider-neutral progressive intelligence services."""
 
 from .background import BackgroundIntelligencePipeline, BackgroundPipelineResult
-from .curation import CuratorService
+from .curation import CuratorContractError, CuratorService
 from .fast_start import FastPathCoordinator, FastPathResult, FastStartPlanner
 from .models import (
     ChapterPlan,
@@ -62,6 +62,7 @@ __all__ = [
     "BackgroundResearchPlanner",
     "ResearchIntentPlanner",
     "CuratorService",
+    "CuratorContractError",
     "Evidence",
     "EvidenceSourceCategory",
     "FastResearchInput",

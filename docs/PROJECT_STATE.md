@@ -13,9 +13,9 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 - **Current milestone:** Phase 4.8.2 — Research quality (implementation in
   progress on a feature branch; no live providers are being run).
-- **Main:** `650537b4cd4637c212244255c79d2b53750a1e23` (merged PR #18, safe
-  live-failure diagnostics). Main is clean before the current Phase 4.8.2
-  working changes.
+- **Main:** `c1f3b7d4eb57f2f9add231bd6c4420f6c83c84dd` (merged PR #19, adaptive
+  research planning). Main is clean before the current Phase 4.8.2.1 working
+  changes.
 - **Immediate work:** preserve the existing 4.8.1 playback-slot contract while
   making background research topic-adaptive, provenance-aware, and safely
   diagnosable. Timing/playback changes remain deferred to Phase 4.8.3.
@@ -63,6 +63,12 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
   actual plan, provenance summaries, skeleton metadata, stage usage, and safe
   provider events. No raw prompts, responses, reasoning, credentials, or signed
   URLs are emitted.
+- **Phase 4.8.2.1 (current):** Curator provider-schema failures are separated
+  from application contract failures with stable reason codes. Unknown Curator
+  evidence references are deterministically dropped before strict scope checks;
+  empty evidence scopes remain valid but constrain Writer to transitions,
+  adjacency, editorial framing, or explicit uncertainty. Failed assembly keeps a
+  sanitized pre-Curator research snapshot and usage ledger for diagnosis.
 
 ## Invariants to preserve
 
@@ -136,6 +142,19 @@ credentials, hidden reasoning, or signed URLs are kept in the repository.
 3. **4.8.3 — Program timing:** improve target-duration adherence, narration
    pacing/ratio, actual-vs-planned segment durations, and buffer-aware timing
    without reintroducing a server playback clock.
+
+## First Phase 4.8.2 live result (sanitized)
+
+The first bounded Fujii Kaze Phase 4.8.2 run was executed once against commit
+`c1f3b7d4eb57f2f9add231bd6c4420f6c83c84dd`. Music readiness, FastStart, and the
+bounded search budget passed, but assembly failed at the Curator boundary. The
+outer failure was `EpisodeAssemblyError` with an underlying
+`ProviderInvalidResponseError`; the then-current diagnostics could not
+distinguish a structured-schema rejection from an application-level Curator
+contract rejection. The exact Curator rule is not known from the retained safe
+report. Phase 4.8.2 acceptance is therefore **not complete**; this
+4.8.2.1 work adds that distinction and preserves safe pre-Curator evidence and
+usage for any future review.
 
 ## Known deferred work
 
