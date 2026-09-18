@@ -177,6 +177,30 @@ def test_background_planner_regenerates_after_fast_fallback_and_routes_its_plan(
     ]
 
 
+def test_background_planner_has_deadline_separate_from_search() -> None:
+    class DelayedPlanner(PlannerFixture):
+        async def plan(self, *args: object, **kwargs: object) -> ResearchPlan:
+            await asyncio.sleep(0.03)
+            return await super().plan(*args, **kwargs)
+
+    async def run() -> tuple[DelayedPlanner, ResearchBundle]:
+        planner_llm = DelayedPlanner()
+        service = BackgroundResearchService(
+            discovery=RecordingSearch("exa"),
+            research=RecordingSearch("tavily"),
+            planner=BackgroundResearchPlanner(planner_llm),
+            deadline_seconds=0.01,
+            planner_deadline_seconds=0.1,
+        )
+        bundle = await service.run(_request(), _fallback_fast(_request()))
+        assert bundle is not None
+        return planner_llm, bundle
+
+    planner_llm, bundle = asyncio.run(run())
+    assert len(planner_llm.calls) == 1
+    assert bundle.research_plan == _adaptive_plan()
+
+
 def test_background_planner_failure_uses_generic_plan_without_blocking_search() -> None:
     async def run() -> tuple[PlannerFixture, RecordingSearch, ResearchBundle, GenerationTrace]:
         planner_llm = PlannerFixture(fail=True)

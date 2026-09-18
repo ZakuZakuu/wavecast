@@ -92,7 +92,7 @@ def test_deepseek_timeout_is_independent_from_search_timeout(
 
     assert settings.timeout_seconds == 20
     assert settings.deepseek_timeout_seconds == 20
-    assert settings.deepseek_deep_timeout_seconds == 45
+    assert settings.deepseek_deep_timeout_seconds == 60
     assert settings.deepseek_max_output_tokens == 4096
     assert settings.deepseek_deep_max_output_tokens == 12288
 
