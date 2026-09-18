@@ -36,7 +36,7 @@ from wavecast.providers.errors import (
     ProviderTimeoutError,
     ProviderUnavailableError,
 )
-from wavecast.providers.usage import UsageEvent, UsageLedger
+from wavecast.providers.usage import UsageEvent, UsageLedger, usage_diagnostics
 
 if __package__:
     from scripts.music_preflight import MusicPreflightError, preflight_music
@@ -132,43 +132,13 @@ def _failure_reason_code(stage: str, cause: ProviderError | None) -> str:
 
 
 def _safe_usage_event(event: UsageEvent) -> dict[str, object]:
-    metadata = event.metadata
+    from wavecast.providers.usage import safe_usage_event
 
-    def metadata_value(name: str) -> object:
-        value = metadata.get(name)
-        return value if value is None or isinstance(value, (bool, int, float, str)) else None
-
-    stage = metadata.get("stage")
-    return {
-        "provider": event.provider,
-        "operation": event.operation,
-        "stage": stage if isinstance(stage, str) else None,
-        "elapsed_ms": event.elapsed_ms,
-        "input_tokens": event.input_tokens,
-        "output_tokens": event.output_tokens,
-        "usage_characters": event.usage_characters,
-        "search_queries": event.search_queries,
-        "search_credits": event.search_credits,
-        "actual_cost_usd": event.actual_cost_usd,
-        "estimated_cost_usd": event.estimated_cost_usd,
-        "model": metadata_value("model"),
-        "transport": metadata_value("transport"),
-        "finish_reason": metadata_value("finish_reason"),
-        "reasoning_tokens": metadata_value("reasoning_tokens"),
-    }
+    return safe_usage_event(event)
 
 
 def _usage_diagnostics(ledger: UsageLedger) -> dict[str, object]:
-    stages: dict[str, dict[str, object]] = {}
-    for event in ledger.events:
-        stage = event.metadata.get("stage")
-        if isinstance(stage, str) and stage and stage not in stages:
-            stages[stage] = ledger.totals_for_stage(stage).model_dump()
-    return {
-        "usage": ledger.totals().model_dump(),
-        "usage_by_stage": stages,
-        "provider_events": [_safe_usage_event(event) for event in ledger.events],
-    }
+    return usage_diagnostics(ledger)
 
 
 def _failure_report(error: EpisodeAssemblyError, ledger: UsageLedger) -> dict[str, object]:
@@ -185,6 +155,7 @@ def _failure_report(error: EpisodeAssemblyError, ledger: UsageLedger) -> dict[st
 
 def _report(result) -> dict[str, object]:
     episode = result.playable_episode
+    research_plan = result.research_plan or result.fast_plan.research_plan
     writer_chapters = [
         {
             "chapter_index": item.chapter_index,
@@ -215,23 +186,72 @@ def _report(result) -> dict[str, object]:
             ],
         },
         "research_plan": {
-            "central_question": result.fast_plan.research_plan.central_question,
+            "central_question": research_plan.central_question,
+            "research_mode": research_plan.research_mode.value,
+            "no_research_reason": research_plan.no_research_reason,
             "facets": [
                 {
                     "id": facet.id,
                     "label": facet.label,
                     "question": facet.question,
                     "priority": facet.priority,
+                    "source_preferences": list(facet.source_preferences),
                 }
-                for facet in result.fast_plan.research_plan.facets
+                for facet in research_plan.facets
             ],
             "background_queries": [
                 {
                     "intent": query.intent.value,
                     "facet_ids": list(query.facet_ids),
                     "query": query.query,
+                    "rationale": query.rationale,
                 }
-                for query in result.fast_plan.research_plan.background_queries
+                for query in research_plan.background_queries
+            ],
+        },
+        "research_evidence": [
+            {
+                "id": item.id,
+                "canonical_url": item.canonical_url or item.source_url,
+                "source_domain": item.source_domain,
+                "source_category": item.source_category.value,
+                "source_preference_rank": item.source_preference_rank,
+                "source_provider": item.source_provider,
+                "source_title": item.source_title,
+                "confidence": item.confidence,
+                "facet_ids": list(item.facet_ids),
+                "search_intent": item.search_intent.value if item.search_intent else None,
+            }
+            for item in result.research_evidence
+        ],
+        "program_skeleton": {
+            "thesis": result.skeleton.thesis,
+            "estimated_duration_seconds": result.skeleton.estimated_duration_seconds,
+            "chapters": [
+                {
+                    "index": chapter.index,
+                    "narrative_role": chapter.narrative_role.value,
+                    "reason": chapter.reason,
+                    "narration_goal": chapter.narration_goal,
+                    "evidence_ids": list(chapter.evidence_ids),
+                    "claim_support": [
+                        {
+                            "claim_type": support.claim_type.value,
+                            "claim": support.claim,
+                            "evidence_ids": list(support.evidence_ids),
+                        }
+                        for support in chapter.claim_support
+                    ],
+                    "novelty_distance": (
+                        chapter.novelty_distance.value if chapter.novelty_distance else None
+                    ),
+                    "track": (
+                        {"artist": chapter.track.artist, "title": chapter.track.title}
+                        if chapter.track is not None
+                        else None
+                    ),
+                }
+                for chapter in result.skeleton.chapters
             ],
         },
         "tracks": [
@@ -261,6 +281,10 @@ def _report(result) -> dict[str, object]:
             for segment in episode.segments
         ],
         "usage": result.usage.model_dump(),
+        "usage_by_stage": {
+            stage: totals.model_dump() for stage, totals in result.usage_by_stage.items()
+        },
+        "provider_events": list(result.provider_events),
         "trace": _safe_trace(result),
         "writer_chapters": writer_chapters,
         "writer_counts": {
@@ -296,6 +320,14 @@ def _safe_script_block(block) -> dict[str, object]:
         "track_index": block.track_index,
         "tts_cues": list(block.tts_cues),
         "evidence_ids": list(block.evidence_ids),
+        "claim_support": [
+            {
+                "claim_type": support.claim_type.value,
+                "claim": support.claim,
+                "evidence_ids": list(support.evidence_ids),
+            }
+            for support in block.claim_support
+        ],
     }
 
 
