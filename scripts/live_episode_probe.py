@@ -54,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--topic", required=True)
     parser.add_argument("--anchor", action="append", default=[])
     parser.add_argument("--max-tracks", type=int, default=4)
+    parser.add_argument("--max-chapters", type=int, default=16)
     parser.add_argument("--json-output", type=Path)
     return parser.parse_args()
 
@@ -398,6 +399,7 @@ async def _run(arguments: argparse.Namespace) -> int:
                 topic=arguments.topic,
                 anchor_tracks=arguments.anchor,
                 max_tracks=arguments.max_tracks,
+                max_chapters=arguments.max_chapters,
             ),
             request_id="live-episode-probe",
         )

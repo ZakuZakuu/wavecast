@@ -11,15 +11,14 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 4.8.2 — Research quality (post-PR #21 live
-  regression repair is in progress; no second live probe is authorized).
-- **Main:** `12fa1a7126e6612917747ab30b87e9fb864e73fb` (merged PR #21,
-  Curator contract hardening and diagnostics).
+- **Current milestone:** Phase 4.8.2 — Research quality (benchmark-bound
+  repair is in progress; no additional live probe is authorized by this
+  change).
+- **Main:** `410023cc03f2734d5a9966cacf5a25d094f8d4cc` (merged PR #22,
+  bounded research deadlines and safe diagnostics).
 - **Immediate work:** preserve the existing 4.8.1 playback-slot contract while
-  separating background-search and planner deadlines, increasing the bounded
-  deep Curator timeout from 45 to 60 seconds, and retaining only safe fallback
-  reasons in diagnostics. Timing/playback changes remain deferred to Phase
-  4.8.3.
+  wiring the existing `max_chapters` bound into the live benchmark.
+  Timing/playback changes remain deferred to Phase 4.8.3.
 
 ## Completed implementation
 
@@ -186,14 +185,38 @@ mapped to `provider_timeout`. No automatic retry was performed, and no raw
 prompt, provider response, hidden reasoning, credential, or signed URL was
 retained. Phase 4.8.2 acceptance remains incomplete.
 
-## Current Phase 4.8.2 repair (sanitized)
+## Phase 4.8.2 deadline repair (merged in PR #22)
 
-The repair separates the background search deadline from the independent
-planner deadline, raises the bounded deep-provider default timeout from 45 to
-60 seconds, and preserves only the fallback `reason` alongside its safe
-plan-source trace metadata. It adds regression coverage for these boundaries.
-No token increase, retry policy change, provider-policy change, or additional
-live probe is part of this repair.
+PR #22 separates the background search deadline from the independent planner
+deadline, raises the bounded deep-provider default timeout from 45 to 60
+seconds, and preserves only the fallback `reason` alongside its safe
+plan-source trace metadata. Its exact-head review and CI passed, and it was
+merged as `410023cc03f2734d5a9966cacf5a25d094f8d4cc`.
+
+## Post-PR #22 Fujii Kaze regression (sanitized)
+
+The single authorized post-merge probe ran against
+`410023cc03f2734d5a9966cacf5a25d094f8d4cc`. Music readiness and both
+anchors passed. The adaptive planner ran successfully
+(`research_plan_source=background_planner`) and bounded search remained
+within budget, confirming the deadline repair. Curator then reached the
+configured `12288` output cap and failed with
+`ProviderOutputLimitError` / `provider_output_limit`.
+
+The live probe did not expose its existing `max_chapters` request bound,
+so this benchmark used the application default of 16 chapters instead of the
+intended 6-chapter biography benchmark bound. No retry was performed; no raw
+prompt, provider response, hidden reasoning, credential, signed URL, or full
+research content was retained. Phase 4.8.2 acceptance remains incomplete.
+
+## Current Phase 4.8.2 benchmark repair (sanitized)
+
+The next small change adds `--max-chapters` to the live probe, forwards it
+to `LiveEpisodeAssemblyRequest`, keeps its default at the application
+default of 16, and fixes this benchmark at `max_tracks=4` /
+`max_chapters=6`. It does not change the production default, token cap,
+reasoning policy, retry policy, search budget, Writer, or frontend. No live run
+is part of this repair.
 
 ## Known deferred work
 
