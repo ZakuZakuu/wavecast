@@ -42,6 +42,10 @@ class CuratorService:
             "stable or repeated novelty distance when a meaningful move is not justified. "
             "A chapter is a narrative beat and may intentionally have no TrackProposal; do not "
             "invent a track to fill a story beat. "
+            "For every factual, correlation, causal, editorial-interpretation, or uncertainty "
+            "statement in a chapter, use typed claim_support with one or more evidence IDs from "
+            "that chapter's evidence_ids. Keep correlation distinct from proven causation; do "
+            "not make an unsupported claim merely because a source is preferred. "
             "novelty_distance may start at any supported "
             "distance; distances may be skipped, and repeated distances are allowed when "
             "intended. The sequence must never move backward: very_close <= close <= bridge "
@@ -72,7 +76,24 @@ class CuratorService:
         )
         if not isinstance(skeleton, ProgramSkeleton):
             raise TypeError("curator returned an unexpected output model")
+        _validate_claim_support(skeleton, bundle)
         return ensure_distance_curve(skeleton)
+
+
+def _validate_claim_support(skeleton: ProgramSkeleton, bundle: ResearchBundle) -> None:
+    available = {item.id for item in bundle.evidence}
+    for chapter in skeleton.chapters:
+        scoped = set(chapter.evidence_ids)
+        if not scoped <= available:
+            raise ProviderInvalidResponseError(
+                "curator chapter referenced evidence outside research bundle"
+            )
+        for support in chapter.claim_support:
+            referenced = set(support.evidence_ids)
+            if not referenced <= scoped or not referenced <= available:
+                raise ProviderInvalidResponseError(
+                    "curator claim support referenced evidence outside chapter scope"
+                )
 
 
 def ensure_distance_curve(skeleton: ProgramSkeleton) -> ProgramSkeleton:

@@ -49,6 +49,7 @@ class FastStartPlanner:
                 raise TypeError("fast planner returned an unexpected output model")
             if "research_plan" not in plan.model_fields_set:
                 plan = plan.model_copy(update={"research_plan": generic_research_plan(request)})
+                plan._research_plan_omitted = True
             if trace:
                 trace.mark(
                     "research_plan_ready",
@@ -91,6 +92,9 @@ class FastStartPlanner:
             "facts. Also produce a ResearchPlan: state the central question, define open-ended "
             "facets with stable IDs, and propose a small pool of zero to eight bounded background "
             "queries; application code will select at most three for execution. "
+            "Use research_mode=adaptive when more evidence is useful. If no additional background "
+            "research is needed, set research_mode=no_additional_research and provide a concrete "
+            "no_research_reason; an adaptive plan with no facets or queries is incomplete. "
             "Each query must declare DISCOVERY, RESEARCH, or EXACT intent, facet IDs, and a "
             "short rationale. Search intent is operational routing, not a show-type classifier. "
             "Do not force similarity, novelty, genre, or sonic dimensions when the request does "

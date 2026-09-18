@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 
+from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 
 from .fast_start import FastStructuredProvider
@@ -78,7 +79,10 @@ class WriterService:
             "or guess a numeric `track_index`; the application places every block. "
             "For each returned block, use only a kind listed in exactly one matching "
             "slot's `allowed_block_kinds`; a block kind is the typed placement contract, "
-            "not a free editorial hint. "
+            "not a free editorial hint. Distinguish fact, correlation, causal claim, "
+            "editorial interpretation, and uncertainty in `claim_support`; every support "
+            "record must cite one or more IDs from this chapter's scoped evidence, and a "
+            "correlation must not be phrased as proven causation. "
             f"Write in output language {selected_language.value}.\n"
             f"Chapter: {chapter.model_dump_json()}\n"
             f"Evidence: {[item.model_dump() for item in scoped]}\n"
@@ -101,6 +105,7 @@ class WriterService:
         )
         if not isinstance(result, (RadioScript, NarrationScript)):
             raise TypeError("writer returned an unexpected output model")
+        _validate_evidence_references(result, chapter, evidence)
         if isinstance(result, RadioScript):
             # Numeric playback placement is application-owned.  Strip any
             # compatibility field emitted by an older/faulty structured model
@@ -111,3 +116,27 @@ class WriterService:
                 }
             )
         return result
+
+
+def _validate_evidence_references(
+    result: RadioScript | NarrationScript,
+    chapter: ChapterPlan,
+    evidence: Sequence[Evidence],
+) -> None:
+    available = {item.id for item in evidence}
+    scoped = set(chapter.evidence_ids)
+    if not scoped <= available:
+        raise ProviderInvalidResponseError("writer chapter referenced unavailable evidence")
+
+    def validate(ids: Sequence[str]) -> None:
+        referenced = set(ids)
+        if not referenced <= scoped or not referenced <= available:
+            raise ProviderInvalidResponseError("writer cited evidence outside chapter scope")
+
+    validate(result.evidence_ids)
+    if isinstance(result, NarrationScript):
+        return
+    for block in result.blocks:
+        validate(block.evidence_ids)
+        for support in block.claim_support:
+            validate(support.evidence_ids)

@@ -58,9 +58,14 @@ class BackgroundIntelligencePipeline:
         if bundle is None or cancel_event.is_set():
             return None
         trace.mark("curator_started")
+        curator_plan = fast_result.plan
+        if bundle.research_plan is not None:
+            curator_plan = fast_result.plan.model_copy(
+                update={"research_plan": bundle.research_plan}
+            )
         skeleton = await self.curator.curate(
             bundle,
-            fast_result.plan,
+            curator_plan,
             desired_duration_seconds=request.desired_duration_seconds,
             committed_chapters=planning.committed_chapters if planning else [],
         )

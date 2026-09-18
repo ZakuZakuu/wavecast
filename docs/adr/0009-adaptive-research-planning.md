@@ -19,6 +19,15 @@ an optional `ResearchPlan` containing:
 - up to eight `PlannedResearchQuery` records with operational `SearchIntent`
   (`DISCOVERY`, `RESEARCH`, or `EXACT`), facet IDs, and rationale.
 
+`ResearchPlan.research_mode` makes the empty-plan distinction explicit. The
+default `ADAPTIVE` mode requires useful facets/queries at the background
+boundary; omitted, generic, or structurally empty adaptive plans are sent to
+the bounded planner for regeneration. A typed
+`NO_ADDITIONAL_RESEARCH` plan must carry a human-readable
+`no_research_reason`, contains no queries, and intentionally skips planner and
+search work. This keeps compatibility defaults from silently turning an
+omitted plan into an accidental zero-query decision.
+
 The deterministic search stages own the budget and routing. Fast research still
 runs exactly one Exa and one Tavily query. Background research consumes the
 FastStart plan, deduplicates against those fast queries, routes discovery to
@@ -56,3 +65,26 @@ runtime, browser playback, provider contracts, or live budgets. The background
 stage may intentionally do less work when the plan has fewer useful facets or
 queries. Future providers can honor facet source preferences without changing
 the orchestration seam.
+
+## Phase 4.8.2 extension: research quality and provenance
+
+Background research now has a narrow `BackgroundResearchPlanner` seam. When
+the FastStart path falls back, it may make one bounded structured planning call
+after first-script readiness; a planner failure deterministically uses the
+generic topic plan. The planner is cancellable and never performs browsing.
+FastStart plans that already contain a useful plan continue directly to
+background execution. The application still selects no more than one Exa and
+two Tavily queries from the small proposal pool.
+
+Search normalization canonicalizes URLs before deduplication and evidence-ID
+generation. `Evidence` records conservative source provenance metadata and
+source preferences only influence deterministic ordering/prioritization; they
+are not authority scores. Search results remain evidence, not track entities.
+Curator and Writer contracts may attach typed claim-support records for facts,
+correlations, causal claims, editorial interpretation, and uncertainty. Each
+record must cite non-empty evidence IDs within the chapter's scoped evidence.
+
+The live probe's successful report exposes the selected research plan,
+provenance summaries, program-skeleton metadata, usage by stage, and safe
+provider event summaries. Prompts, provider payloads, reasoning text,
+credentials, and signed URLs remain excluded.

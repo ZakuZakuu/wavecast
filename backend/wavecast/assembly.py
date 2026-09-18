@@ -23,6 +23,7 @@ from wavecast.intelligence.curation import CuratorService
 from wavecast.intelligence.fast_start import FastPathCoordinator, FastStartPlanner
 from wavecast.intelligence.models import (
     ChapterPlan,
+    Evidence,
     FastResearchInput,
     FastStartPlan,
     NarrationScript,
@@ -35,12 +36,15 @@ from wavecast.intelligence.models import (
     RadioScript,
     RadioScriptBlock,
     RadioScriptBlockKind,
+    ResearchFacet,
+    ResearchPlan,
     ResolvedTrack,
     TrackProposal,
     UnresolvedTrackError,
     resolve_output_language,
 )
 from wavecast.intelligence.research import (
+    BackgroundResearchPlanner,
     BackgroundResearchService,
     FastResearchService,
     generic_research_plan,
@@ -69,7 +73,7 @@ from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.registry import MusicProviderRegistry
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.search import ExaSearchProvider, TavilySearchProvider
-from wavecast.providers.usage import UsageLedger, UsageTotals
+from wavecast.providers.usage import UsageLedger, UsageTotals, usage_diagnostics
 from wavecast.storage.assets import LocalObjectStorageProvider
 
 
@@ -149,6 +153,10 @@ class EpisodeAssemblyResult(BaseModel):
     duration_summary: AssemblyDurationSummary
     trace: GenerationTrace
     writer_chapters: list[WriterChapterDiagnostic] = Field(default_factory=list)
+    research_plan: ResearchPlan | None = None
+    research_evidence: list[Evidence] = Field(default_factory=list)
+    usage_by_stage: dict[str, UsageTotals] = Field(default_factory=dict)
+    provider_events: list[dict[str, object]] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -231,9 +239,14 @@ class LiveEpisodeAssemblyService:
 
         curator_started = perf_counter()
         try:
+            curator_plan = fast_result.plan
+            if bundle.research_plan is not None:
+                curator_plan = fast_result.plan.model_copy(
+                    update={"research_plan": bundle.research_plan}
+                )
             skeleton = await self.background_pipeline.curator.curate(
                 bundle,
-                fast_result.plan,
+                curator_plan,
                 desired_duration_seconds=request.desired_duration_seconds,
                 output_language=resolve_output_language(request.output_language, request.topic),
                 topic=request.topic,
@@ -383,6 +396,7 @@ class LiveEpisodeAssemblyService:
         trace.mark("episode_ready", segment_count=len(playable_episode.segments))
 
         duration_summary = _duration_summary(playable_episode)
+        usage_report = usage_diagnostics(self.ledger)
         return EpisodeAssemblyResult(
             playable_episode=playable_episode,
             fast_plan=fast_result.plan,
@@ -404,6 +418,13 @@ class LiveEpisodeAssemblyService:
             duration_summary=duration_summary,
             trace=trace,
             writer_chapters=writer_chapters,
+            research_plan=bundle.research_plan or fast_result.plan.research_plan,
+            research_evidence=list(bundle.evidence),
+            usage_by_stage={
+                stage: UsageTotals.model_validate(totals)
+                for stage, totals in usage_report["usage_by_stage"].items()
+            },
+            provider_events=list(usage_report["provider_events"]),
         )
 
     async def run(
@@ -1031,6 +1052,20 @@ class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
                     FastResearchInput(topic="guided listening", desired_duration_seconds=900)
                 ),
             )
+        if output_type is ResearchPlan:
+            return ResearchPlan(
+                central_question="What evidence explains this guided listening request?",
+                facets=[
+                    ResearchFacet(
+                        id="context",
+                        label="Context",
+                        question="What context connects the selected tracks?",
+                        priority=80,
+                        source_preferences=["reference"],
+                    )
+                ],
+                background_queries=[],
+            )
         if output_type is ProgramSkeleton:
             chapters = [
                 ChapterPlan(
@@ -1160,7 +1195,10 @@ def create_episode_assembly_service(
 
     fast_research = FastResearchService(discovery=discovery, research=research, ledger=ledger)
     background_research = BackgroundResearchService(
-        discovery=discovery, research=research, ledger=ledger
+        discovery=discovery,
+        research=research,
+        ledger=ledger,
+        planner=BackgroundResearchPlanner(llm),
     )
     fast_path = FastPathCoordinator(
         research=fast_research,

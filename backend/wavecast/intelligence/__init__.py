@@ -5,7 +5,10 @@ from .curation import CuratorService
 from .fast_start import FastPathCoordinator, FastPathResult, FastStartPlanner
 from .models import (
     ChapterPlan,
+    ClaimSupport,
+    ClaimType,
     Evidence,
+    EvidenceSourceCategory,
     FastResearchInput,
     FastResearchResult,
     FastStartPlan,
@@ -23,6 +26,7 @@ from .models import (
     ResearchBundle,
     ResearchFacet,
     ResearchPlan,
+    ResearchPlanMode,
     ResolvedTrack,
     ResolvedTrackCandidate,
     SearchIntent,
@@ -33,7 +37,12 @@ from .models import (
     resolve_output_language,
 )
 from .planning import PlanningSession
-from .research import BackgroundResearchService, FastResearchService
+from .research import (
+    BackgroundResearchPlanner,
+    BackgroundResearchService,
+    FastResearchService,
+    ResearchIntentPlanner,
+)
 from .resolution import (
     music_segment_from_track,
     resolve_track_candidate,
@@ -45,11 +54,16 @@ from .writer import WriterService
 
 __all__ = [
     "ChapterPlan",
+    "ClaimSupport",
+    "ClaimType",
     "BackgroundIntelligencePipeline",
     "BackgroundPipelineResult",
     "BackgroundResearchService",
+    "BackgroundResearchPlanner",
+    "ResearchIntentPlanner",
     "CuratorService",
     "Evidence",
+    "EvidenceSourceCategory",
     "FastResearchInput",
     "FastResearchResult",
     "FastPathCoordinator",
@@ -72,6 +86,7 @@ __all__ = [
     "ResearchBundle",
     "ResearchFacet",
     "ResearchPlan",
+    "ResearchPlanMode",
     "PlannedResearchQuery",
     "SearchIntent",
     "ResolvedTrack",
