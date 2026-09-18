@@ -19,6 +19,7 @@ from wavecast.providers.errors import (
     ProviderInvalidResponseError,
     ProviderOutputLimitError,
     ProviderRateLimitError,
+    ProviderSchemaValidationError,
     ProviderTimeoutError,
     ProviderUnavailableError,
 )
@@ -47,7 +48,8 @@ def _wrapped(cause: BaseException, *, stage: str = "curator") -> EpisodeAssembly
         (ProviderAuthenticationError("provider authentication failed"), "ProviderAuthenticationError", "provider_authentication"),
         (ProviderUnavailableError("provider unavailable"), "ProviderUnavailableError", "provider_unavailable"),
         (ProviderOutputLimitError("incomplete max output"), "ProviderOutputLimitError", "provider_output_limit"),
-        (ProviderInvalidResponseError("structured response invalid"), "ProviderInvalidResponseError", "curator_schema_invalid"),
+        (ProviderSchemaValidationError("structured response invalid"), "ProviderSchemaValidationError", "curator_schema_invalid"),
+        (ProviderInvalidResponseError("provider response invalid"), "ProviderInvalidResponseError", "structured_output_invalid"),
     ],
 )
 def test_failure_report_classifies_curator_provider_failures(

@@ -5,7 +5,11 @@ import pytest
 from pydantic import BaseModel
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.deepseek import DeepSeekLLMProvider
-from wavecast.providers.errors import ProviderInvalidResponseError, ProviderOutputLimitError
+from wavecast.providers.errors import (
+    ProviderInvalidResponseError,
+    ProviderOutputLimitError,
+    ProviderSchemaValidationError,
+)
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.usage import UsageLedger
 
@@ -288,6 +292,35 @@ def test_responses_malformed_json_keeps_bounded_retry_behavior() -> None:
     asyncio.run(run())
     assert len(responses.calls) == 2
     assert len(ledger.events) == 2
+
+
+def test_responses_schema_validation_error_is_typed() -> None:
+    response = SimpleNamespace(
+        id="response-schema-invalid",
+        status="completed",
+        output=[
+            SimpleNamespace(
+                type="message",
+                content=[SimpleNamespace(type="output_text", text="not-json")],
+            )
+        ],
+        usage=SimpleNamespace(input_tokens=2, output_tokens=1),
+    )
+    client, responses = response_client(response)
+    ledger = UsageLedger()
+
+    async def run() -> None:
+        provider = DeepSeekLLMProvider(response_settings(), client=client, ledger=ledger)
+        with pytest.raises(ProviderSchemaValidationError, match="did not match"):
+            await provider.structured(
+                "tiny test",
+                ResponseAnswer,
+                transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
+                profile=InferenceProfile.FAST,
+            )
+
+    asyncio.run(run())
+    assert len(responses.calls) == 1
 
 
 def test_responses_failed_status_is_normalized_and_usage_is_kept() -> None:

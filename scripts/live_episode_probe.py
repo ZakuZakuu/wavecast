@@ -34,6 +34,7 @@ from wavecast.providers.errors import (
     ProviderInvalidResponseError,
     ProviderOutputLimitError,
     ProviderRateLimitError,
+    ProviderSchemaValidationError,
     ProviderTimeoutError,
     ProviderUnavailableError,
 )
@@ -134,9 +135,11 @@ def _failure_reason_code(
         return "provider_budget_exceeded"
     if isinstance(cause, ProviderOutputLimitError):
         return "provider_output_limit"
-    if isinstance(cause, ProviderInvalidResponseError):
+    if isinstance(cause, ProviderSchemaValidationError):
         if stage == "curator":
             return "curator_schema_invalid"
+        return "structured_output_invalid"
+    if isinstance(cause, ProviderInvalidResponseError):
         return "structured_output_invalid"
     return "unknown_provider_failure"
 
