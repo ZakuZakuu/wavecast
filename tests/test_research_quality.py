@@ -32,6 +32,7 @@ from wavecast.intelligence.research import (
     BackgroundResearchService,
     bundle_from_results,
     canonicalize_url,
+    generic_research_plan,
     normalize_results,
 )
 from wavecast.intelligence.trace import GenerationTrace
@@ -182,6 +183,43 @@ def test_background_planner_failure_uses_generic_plan_without_blocking_search() 
     assert bundle.research_plan is not None
     assert bundle.research_plan.facets[0].id == "context"
     assert any(event.name == "background_research_plan_fallback" for event in trace.events)
+
+
+def test_background_planner_rejects_empty_adaptive_output_and_uses_generic_fallback() -> None:
+    async def run() -> tuple[PlannerFixture, RecordingSearch, RecordingSearch, GenerationTrace, ResearchBundle]:
+        planner_llm = PlannerFixture(
+            output=ResearchPlan(
+                central_question="planner forgot the research intent",
+                research_mode=ResearchPlanMode.ADAPTIVE,
+                facets=[],
+                background_queries=[],
+            )
+        )
+        exa = RecordingSearch("exa")
+        tavily = RecordingSearch("tavily")
+        service = BackgroundResearchService(
+            discovery=exa,
+            research=tavily,
+            planner=BackgroundResearchPlanner(planner_llm),
+            deadline_seconds=0.2,
+        )
+        trace = GenerationTrace(request_id="planner-empty-adaptive")
+        bundle = await service.run(_request(), _fallback_fast(_request()), trace=trace)
+        assert bundle is not None
+        return planner_llm, exa, tavily, trace, bundle
+
+    planner_llm, exa, tavily, trace, bundle = asyncio.run(run())
+    assert len(planner_llm.calls) == 1
+    assert exa.calls == [generic_research_plan(_request()).background_queries[0].query]
+    assert tavily.calls == [
+        query.query for query in generic_research_plan(_request()).background_queries[1:]
+    ]
+    assert bundle.research_plan == generic_research_plan(_request())
+    fallback_events = [
+        event for event in trace.events if event.name == "background_research_plan_fallback"
+    ]
+    assert len(fallback_events) == 1
+    assert fallback_events[0].metadata["reason"] == "ProviderInvalidResponseError"
 
 
 def test_useful_fast_plan_does_not_trigger_background_planner() -> None:
