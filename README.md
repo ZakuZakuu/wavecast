@@ -64,8 +64,8 @@ optional, bounded configuration: `DEEPSEEK_TIMEOUT_SECONDS=20` and
 `DEEPSEEK_DEEP_TIMEOUT_SECONDS=60` for background DEEP/Curator inference, plus
 `DEEPSEEK_MAX_OUTPUT_TOKENS=4096` and
 `DEEPSEEK_DEEP_MAX_OUTPUT_TOKENS=12288`. These are defaults, not required environment variables; the
-hot-path timeout remains 20 seconds, while only the background DEEP profile receives the longer
-bounded budget. The dedicated Curator profile keeps the same deep-sized timeout and
+hot-path timeout remains 20 seconds, while DEEP and the dedicated CURATOR profile receive the longer bounded
+background budget. The dedicated Curator profile keeps the same deep-sized timeout and
 12288-token cap while using low reasoning effort; the general DEEP profile remains high
 reasoning. The output limit bounds a single response without disabling model reasoning or
 adding another attempt.
