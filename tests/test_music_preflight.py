@@ -145,6 +145,7 @@ def test_live_probe_aborts_before_assembly_when_music_preflight_fails(
                 topic="fixture",
                 anchor=["藤井風 — 何なんw"],
                 max_tracks=4,
+                max_chapters=16,
                 json_output=report_path,
             )
         )
@@ -192,6 +193,7 @@ def test_live_probe_continues_after_successful_music_preflight(
                 topic="fixture",
                 anchor=[],
                 max_tracks=4,
+                max_chapters=16,
                 json_output=report_path,
             )
         )
