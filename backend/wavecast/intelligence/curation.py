@@ -95,7 +95,7 @@ class CuratorService:
             prompt,
             ProgramSkeleton,
             transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
-            profile=InferenceProfile.DEEP,
+            profile=InferenceProfile.CURATOR,
             stage="curator",
         )
         if not isinstance(skeleton, ProgramSkeleton):

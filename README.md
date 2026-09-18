@@ -65,7 +65,9 @@ optional, bounded configuration: `DEEPSEEK_TIMEOUT_SECONDS=20` and
 `DEEPSEEK_MAX_OUTPUT_TOKENS=4096` and
 `DEEPSEEK_DEEP_MAX_OUTPUT_TOKENS=12288`. These are defaults, not required environment variables; the
 hot-path timeout remains 20 seconds, while only the background DEEP profile receives the longer
-bounded budget. The output limit bounds a single response without disabling model reasoning or
+bounded budget. The dedicated Curator profile keeps the same deep-sized timeout and
+12288-token cap while using low reasoning effort; the general DEEP profile remains high
+reasoning. The output limit bounds a single response without disabling model reasoning or
 adding another attempt.
 The diagnostic 3rd Coast probe locally overrides only its DeepSeek call to a 90-second timeout;
 the reusable provider default remains 20 seconds.
