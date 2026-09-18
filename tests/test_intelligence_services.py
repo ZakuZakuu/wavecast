@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from wavecast.intelligence.curation import CuratorService
+from wavecast.intelligence.curation import CuratorContractError, CuratorService
 from wavecast.intelligence.models import (
     ChapterPlan,
     Evidence,
@@ -16,7 +16,6 @@ from wavecast.intelligence.models import (
 )
 from wavecast.intelligence.planning import PlanningSession
 from wavecast.intelligence.writer import WriterService
-from wavecast.providers.errors import ProviderInvalidResponseError
 
 
 class StructuredFixture:
@@ -146,14 +145,15 @@ def test_curator_rejects_invalid_novelty_curve_with_sanitized_values() -> None:
         first_narration=NarrationScript(text="start", intended_duration_seconds=5),
     )
 
-    with pytest.raises(
-        ProviderInvalidResponseError,
-        match=r"invalid novelty curve values: \['surprise', 'bridge'\]",
-    ):
+    with pytest.raises(CuratorContractError) as failure:
         asyncio.run(service.curate(bundle, fast, desired_duration_seconds=1200))
+    assert failure.value.reason_code == "curator_novelty_curve_invalid"
+    assert failure.value.diagnostics == [
+        {"novelty_distance_values": ["surprise", "bridge"]}
+    ]
 
 
-def test_curator_rejects_unknown_chapter_evidence_without_claim_support() -> None:
+def test_curator_drops_unknown_chapter_evidence_without_claim_support() -> None:
     invalid = skeleton().model_copy(
         update={
             "chapters": [
@@ -187,8 +187,9 @@ def test_curator_rejects_unknown_chapter_evidence_without_claim_support() -> Non
         first_narration=NarrationScript(text="start", intended_duration_seconds=5),
     )
 
-    with pytest.raises(ProviderInvalidResponseError, match="outside research bundle"):
-        asyncio.run(service.curate(bundle, fast, desired_duration_seconds=1200))
+    result = asyncio.run(service.curate(bundle, fast, desired_duration_seconds=1200))
+
+    assert result.chapters[0].evidence_ids == []
 
 
 def test_writer_receives_only_evidence_scoped_to_chapter() -> None:

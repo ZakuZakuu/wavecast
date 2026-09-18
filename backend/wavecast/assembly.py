@@ -19,8 +19,8 @@ from pydantic import BaseModel, Field
 
 from wavecast.composer import EpisodeComposer
 from wavecast.intelligence.background import BackgroundIntelligencePipeline
-from wavecast.intelligence.curation import CuratorService
-from wavecast.intelligence.fast_start import FastPathCoordinator, FastStartPlanner
+from wavecast.intelligence.curation import CuratorContractError, CuratorService
+from wavecast.intelligence.fast_start import FastPathCoordinator, FastPathResult, FastStartPlanner
 from wavecast.intelligence.models import (
     ChapterPlan,
     Evidence,
@@ -36,6 +36,7 @@ from wavecast.intelligence.models import (
     RadioScript,
     RadioScriptBlock,
     RadioScriptBlockKind,
+    ResearchBundle,
     ResearchFacet,
     ResearchPlan,
     ResolvedTrack,
@@ -62,7 +63,11 @@ from wavecast.providers.contracts import (
     TTSProvider,
 )
 from wavecast.providers.deepseek import DeepSeekLLMProvider
-from wavecast.providers.errors import ProviderConfigurationError, ProviderError
+from wavecast.providers.errors import (
+    ProviderConfigurationError,
+    ProviderError,
+    ProviderInvalidResponseError,
+)
 from wavecast.providers.fakes import (
     FakeSearchProvider,
     MockMusicProvider,
@@ -80,9 +85,18 @@ from wavecast.storage.assets import LocalObjectStorageProvider
 class EpisodeAssemblyError(RuntimeError):
     """A typed failure at one deterministic assembly boundary."""
 
-    def __init__(self, message: str, *, stage: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        stage: str,
+        reason_code: str | None = None,
+        diagnostics: dict[str, object] | None = None,
+    ) -> None:
         super().__init__(message)
         self.stage = stage
+        self.reason_code = reason_code
+        self.diagnostics = diagnostics or {}
 
 
 class NarrationPlacementError(ValueError):
@@ -238,6 +252,7 @@ class LiveEpisodeAssemblyService:
         trace.mark("background_research_ready", elapsed_ms=background_research_ms)
 
         curator_started = perf_counter()
+        trace.mark("curator_started")
         try:
             curator_plan = fast_result.plan
             if bundle.research_plan is not None:
@@ -250,9 +265,35 @@ class LiveEpisodeAssemblyService:
                 desired_duration_seconds=request.desired_duration_seconds,
                 output_language=resolve_output_language(request.output_language, request.topic),
                 topic=request.topic,
+                trace=trace,
             )
+        except CuratorContractError as error:
+            raise EpisodeAssemblyError(
+                "curator contract validation failed",
+                stage="curator",
+                reason_code=error.reason_code,
+                diagnostics={
+                    "research_snapshot": _research_failure_snapshot(
+                        fast_result, bundle, trace, self.ledger
+                    ),
+                    "curator_diagnostics": list(error.diagnostics),
+                },
+            ) from error
         except ProviderError as error:
-            raise EpisodeAssemblyError(str(error), stage="curator") from error
+            raise EpisodeAssemblyError(
+                "curator provider response was invalid",
+                stage="curator",
+                reason_code=(
+                    "curator_schema_invalid"
+                    if isinstance(error, ProviderInvalidResponseError)
+                    else None
+                ),
+                diagnostics={
+                    "research_snapshot": _research_failure_snapshot(
+                        fast_result, bundle, trace, self.ledger
+                    )
+                },
+            ) from error
         curator_ms = _elapsed_ms(curator_started)
         chapters = _select_chapters_for_music_limit(
             skeleton.chapters, request.max_tracks, request.max_chapters
@@ -461,6 +502,146 @@ class LiveEpisodeAssemblyService:
 
 def _elapsed_ms(started: float) -> int:
     return max(0, int((perf_counter() - started) * 1000))
+
+
+_SAFE_TRACE_METADATA = {
+    "fallback",
+    "candidate_count",
+    "chapter_count",
+    "query_count",
+    "elapsed_ms",
+    "research_facet_count",
+    "planned_background_query_count",
+    "plan_source",
+    "selected_queries",
+    "chapter_index",
+    "reference_kind",
+    "dropped_reference_count",
+    "remaining_reference_count",
+}
+
+
+def _safe_trace_snapshot(trace: GenerationTrace) -> list[dict[str, object]]:
+    return [
+        {
+            "name": event.name,
+            "elapsed_ms": event.elapsed_from_start_ms,
+            "metadata": {
+                key: value
+                for key, value in event.metadata.items()
+                if key in _SAFE_TRACE_METADATA
+            },
+        }
+        for event in trace.events
+    ]
+
+
+def _safe_diagnostic_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    from urllib.parse import urlsplit, urlunsplit
+
+    parsed = urlsplit(url)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", "", ""))
+
+
+def _safe_research_plan(plan: ResearchPlan | None) -> dict[str, object] | None:
+    if plan is None:
+        return None
+    return {
+        "central_question": plan.central_question,
+        "research_mode": plan.research_mode.value,
+        "no_research_reason": plan.no_research_reason,
+        "facets": [
+            {
+                "id": facet.id,
+                "label": facet.label,
+                "question": facet.question,
+                "priority": facet.priority,
+                "source_preferences": list(facet.source_preferences),
+            }
+            for facet in plan.facets
+        ],
+        "background_queries": [
+            {
+                "query": query.query,
+                "intent": query.intent.value,
+                "facet_ids": list(query.facet_ids),
+                "rationale": query.rationale,
+            }
+            for query in plan.background_queries
+        ],
+    }
+
+
+def _safe_research_evidence(evidence: list[Evidence]) -> list[dict[str, object]]:
+    return [
+        {
+            "id": item.id,
+            "canonical_url": _safe_diagnostic_url(item.canonical_url or item.source_url),
+            "source_domain": item.source_domain,
+            "source_category": item.source_category.value,
+            "source_preference_rank": item.source_preference_rank,
+            "source_provider": item.source_provider,
+            "source_title": item.source_title,
+            "confidence": item.confidence,
+            "facet_ids": list(item.facet_ids),
+            "search_intent": item.search_intent.value if item.search_intent else None,
+        }
+        for item in evidence
+    ]
+
+
+def _research_plan_source(trace: GenerationTrace) -> str:
+    for event in reversed(trace.events):
+        if event.name in {"background_research_plan_fallback", "background_research_plan_regenerated"}:
+            return str(event.metadata.get("plan_source", "unknown"))
+        if event.name == "background_research_plan_used":
+            return str(event.metadata.get("plan_source", "unknown"))
+    return "unknown"
+
+
+def _selected_background_queries(trace: GenerationTrace) -> list[dict[str, object]]:
+    selected: list[dict[str, object]] = []
+    for event in trace.events:
+        values = event.metadata.get("selected_queries")
+        if isinstance(values, list):
+            selected = [
+                value
+                for value in values
+                if isinstance(value, dict)
+                and isinstance(value.get("provider"), str)
+                and isinstance(value.get("query"), str)
+            ]
+    return selected
+
+
+def _research_failure_snapshot(
+    fast_result: FastPathResult,
+    bundle: ResearchBundle,
+    trace: GenerationTrace,
+    ledger: UsageLedger,
+) -> dict[str, object]:
+    usage_report = usage_diagnostics(ledger)
+    fast_plan = getattr(fast_result, "plan", None)
+    plan = bundle.research_plan or getattr(fast_plan, "research_plan", None)
+    return {
+        "fast": {
+            "fallback": trace.fallback_used,
+            "ttfs_ms": trace.time_to_first_script_ms,
+            "fast_research_elapsed_ms": trace.fast_research_elapsed_ms,
+            "fast_planner_started_ms": trace.fast_planner_started_ms,
+        },
+        "research_plan_source": _research_plan_source(trace),
+        "research_plan": _safe_research_plan(plan),
+        "selected_background_queries": _selected_background_queries(trace),
+        "research_evidence": _safe_research_evidence(list(bundle.evidence)),
+        "trace": _safe_trace_snapshot(trace),
+        "usage_by_stage": usage_report["usage_by_stage"],
+        "provider_events": usage_report["provider_events"],
+    }
 
 
 def _narration_target_seconds(

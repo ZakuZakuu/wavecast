@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from wavecast.providers.errors import ProviderInvalidResponseError
+from collections.abc import Sequence
+
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 
 from .fast_start import FastStructuredProvider
@@ -14,6 +15,22 @@ from .models import (
     ResearchBundle,
     resolve_output_language,
 )
+from .trace import GenerationTrace
+
+
+class CuratorContractError(ValueError):
+    """A parsed Curator result violated an application-owned invariant."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str,
+        diagnostics: list[dict[str, object]] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.diagnostics = diagnostics or []
 
 
 class CuratorService:
@@ -29,6 +46,7 @@ class CuratorService:
         committed_chapters: list[ChapterPlan] | None = None,
         output_language: OutputLanguage = OutputLanguage.AUTO,
         topic: str = "",
+        trace: GenerationTrace | None = None,
     ) -> ProgramSkeleton:
         committed = committed_chapters or []
         prompt = (
@@ -76,24 +94,140 @@ class CuratorService:
         )
         if not isinstance(skeleton, ProgramSkeleton):
             raise TypeError("curator returned an unexpected output model")
-        _validate_claim_support(skeleton, bundle)
-        return ensure_distance_curve(skeleton)
+        normalized, diagnostics = normalize_curator_skeleton(skeleton, bundle)
+        if trace:
+            for diagnostic in diagnostics:
+                trace.mark("curator_reference_normalized", **diagnostic)
+        _validate_curator_contract(normalized, bundle)
+        normalized = _restore_committed_prefix(normalized, committed)
+        return ensure_distance_curve(normalized)
 
 
-def _validate_claim_support(skeleton: ProgramSkeleton, bundle: ResearchBundle) -> None:
+def normalize_curator_skeleton(
+    skeleton: ProgramSkeleton,
+    bundle: ResearchBundle,
+) -> tuple[ProgramSkeleton, list[dict[str, object]]]:
+    """Drop only ungrounded evidence references before strict validation."""
+
+    available = {item.id for item in bundle.evidence}
+    diagnostics: list[dict[str, object]] = []
+    chapters: list[ChapterPlan] = []
+    for chapter in skeleton.chapters:
+        chapter_ids, dropped, remaining = _retain_evidence_ids(
+            chapter.evidence_ids, available
+        )
+        if dropped:
+            diagnostics.append(
+                _normalization_diagnostic(
+                    chapter.index,
+                    "chapter_evidence",
+                    dropped,
+                    remaining,
+                )
+            )
+        chapter_scope = set(chapter_ids)
+        supports = []
+        for support in chapter.claim_support:
+            support_ids, dropped, remaining = _retain_evidence_ids(
+                support.evidence_ids, available & chapter_scope
+            )
+            if dropped:
+                diagnostics.append(
+                    _normalization_diagnostic(
+                        chapter.index,
+                        "claim_support",
+                        dropped,
+                        remaining,
+                    )
+                )
+            if support_ids:
+                supports.append(support.model_copy(update={"evidence_ids": support_ids}))
+        track = chapter.track
+        if track is not None:
+            track_ids, dropped, remaining = _retain_evidence_ids(track.evidence_ids, available)
+            if dropped:
+                diagnostics.append(
+                    _normalization_diagnostic(
+                        chapter.index,
+                        "track_evidence",
+                        dropped,
+                        remaining,
+                    )
+                )
+            track = track.model_copy(update={"evidence_ids": track_ids})
+        chapters.append(
+            chapter.model_copy(
+                update={
+                    "evidence_ids": chapter_ids,
+                    "claim_support": supports,
+                    "track": track,
+                }
+            )
+        )
+    return skeleton.model_copy(update={"chapters": chapters}), diagnostics
+
+
+def _retain_evidence_ids(
+    evidence_ids: Sequence[str], available: set[str]
+) -> tuple[list[str], int, int]:
+    retained: list[str] = []
+    seen: set[str] = set()
+    for evidence_id in evidence_ids:
+        if evidence_id in available and evidence_id not in seen:
+            retained.append(evidence_id)
+            seen.add(evidence_id)
+    return retained, len(evidence_ids) - len(retained), len(retained)
+
+
+def _normalization_diagnostic(
+    chapter_index: int,
+    reference_kind: str,
+    dropped_reference_count: int,
+    remaining_reference_count: int,
+) -> dict[str, object]:
+    return {
+        "chapter_index": chapter_index,
+        "reference_kind": reference_kind,
+        "dropped_reference_count": dropped_reference_count,
+        "remaining_reference_count": remaining_reference_count,
+    }
+
+
+def _validate_curator_contract(skeleton: ProgramSkeleton, bundle: ResearchBundle) -> None:
     available = {item.id for item in bundle.evidence}
     for chapter in skeleton.chapters:
         scoped = set(chapter.evidence_ids)
         if not scoped <= available:
-            raise ProviderInvalidResponseError(
-                "curator chapter referenced evidence outside research bundle"
+            raise CuratorContractError(
+                "curator chapter evidence scope is invalid",
+                reason_code="curator_chapter_evidence_scope_invalid",
             )
         for support in chapter.claim_support:
             referenced = set(support.evidence_ids)
-            if not referenced <= scoped or not referenced <= available:
-                raise ProviderInvalidResponseError(
-                    "curator claim support referenced evidence outside chapter scope"
+            if not referenced or not referenced <= scoped or not referenced <= available:
+                raise CuratorContractError(
+                    "curator claim support evidence scope is invalid",
+                    reason_code="curator_claim_support_scope_invalid",
                 )
+        if chapter.track is not None and not set(chapter.track.evidence_ids) <= available:
+            raise CuratorContractError(
+                "curator track evidence scope is invalid",
+                reason_code="curator_track_evidence_scope_invalid",
+            )
+
+
+def _restore_committed_prefix(
+    skeleton: ProgramSkeleton, committed_chapters: Sequence[ChapterPlan]
+) -> ProgramSkeleton:
+    """Keep already committed chapter models byte-for-byte stable across curation."""
+
+    if not committed_chapters:
+        return skeleton
+    committed_by_index = {chapter.index: chapter for chapter in committed_chapters}
+    chapters = [
+        committed_by_index.get(chapter.index, chapter) for chapter in skeleton.chapters
+    ]
+    return skeleton.model_copy(update={"chapters": chapters})
 
 
 def ensure_distance_curve(skeleton: ProgramSkeleton) -> ProgramSkeleton:
@@ -115,7 +249,11 @@ def ensure_distance_curve(skeleton: ProgramSkeleton) -> ProgramSkeleton:
             for chapter in skeleton.chapters
             if chapter.novelty_distance is not None
         ]
-        raise ProviderInvalidResponseError(f"invalid novelty curve values: {values!r}")
+        raise CuratorContractError(
+            "curator novelty curve is invalid",
+            reason_code="curator_novelty_curve_invalid",
+            diagnostics=[{"novelty_distance_values": values}],
+        )
     # Curator order and chapter indices are part of the narrative contract.  Do not
     # sort or renumber here: committed-prefix validation relies on exact identity.
     return skeleton

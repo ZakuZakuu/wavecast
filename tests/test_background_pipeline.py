@@ -154,7 +154,14 @@ def test_background_pipeline_passes_adaptive_plan_to_research_service() -> None:
 def test_background_writer_targets_first_speculative_chapter_after_committed_prefix() -> None:
     fixture_skeleton = curator_fixture_skeleton_without_evidence()
     committed = fixture_skeleton.chapters[0]
-    speculative = fixture_skeleton.chapters[1]
+    assert fixture_skeleton.chapters[1].track is not None
+    speculative = fixture_skeleton.chapters[1].model_copy(
+        update={
+            "track": fixture_skeleton.chapters[1].track.model_copy(
+                update={"evidence_ids": []}
+            )
+        }
+    )
     script = NarrationScript(text="future narration", intended_duration_seconds=8)
 
     class CuratorThenWriter:
