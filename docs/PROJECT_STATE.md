@@ -121,7 +121,7 @@ credentials, hidden reasoning, or signed URLs are kept in the repository.
   silent Writer block loss **not observed (10 == 10 == 10)**;
   narrative-only placement **passed**; final narration placement **passed**.
 - This validates editorial placement and timing instrumentation for the
-  benchmark. It does **not** validate cross-DJMAX discovery quality; that
+  benchmark. It does **not** validate cross-artist discovery quality; that
   remains a human-review item.
 
 ## Phase 4.8 plan

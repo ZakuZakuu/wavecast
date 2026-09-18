@@ -87,6 +87,7 @@ class BackgroundResearchPlanner:
         if not isinstance(result, ResearchPlan):
             raise TypeError("background research planner returned an unexpected output model")
         normalized = normalize_research_plan(result)
+        validate_background_research_plan(normalized)
         if trace:
             trace.mark(
                 "background_research_plan_regenerated",
@@ -334,6 +335,7 @@ class BackgroundResearchService:
         if (
             isinstance(candidate, FastStartPlan)
             and not trace_fallback
+            and candidate.research_plan.research_mode is ResearchPlanMode.ADAPTIVE
             and not candidate._research_plan_omitted
             and not _is_generic_or_empty_plan(request, candidate.research_plan)
         ):
@@ -429,7 +431,25 @@ class BackgroundResearchService:
 def _is_generic_or_empty_plan(request: FastResearchInput, plan: ResearchPlan) -> bool:
     """Identify plans that lack enough intent for independent background work."""
 
-    return not plan.facets or not plan.background_queries or plan == generic_research_plan(request)
+    return not is_effective_research_plan(plan) or plan == generic_research_plan(request)
+
+
+def is_effective_research_plan(plan: ResearchPlan) -> bool:
+    """Return whether a plan has an explicit, executable research decision."""
+
+    if plan.research_mode is ResearchPlanMode.NO_ADDITIONAL_RESEARCH:
+        return bool(plan.no_research_reason) and not plan.background_queries
+    return bool(plan.facets and plan.background_queries)
+
+
+def validate_background_research_plan(plan: ResearchPlan) -> ResearchPlan:
+    """Reject planner output that would silently turn adaptive research off."""
+
+    if not is_effective_research_plan(plan):
+        raise ProviderInvalidResponseError(
+            "background research planner returned an effectively empty adaptive plan"
+        )
+    return plan
 
 
 def build_fast_queries(request: FastResearchInput) -> tuple[str, str]:
