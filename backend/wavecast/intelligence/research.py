@@ -62,6 +62,7 @@ class ResearchIntentPlanner(Protocol):
 
 FAST_RESEARCH_DEADLINE_SECONDS = 4.5
 BACKGROUND_RESEARCH_DEADLINE_SECONDS = 8.0
+BACKGROUND_RESEARCH_PLANNER_DEADLINE_SECONDS = 20.0
 
 
 class BackgroundResearchPlanner:
@@ -211,12 +212,14 @@ class BackgroundResearchService:
         research: SearchCallable,
         ledger: UsageLedger | None = None,
         deadline_seconds: float = BACKGROUND_RESEARCH_DEADLINE_SECONDS,
+        planner_deadline_seconds: float = BACKGROUND_RESEARCH_PLANNER_DEADLINE_SECONDS,
         planner: ResearchIntentPlanner | None = None,
     ) -> None:
         self.discovery = discovery
         self.research = research
         self.ledger = ledger
         self.deadline_seconds = deadline_seconds
+        self.planner_deadline_seconds = planner_deadline_seconds
         self.planner = planner
 
     async def run(
@@ -410,7 +413,7 @@ class BackgroundResearchService:
         cancel_event: asyncio.Event | None,
         trace: GenerationTrace | None,
     ) -> ResearchPlan:
-        """Run the single planner call with the same cancellation boundary as search."""
+        """Run the planner with its own bounded deadline, separate from search."""
 
         assert self.planner is not None
         planner_task = asyncio.create_task(
@@ -421,7 +424,7 @@ class BackgroundResearchService:
         if cancel_event is not None:
             cancel_task = asyncio.create_task(cancel_event.wait())
             waitables.add(cancel_task)
-        done, pending = await asyncio.wait(waitables, timeout=self.deadline_seconds)
+        done, pending = await asyncio.wait(waitables, timeout=self.planner_deadline_seconds)
         if cancel_task is not None and cancel_task in done and cancel_event is not None:
             planner_task.cancel()
             await asyncio.gather(planner_task, return_exceptions=True)

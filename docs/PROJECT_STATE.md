@@ -11,15 +11,15 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 4.8.2 — Research quality (Curator output
-  bounding is in progress on a feature branch; no live providers are being
-  run).
-- **Main:** `fdeace50d0047f7dede1b59d52bd15bc56d6f038` (merged PR #20,
-  Curator contract diagnostics). Main is clean before the current Curator
-  output-bounding changes.
+- **Current milestone:** Phase 4.8.2 — Research quality (post-PR #21 live
+  regression repair is in progress; no second live probe is authorized).
+- **Main:** `12fa1a7126e6612917747ab30b87e9fb864e73fb` (merged PR #21,
+  Curator contract hardening and diagnostics).
 - **Immediate work:** preserve the existing 4.8.1 playback-slot contract while
-  making background research topic-adaptive, provenance-aware, and safely
-  diagnosable. Timing/playback changes remain deferred to Phase 4.8.3.
+  separating background-search and planner deadlines, increasing the bounded
+  deep Curator timeout from 45 to 60 seconds, and retaining only safe fallback
+  reasons in diagnostics. Timing/playback changes remain deferred to Phase
+  4.8.3.
 
 ## Completed implementation
 
@@ -175,6 +175,25 @@ retry was performed, and no raw prompt, provider response, hidden reasoning,
 credential, or signed URL was retained. This confirms the PR #20 failure
 classification path but does not complete Phase 4.8.2 content-quality
 acceptance.
+
+## Post-PR #21 Fujii Kaze regression (sanitized)
+
+A single authorized post-merge regression ran against
+`12fa1a7126e6612917747ab30b87e9fb864e73fb` after local music readiness and
+both anchor preflights passed. The bounded search stages completed, but
+assembly timed out at the Curator boundary with `ProviderTimeoutError`,
+mapped to `provider_timeout`. No automatic retry was performed, and no raw
+prompt, provider response, hidden reasoning, credential, or signed URL was
+retained. Phase 4.8.2 acceptance remains incomplete.
+
+## Current Phase 4.8.2 repair (sanitized)
+
+The repair separates the background search deadline from the independent
+planner deadline, raises the bounded deep-provider default timeout from 45 to
+60 seconds, and preserves only the fallback `reason` alongside its safe
+plan-source trace metadata. It adds regression coverage for these boundaries.
+No token increase, retry policy change, provider-policy change, or additional
+live probe is part of this repair.
 
 ## Known deferred work
 
