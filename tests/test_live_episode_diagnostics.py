@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from argparse import Namespace
 from pathlib import Path
 
@@ -244,6 +245,7 @@ def test_failed_probe_writes_usage_diagnostics_from_assembly_service(
                 topic="fixture",
                 anchor=[],
                 max_tracks=4,
+                max_chapters=16,
                 json_output=report_path,
             )
         )
@@ -273,3 +275,54 @@ def test_safe_trace_preserves_only_fallback_reason_type() -> None:
         "reason": "TimeoutError",
     }
     assert "provider details" not in json.dumps(report)
+
+
+def test_parse_args_defaults_max_chapters_to_application_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["live_episode_probe.py", "--topic", "fixture"])
+
+    arguments = live_episode_probe.parse_args()
+
+    assert arguments.max_tracks == 4
+    assert arguments.max_chapters == 16
+
+
+def test_live_probe_forwards_benchmark_max_chapters(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = live_episode_probe.ProviderSettings(mode="live")
+    captured_requests: list[object] = []
+
+    async def passing_preflight(*args: object, **kwargs: object) -> MusicPreflightResult:
+        return MusicPreflightResult(ready=True, resolved_anchors=())
+
+    class FakeAssembly:
+        async def assemble(self, request: object, **kwargs: object) -> object:
+            captured_requests.append(request)
+            return object()
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(live_episode_probe.ProviderSettings, "from_env", lambda: settings)
+    monkeypatch.setattr(live_episode_probe, "preflight_music", passing_preflight)
+    monkeypatch.setattr(live_episode_probe, "create_episode_assembly_service", lambda _: FakeAssembly())
+    monkeypatch.setattr(live_episode_probe, "_report", lambda result: {"status": "ok"})
+
+    result = asyncio.run(
+        live_episode_probe._run(
+            Namespace(
+                topic="fixture",
+                anchor=[],
+                max_tracks=4,
+                max_chapters=6,
+                json_output=tmp_path / "success.json",
+            )
+        )
+    )
+
+    assert result == 0
+    assert len(captured_requests) == 1
+    assert captured_requests[0].max_tracks == 4
+    assert captured_requests[0].max_chapters == 6
