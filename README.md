@@ -61,7 +61,7 @@ For this probe only, values from `.env` take precedence over stale exported prov
 
 Search adapters retain their short 20-second timeout. DeepSeek structured synthesis has its own
 optional, bounded configuration: `DEEPSEEK_TIMEOUT_SECONDS=20` and
-`DEEPSEEK_DEEP_TIMEOUT_SECONDS=45` for background DEEP/Curator inference, plus
+`DEEPSEEK_DEEP_TIMEOUT_SECONDS=60` for background DEEP/Curator inference, plus
 `DEEPSEEK_MAX_OUTPUT_TOKENS=4096` and
 `DEEPSEEK_DEEP_MAX_OUTPUT_TOKENS=12288`. These are defaults, not required environment variables; the
 hot-path timeout remains 20 seconds, while only the background DEEP profile receives the longer

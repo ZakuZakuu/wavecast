@@ -77,6 +77,7 @@ def _safe_trace(result) -> list[dict[str, object]]:
         "reference_kind",
         "dropped_reference_count",
         "remaining_reference_count",
+        "reason",
     }
     return [
         {

@@ -520,6 +520,7 @@ _SAFE_TRACE_METADATA = {
     "reference_kind",
     "dropped_reference_count",
     "remaining_reference_count",
+    "reason",
 }
 
 

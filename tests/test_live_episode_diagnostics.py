@@ -14,6 +14,7 @@ from wavecast.intelligence.models import (
     NoveltyDistance,
     ProgramSkeleton,
 )
+from wavecast.intelligence.trace import GenerationTrace
 from wavecast.providers.errors import (
     ProviderAuthenticationError,
     ProviderInvalidResponseError,
@@ -253,3 +254,22 @@ def test_failed_probe_writes_usage_diagnostics_from_assembly_service(
     assert report["reason_code"] == "provider_timeout"
     assert report["usage"]["input_tokens"] == 10
     assert report["usage_by_stage"]["curator"]["output_tokens"] == 20
+
+
+def test_safe_trace_preserves_only_fallback_reason_type() -> None:
+    trace = GenerationTrace(request_id="safe-trace")
+    trace.mark(
+        "background_research_plan_fallback",
+        plan_source="generic_fallback",
+        reason="TimeoutError",
+        message="do not emit provider details",
+    )
+    result = type("Result", (), {"trace": trace})()
+
+    report = live_episode_probe._safe_trace(result)
+
+    assert report[-1]["metadata"] == {
+        "plan_source": "generic_fallback",
+        "reason": "TimeoutError",
+    }
+    assert "provider details" not in json.dumps(report)
