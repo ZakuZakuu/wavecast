@@ -154,6 +154,28 @@ def test_writer_runs_only_after_resolution_and_receives_next_track_context(tmp_p
     )
 
 
+def test_assembly_passes_request_limits_to_curator_prompt(tmp_path) -> None:
+    llm = RecordingAssemblyLLM()
+    assembly = service(tmp_path, llm)
+
+    asyncio.run(
+        assembly.assemble(
+            LiveEpisodeAssemblyRequest(
+                topic="bounded fixture",
+                max_tracks=4,
+                max_chapters=6,
+            )
+        )
+    )
+
+    curator_calls = [call for call in llm.calls if call["output_type"] is ProgramSkeleton]
+    assert len(curator_calls) == 1
+    prompt = curator_calls[0]["prompt"]
+    assert "Return no more than 6 chapters total" in prompt
+    assert "no more than 4 chapters with a TrackProposal" in prompt
+    asyncio.run(assembly.aclose())
+
+
 def test_radio_script_normalization_keeps_episode_anchors_in_their_owners() -> None:
     script = _assemble_radio_script(
         [
