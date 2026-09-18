@@ -14,6 +14,7 @@ class InferenceProfile(StrEnum):
     BALANCED = "balanced"
     SYNTHESIS = "synthesis"
     DEEP = "deep"
+    CURATOR = "curator"
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,14 @@ def policy_for(
             max_output_tokens=deep_max_output_tokens or default_max_output_tokens,
             max_attempts=default_max_attempts,
             reasoning_effort="high",
+        )
+    if profile is InferenceProfile.CURATOR:
+        return InferencePolicy(
+            transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
+            timeout_seconds=deep_timeout_seconds or default_timeout_seconds,
+            max_output_tokens=deep_max_output_tokens or default_max_output_tokens,
+            max_attempts=default_max_attempts,
+            reasoning_effort="low",
         )
     if profile is InferenceProfile.SYNTHESIS:
         return InferencePolicy(
