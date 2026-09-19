@@ -297,3 +297,33 @@ def test_composer_preserves_visible_and_tts_text() -> None:
     narration = next(segment for segment in episode.segments if segment.narration_text)
     assert narration.narration_text == "3rd Coast"
     assert narration.tts_text == "Third Coast"
+
+def test_composer_prepares_each_music_asset_once_before_composition() -> None:
+    class CountingMusicProvider(MockMusicProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        async def get_playback_asset(self, resolved_track):
+            self.calls += 1
+            return await super().get_playback_asset(resolved_track)
+
+    provider = CountingMusicProvider()
+    composer = EpisodeComposer(provider)
+    tracks = [
+        ResolvedTrack(
+            track_ref="mock:opening",
+            canonical_artist="Mira Fields",
+            canonical_title="Neon First Light",
+        ),
+        ResolvedTrack(
+            track_ref="mock:bridge",
+            canonical_artist="Signal Garden",
+            canonical_title="Midnight Transfer",
+        ),
+    ]
+    prepared = asyncio.run(composer.prepare_tracks(tracks))
+    composer.compose_prepared(prepared, RadioScript(blocks=[]))
+
+    assert provider.calls == 2
+    assert [item.asset.duration for item in prepared if item is not None] == [22, 24]

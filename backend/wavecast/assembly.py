@@ -80,6 +80,12 @@ from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.search import ExaSearchProvider, TavilySearchProvider
 from wavecast.providers.usage import UsageLedger, UsageTotals, usage_diagnostics
 from wavecast.storage.assets import LocalObjectStorageProvider
+from wavecast.timing import (
+    ProgramTimingPlan,
+    ProgramTimingSummary,
+    build_program_timing_plan,
+    summarize_program_timing,
+)
 
 
 class EpisodeAssemblyError(RuntimeError):
@@ -165,6 +171,8 @@ class EpisodeAssemblyResult(BaseModel):
     timings: AssemblyTimings
     usage: UsageTotals
     duration_summary: AssemblyDurationSummary
+    timing_plan: ProgramTimingPlan
+    timing_summary: ProgramTimingSummary
     trace: GenerationTrace
     writer_chapters: list[WriterChapterDiagnostic] = Field(default_factory=list)
     research_plan: ResearchPlan | None = None
@@ -370,7 +378,23 @@ class LiveEpisodeAssemblyService:
                 stage="resolution",
             )
 
+        track_inputs = [item.track for item in resolved_chapters if item.track is not None]
+
+        try:
+            prepared_tracks = [
+                item for item in await self.composer.prepare_tracks(track_inputs) if item is not None
+            ]
+        except (ProviderError, UnresolvedTrackError, ValueError) as error:
+            raise EpisodeAssemblyError(str(error), stage="music_preparation") from error
+
+        resolved_music_seconds = sum(item.asset.duration for item in prepared_tracks)
         slot_contexts = _build_narration_slot_contexts(resolved_chapters)
+        timing_plan = build_program_timing_plan(
+            desired_total_seconds=request.desired_duration_seconds,
+            target_narration_ratio=self.narration_ratio,
+            resolved_music_seconds=resolved_music_seconds,
+            chapter_slot_counts=[len(contexts) for contexts in slot_contexts],
+        )
         writer_started = perf_counter()
         writer_scripts: list[RadioScript | NarrationScript] = []
         previous_context = ""
@@ -394,11 +418,7 @@ class LiveEpisodeAssemblyService:
                     bundle.evidence,
                     previous_committed_context=previous_context,
                     next_track_metadata=next_metadata,
-                    target_duration_seconds=_narration_target_seconds(
-                        request.desired_duration_seconds,
-                        len(resolved_chapters),
-                        self.narration_ratio,
-                    ),
+                    target_duration_seconds=timing_plan.chapter_budgets[index].target_narration_seconds,
                     output_language=resolve_output_language(request.output_language, request.topic),
                     topic=request.topic,
                     slot_contexts=chapter_slots,
@@ -420,9 +440,7 @@ class LiveEpisodeAssemblyService:
 
         composition_started = perf_counter()
         try:
-            playable_episode = await self.composer.compose(
-                [item.track for item in resolved_chapters if item.track is not None], radio_script
-            )
+            playable_episode = self.composer.compose_prepared(prepared_tracks, radio_script)
         except (ProviderError, UnresolvedTrackError, ValueError) as error:
             raise EpisodeAssemblyError(str(error), stage="composition") from error
         composition_ms = _elapsed_ms(composition_started)
@@ -439,6 +457,14 @@ class LiveEpisodeAssemblyService:
         trace.mark("episode_ready", segment_count=len(playable_episode.segments))
 
         duration_summary = _duration_summary(playable_episode)
+        timing_summary = summarize_program_timing(
+            timing_plan,
+            planned_narration_seconds=sum(
+                block.intended_duration_seconds for block in radio_script.blocks
+            ),
+            actual_narration_seconds=duration_summary.narration_seconds,
+            music_seconds=duration_summary.music_seconds,
+        )
         usage_report = usage_diagnostics(self.ledger)
         return EpisodeAssemblyResult(
             playable_episode=playable_episode,
@@ -459,6 +485,8 @@ class LiveEpisodeAssemblyService:
             ),
             usage=self.ledger.totals(),
             duration_summary=duration_summary,
+            timing_plan=timing_plan,
+            timing_summary=timing_summary,
             trace=trace,
             writer_chapters=writer_chapters,
             research_plan=bundle.research_plan or fast_result.plan.research_plan,
@@ -647,12 +675,6 @@ def _research_failure_snapshot(
     }
 
 
-def _narration_target_seconds(
-    desired_duration_seconds: int, chapter_count: int, ratio: float
-) -> int:
-    """Allocate a small, deterministic spoken budget to every narrative beat."""
-
-    return min(300, max(1, round(desired_duration_seconds * ratio / max(1, chapter_count))))
 
 
 def _select_chapters_for_music_limit(

@@ -922,7 +922,10 @@ def test_assembly_preserves_auto_language_and_duration_budget(tmp_path) -> None:
     writer_prompts = [call["prompt"] for call in llm.calls if call["output_type"] is RadioScript]
     assert writer_prompts
     assert all("output language zh-CN" in prompt for prompt in writer_prompts)
-    assert all("Target narration duration seconds: 22" in prompt for prompt in writer_prompts)
+    assert all(
+        f"Target narration duration seconds: {budget.target_narration_seconds}" in prompt
+        for prompt, budget in zip(writer_prompts, result.timing_plan.chapter_budgets, strict=True)
+    )
     assert result.duration_summary.narration_seconds >= 0
 
 

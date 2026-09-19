@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 from wavecast.intelligence.models import (
@@ -27,6 +28,12 @@ class PlaybackAssetProvider(Protocol):
     async def get_playback_asset(self, resolved_track: ResolvedTrack) -> AudioAsset: ...
 
 
+@dataclass(frozen=True)
+class PreparedMusicAsset:
+    track: ResolvedTrack
+    asset: AudioAsset
+
+
 class EpisodeComposer:
     """Compose an ordered timeline without allowing proposals into playback."""
 
@@ -38,19 +45,40 @@ class EpisodeComposer:
         tracks: Sequence[ResolvedTrack | ResolvedTrackCandidate | None],
         script: RadioScript | NarrationScript | Sequence[RadioScriptBlock],
     ) -> PlayableEpisode:
-        blocks = _script_blocks(script)
-        resolved_assets: list[tuple[ResolvedTrack, AudioAsset]] = []
+        prepared_tracks = await self.prepare_tracks(tracks)
+        return self.compose_prepared(prepared_tracks, script)
+
+    async def prepare_tracks(
+        self,
+        tracks: Sequence[ResolvedTrack | ResolvedTrackCandidate | None],
+    ) -> list[PreparedMusicAsset | None]:
+        """Resolve each playable track to exactly one provider asset."""
+
+        prepared: list[PreparedMusicAsset | None] = []
         for candidate in tracks:
             if candidate is None:
-                # A narrative-only chapter is legal.  It contributes no music
-                # asset; its unindexed script blocks remain in the timeline.
+                prepared.append(None)
                 continue
             resolved = _resolved_identity(candidate)
             asset = await self.music_provider.get_playback_asset(resolved)
             if asset.asset_type is not AudioAssetType.MUSIC:
                 raise ValueError("music provider returned a non-music asset")
-            resolved_assets.append((resolved, asset))
+            prepared.append(PreparedMusicAsset(track=resolved, asset=asset))
+        return prepared
 
+    def compose_prepared(
+        self,
+        prepared_tracks: Sequence[PreparedMusicAsset | None],
+        script: RadioScript | NarrationScript | Sequence[RadioScriptBlock],
+    ) -> PlayableEpisode:
+        """Compose from already prepared assets without another provider fetch."""
+
+        blocks = _script_blocks(script)
+        resolved_assets = [
+            (item.track, item.asset)
+            for item in prepared_tracks
+            if item is not None
+        ]
         segments: list[MusicSegment | NarrationSegment] = []
         order = 0
         used_blocks: set[int] = set()
