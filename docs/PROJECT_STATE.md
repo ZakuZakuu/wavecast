@@ -12,13 +12,15 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 ## Current milestone and main state
 
 - **Current milestone:** Phase 5.1 — Discovery & Editorial Quality.
-- **Current stage:** documentation recovery is followed by a read-only codebase
-  audit and evaluation PLAN; implementation has not started.
-- **Canonical main:** `f89a6e0ca0dc6ebd9190ff91af226bfd9ab561b4` (merged PR #27,
-  documentation closeout).
-- **Latest code milestone:** `b1ca70880150149623016babcf7650719e15bf10` (merged PR #26,
+- **Current stage:** Phase 5.1A evaluation foundation and typed route-contract
+  implementation are proceeding from the approved read-only audit PLAN.
+- **Canonical main:** origin/main; verify the remote HEAD before acting.
+- **Last documented recovery baseline:** 8650c1de709ecf9231e049e0744968def401f7d6
+  (merged PR #28).
+- **Latest code milestone:** b1ca70880150149623016babcf7650719e15bf10 (merged PR #26,
   completing Phase 4.8.3 program timing).
-- **Immediate work:** complete the read-only Phase 5.1 codebase audit and evaluation PLAN for the four fixed benchmarks; implementation has not started and live/paid providers remain disabled.
+- **Immediate work:** implement the credential-free Phase 5.1 evaluation foundation,
+  then the typed local editorial route contract; live/paid providers remain disabled.
 
 ## Completed implementation
 
