@@ -57,6 +57,7 @@ export type LiveEpisode = {
   is_playing: boolean;
   program_estimated_duration_seconds: number;
   generated_frontier_seconds: number;
+  buffer_ahead_seconds: number;
   committed_frontier_seconds: number;
   timeline_duration_seconds: number;
 };

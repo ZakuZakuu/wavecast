@@ -13,6 +13,11 @@ def test_mock_vertical_slice_from_seed_to_materialized_resumeable_episode() -> N
     episode = created.json()
     episode_id = episode["id"]
     assert episode["generated_frontier_seconds"] == 22
+    assert episode["buffer_ahead_seconds"] == 22
+
+    seeked = client.post(f"/api/episodes/{episode_id}/seek", json={"position_seconds": 10})
+    assert seeked.status_code == 200
+    assert seeked.json()["buffer_ahead_seconds"] == 12
 
     assert (
         client.post(f"/api/episodes/{episode_id}/seek", json={"position_seconds": 10}).status_code
