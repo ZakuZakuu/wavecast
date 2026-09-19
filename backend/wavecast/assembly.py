@@ -354,12 +354,17 @@ class LiveEpisodeAssemblyService:
                 )
             )
         music_index = 0
+        diagnostic_connections = _resolved_route_connections(resolved_chapters)
         indexed_chapters: list[_ResolvedChapter] = []
-        for item in resolved_chapters:
+        for index, item in enumerate(resolved_chapters):
             indexed_chapters.append(
                 _ResolvedChapter(
                     chapter=item.chapter,
-                    writer_chapter=item.writer_chapter,
+                    writer_chapter=item.writer_chapter.model_copy(
+                        update={
+                            "connection_from_previous_track": diagnostic_connections[index],
+                        }
+                    ),
                     track=item.track,
                     music_index=music_index if item.track is not None else None,
                 )
@@ -437,7 +442,8 @@ class LiveEpisodeAssemblyService:
                 chapter_music_indices=[item.music_index for item in resolved_chapters],
                 slot_contexts=slot_contexts,
                 chapter_connections=[
-                    item.chapter.connection_from_previous_track for item in resolved_chapters
+                    item.writer_chapter.connection_from_previous_track
+                    for item in resolved_chapters
                 ],
             )
         except NarrationPlacementError as error:
@@ -680,6 +686,27 @@ def _research_failure_snapshot(
     }
 
 
+
+
+def _resolved_route_connections(
+    chapters: list[_ResolvedChapter],
+) -> list[EditorialConnection | None]:
+    """Keep only selected-route connections that remain playable-route adjacency.
+
+    Resolution may remove an intermediate selected track.  We clear stale
+    metadata instead of inventing a new relation between surviving tracks.
+    """
+
+    connections: list[EditorialConnection | None] = []
+    previous_selected_track_resolved = False
+    for item in chapters:
+        connection: EditorialConnection | None = None
+        if item.chapter.track is not None:
+            if item.track is not None and previous_selected_track_resolved:
+                connection = item.chapter.connection_from_previous_track
+            previous_selected_track_resolved = item.track is not None
+        connections.append(connection)
+    return connections
 
 
 def _select_chapters_for_music_limit(

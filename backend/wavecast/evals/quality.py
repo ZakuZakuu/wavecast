@@ -269,18 +269,20 @@ def build_phase51_evaluation(
         connection_status: Literal["pass", "fail", "not_observed"] = "not_observed"
         connection_summary = "No pair of playable tracks was available for route metadata."
     elif connection_observed_count == 0:
-        connection_status = "not_observed"
-        connection_summary = "No typed route connection metadata was present."
+        connection_status = "fail"
+        connection_summary = (
+            f"Expected {connection_expected_count} selected-track connections, observed none."
+        )
     elif connection_observed_count == connection_expected_count:
         connection_status = "pass"
         connection_summary = (
-            f"Observed typed connections for all {connection_expected_count} playable-track moves."
+            f"Observed typed connections for all {connection_expected_count} selected-track moves."
         )
     else:
         connection_status = "fail"
         connection_summary = (
             f"Observed {connection_observed_count} of {connection_expected_count} "
-            "playable-track connections."
+            "selected-track connections."
         )
 
     human_review = [
