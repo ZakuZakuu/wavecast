@@ -66,6 +66,42 @@ def test_failure_report_classifies_curator_provider_failures(
     assert report["reason_code"] == reason_code
 
 
+def test_live_probe_forwards_bounded_duration_and_capacity() -> None:
+    arguments = Namespace(
+        topic="fixture topic",
+        anchor=["Artist - Track"],
+        desired_duration_seconds=1200,
+        max_tracks=5,
+        max_chapters=8,
+    )
+
+    request = live_episode_probe._assembly_request(arguments)
+
+    assert request.topic == "fixture topic"
+    assert request.anchor_tracks == ["Artist - Track"]
+    assert request.desired_duration_seconds == 1200
+    assert request.max_tracks == 5
+    assert request.max_chapters == 8
+
+
+def test_live_probe_rejects_non_positive_duration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "live_episode_probe.py",
+            "--run-live",
+            "--topic",
+            "fixture topic",
+            "--desired-duration-seconds",
+            "0",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        live_episode_probe.parse_args()
+
+
 def test_invalid_novelty_curve_is_classified_without_provider_text() -> None:
     valid = ProgramSkeleton(
         thesis="fixture",
