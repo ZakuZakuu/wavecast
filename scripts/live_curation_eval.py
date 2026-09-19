@@ -46,6 +46,13 @@ def parse_args() -> argparse.Namespace:
     arguments = parser.parse_args()
     if arguments.case and len(arguments.case) > MAX_CASES:
         parser.error(f"at most {MAX_CASES} cases are allowed")
+    suite_cases = PHASE51_EDITORIAL_CASES if arguments.suite == "phase51" else GUIDED_DISCOVERY_CASES
+    suite_case_ids = {case.case_id for case in suite_cases}
+    invalid_cases = sorted(set(arguments.case or []) - suite_case_ids)
+    if invalid_cases:
+        parser.error(
+            f"case(s) {', '.join(invalid_cases)} do not belong to suite {arguments.suite}"
+        )
     return arguments
 
 

@@ -75,7 +75,7 @@ def test_biography_allows_same_artist_route() -> None:
 
 
 def test_b2_reports_missing_musiq_bridge() -> None:
-    case, plan, skeleton = _artifact(1, ["Anchor Artist"])
+    case, plan, skeleton = _artifact(1, ["Anchor Artist", "Third Artist", "Fourth Artist"])
     evaluation = build_phase51_evaluation(case, plan, skeleton)
     check = next(
         item for item in evaluation.hard_checks
@@ -83,3 +83,27 @@ def test_b2_reports_missing_musiq_bridge() -> None:
     )
     assert check.status == "fail"
     assert "Musiq Soulchild" in check.summary
+
+
+
+def test_b2_requires_minimum_distinct_artists_in_addition_to_musiq() -> None:
+    case, plan, skeleton = _artifact(1, ["Anchor Artist", "Musiq Soulchild"])
+    evaluation = build_phase51_evaluation(case, plan, skeleton)
+    check = next(
+        item for item in evaluation.hard_checks
+        if item.name == "benchmark_route_obligation"
+    )
+    assert check.status == "fail"
+    assert "at least 3 distinct artists" in check.summary
+
+
+def test_b2_passes_when_both_route_obligations_are_met() -> None:
+    case, plan, skeleton = _artifact(
+        1, ["Anchor Artist", "Musiq Soulchild", "Third Artist"]
+    )
+    evaluation = build_phase51_evaluation(case, plan, skeleton)
+    check = next(
+        item for item in evaluation.hard_checks
+        if item.name == "benchmark_route_obligation"
+    )
+    assert check.status == "pass"

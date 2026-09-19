@@ -207,16 +207,25 @@ def build_phase51_evaluation(
         if normalized not in set(artists)
     ]
     route_status: Literal["pass", "fail", "not_observed"]
+    route_obligations: list[str] = []
+    route_failed = False
     if required:
-        route_status = "fail" if missing else "pass"
-        route_summary = (
-            f"Missing required route artist(s): {', '.join(missing)}"
-            if missing
-            else "All benchmark-specific route artists are present."
+        if missing:
+            route_failed = True
+            route_obligations.append(
+                f"Missing required route artist(s): {', '.join(missing)}"
+            )
+        else:
+            route_obligations.append("All benchmark-specific route artists are present.")
+    if case.minimum_distinct_artists is not None:
+        if distinct_artists < case.minimum_distinct_artists:
+            route_failed = True
+        route_obligations.append(
+            f"Expected at least {case.minimum_distinct_artists} distinct artists; observed {distinct_artists}."
         )
-    elif case.minimum_distinct_artists is not None:
-        route_status = "fail" if distinct_artists < case.minimum_distinct_artists else "pass"
-        route_summary = f"Expected at least {case.minimum_distinct_artists} distinct artists; observed {distinct_artists}."
+    if route_obligations:
+        route_status = "fail" if route_failed else "pass"
+        route_summary = " ".join(route_obligations)
     else:
         route_status = "not_observed"
         route_summary = "No benchmark-specific artist route obligation is defined."
