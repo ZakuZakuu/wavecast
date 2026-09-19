@@ -145,6 +145,21 @@ def test_partial_future_chapter_is_completed_before_seconds_cutoff(
     assert buffered.segment("segment-narration-2").state is SegmentState.PLANNED
 
 
+def test_partial_current_chapter_is_completed_before_seconds_cutoff(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    episode = runtime.start(seed)
+    runtime._make_ready(episode.segment("segment-narration-1"))
+    runtime.commit_segment(episode.id, "segment-narration-1")
+
+    buffered = runtime.ensure_buffer(
+        episode.id, target_chapters=2, target_ahead_seconds=5
+    )
+
+    assert buffered.segment("segment-bridge").is_audio_ready
+    assert buffered.segment("segment-narration-2").state is SegmentState.PLANNED
+
+
 def test_replan_preserves_committed_content(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:

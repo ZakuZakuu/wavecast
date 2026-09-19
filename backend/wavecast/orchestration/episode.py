@@ -144,7 +144,7 @@ class EpisodeOrchestrator:
         if episode.state is EpisodeState.MATERIALIZED:
             return episode
         while True:
-            partial_chapter_id = self._next_partial_future_chapter_id(episode)
+            partial_chapter_id = self._next_partial_chapter_id(episode)
             if partial_chapter_id is not None:
                 self._materialize_chapter(episode, partial_chapter_id)
                 continue
@@ -462,16 +462,16 @@ class EpisodeOrchestrator:
         )
 
     @staticmethod
-    def _next_partial_future_chapter_id(episode: LiveEpisode) -> str | None:
+    def _next_partial_chapter_id(episode: LiveEpisode) -> str | None:
         current = EpisodeOrchestrator._current_segment(episode)
         if current is None:
             return None
-        future_chapter_ids: list[str] = []
+        chapter_ids: list[str] = []
         for segment in episode.timeline_segments:
-            if segment.order > current.order and segment.chapter_id != current.chapter_id:
-                if segment.chapter_id not in future_chapter_ids:
-                    future_chapter_ids.append(segment.chapter_id)
-        for chapter_id in future_chapter_ids:
+            if segment.chapter_id == current.chapter_id or segment.order > current.order:
+                if segment.chapter_id not in chapter_ids:
+                    chapter_ids.append(segment.chapter_id)
+        for chapter_id in chapter_ids:
             chapter_segments = [
                 segment
                 for segment in episode.timeline_segments
