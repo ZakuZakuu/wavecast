@@ -2,11 +2,17 @@ from typing import Protocol
 
 from wavecast.models.episode import LiveEpisode
 
-from .episode import EpisodeOrchestrator
+from .episode import DEFAULT_BUFFER_AHEAD_SECONDS, EpisodeOrchestrator
 
 
 class GenerationScheduler(Protocol):
-    def ensure_buffer(self, episode_id: str, *, target_chapters: int = 2) -> LiveEpisode: ...
+    def ensure_buffer(
+        self,
+        episode_id: str,
+        *,
+        target_chapters: int = 2,
+        target_ahead_seconds: int = DEFAULT_BUFFER_AHEAD_SECONDS,
+    ) -> LiveEpisode: ...
 
 
 class InlineGenerationScheduler:
@@ -15,5 +21,15 @@ class InlineGenerationScheduler:
     def __init__(self, orchestrator: EpisodeOrchestrator) -> None:
         self.orchestrator = orchestrator
 
-    def ensure_buffer(self, episode_id: str, *, target_chapters: int = 2) -> LiveEpisode:
-        return self.orchestrator.ensure_buffer(episode_id, target_chapters=target_chapters)
+    def ensure_buffer(
+        self,
+        episode_id: str,
+        *,
+        target_chapters: int = 2,
+        target_ahead_seconds: int = DEFAULT_BUFFER_AHEAD_SECONDS,
+    ) -> LiveEpisode:
+        return self.orchestrator.ensure_buffer(
+            episode_id,
+            target_chapters=target_chapters,
+            target_ahead_seconds=target_ahead_seconds,
+        )

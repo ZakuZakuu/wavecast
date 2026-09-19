@@ -182,6 +182,12 @@ class LiveEpisode(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def buffer_ahead_seconds(self) -> int:
+        """Return the generated audio that remains ahead of the browser position."""
+        return max(0, self.generated_frontier_seconds - self.playback_position_seconds)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def committed_frontier_seconds(self) -> int:
         total = 0
         for segment in self.timeline_segments:

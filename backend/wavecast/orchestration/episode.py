@@ -24,6 +24,7 @@ from wavecast.storage.episodes import (
 
 SESSION_TTL = timedelta(seconds=30)
 DEFAULT_BUFFER_CHAPTERS = 2
+DEFAULT_BUFFER_AHEAD_SECONDS = 5 * 60
 
 
 class EpisodeRuntimeError(ValueError):
@@ -132,21 +133,24 @@ class EpisodeOrchestrator:
         episode_id: str,
         *,
         target_chapters: int = DEFAULT_BUFFER_CHAPTERS,
+        target_ahead_seconds: int = DEFAULT_BUFFER_AHEAD_SECONDS,
     ) -> LiveEpisode:
-        """Materialize only enough contiguous future chapters for safe playback."""
+        """Materialize complete future chapters until either buffer target is met."""
         if target_chapters not in {1, 2}:
             raise EpisodeRuntimeError("target buffer must be one or two chapters")
+        if target_ahead_seconds <= 0:
+            raise EpisodeRuntimeError("target buffer seconds must be positive")
         episode = self._active_episode(episode_id)
         if episode.state is EpisodeState.MATERIALIZED:
             return episode
-        while self._ready_future_chapter_count(episode) < target_chapters:
-            next_segment = next(
-                (segment for segment in episode.timeline_segments if not segment.is_audio_ready),
-                None,
-            )
-            if next_segment is None:
+        while (
+            self._ready_future_chapter_count(episode) < target_chapters
+            and episode.buffer_ahead_seconds < target_ahead_seconds
+        ):
+            next_chapter_id = self._next_future_chapter_id(episode)
+            if next_chapter_id is None:
                 break
-            self._make_ready(next_segment)
+            self._materialize_chapter(episode, next_chapter_id)
         self._start_ready_successor(episode)
         episode.last_activity_at = self.now()
         return self.repository.save(episode)
@@ -451,6 +455,22 @@ class EpisodeOrchestrator:
             )
             for chapter_id in chapter_ids
         )
+
+    @staticmethod
+    def _next_future_chapter_id(episode: LiveEpisode) -> str | None:
+        current = EpisodeOrchestrator._current_segment(episode)
+        if current is None:
+            return None
+        for segment in episode.timeline_segments:
+            if segment.order > current.order and not segment.is_audio_ready:
+                return segment.chapter_id
+        return None
+
+    def _materialize_chapter(self, episode: LiveEpisode, chapter_id: str) -> None:
+        """Make every segment in one chapter ready before checking the buffer."""
+        for segment in episode.timeline_segments:
+            if segment.chapter_id == chapter_id and not segment.is_audio_ready:
+                self._make_ready(segment)
 
     def _future_segments(self) -> list[MusicSegment | NarrationSegment]:
         def music(

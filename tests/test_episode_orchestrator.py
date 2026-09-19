@@ -40,6 +40,7 @@ def test_opening_track_is_ready_immediately_and_future_advances_one_segment(
     episode = runtime.start(seed)
     assert episode.state is EpisodeState.STREAMING
     assert episode.generated_frontier_seconds == 22
+    assert episode.buffer_ahead_seconds == 22
     assert episode.ordered_segments[0].is_audio_ready
     assert episode.ordered_segments[1].state is SegmentState.PLANNED
 
@@ -88,6 +89,46 @@ def test_seek_cannot_cross_generated_frontier(
 
     with pytest.raises(EpisodeRuntimeError, match="generated frontier"):
         runtime.seek(episode.id, 23)
+
+
+def test_buffer_ahead_tracks_generated_frontier_minus_browser_position(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    episode = runtime.start(seed)
+    runtime.ensure_buffer(episode.id, target_chapters=1)
+
+    checkpointed = runtime.checkpoint_playback(episode.id, 9)
+
+    assert checkpointed.buffer_ahead_seconds == (
+        checkpointed.generated_frontier_seconds - checkpointed.playback_position_seconds
+    )
+
+
+def test_seconds_target_stops_after_one_long_chapter_without_partial_materialization(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    episode = runtime.start(seed)
+
+    buffered = runtime.ensure_buffer(
+        episode.id, target_chapters=2, target_ahead_seconds=30
+    )
+
+    assert buffered.buffer_ahead_seconds >= 30
+    assert buffered.segment("segment-narration-1").is_audio_ready
+    assert buffered.segment("segment-bridge").is_audio_ready
+    assert buffered.segment("segment-narration-2").state is SegmentState.PLANNED
+    assert buffered.segment("segment-resolution").state is SegmentState.PLANNED
+
+
+def test_short_chapters_still_reach_the_two_chapter_target(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    episode = runtime.start(seed)
+
+    buffered = runtime.ensure_buffer(episode.id)
+
+    assert buffered.segment("segment-resolution").is_audio_ready
+    assert buffered.segment("segment-narration-3").state is SegmentState.PLANNED
 
 
 def test_replan_preserves_committed_content(

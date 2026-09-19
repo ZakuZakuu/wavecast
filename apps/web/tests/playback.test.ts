@@ -6,7 +6,7 @@ import type { LiveEpisode } from "../lib/types";
 const episode: LiveEpisode = {
   id: "episode", seed_id: "seed", listener_id: "listener", version: 1, state: "STREAMING", generation_mode: "PROGRESSIVE", current_segment_id: "opening",
   playback_position_seconds: 0, is_listener_active: true, is_playing: true,
-  program_estimated_duration_seconds: 30 * 60, generated_frontier_seconds: 22,
+  program_estimated_duration_seconds: 30 * 60, generated_frontier_seconds: 22, buffer_ahead_seconds: 22,
   committed_frontier_seconds: 0, timeline_duration_seconds: 58,
   segments: [
     { id: "opening", chapter_id: "one", order: 0, kind: "MUSIC", state: "AUDIO_READY", planned_duration_seconds: 22, actual_duration_seconds: 22, audio_source_url: "/api/audio/mock/music/mock%3Aopening?duration=22", duration_seconds: 22, track_ref: "mock:opening", title: "Opening", artist: "Artist", narration_text: null, asset_ref: null },
