@@ -1,6 +1,15 @@
 """Credential-free Guided Discovery evaluation contracts and benchmark fixtures."""
 
 from .fixtures import GUIDED_DISCOVERY_CASES, PHASE51_EDITORIAL_CASES
+from .listening import (
+    DurationMetrics,
+    ListeningEvaluation,
+    PacingMetrics,
+    PacingWindow,
+    RouteSurvivalMetrics,
+    WriterContinuityMetrics,
+    build_listening_evaluation,
+)
 from .quality import (
     PHASE51_RUBRIC,
     GuidedDiscoveryCase,
@@ -24,6 +33,13 @@ from .retrieval import (
 
 __all__ = [
     "GUIDED_DISCOVERY_CASES",
+    "DurationMetrics",
+    "ListeningEvaluation",
+    "PacingMetrics",
+    "PacingWindow",
+    "RouteSurvivalMetrics",
+    "WriterContinuityMetrics",
+    "build_listening_evaluation",
     "PHASE51_EDITORIAL_CASES",
     "GuidedDiscoveryCase",
     "GuidedDiscoveryReview",
