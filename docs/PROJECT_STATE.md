@@ -13,7 +13,9 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 - **Current milestone:** Phase 4.8 complete; the next product/engineering
   milestone has not yet been selected.
-- **Main:** `b1ca70880150149623016babcf7650719e15bf10` (merged PR #26,
+- **Canonical main:** `f89a6e0ca0dc6ebd9190ff91af226bfd9ab561b4` (merged PR #27,
+  documentation closeout).
+- **Latest code milestone:** `b1ca70880150149623016babcf7650719e15bf10` (merged PR #26,
   completing Phase 4.8.3 program timing).
 - **Immediate work:** none is selected. Phase 4.8.3 implementation and its
   credential-free validation are complete; live/paid probes remain disabled.
@@ -77,9 +79,11 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
   to transitions, adjacency, editorial framing, or explicit uncertainty.
   Failed assembly keeps a sanitized pre-Curator research snapshot and usage
   ledger for diagnosis.
-- **Phase 4.8.2 complete (PR #24):** the single authorized low-reasoning
-  Fujii Kaze probe passed readiness, bounded research, Curator policy,
-  4/6 chapter-track bounds, 3 resolved tracks, and zero unresolved tracks.
+- **Phase 4.8.2 implementation complete (PR #24):** the single authorized
+  low-reasoning Fujii Kaze probe passed readiness, bounded research, Curator
+  policy, 4/6 chapter-track bounds, 3 resolved tracks, and zero unresolved
+  tracks. Historical follow-up probe failures below describe benchmark/content
+  quality outcomes and do not roll back the implementation-complete status.
 - Safe metrics: Curator 35.713s with 11,553 input / 8,180 output /
   4,807 reasoning tokens; output cap was not touched; Writer was 8/8/8
   parsed/normalized/final blocks and all 11 timeline segments were AUDIO_READY.
@@ -167,9 +171,10 @@ outer failure was `EpisodeAssemblyError` with an underlying
 `ProviderInvalidResponseError`; the then-current diagnostics could not
 distinguish a structured-schema rejection from an application-level Curator
 contract rejection. The exact Curator rule is not known from the retained safe
-report. Phase 4.8.2 acceptance is therefore **not complete**; this
-4.8.2.1 work adds that distinction and preserves safe pre-Curator evidence and
-usage for any future review.
+report. This historical run did not establish content-quality benchmark
+acceptance;
+4.8.2.1 then added the required distinction and preserved safe pre-Curator
+evidence and usage for future review.
 
 ## Post-PR #20 Fujii Kaze regression (sanitized)
 
@@ -190,7 +195,8 @@ both anchor preflights passed. The bounded search stages completed, but
 assembly timed out at the Curator boundary with `ProviderTimeoutError`,
 mapped to `provider_timeout`. No automatic retry was performed, and no raw
 prompt, provider response, hidden reasoning, credential, or signed URL was
-retained. Phase 4.8.2 acceptance remains incomplete.
+retained. The historical benchmark acceptance remained incomplete; this does not
+roll back the implementation-complete status recorded above.
 
 ## Phase 4.8.2 deadline repair (merged in PR #22)
 
@@ -214,11 +220,12 @@ The live probe did not expose its existing `max_chapters` request bound,
 so this benchmark used the application default of 16 chapters instead of the
 intended 6-chapter biography benchmark bound. No retry was performed; no raw
 prompt, provider response, hidden reasoning, credential, signed URL, or full
-research content was retained. Phase 4.8.2 acceptance remains incomplete.
+research content was retained. The historical benchmark acceptance remained incomplete; this does not
+roll back the implementation-complete status recorded above.
 
-## Current Phase 4.8.2 benchmark repair (sanitized)
+## Phase 4.8.2 benchmark-bound repair (historical, sanitized)
 
-The next small change adds `--max-chapters` to the live probe, forwards it
+The repair added `--max-chapters` to the live probe, forwarded it
 to `LiveEpisodeAssemblyRequest`, keeps its default at the application
 default of 16, and fixes this benchmark at `max_tracks=4` /
 `max_chapters=6`. It does not change the production default, token cap,
@@ -234,12 +241,12 @@ and both anchors passed; bounded background research completed. Curator still
 reached the configured output boundary with `ProviderOutputLimitError`
 and `provider_output_limit` (safe output usage was 12,285 of 12,288).
 No retry was performed, and no raw prompt, provider response, hidden reasoning,
-credential, signed URL, or full research content was retained. Phase 4.8.2
-acceptance remains incomplete.
+credential, signed URL, or full research content was retained. The historical benchmark acceptance remained incomplete; this does not
+roll back the implementation-complete status recorded above.
 
-## Current Phase 4.8.2 Curator policy repair (sanitized)
+## Phase 4.8.2 Curator policy repair (historical, sanitized)
 
-The next small change introduces `InferenceProfile.CURATOR`, preserving
+The repair introduced `InferenceProfile.CURATOR`, preserving
 the deep timeout, 12,288-token cap, transport, and bounded attempts while using
 low reasoning effort. Only Curator switches to this profile; general
 `InferenceProfile.DEEP`, FastStart, ResearchPlanner, Writer, grounding
@@ -262,11 +269,30 @@ credentials, or signed playback URLs.
   [ADR 0009](adr/0009-adaptive-research-planning.md) for adaptive research and
   [ADR 0011](adr/0011-deterministic-narration-slot-context.md) for the prior
   editorial-slot phase
-- Recent milestones: [PR #10](https://github.com/ZakuZakuu/wavecast/pull/10),
-  [PR #11](https://github.com/ZakuZakuu/wavecast/pull/11),
-  [PR #13](https://github.com/ZakuZakuu/wavecast/pull/13),
-  [PR #14](https://github.com/ZakuZakuu/wavecast/pull/14),
-  [PR #15](https://github.com/ZakuZakuu/wavecast/pull/15)
+- Recent milestones: [PR #20](https://github.com/ZakuZakuu/wavecast/pull/20),
+  [PR #21](https://github.com/ZakuZakuu/wavecast/pull/21),
+  [PR #22](https://github.com/ZakuZakuu/wavecast/pull/22),
+  [PR #23](https://github.com/ZakuZakuu/wavecast/pull/23),
+  [PR #24](https://github.com/ZakuZakuu/wavecast/pull/24),
+  [PR #25](https://github.com/ZakuZakuu/wavecast/pull/25),
+  [PR #26](https://github.com/ZakuZakuu/wavecast/pull/26),
+  [PR #27](https://github.com/ZakuZakuu/wavecast/pull/27). Earlier milestones
+  remain available in Git history and the preceding project-state entries.
+- Timing decision: [ADR 0012](adr/0012-deterministic-program-timing.md).
+
+## Session handoff and recovery
+
+This file is the current execution snapshot; `CODEX_HANDOFF.md` is the
+long-lived product and architecture contract. A new Codex session should read
+`AGENTS.md`, this file, `CODEX_HANDOFF.md`, and the relevant ADRs before acting.
+
+The PR Loop state under the user-level `~/.codex/pr-loop/wavecast/` directory
+contains PR metadata, exact HEADs, tests, CI, review SHAs, and merge state. It
+is not the ChatGPT conversation state. If a long ChatGPT conversation must be
+replaced, use the original `codex-with-chatgpt` HANDOFF flow and re-confirm the
+current PR HEAD; never treat an old review as valid for a changed SHA. Do not
+reset, stash, or overwrite a dirty checkout merely to synchronize it. Create a
+clean worktree from canonical `origin/main` instead.
 
 Credential-free validation:
 
