@@ -68,7 +68,11 @@ class EditorialRelationType(StrEnum):
 
 
 class EditorialConnection(BaseModel):
-    """A grounded editorial explanation for one playable route transition."""
+    """A pre-resolution explanation between selected track-bearing chapters.
+
+    This relation describes Curator selection order; assembly may clear it when
+    catalog resolution changes the playable route.
+    """
 
     model_config = ConfigDict(extra="forbid")
 

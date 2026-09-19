@@ -156,3 +156,13 @@ def test_phase51_marks_partial_route_connection_metadata_as_failed() -> None:
     check = next(item for item in evaluation.hard_checks if item.name == "route_connection_metadata")
     assert check.status == "fail"
     assert evaluation.diagnostics.connection_coverage == 0.5
+
+
+def test_phase51_zero_route_connection_coverage_is_a_failure() -> None:
+    case, plan, skeleton = _artifact(1, ["Anchor Artist", "Musiq Soulchild", "Third Artist"])
+    evaluation = build_phase51_evaluation(case, plan, skeleton)
+    check = next(item for item in evaluation.hard_checks if item.name == "route_connection_metadata")
+    assert check.status == "fail"
+    assert evaluation.diagnostics.connection_expected_count == 2
+    assert evaluation.diagnostics.connection_observed_count == 0
+    assert evaluation.diagnostics.connection_coverage == 0
