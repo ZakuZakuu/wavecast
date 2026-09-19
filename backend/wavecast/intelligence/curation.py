@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
@@ -51,6 +52,7 @@ class CuratorService:
         trace: GenerationTrace | None = None,
     ) -> ProgramSkeleton:
         committed = committed_chapters or []
+        research_context, fast_context = _build_curator_context(bundle, fast_plan)
         prompt = (
             "Sequence a deliberate chapter-ordered response to the listener's actual topic "
             "from normalized research, the FastStart plan, and the ResearchPlan. This may be a "
@@ -90,10 +92,9 @@ class CuratorService:
             "a single-artist deep dive, later bridge/discovery chapters should introduce new "
             "artists or scenes only when they answer the topic. Use each chapter reason as a concise "
             "topic-specific rationale.\n"
-            f"Research: {bundle.model_dump_json()}\n"
-            f"Fast plan: {fast_plan.model_dump_json()}\n"
-            f"Research plan: {fast_plan.research_plan.model_dump_json()}\n"
-            f"Committed: {[item.model_dump() for item in committed]}\n"
+            f"Research context: {_compact_json(research_context)}\n"
+            f"FastStart context: {_compact_json(fast_context)}\n"
+            f"Committed: {_compact_json([item.model_dump(mode='json') for item in committed])}\n"
             f"Duration: {desired_duration_seconds}\n"
             f"Output language: {resolve_output_language(output_language, topic).value}"
         )
@@ -113,6 +114,52 @@ class CuratorService:
         _validate_curator_contract(normalized, bundle)
         normalized = _restore_committed_prefix(normalized, committed)
         return ensure_distance_curve(normalized)
+
+
+def _build_curator_context(
+    bundle: ResearchBundle,
+    fast_plan: FastStartPlan,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Keep Curator context complete while avoiding duplicated payloads.
+
+    ResearchPlan used to appear once through each of ResearchBundle,
+    FastStartPlan, and an explicit prompt field. The Curator only needs one
+    canonical copy; the first non-empty source is the application-owned one.
+    first_narration is an immediate playback artifact and is intentionally not
+    part of editorial selection context.
+    """
+
+    research_plan = bundle.research_plan or fast_plan.research_plan
+    research_context = {
+        "anchors": bundle.anchors,
+        "taste_hypotheses": [
+            item.model_dump(mode="json") for item in bundle.taste_hypotheses
+        ],
+        "evidence": [item.model_dump(mode="json") for item in bundle.evidence],
+        "candidates": [item.model_dump(mode="json") for item in bundle.candidates],
+        "research_plan": research_plan.model_dump(mode="json") if research_plan else None,
+        "uncertainties": bundle.uncertainties,
+    }
+    fast_context = {
+        "anchor_understanding": fast_plan.anchor_understanding,
+        "immediate_taste_hypotheses": [
+            item.model_dump(mode="json") for item in fast_plan.immediate_taste_hypotheses
+        ],
+        "next_candidates": [
+            item.model_dump(mode="json") for item in fast_plan.next_candidates
+        ],
+        "selected_next_track": (
+            fast_plan.selected_next_track.model_dump(mode="json")
+            if fast_plan.selected_next_track
+            else None
+        ),
+        "uncertainties": fast_plan.uncertainties,
+    }
+    return research_context, fast_context
+
+
+def _compact_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def normalize_curator_skeleton(

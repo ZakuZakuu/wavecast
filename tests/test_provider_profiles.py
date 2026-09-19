@@ -47,7 +47,7 @@ def test_balanced_and_deep_profiles_keep_background_retry_and_reasoning_separate
     assert deep.max_output_tokens == 12288
     assert deep.max_attempts == 2
     assert deep.timeout_seconds == 45
-    assert curator.reasoning_effort == "low"
+    assert curator.reasoning_effort == "none"
     assert curator.max_output_tokens == 12288
     assert curator.max_attempts == 2
     assert curator.timeout_seconds == 45
