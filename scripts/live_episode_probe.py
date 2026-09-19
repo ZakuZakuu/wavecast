@@ -196,6 +196,8 @@ def _report(result) -> dict[str, object]:
         "status": "ok",
         "timings": result.timings.model_dump(),
         "duration": result.duration_summary.model_dump(),
+        "timing_plan": result.timing_plan.model_dump(),
+        "timing_summary": result.timing_summary.model_dump(),
         "fast": {
             "fallback": result.trace.fallback_used,
             "ttfs_ms": result.trace.time_to_first_script_ms,

@@ -75,7 +75,7 @@ class WriterService:
             "Return ordered blocks using only intro, track_intro, transition, or outro. Each "
             "block must be speakable and independently timed. The chapter is a "
             "narrative beat and may have no playable track; do not invent or substitute a song. "
-            "Aim for the allocated narration duration rather than a generic short answer. "
+            "Aim for the allocated narration duration across all blocks returned for this chapter, rather than a generic short answer. "
             "Keep `text` as the listener-visible copy and optionally provide `tts_text` when "
             "spoken pronunciation should differ. For example, display `3rd Coast` but use "
             "`Third Coast` for TTS. Do not use broad regex or dictionary substitutions. "
