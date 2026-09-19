@@ -293,6 +293,7 @@ def test_live_probe_forwards_benchmark_max_chapters(
 ) -> None:
     settings = live_episode_probe.ProviderSettings(mode="live")
     captured_requests: list[object] = []
+    captured_settings: list[live_episode_probe.ProviderSettings] = []
 
     async def passing_preflight(*args: object, **kwargs: object) -> MusicPreflightResult:
         return MusicPreflightResult(ready=True, resolved_anchors=())
@@ -307,7 +308,12 @@ def test_live_probe_forwards_benchmark_max_chapters(
 
     monkeypatch.setattr(live_episode_probe.ProviderSettings, "from_env", lambda: settings)
     monkeypatch.setattr(live_episode_probe, "preflight_music", passing_preflight)
-    monkeypatch.setattr(live_episode_probe, "create_episode_assembly_service", lambda _: FakeAssembly())
+
+    def create(configured: live_episode_probe.ProviderSettings) -> FakeAssembly:
+        captured_settings.append(configured)
+        return FakeAssembly()
+
+    monkeypatch.setattr(live_episode_probe, "create_episode_assembly_service", create)
     monkeypatch.setattr(live_episode_probe, "_report", lambda result: {"status": "ok"})
 
     result = asyncio.run(
@@ -324,5 +330,7 @@ def test_live_probe_forwards_benchmark_max_chapters(
 
     assert result == 0
     assert len(captured_requests) == 1
+    assert len(captured_settings) == 1
+    assert captured_settings[0].max_attempts == 1
     assert captured_requests[0].max_tracks == 4
     assert captured_requests[0].max_chapters == 6
