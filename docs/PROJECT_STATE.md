@@ -11,13 +11,12 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 4.8.3 - Program timing (PR A merged; PR B:
-  buffer-aware generation horizon is in progress; no live/paid probe is authorized).
-- **Main:** `fb8afd34ad17fe9e5f9d589d2d9d13f82ad26fc3` (merged PR #25,
-  deterministic program timing).
-- **Immediate work:** complete PR B's credential-free buffer-aware generation
-  horizon, obtain exact-HEAD ChatGPT review, and merge it only after the local
-  test/CI gate passes. Phase 4.8.3 live probes remain disabled.
+- **Current milestone:** Phase 4.8 complete; the next product/engineering
+  milestone has not yet been selected.
+- **Main:** `b1ca70880150149623016babcf7650719e15bf10` (merged PR #26,
+  completing Phase 4.8.3 program timing).
+- **Immediate work:** none is selected. Phase 4.8.3 implementation and its
+  credential-free validation are complete; live/paid probes remain disabled.
 
 ## Completed implementation
 
@@ -65,9 +64,12 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 - **Phase 4.8.3.1 (merged in PR #25):** deterministic program timing plans
   use resolved music durations, weighted narration budgets, explicit infeasibility
   diagnostics, and planned-versus-actual timing summaries without paid providers.
-- **Phase 4.8.3.2 (in progress):** buffer-aware generation uses the derived
-  `buffer_ahead_seconds` metric and materializes complete future chapters until
-  either the chapter or seconds target is met; no server playback clock is added.
+- **Phase 4.8.3.2 (complete, merged in PR #26):** buffer-aware generation uses
+  the derived `buffer_ahead_seconds` metric and materializes complete future
+  chapters until either the chapter or seconds target is met. Current and
+  future partial chapters are completed atomically before either stop bound;
+  no server playback clock is added. The exact-head review and backend/web CI
+  both passed, with no live/paid provider used.
 - **Phase 4.8.2.1 (merged in PR #20):** Curator provider-schema failures
   are separated from application contract failures with stable reason codes.
   Unknown Curator evidence references are deterministically dropped before
@@ -152,9 +154,9 @@ credentials, hidden reasoning, or signed URLs are kept in the repository.
 2. **4.8.2 - Research quality (complete):** evidence quality, provenance, bounded planning,
    query/facet usefulness, candidate grounding, and uncertainty reporting without
    expanding search budgets.
-3. **4.8.3 - Program timing (current):** improve target-duration adherence, narration
-   pacing/ratio, actual-vs-planned segment durations, and buffer-aware timing
-   without reintroducing a server playback clock.
+3. **4.8.3 - Program timing (complete):** improve target-duration adherence,
+   narration pacing/ratio, actual-vs-planned segment durations, and buffer-aware
+   timing without reintroducing a server playback clock.
 
 ## First Phase 4.8.2 live result (sanitized)
 
