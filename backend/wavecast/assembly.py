@@ -383,6 +383,12 @@ class LiveEpisodeAssemblyService:
             raise EpisodeAssemblyError(
                 f"assembly requires at least two resolved tracks; got {resolved_track_count}",
                 stage="resolution",
+                reason_code="insufficient_resolved_tracks",
+                diagnostics={
+                    "resolved_track_count": resolved_track_count,
+                    "unresolved_track_count": len(unresolved),
+                    "required_resolved_track_count": 2,
+                },
             )
 
         track_inputs = [item.track for item in resolved_chapters if item.track is not None]
