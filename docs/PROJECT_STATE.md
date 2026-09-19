@@ -61,7 +61,7 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
   actual plan, provenance summaries, skeleton metadata, stage usage, and safe
   provider events. No raw prompts, responses, reasoning, credentials, or signed
   URLs are emitted.
-- **Phase 4.8.3.1 (merged in PR #25):** deterministic program timing plans
+- **Phase 4.8.3.1 (complete, merged in PR #25):** deterministic program timing plans
   use resolved music durations, weighted narration budgets, explicit infeasibility
   diagnostics, and planned-versus-actual timing summaries without paid providers.
 - **Phase 4.8.3.2 (complete, merged in PR #26):** buffer-aware generation uses
