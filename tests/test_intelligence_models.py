@@ -5,6 +5,8 @@ import pytest
 from pydantic import ValidationError
 from wavecast.intelligence.models import (
     ChapterPlan,
+    EditorialConnection,
+    EditorialRelationType,
     Evidence,
     FastStartPlan,
     NarrationScript,
@@ -222,3 +224,27 @@ def test_resolved_track_is_accepted_without_a_candidate_wrapper() -> None:
     )
 
     assert segment.track_ref == "mock:opening"
+
+
+def test_editorial_connection_is_typed_and_serializable() -> None:
+    connection = EditorialConnection(
+        relation_type=EditorialRelationType.SCENE_OR_LINEAGE,
+        musical_dimensions=["vocal phrasing", "rhythmic pocket"],
+        rationale="The later track extends the same vocal pocket through a related scene.",
+        evidence_ids=["e1"],
+    )
+    chapter = ChapterPlan(
+        index=1,
+        track=TrackProposal(artist="Current", title="Track", confidence=0.8),
+        connection_from_previous_track=connection,
+        narrative_role=NarrativeRole.BRIDGE,
+        reason="move through a related scene",
+        narration_goal="explain the bridge",
+    )
+
+    payload = chapter.model_dump(mode="json")
+    assert payload["connection_from_previous_track"]["relation_type"] == "scene_or_lineage"
+    assert payload["connection_from_previous_track"]["musical_dimensions"] == [
+        "vocal phrasing",
+        "rhythmic pocket",
+    ]

@@ -19,6 +19,8 @@ from wavecast.intelligence.curation import CuratorService
 from wavecast.intelligence.fast_start import FastPathCoordinator, FastStartPlanner
 from wavecast.intelligence.models import (
     ChapterPlan,
+    EditorialConnection,
+    EditorialRelationType,
     NarrativeRole,
     NoveltyDistance,
     OutputLanguage,
@@ -959,6 +961,14 @@ def test_middle_unresolved_chapter_keeps_narrative_writer_order(tmp_path) -> Non
                         narrative_role=NarrativeRole.ANCHOR,
                         reason="fixture",
                         novelty_distance=item[2],
+                        connection_from_previous_track=(
+                            EditorialConnection(
+                                relation_type=EditorialRelationType.SCENE_OR_LINEAGE,
+                                rationale="fixture selected-route connection",
+                            )
+                            if index > 0
+                            else None
+                        ),
                         narration_goal="fixture",
                     )
                     for index, item in enumerate((known, unknown, surviving))
@@ -996,6 +1006,9 @@ def test_middle_unresolved_chapter_keeps_narrative_writer_order(tmp_path) -> Non
     assert '"index":1' in writer_calls[1]["prompt"]
     assert '"index":2' not in writer_calls[1]["prompt"]
     assert [chapter.index for chapter in result.skeleton.chapters] == [0, 1, 2]
+    assert [
+        chapter.connection_from_previous_track for chapter in result.writer_chapters
+    ] == [None, None, None]
     assert [track.canonical_title for track in result.resolved_tracks] == [
         "Neon First Light",
         "Daybreak in Stereo",
