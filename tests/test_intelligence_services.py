@@ -4,6 +4,10 @@ import pytest
 from wavecast.intelligence.curation import CuratorContractError, CuratorService
 from wavecast.intelligence.models import (
     ChapterPlan,
+    ClaimSupport,
+    ClaimType,
+    EditorialConnection,
+    EditorialRelationType,
     Evidence,
     FastStartPlan,
     NarrationScript,
@@ -11,6 +15,7 @@ from wavecast.intelligence.models import (
     NoveltyDistance,
     ProgramSkeleton,
     ResearchBundle,
+    ResearchPlan,
     ResolvedTrackCandidate,
     TrackCandidate,
 )
@@ -86,7 +91,8 @@ def test_curator_preserves_narrative_distance_curve_without_search_dependency() 
                 query="fixture",
             )
         ],
-        candidates=[],
+        candidates=[candidate("Bundle candidate", NoveltyDistance.CLOSE)],
+        research_plan=ResearchPlan(central_question="Why this route?"),
     )
     fast = FastStartPlan(
         anchor_understanding=["anchor"],
@@ -95,8 +101,30 @@ def test_curator_preserves_narrative_distance_curve_without_search_dependency() 
         first_narration=NarrationScript(text="start", intended_duration_seconds=5),
     )
 
+    committed = skeleton().chapters[0].model_copy(
+        update={
+            "claim_support": [
+                ClaimSupport(
+                    claim_type=ClaimType.FACT,
+                    claim="supported fixture claim",
+                    evidence_ids=["e1"],
+                )
+            ],
+            "connection_from_previous_track": EditorialConnection(
+                relation_type=EditorialRelationType.SHARED_RHYTHMIC_POCKET,
+                musical_dimensions=["groove"],
+                rationale="fixture connection",
+                evidence_ids=["e1"],
+            ),
+        }
+    )
     result = asyncio.run(
-        service.curate(bundle, fast, desired_duration_seconds=1200)
+        service.curate(
+            bundle,
+            fast,
+            desired_duration_seconds=1200,
+            committed_chapters=[committed],
+        )
     )
 
     assert [chapter.novelty_distance for chapter in result.chapters] == [
@@ -111,6 +139,12 @@ def test_curator_preserves_narrative_distance_curve_without_search_dependency() 
     assert "Playback order is exactly chapter order" in fixture.prompts[0]
     assert "very_close keeps the same core sonic identity" in fixture.prompts[0]
     assert "new artists or scenes" in fixture.prompts[0]
+    assert "first_narration" not in fixture.prompts[0]
+    assert fixture.prompts[0].count('"central_question"') == 1
+    assert "Bundle candidate" in fixture.prompts[0]
+    assert '"evidence"' in fixture.prompts[0]
+    assert '"claim_support"' in fixture.prompts[0]
+    assert '"connection_from_previous_track"' in fixture.prompts[0]
 
 
 def test_curator_rejects_invalid_novelty_curve_with_sanitized_values() -> None:
