@@ -83,7 +83,7 @@ def _episode() -> PlayableEpisode:
                 chapter_id="chapter-1",
                 order=3,
                 title="Bridge 1",
-                narration_text="Artist 1 Track 1.",
+                narration_text="崔健的《一无所有》是一首重要作品。",
                 planned_duration_seconds=40,
                 actual_duration_seconds=40,
                 state=SegmentState.AUDIO_READY,
@@ -122,12 +122,12 @@ def _timing() -> ProgramTimingSummary:
 def _writer_chapters() -> list[SimpleNamespace]:
     parsed = RadioScriptBlock(
         kind=RadioScriptBlockKind.TRANSITION,
-        text="Artist 1 Track 1.",
+        text="崔健的《一无所有》是一首重要作品。",
         duration_seconds=40,
     )
     normalized = RadioScriptBlock(
         kind=RadioScriptBlockKind.TRANSITION,
-        text="Artist 1 Track 1.",
+        text="崔健的《一无所有》是一首重要作品。",
         duration_seconds=40,
     )
     other = RadioScriptBlock(
@@ -154,7 +154,7 @@ def test_build_listening_evaluation_reports_route_pacing_duration_and_continuity
         skeleton=_skeleton(),
         resolved_chapter_indices=[0, 2],
         unresolved_chapter_indices=[1],
-        unresolved_track_labels=["Artist 1 Track 1"],
+        unresolved_track_references=[("崔健", "一无所有")],
         episode=_episode(),
         timing_summary=_timing(),
         writer_chapters=_writer_chapters(),
@@ -194,7 +194,7 @@ def test_build_listening_evaluation_reports_route_pacing_duration_and_continuity
     assert evaluation.review_questions == REVIEW_QUESTIONS
 
     serialized = evaluation.model_dump_json()
-    assert "Artist 1 Track 1" not in serialized
+    assert "崔健《一无所有》" not in serialized
 
 
 def test_listening_evaluation_rejects_non_positive_pacing_window() -> None:
@@ -203,7 +203,7 @@ def test_listening_evaluation_rejects_non_positive_pacing_window() -> None:
             skeleton=_skeleton(),
             resolved_chapter_indices=[0, 2],
             unresolved_chapter_indices=[1],
-            unresolved_track_labels=[],
+            unresolved_track_references=[],
             episode=_episode(),
             timing_summary=_timing(),
             writer_chapters=[],

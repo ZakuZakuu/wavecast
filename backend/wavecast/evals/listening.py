@@ -7,6 +7,7 @@ reviewed in Phase 5.2.
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -110,7 +111,7 @@ def build_listening_evaluation(
     skeleton: ProgramSkeleton,
     resolved_chapter_indices: Sequence[int],
     unresolved_chapter_indices: Sequence[int],
-    unresolved_track_labels: Sequence[str],
+    unresolved_track_references: Sequence[tuple[str, str]],
     episode: PlayableEpisode,
     timing_summary: ProgramTimingSummary,
     writer_chapters: Sequence[WriterChapterLike],
@@ -144,12 +145,13 @@ def build_listening_evaluation(
         for segment in episode.segments
         if segment.is_timeline_active
     )
-    unresolved_labels = [label.casefold() for label in unresolved_track_labels]
     mentioned = 0
     for chapter in writer_chapters:
         for block in chapter.parsed_blocks:
-            text = block.text.casefold()
-            mentioned += sum(label in text for label in unresolved_labels)
+            mentioned += sum(
+                _contains_track_reference(block.text, artist, title)
+                for artist, title in unresolved_track_references
+            )
 
     return ListeningEvaluation(
         route_survival=RouteSurvivalMetrics(
@@ -172,6 +174,23 @@ def build_listening_evaluation(
             unresolved_track_mention_count=mentioned,
         ),
         review_questions=list(REVIEW_QUESTIONS),
+    )
+
+
+def _contains_track_reference(text: str, artist: str, title: str) -> bool:
+    normalized_text = _normalize_for_track_matching(text)
+    normalized_artist = _normalize_for_track_matching(artist)
+    normalized_title = _normalize_for_track_matching(title)
+    if not normalized_artist or not normalized_title:
+        return False
+    return normalized_artist in normalized_text and normalized_title in normalized_text
+
+
+def _normalize_for_track_matching(value: str) -> str:
+    return "".join(
+        character
+        for character in unicodedata.normalize("NFKC", value).casefold()
+        if not unicodedata.category(character).startswith("P") and not character.isspace()
     )
 
 
