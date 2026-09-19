@@ -1047,6 +1047,12 @@ def test_fewer_than_two_resolved_tracks_is_a_typed_assembly_failure(tmp_path) ->
     with pytest.raises(EpisodeAssemblyError, match="at least two resolved tracks") as failure:
         asyncio.run(service(tmp_path, OneTrackLLM()).assemble(LiveEpisodeAssemblyRequest(topic="fixture")))
     assert failure.value.stage == "resolution"
+    assert failure.value.reason_code == "insufficient_resolved_tracks"
+    assert failure.value.diagnostics == {
+        "resolved_track_count": 1,
+        "unresolved_track_count": 0,
+        "required_resolved_track_count": 2,
+    }
 
 
 def test_live_factory_requires_a_real_music_provider(monkeypatch) -> None:
