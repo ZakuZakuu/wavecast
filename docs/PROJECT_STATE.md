@@ -11,13 +11,13 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 4.8.3 - Program timing (PR A:
-  deterministic duration planning is in review; no live/paid probe is authorized).
-- **Main:** `ab013957e8ad11a228c7edf2a8436abc8b7bd637` (merged PR #24,
-  Curator low-reasoning policy repair).
-- **Immediate work:** complete PR A's credential-free timing implementation,
-  obtain exact-HEAD ChatGPT review, merge it, then implement PR B's computed
-  buffer-ahead metric. Phase 4.8.3 live probes remain disabled.
+- **Current milestone:** Phase 4.8.3 - Program timing (PR A merged; PR B:
+  buffer-aware generation horizon is in progress; no live/paid probe is authorized).
+- **Main:** `fb8afd34ad17fe9e5f9d589d2d9d13f82ad26fc3` (merged PR #25,
+  deterministic program timing).
+- **Immediate work:** complete PR B's credential-free buffer-aware generation
+  horizon, obtain exact-HEAD ChatGPT review, and merge it only after the local
+  test/CI gate passes. Phase 4.8.3 live probes remain disabled.
 
 ## Completed implementation
 
@@ -62,6 +62,12 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
   actual plan, provenance summaries, skeleton metadata, stage usage, and safe
   provider events. No raw prompts, responses, reasoning, credentials, or signed
   URLs are emitted.
+- **Phase 4.8.3.1 (merged in PR #25):** deterministic program timing plans
+  use resolved music durations, weighted narration budgets, explicit infeasibility
+  diagnostics, and planned-versus-actual timing summaries without paid providers.
+- **Phase 4.8.3.2 (in progress):** buffer-aware generation uses the derived
+  `buffer_ahead_seconds` metric and materializes complete future chapters until
+  either the chapter or seconds target is met; no server playback clock is added.
 - **Phase 4.8.2.1 (merged in PR #20):** Curator provider-schema failures
   are separated from application contract failures with stable reason codes.
   Unknown Curator evidence references are deterministically dropped before
