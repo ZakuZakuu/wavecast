@@ -1,10 +1,20 @@
 # Codex Handoff — AI Music Radio / Guided Listening MVP
 
-**Status:** Ready for implementation  
+**Status:** Long-lived architecture and product handoff; current execution
+state is maintained in `docs/PROJECT_STATE.md`.
 **Target:** Hackathon prototype with production-minded architecture  
 **Primary objective:** Build the smallest end-to-end product that proves the listening experience, streaming generation model, and research/curation intelligence.
 
 ---
+
+## How to use this handoff
+
+This document records the durable product, architecture, and long-range
+roadmap contract. It is not the current task queue. Before starting work,
+read `AGENTS.md` and `docs/PROJECT_STATE.md`; use the latter for canonical
+main, completed milestones, active work, and session recovery. The bootstrap
+assignment and first-review criteria near the end are historical Phase 0/1
+guidance and apply only when the repository lacks meaningful implementation.
 
 # 1. Product thesis
 
@@ -1211,9 +1221,11 @@ If `gh` is authenticated and there is no remote repository yet, a private GitHub
 
 ---
 
-# 23. First assignment to execute now
+# 23. Historical first assignment (Phase 0/1 bootstrap)
 
-Unless the repository already contains meaningful implementation that changes the plan, begin with **Phase 0 + Phase 1**, not real API integrations.
+This section records the original bootstrap plan. If the repository already
+contains meaningful implementation, treat `docs/PROJECT_STATE.md` as the
+authoritative source for the next task instead of restarting Phase 0/1.
 
 Specifically:
 
