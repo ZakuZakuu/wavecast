@@ -18,8 +18,7 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
   documentation closeout).
 - **Latest code milestone:** `b1ca70880150149623016babcf7650719e15bf10` (merged PR #26,
   completing Phase 4.8.3 program timing).
-- **Immediate work:** none is selected. Phase 4.8.3 implementation and its
-  credential-free validation are complete; live/paid probes remain disabled.
+- **Immediate work:** complete the read-only Phase 5.1 codebase audit and evaluation PLAN for the four fixed benchmarks; implementation has not started and live/paid providers remain disabled.
 
 ## Completed implementation
 
