@@ -115,6 +115,7 @@ def test_responses_json_schema_validates_and_maps_fast_profile() -> None:
         (InferenceProfile.BALANCED, "low", 4096),
         (InferenceProfile.SYNTHESIS, "none", 4096),
         (InferenceProfile.DEEP, "high", 12288),
+        (InferenceProfile.CURATOR, "low", 12288),
     ],
 )
 def test_responses_reasoning_profiles_use_exact_request_shape(

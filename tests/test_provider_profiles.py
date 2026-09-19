@@ -31,6 +31,14 @@ def test_balanced_and_deep_profiles_keep_background_retry_and_reasoning_separate
         deep_max_output_tokens=12288,
         default_max_attempts=2,
     )
+    curator = policy_for(
+        InferenceProfile.CURATOR,
+        default_timeout_seconds=20,
+        deep_timeout_seconds=45,
+        default_max_output_tokens=4096,
+        deep_max_output_tokens=12288,
+        default_max_attempts=2,
+    )
 
     assert balanced.reasoning_effort == "low"
     assert balanced.max_output_tokens == 4096
@@ -39,6 +47,10 @@ def test_balanced_and_deep_profiles_keep_background_retry_and_reasoning_separate
     assert deep.max_output_tokens == 12288
     assert deep.max_attempts == 2
     assert deep.timeout_seconds == 45
+    assert curator.reasoning_effort == "low"
+    assert curator.max_output_tokens == 12288
+    assert curator.max_attempts == 2
+    assert curator.timeout_seconds == 45
 
 
 def test_synthesis_profile_uses_normal_budget_without_reasoning() -> None:

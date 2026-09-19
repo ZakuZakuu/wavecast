@@ -16,15 +16,18 @@ from wavecast.intelligence.models import (
 )
 from wavecast.intelligence.planning import PlanningSession
 from wavecast.intelligence.writer import WriterService
+from wavecast.providers.profiles import InferenceProfile
 
 
 class StructuredFixture:
     def __init__(self, output: object) -> None:
         self.output = output
         self.prompts: list[str] = []
+        self.calls: list[dict[str, object]] = []
 
-    async def structured(self, prompt: str, _output_type: type[object], **_kwargs: object) -> object:
+    async def structured(self, prompt: str, _output_type: type[object], **kwargs: object) -> object:
         self.prompts.append(prompt)
+        self.calls.append(kwargs)
         return self.output
 
 
@@ -103,6 +106,8 @@ def test_curator_preserves_narrative_distance_curve_without_search_dependency() 
     assert [chapter.index for chapter in result.chapters] == [0, 1]
     assert all(not isinstance(chapter.track, ResolvedTrackCandidate) for chapter in result.chapters)
     assert not hasattr(service, "discovery")
+    assert fixture.calls[0]["profile"] is InferenceProfile.CURATOR
+    assert fixture.calls[0]["stage"] == "curator"
     assert "Playback order is exactly chapter order" in fixture.prompts[0]
     assert "very_close keeps the same core sonic identity" in fixture.prompts[0]
     assert "new artists or scenes" in fixture.prompts[0]

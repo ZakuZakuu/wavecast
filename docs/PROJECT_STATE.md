@@ -11,13 +11,12 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 4.8.2 — Research quality (benchmark-bound
-  repair is in progress; no additional live probe is authorized by this
-  change).
-- **Main:** `410023cc03f2734d5a9966cacf5a25d094f8d4cc` (merged PR #22,
-  bounded research deadlines and safe diagnostics).
+- **Current milestone:** Phase 4.8.2 — Research quality (Curator inference
+  policy repair is in progress; no live probe is authorized by this change).
+- **Main:** `87bf89e86e55682c879b9a6c3c11140fa14f75cb` (merged PR #23,
+  benchmark chapter-bound wiring).
 - **Immediate work:** preserve the existing 4.8.1 playback-slot contract while
-  wiring the existing `max_chapters` bound into the live benchmark.
+  isolating Curator onto a deep-sized, low-reasoning inference profile.
   Timing/playback changes remain deferred to Phase 4.8.3.
 
 ## Completed implementation
@@ -217,6 +216,27 @@ default of 16, and fixes this benchmark at `max_tracks=4` /
 `max_chapters=6`. It does not change the production default, token cap,
 reasoning policy, retry policy, search budget, Writer, or frontend. No live run
 is part of this repair.
+
+## Post-PR #23 Fujii Kaze regression (sanitized)
+
+The single authorized 4/6-bound probe ran against
+`87bf89e86e55682c879b9a6c3c11140fa14f75cb` with effective deep timeout
+60 seconds, `max_tracks=4`, and `max_chapters=6`. Music readiness
+and both anchors passed; bounded background research completed. Curator still
+reached the configured output boundary with `ProviderOutputLimitError`
+and `provider_output_limit` (safe output usage was 12,285 of 12,288).
+No retry was performed, and no raw prompt, provider response, hidden reasoning,
+credential, signed URL, or full research content was retained. Phase 4.8.2
+acceptance remains incomplete.
+
+## Current Phase 4.8.2 Curator policy repair (sanitized)
+
+The next small change introduces `InferenceProfile.CURATOR`, preserving
+the deep timeout, 12,288-token cap, transport, and bounded attempts while using
+low reasoning effort. Only Curator switches to this profile; general
+`InferenceProfile.DEEP`, FastStart, ResearchPlanner, Writer, grounding
+contracts, schemas, search budgets, and retry behavior remain unchanged. No
+live/paid provider call is part of this repair.
 
 ## Known deferred work
 
