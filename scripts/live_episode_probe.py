@@ -25,6 +25,7 @@ from wavecast.assembly import (
     LiveEpisodeAssemblyRequest,
     create_episode_assembly_service,
 )
+from wavecast.evals.listening import build_listening_evaluation
 from wavecast.intelligence.curation import CuratorContractError
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.errors import (
@@ -193,12 +194,35 @@ def _report(result) -> dict[str, object]:
         }
         for item in result.writer_chapters
     ]
+    unresolved_chapter_indices = {
+        item.chapter_index for item in result.unresolved_proposals
+    }
+    listening_evaluation = build_listening_evaluation(
+        skeleton=result.skeleton,
+        resolved_chapter_indices=[
+            chapter.index
+            for chapter in result.skeleton.chapters
+            if chapter.track is not None
+            and chapter.index not in unresolved_chapter_indices
+        ],
+        unresolved_chapter_indices=[
+            item.chapter_index for item in result.unresolved_proposals
+        ],
+        unresolved_track_labels=[
+            f"{item.proposal.artist} {item.proposal.title}"
+            for item in result.unresolved_proposals
+        ],
+        episode=episode,
+        timing_summary=result.timing_summary,
+        writer_chapters=result.writer_chapters,
+    )
     return {
         "status": "ok",
         "timings": result.timings.model_dump(),
         "duration": result.duration_summary.model_dump(),
         "timing_plan": result.timing_plan.model_dump(),
         "timing_summary": result.timing_summary.model_dump(),
+        "listening_evaluation": listening_evaluation.model_dump(mode="json"),
         "fast": {
             "fallback": result.trace.fallback_used,
             "ttfs_ms": result.trace.time_to_first_script_ms,
