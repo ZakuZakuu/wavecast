@@ -86,7 +86,9 @@ def _safe_trace(result) -> list[dict[str, object]]:
         {
             "name": event.name,
             "elapsed_ms": event.elapsed_from_start_ms,
-            "metadata": {key: value for key, value in event.metadata.items() if key in allowed},
+            "metadata": {
+                key: value for key, value in event.metadata.items() if key in allowed
+            },
         }
         for event in result.trace.events
     ]
@@ -105,9 +107,7 @@ _KNOWN_PROVIDER_ERRORS = (
 )
 
 
-def _nearest_known_cause(
-    error: EpisodeAssemblyError,
-) -> ProviderError | CuratorContractError | None:
+def _nearest_known_cause(error: EpisodeAssemblyError) -> ProviderError | CuratorContractError | None:
     cause = error.__cause__
     while cause is not None:
         if isinstance(cause, _KNOWN_PROVIDER_ERRORS) or isinstance(cause, CuratorContractError):
@@ -179,26 +179,38 @@ def _report(result) -> dict[str, object]:
     writer_chapters = [
         {
             "chapter_index": item.chapter_index,
-            "available_slots": [_safe_slot_context(slot) for slot in item.available_slots],
-            "parsed_blocks": [_safe_script_block(block) for block in item.parsed_blocks],
-            "normalized_blocks": [_safe_script_block(block) for block in item.normalized_blocks],
+            "available_slots": [
+                _safe_slot_context(slot) for slot in item.available_slots
+            ],
+            "parsed_blocks": [
+                _safe_script_block(block) for block in item.parsed_blocks
+            ],
+            "normalized_blocks": [
+                _safe_script_block(block) for block in item.normalized_blocks
+            ],
             "normalized_slot_contexts": [
                 _safe_slot_context(slot) for slot in item.normalized_slot_contexts
             ],
         }
         for item in result.writer_chapters
     ]
-    unresolved_chapter_indices = {item.chapter_index for item in result.unresolved_proposals}
+    unresolved_chapter_indices = {
+        item.chapter_index for item in result.unresolved_proposals
+    }
     listening_evaluation = build_listening_evaluation(
         skeleton=result.skeleton,
         resolved_chapter_indices=[
             chapter.index
             for chapter in result.skeleton.chapters
-            if chapter.track is not None and chapter.index not in unresolved_chapter_indices
+            if chapter.track is not None
+            and chapter.index not in unresolved_chapter_indices
         ],
-        unresolved_chapter_indices=[item.chapter_index for item in result.unresolved_proposals],
+        unresolved_chapter_indices=[
+            item.chapter_index for item in result.unresolved_proposals
+        ],
         unresolved_track_references=[
-            (item.proposal.artist, item.proposal.title) for item in result.unresolved_proposals
+            (item.proposal.artist, item.proposal.title)
+            for item in result.unresolved_proposals
         ],
         episode=episode,
         timing_summary=result.timing_summary,
@@ -321,7 +333,9 @@ def _report(result) -> dict[str, object]:
         "trace": _safe_trace(result),
         "writer_chapters": writer_chapters,
         "writer_counts": {
-            "generated_blocks": sum(len(item.parsed_blocks) for item in result.writer_chapters),
+            "generated_blocks": sum(
+                len(item.parsed_blocks) for item in result.writer_chapters
+            ),
             "normalized_blocks": sum(
                 len(item.normalized_blocks) for item in result.writer_chapters
             ),
@@ -420,9 +434,7 @@ async def _run(arguments: argparse.Namespace) -> int:
     except EpisodeAssemblyError as error:
         report = _failure_report(error, service.ledger)
         if arguments.json_output:
-            arguments.json_output.write_text(
-                json.dumps(report, ensure_ascii=False, indent=2) + "\n"
-            )
+            arguments.json_output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
         print(json.dumps(report, ensure_ascii=False))
         return 1
     finally:
