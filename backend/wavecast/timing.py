@@ -36,6 +36,8 @@ class ProgramTimingPlan(BaseModel):
     def validate_budget_sum(self) -> ProgramTimingPlan:
         if sum(item.target_narration_seconds for item in self.chapter_budgets) != self.allocated_narration_seconds:
             raise ValueError("chapter narration budgets must sum to allocated narration seconds")
+        if self.duration_target_feasible and self.allocated_narration_seconds > self.available_narration_seconds:
+            raise ValueError("a feasible timing plan cannot allocate more narration than available duration")
         if self.duration_target_feasible and self.resolved_music_seconds >= self.desired_total_seconds:
             raise ValueError("a feasible timing target cannot have music at or beyond the desired duration")
         return self
@@ -67,10 +69,11 @@ def build_program_timing_plan(
 ) -> ProgramTimingPlan:
     """Build a deterministic weighted narration budget.
 
-    A target is feasible when at least one second remains after resolved music.
-    If the music already fills the requested duration, each existing chapter
-    still receives a one-second minimum budget and the explicit infeasible flag
-    preserves the chapter/editorial structure instead of deleting content.
+    A target is feasible when the remaining duration can hold the deterministic
+    one-second minimum for every existing chapter. If the music leaves less
+    room, each existing chapter still receives a one-second minimum budget and
+    the explicit infeasible flag preserves the chapter/editorial structure
+    instead of deleting content.
     """
 
     if desired_total_seconds <= 0:
@@ -85,14 +88,21 @@ def build_program_timing_plan(
     normalized_slots = [max(1, count) for count in chapter_slot_counts]
     requested = max(0, round(desired_total_seconds * target_narration_ratio))
     available = max(0, desired_total_seconds - resolved_music_seconds)
-    feasible = resolved_music_seconds < desired_total_seconds
+    minimum_narration_seconds = len(normalized_slots)
+    feasible = (
+        not normalized_slots
+        and resolved_music_seconds < desired_total_seconds
+    ) or (
+        bool(normalized_slots)
+        and available >= minimum_narration_seconds
+    )
     if not normalized_slots:
         allocated = 0
     elif feasible:
         allocated = min(requested, available)
-        allocated = max(allocated, len(normalized_slots))
+        allocated = max(allocated, minimum_narration_seconds)
     else:
-        allocated = len(normalized_slots)
+        allocated = minimum_narration_seconds
 
     budgets = _weighted_budgets(normalized_slots, allocated)
     return ProgramTimingPlan(
@@ -145,12 +155,13 @@ def summarize_program_timing(
 def _weighted_budgets(weights: list[int], total: int) -> list[int]:
     if not weights:
         return []
-    if total < len(weights):
-        total = len(weights)
+    minimum = len(weights)
+    total = max(total, minimum)
+    remaining = total - minimum
     weight_sum = sum(weights)
-    exact = [Decimal(total * weight) / Decimal(weight_sum) for weight in weights]
+    exact = [Decimal(remaining * weight) / Decimal(weight_sum) for weight in weights]
     floors = [int(value.to_integral_value(rounding=ROUND_FLOOR)) for value in exact]
-    remainder = total - sum(floors)
+    remainder = remaining - sum(floors)
     order = sorted(
         range(len(weights)),
         key=lambda index: (exact[index] - floors[index], -index),
@@ -158,4 +169,4 @@ def _weighted_budgets(weights: list[int], total: int) -> list[int]:
     )
     for index in order[:remainder]:
         floors[index] += 1
-    return floors
+    return [1 + floor for floor in floors]

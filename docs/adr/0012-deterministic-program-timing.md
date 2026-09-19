@@ -28,9 +28,11 @@ did not expose planned-versus-actual drift.
    ratios, and signed drift in a safe timing summary.
 5. Desired duration is a target, not a hard constraint. If music leaves less
    room than the requested narration budget, narration is compressed. If
-   music fills or exceeds the target, the plan is explicitly infeasible and
-   existing chapters receive a deterministic minimum budget; no chapter or
-   editorial content is silently deleted.
+   music fills or exceeds the target, or the remaining room is smaller than
+   the deterministic minimum narration budget required to preserve existing
+   chapters, the plan is explicitly infeasible; existing chapters still
+   receive a deterministic minimum budget and no chapter or editorial content
+   is silently deleted.
 6. Timing drift does not trigger an implicit Writer or TTS retry. Timing does
    not rewrite committed/editorial content, trim tracks, add fades, or ask an
    LLM to delete chapters.

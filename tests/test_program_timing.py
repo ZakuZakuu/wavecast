@@ -1,4 +1,5 @@
-from wavecast.timing import build_program_timing_plan, summarize_program_timing
+import pytest
+from wavecast.timing import ProgramTimingPlan, build_program_timing_plan, summarize_program_timing
 
 
 def test_timing_plan_allocates_requested_narration_when_music_leaves_room() -> None:
@@ -43,6 +44,49 @@ def test_timing_plan_marks_music_filled_target_infeasible_without_dropping_chapt
     assert all(item.target_narration_seconds > 0 for item in plan.chapter_budgets)
     assert plan.allocated_narration_seconds == 2
 
+
+def test_timing_plan_marks_minimum_budget_overflow_infeasible() -> None:
+    plan = build_program_timing_plan(
+        desired_total_seconds=900,
+        target_narration_ratio=0.15,
+        resolved_music_seconds=898,
+        chapter_slot_counts=[1, 1, 1],
+    )
+
+    assert plan.available_narration_seconds == 2
+    assert plan.duration_target_feasible is False
+    assert plan.allocated_narration_seconds == 3
+    assert [item.target_narration_seconds for item in plan.chapter_budgets] == [1, 1, 1]
+
+
+def test_timing_plan_weighting_preserves_each_chapter_minimum() -> None:
+    plan = build_program_timing_plan(
+        desired_total_seconds=1000,
+        target_narration_ratio=0.0,
+        resolved_music_seconds=998,
+        chapter_slot_counts=[1, 100],
+    )
+
+    assert plan.allocated_narration_seconds == 2
+    assert [item.target_narration_seconds for item in plan.chapter_budgets] == [1, 1]
+
+
+def test_feasible_timing_plan_cannot_allocate_beyond_available_duration() -> None:
+    with pytest.raises(ValueError, match="available duration"):
+        ProgramTimingPlan(
+            desired_total_seconds=900,
+            target_narration_ratio=0.15,
+            resolved_music_seconds=898,
+            requested_narration_seconds=135,
+            available_narration_seconds=2,
+            allocated_narration_seconds=3,
+            duration_target_feasible=True,
+            chapter_budgets=[
+                {"chapter_index": 0, "slot_count": 1, "target_narration_seconds": 1},
+                {"chapter_index": 1, "slot_count": 1, "target_narration_seconds": 1},
+                {"chapter_index": 2, "slot_count": 1, "target_narration_seconds": 1},
+            ],
+        )
 
 def test_timing_plan_uses_deterministic_slot_weighting_and_exact_sum() -> None:
     plan = build_program_timing_plan(
