@@ -11,8 +11,9 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 4.8 complete; the next product/engineering
-  milestone has not yet been selected.
+- **Current milestone:** Phase 5.1 — Discovery & Editorial Quality.
+- **Current stage:** documentation recovery is followed by a read-only codebase
+  audit and evaluation PLAN; implementation has not started.
 - **Canonical main:** `f89a6e0ca0dc6ebd9190ff91af226bfd9ab561b4` (merged PR #27,
   documentation closeout).
 - **Latest code milestone:** `b1ca70880150149623016babcf7650719e15bf10` (merged PR #26,
@@ -161,6 +162,21 @@ credentials, hidden reasoning, or signed URLs are kept in the repository.
 3. **4.8.3 - Program timing (complete):** improve target-duration adherence,
    narration pacing/ratio, actual-vs-planned segment durations, and buffer-aware
    timing without reintroducing a server playback clock.
+
+## Phase 5.1 initial scope
+
+The fixed benchmark set is: B1 Fang Da Tong biography, B2 Fang Da Tong to
+Musiq Soulchild and broader Soul/Neo-Soul/R&B discovery, B3 UK Garage
+genre/scene, and B4 Chinese rock across eras. The first stage evaluates
+editorial thesis, discovery value, route coherence, musical insight, research
+grounding, narrative/pacing, and after-listening effect. Spoken writing and
+TTS delivery are evaluation dimensions, but prompt and voice tuning are
+deferred polish work rather than Phase 5.1A objectives.
+
+The immediate action is a read-only audit of Research, candidate generation,
+Curator, catalog resolution, Writer, and TTS/composition to identify the actual
+source of artist-local or obvious-track bias and propose the smallest
+provider-neutral implementation plan. LIVE_ALLOWED: NO.
 
 ## First Phase 4.8.2 live result (sanitized)
 
