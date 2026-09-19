@@ -1,12 +1,18 @@
 """Credential-free Guided Discovery evaluation contracts and benchmark fixtures."""
 
-from .fixtures import GUIDED_DISCOVERY_CASES
+from .fixtures import GUIDED_DISCOVERY_CASES, PHASE51_EDITORIAL_CASES
 from .quality import (
+    PHASE51_RUBRIC,
     GuidedDiscoveryCase,
     GuidedDiscoveryReview,
+    HardCheckResult,
+    HumanReviewDimension,
+    Phase51Diagnostics,
+    Phase51Evaluation,
     QualityDimension,
     QualityRubric,
     ReviewCandidate,
+    build_phase51_evaluation,
     build_review_bundle,
 )
 from .retrieval import (
@@ -18,8 +24,14 @@ from .retrieval import (
 
 __all__ = [
     "GUIDED_DISCOVERY_CASES",
+    "PHASE51_EDITORIAL_CASES",
     "GuidedDiscoveryCase",
     "GuidedDiscoveryReview",
+    "HardCheckResult",
+    "HumanReviewDimension",
+    "Phase51Diagnostics",
+    "Phase51Evaluation",
+    "PHASE51_RUBRIC",
     "QualityDimension",
     "QualityRubric",
     "RETRIEVAL_BENCHMARK_CASES",
@@ -27,5 +39,6 @@ __all__ = [
     "RetrievalBenchmarkCase",
     "RetrievalFixtureTrack",
     "ReviewCandidate",
+    "build_phase51_evaluation",
     "build_review_bundle",
 ]

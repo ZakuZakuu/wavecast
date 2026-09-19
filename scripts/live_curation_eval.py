@@ -7,14 +7,18 @@ from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 
-from wavecast.evals import GUIDED_DISCOVERY_CASES, GuidedDiscoveryCase, build_review_bundle
-from wavecast.intelligence.background import BackgroundIntelligencePipeline
+from wavecast.evals import (
+    GUIDED_DISCOVERY_CASES,
+    PHASE51_EDITORIAL_CASES,
+    GuidedDiscoveryCase,
+    build_phase51_evaluation,
+    build_review_bundle,
+)
 from wavecast.intelligence.curation import CuratorService
 from wavecast.intelligence.fast_start import FastPathCoordinator, FastStartPlanner
 from wavecast.intelligence.models import FastResearchInput
 from wavecast.intelligence.research import BackgroundResearchService, FastResearchService
 from wavecast.intelligence.trace import GenerationTrace
-from wavecast.intelligence.writer import WriterService
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
@@ -27,10 +31,16 @@ MAX_CASES = 2
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--suite",
+        choices=["guided_discovery", "phase51"],
+        default="guided_discovery",
+        help="benchmark suite; phase51 is the editorial foundation suite",
+    )
+    parser.add_argument(
         "--case",
         action="append",
-        choices=[case.case_id for case in GUIDED_DISCOVERY_CASES],
-        help="case ID; defaults to the first two benchmark cases",
+        choices=[case.case_id for case in (*GUIDED_DISCOVERY_CASES, *PHASE51_EDITORIAL_CASES)],
+        help="case ID; defaults to the first two cases in the selected suite",
     )
     parser.add_argument("--json-output", type=Path)
     arguments = parser.parse_args()
@@ -145,20 +155,30 @@ async def evaluate_case(case: GuidedDiscoveryCase, settings: ProviderSettings) -
 
         stage = "background_research"
         background_started = perf_counter()
-        background_result = await BackgroundIntelligencePipeline(
-            research=BackgroundResearchService(
-                discovery=exa, research=tavily, ledger=ledger, deadline_seconds=8
-            ),
-            curator=CuratorService(llm),
-            writer=WriterService(llm),
-        ).run(
-            request,
-            fast_result,
-            cancel_event=asyncio.Event(),
+        background_bundle = await BackgroundResearchService(
+            discovery=exa, research=tavily, ledger=ledger, deadline_seconds=8
+        ).run(request, fast_result, cancel_event=asyncio.Event(), trace=trace)
+        if background_bundle is None:
+            raise ProviderError("background research was cancelled")
+        trace.mark("curator_started")
+        curator_plan = fast_result.plan
+        if background_bundle.research_plan is not None:
+            curator_plan = fast_result.plan.model_copy(
+                update={"research_plan": background_bundle.research_plan}
+            )
+        skeleton = await CuratorService(llm).curate(
+            background_bundle,
+            curator_plan,
+            desired_duration_seconds=request.desired_duration_seconds,
+            max_tracks=4,
+            max_chapters=16,
+            topic=request.topic,
             trace=trace,
         )
+        trace.mark("program_skeleton_ready", chapter_count=len(skeleton.chapters))
         background_elapsed_ms = int((perf_counter() - background_started) * 1000)
-        review = build_review_bundle(case, fast_result.plan, background_result.skeleton if background_result else None)
+        review = build_review_bundle(case, fast_result.plan, skeleton)
+        phase51_review = build_phase51_evaluation(case, fast_result.plan, skeleton)
         curator_end = (
             "writer_started"
             if event_elapsed(trace, "writer_started") is not None
@@ -182,12 +202,14 @@ async def evaluate_case(case: GuidedDiscoveryCase, settings: ProviderSettings) -
             "background": {
                 "elapsed_ms": background_elapsed_ms,
                 "curator_elapsed_ms": elapsed_between(trace, "curator_started", curator_end),
-                "writer_elapsed_ms": elapsed_between(
-                    trace, "writer_started", "chapter_script_ready"
-                ),
                 "chapters": [chapter.model_dump(mode="json") for chapter in review.program_arc],
             },
             "review": review.model_dump(mode="json"),
+            "phase51_evaluation": (
+                phase51_review.model_dump(mode="json")
+                if case.benchmark_kind != "guided_discovery"
+                else None
+            ),
             "usage": stage_usage(ledger),
             "total_elapsed_ms": int((perf_counter() - started) * 1000),
         }
@@ -218,10 +240,13 @@ async def evaluate_case(case: GuidedDiscoveryCase, settings: ProviderSettings) -
             await exa.aclose()
 
 
-async def run(case_ids: list[str] | None = None) -> list[dict[str, object]]:
+async def run(
+    case_ids: list[str] | None = None, *, suite: str = "guided_discovery"
+) -> list[dict[str, object]]:
     settings = replace(require_live_settings(), max_attempts=1)
-    selected_ids = case_ids or [case.case_id for case in GUIDED_DISCOVERY_CASES[:MAX_CASES]]
-    cases = [case for case in GUIDED_DISCOVERY_CASES if case.case_id in selected_ids]
+    suite_cases = PHASE51_EDITORIAL_CASES if suite == "phase51" else GUIDED_DISCOVERY_CASES
+    selected_ids = case_ids or [case.case_id for case in suite_cases[:MAX_CASES]]
+    cases = [case for case in suite_cases if case.case_id in selected_ids]
     reports: list[dict[str, object]] = []
     for case in cases:
         report = await evaluate_case(case, settings)
@@ -233,7 +258,7 @@ async def run(case_ids: list[str] | None = None) -> list[dict[str, object]]:
 if __name__ == "__main__":
     arguments = parse_args()
     try:
-        reports = asyncio.run(run(arguments.case))
+        reports = asyncio.run(run(arguments.case, suite=arguments.suite))
     except ProviderError:
         raise SystemExit(1)
     if arguments.json_output:
