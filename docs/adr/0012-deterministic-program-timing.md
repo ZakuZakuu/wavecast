@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for Phase 4.8.3.
+Accepted and implemented in Phase 4.8.3.
 
 ## Context
 
@@ -36,8 +36,8 @@ did not expose planned-versus-actual drift.
 6. Timing drift does not trigger an implicit Writer or TTS retry. Timing does
    not rewrite committed/editorial content, trim tracks, add fades, or ask an
    LLM to delete chapters.
-7. Phase 4.8.3 initial implementation remains credential-free. Buffer-ahead
-   runtime changes are a later phase and must not introduce a server clock.
+7. Phase 4.8.3 remains credential-free. Phase 4.8.3.2 adds derived
+   buffer-ahead runtime accounting without introducing a server playback clock.
 
 ## Alternatives considered
 
