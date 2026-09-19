@@ -57,7 +57,7 @@ def policy_for(
             timeout_seconds=deep_timeout_seconds or default_timeout_seconds,
             max_output_tokens=deep_max_output_tokens or default_max_output_tokens,
             max_attempts=default_max_attempts,
-            reasoning_effort="low",
+            reasoning_effort="none",
         )
     if profile is InferenceProfile.SYNTHESIS:
         return InferencePolicy(
