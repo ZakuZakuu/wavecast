@@ -55,6 +55,28 @@ class NarrativeRole(StrEnum):
     RESOLUTION = "resolution"
 
 
+class EditorialRelationType(StrEnum):
+    """Typed reasons for moving from one playable track to the next."""
+
+    SHARED_RHYTHMIC_POCKET = "shared_rhythmic_pocket"
+    SHARED_MELODIC_LANGUAGE = "shared_melodic_language"
+    SHARED_VOCAL_APPROACH = "shared_vocal_approach"
+    SHARED_PRODUCTION_TEXTURE = "shared_production_texture"
+    SCENE_OR_LINEAGE = "scene_or_lineage"
+    ARTIST_DEVELOPMENT = "artist_development"
+    CONTRAST = "contrast"
+
+
+class EditorialConnection(BaseModel):
+    """A grounded editorial explanation for one playable route transition."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    relation_type: EditorialRelationType
+    musical_dimensions: list[str] = Field(default_factory=list, max_length=8)
+    rationale: str = Field(min_length=1, max_length=500)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=8)
+
 class SearchIntent(StrEnum):
     """Operational routing intent for one bounded research query."""
 
@@ -353,6 +375,7 @@ class RadioScript(BaseModel):
 class ChapterPlan(BaseModel):
     index: int = Field(ge=0)
     track: TrackProposal | None = None
+    connection_from_previous_track: EditorialConnection | None = None
     narrative_role: NarrativeRole
     reason: str = Field(min_length=1, max_length=500)
     novelty_distance: NoveltyDistance | None = None

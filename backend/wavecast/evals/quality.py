@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from wavecast.intelligence.models import (
+    EditorialConnection,
     FastStartPlan,
     NarrativeRole,
     NoveltyDistance,
@@ -75,6 +76,7 @@ class ReviewCandidate(BaseModel):
     scene_cluster_rationale: str | None = None
     track_ref: str | None = None
     resolution_status: Literal["resolved", "unresolved"] = "unresolved"
+    connection_from_previous_track: EditorialConnection | None = None
 
 
 class GuidedDiscoveryReview(BaseModel):
@@ -118,6 +120,9 @@ class Phase51Diagnostics(BaseModel):
     duplicate_track_count: int = Field(ge=0)
     resolution_rate: float | None = Field(default=None, ge=0, le=1)
     novelty_distribution: dict[str, int] = Field(default_factory=dict)
+    connection_expected_count: int = Field(ge=0, default=0)
+    connection_observed_count: int = Field(ge=0, default=0)
+    connection_coverage: float | None = Field(default=None, ge=0, le=1)
 
 
 class Phase51Evaluation(BaseModel):
@@ -245,6 +250,39 @@ def build_phase51_evaluation(
             value = item.novelty_distance.value
             novelty_distribution[value] = novelty_distribution.get(value, 0) + 1
 
+    track_chapters = [
+        chapter
+        for chapter in (skeleton.chapters if skeleton is not None else [])
+        if chapter.track is not None
+    ]
+    connection_expected_count = max(0, len(track_chapters) - 1)
+    connection_observed_count = sum(
+        chapter.connection_from_previous_track is not None
+        for chapter in track_chapters[1:]
+    )
+    connection_coverage = (
+        connection_observed_count / connection_expected_count
+        if connection_expected_count
+        else None
+    )
+    if not connection_expected_count:
+        connection_status: Literal["pass", "fail", "not_observed"] = "not_observed"
+        connection_summary = "No pair of playable tracks was available for route metadata."
+    elif connection_observed_count == 0:
+        connection_status = "not_observed"
+        connection_summary = "No typed route connection metadata was present."
+    elif connection_observed_count == connection_expected_count:
+        connection_status = "pass"
+        connection_summary = (
+            f"Observed typed connections for all {connection_expected_count} playable-track moves."
+        )
+    else:
+        connection_status = "fail"
+        connection_summary = (
+            f"Observed {connection_observed_count} of {connection_expected_count} "
+            "playable-track connections."
+        )
+
     human_review = [
         HumanReviewDimension(dimension=dimension)
         for dimension in PHASE51_RUBRIC.dimensions
@@ -265,8 +303,8 @@ def build_phase51_evaluation(
             ),
             HardCheckResult(
                 name="route_connection_metadata",
-                status="not_observed",
-                summary="Typed route connections are introduced by the route-contract PR.",
+                status=connection_status,
+                summary=connection_summary,
             ),
             HardCheckResult(
                 name="catalog_resolution",
@@ -290,6 +328,9 @@ def build_phase51_evaluation(
             duplicate_track_count=duplicate_count,
             resolution_rate=resolution_rate,
             novelty_distribution=novelty_distribution,
+            connection_expected_count=connection_expected_count,
+            connection_observed_count=connection_observed_count,
+            connection_coverage=connection_coverage,
         ),
         human_review=human_review,
     )
@@ -322,6 +363,7 @@ def build_review_bundle(
             resolution_status=(
                 "resolved" if isinstance(candidate, ResolvedTrackCandidate) else "unresolved"
             ),
+            connection_from_previous_track=None,
         )
 
     candidates_by_key: dict[tuple[str, str], ReviewCandidate] = {}
@@ -349,6 +391,7 @@ def build_review_bundle(
                         evidence_ids=list(chapter.evidence_ids),
                         scene_cluster_rationale=chapter.reason,
                         resolution_status="unresolved",
+                        connection_from_previous_track=chapter.connection_from_previous_track,
                     )
                 )
                 continue
@@ -357,6 +400,9 @@ def build_review_bundle(
                 narrative_role=chapter.narrative_role,
                 evidence_ids=list(chapter.evidence_ids or chapter.track.evidence_ids),
                 scene_cluster_rationale=chapter.reason,
+            )
+            chapter_review_candidate.connection_from_previous_track = (
+                chapter.connection_from_previous_track
             )
             arc.append(chapter_review_candidate)
             key = (chapter.track.artist.lower(), chapter.track.title.lower())

@@ -382,6 +382,7 @@ def test_research_planner_prompt_is_topic_adaptive_and_distinguishes_claim_types
     assert "correlation" in prompt
     assert "causal claim" in prompt
     assert "editorial interpretation" in prompt
+    assert "relation, scene, or lineage" in prompt
 
 
 def test_evidence_urls_are_canonicalized_before_deduplication_and_id_generation() -> None:

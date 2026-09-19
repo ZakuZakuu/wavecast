@@ -9,6 +9,8 @@ from wavecast.intelligence.models import (
     ChapterPlan,
     ClaimSupport,
     ClaimType,
+    EditorialConnection,
+    EditorialRelationType,
     Evidence,
     FastStartPlan,
     NarrationScript,
@@ -76,6 +78,12 @@ def test_curator_normalizes_unknown_references_and_records_safe_diagnostics() ->
                 reason="fixture",
                 novelty_distance=NoveltyDistance.CLOSE,
                 evidence_ids=["e1", "ghost", "e1"],
+                connection_from_previous_track=EditorialConnection(
+                    relation_type=EditorialRelationType.SCENE_OR_LINEAGE,
+                    musical_dimensions=["scene"],
+                    rationale="fixture bridge",
+                    evidence_ids=["e1", "ghost", "e1"],
+                ),
                 claim_support=[
                     ClaimSupport(
                         claim_type=ClaimType.FACT,
@@ -111,6 +119,8 @@ def test_curator_normalizes_unknown_references_and_records_safe_diagnostics() ->
     assert chapter.evidence_ids == ["e1"]
     assert chapter.track is not None
     assert chapter.track.evidence_ids == ["e2"]
+    assert chapter.connection_from_previous_track is not None
+    assert chapter.connection_from_previous_track.evidence_ids == ["e1"]
     assert [support.evidence_ids for support in chapter.claim_support] == [["e1"]]
     diagnostics = [
         event.metadata
@@ -123,6 +133,7 @@ def test_curator_normalizes_unknown_references_and_records_safe_diagnostics() ->
         "chapter_evidence",
         "claim_support",
         "track_evidence",
+        "connection_evidence",
     }
 
 

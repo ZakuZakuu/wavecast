@@ -104,6 +104,7 @@ def test_fast_prompt_is_topic_adaptive_and_declares_research_planning() -> None:
     assert "history/context, or discovery" in prompt
     assert "ResearchPlan" in prompt
     assert "Do not force similarity" in prompt
+    assert "relation, scene, or lineage" in prompt
 
 
 def test_fast_path_deadline_returns_safe_fallback_without_retry() -> None:
