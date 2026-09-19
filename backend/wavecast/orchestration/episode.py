@@ -143,10 +143,15 @@ class EpisodeOrchestrator:
         episode = self._active_episode(episode_id)
         if episode.state is EpisodeState.MATERIALIZED:
             return episode
-        while (
-            self._ready_future_chapter_count(episode) < target_chapters
-            and episode.buffer_ahead_seconds < target_ahead_seconds
-        ):
+        while True:
+            partial_chapter_id = self._next_partial_future_chapter_id(episode)
+            if partial_chapter_id is not None:
+                self._materialize_chapter(episode, partial_chapter_id)
+                continue
+            if self._ready_future_chapter_count(episode) >= target_chapters:
+                break
+            if episode.buffer_ahead_seconds >= target_ahead_seconds:
+                break
             next_chapter_id = self._next_future_chapter_id(episode)
             if next_chapter_id is None:
                 break
@@ -455,6 +460,29 @@ class EpisodeOrchestrator:
             )
             for chapter_id in chapter_ids
         )
+
+    @staticmethod
+    def _next_partial_future_chapter_id(episode: LiveEpisode) -> str | None:
+        current = EpisodeOrchestrator._current_segment(episode)
+        if current is None:
+            return None
+        future_chapter_ids: list[str] = []
+        for segment in episode.timeline_segments:
+            if segment.order > current.order and segment.chapter_id != current.chapter_id:
+                if segment.chapter_id not in future_chapter_ids:
+                    future_chapter_ids.append(segment.chapter_id)
+        for chapter_id in future_chapter_ids:
+            chapter_segments = [
+                segment
+                for segment in episode.timeline_segments
+                if segment.chapter_id == chapter_id
+            ]
+            if (
+                any(segment.is_audio_ready for segment in chapter_segments)
+                and any(not segment.is_audio_ready for segment in chapter_segments)
+            ):
+                return chapter_id
+        return None
 
     @staticmethod
     def _next_future_chapter_id(episode: LiveEpisode) -> str | None:
