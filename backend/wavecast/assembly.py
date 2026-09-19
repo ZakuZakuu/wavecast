@@ -23,6 +23,7 @@ from wavecast.intelligence.curation import CuratorContractError, CuratorService
 from wavecast.intelligence.fast_start import FastPathCoordinator, FastPathResult, FastStartPlanner
 from wavecast.intelligence.models import (
     ChapterPlan,
+    EditorialConnection,
     Evidence,
     FastResearchInput,
     FastStartPlan,
@@ -153,6 +154,7 @@ class WriterChapterDiagnostic(BaseModel):
     """Safe parsed/normalized Writer data for one application chapter."""
 
     chapter_index: int = Field(ge=0)
+    connection_from_previous_track: EditorialConnection | None = None
     available_slots: list[NarrationSlotContext] = Field(default_factory=list)
     parsed_blocks: list[RadioScriptBlock] = Field(default_factory=list)
     normalized_blocks: list[RadioScriptBlock] = Field(default_factory=list)
@@ -434,6 +436,9 @@ class LiveEpisodeAssemblyService:
                 resolved_track_count,
                 chapter_music_indices=[item.music_index for item in resolved_chapters],
                 slot_contexts=slot_contexts,
+                chapter_connections=[
+                    item.chapter.connection_from_previous_track for item in resolved_chapters
+                ],
             )
         except NarrationPlacementError as error:
             raise EpisodeAssemblyError(str(error), stage="writer_normalization") from error
@@ -817,6 +822,7 @@ def _assemble_writer_scripts(
     *,
     chapter_music_indices: list[int | None],
     slot_contexts: list[list[NarrationSlotContext]],
+    chapter_connections: list[EditorialConnection | None] | None = None,
 ) -> tuple[RadioScript, list[WriterChapterDiagnostic]]:
     """Place parsed Writer blocks into deterministic resolved narration slots."""
 
@@ -824,6 +830,11 @@ def _assemble_writer_scripts(
         raise NarrationPlacementError(
             "writer output count does not match the resolved chapter slot count"
         )
+    if chapter_connections is not None and len(chapter_connections) != len(scripts):
+        raise NarrationPlacementError(
+            "chapter connection metadata count does not match writer chapter count"
+        )
+    chapter_connections = chapter_connections or [None] * len(scripts)
 
     blocks: list[RadioScriptBlock] = []
     diagnostics: list[WriterChapterDiagnostic] = []
@@ -878,6 +889,7 @@ def _assemble_writer_scripts(
         diagnostics.append(
             WriterChapterDiagnostic(
                 chapter_index=contexts[0].chapter_index if contexts else chapter_index,
+                connection_from_previous_track=chapter_connections[chapter_index],
                 available_slots=contexts,
                 parsed_blocks=parsed_blocks,
                 normalized_blocks=normalized,

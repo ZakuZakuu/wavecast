@@ -70,6 +70,12 @@ class CuratorService:
             "statement in a chapter, use typed claim_support with one or more evidence IDs from "
             "that chapter's evidence_ids. Keep correlation distinct from proven causation; do "
             "not make an unsupported claim merely because a source is preferred. "
+            "For every track-bearing chapter after the first playable track, add a typed "
+            "connection_from_previous_track describing the previous playable track to current "
+            "track. Use one relation_type, concise musical_dimensions, a topic-specific rationale, "
+            "and only evidence IDs scoped to that chapter. The connection follows playable-track "
+            "order, not raw chapter adjacency; the first playable track and narrative-only beats "
+            "do not need a connection. "
             "novelty_distance may start at any supported "
             "distance; distances may be skipped, and repeated distances are allowed when "
             "intended. The sequence must never move backward: very_close <= close <= bridge "
@@ -161,12 +167,28 @@ def normalize_curator_skeleton(
                     )
                 )
             track = track.model_copy(update={"evidence_ids": track_ids})
+        connection = chapter.connection_from_previous_track
+        if connection is not None:
+            connection_ids, dropped, remaining = _retain_evidence_ids(
+                connection.evidence_ids, available & chapter_scope
+            )
+            if dropped:
+                diagnostics.append(
+                    _normalization_diagnostic(
+                        chapter.index,
+                        "connection_evidence",
+                        dropped,
+                        remaining,
+                    )
+                )
+            connection = connection.model_copy(update={"evidence_ids": connection_ids})
         chapters.append(
             chapter.model_copy(
                 update={
                     "evidence_ids": chapter_ids,
                     "claim_support": supports,
                     "track": track,
+                    "connection_from_previous_track": connection,
                 }
             )
         )
@@ -220,6 +242,20 @@ def _validate_curator_contract(skeleton: ProgramSkeleton, bundle: ResearchBundle
                 "curator track evidence scope is invalid",
                 reason_code="curator_track_evidence_scope_invalid",
             )
+        connection = chapter.connection_from_previous_track
+        if connection is not None:
+            if chapter.track is None:
+                raise CuratorContractError(
+                    "curator connection requires a track-bearing chapter",
+                    reason_code="curator_connection_requires_track",
+                )
+            if not set(connection.evidence_ids) <= scoped or not set(
+                connection.evidence_ids
+            ) <= available:
+                raise CuratorContractError(
+                    "curator connection evidence scope is invalid",
+                    reason_code="curator_connection_evidence_scope_invalid",
+                )
 
 
 def _restore_committed_prefix(

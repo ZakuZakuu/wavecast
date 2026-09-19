@@ -1,6 +1,8 @@
 from wavecast.evals import PHASE51_EDITORIAL_CASES, build_phase51_evaluation
 from wavecast.intelligence.models import (
     ChapterPlan,
+    EditorialConnection,
+    EditorialRelationType,
     FastStartPlan,
     NarrationScript,
     NarrativeRole,
@@ -107,3 +109,50 @@ def test_b2_passes_when_both_route_obligations_are_met() -> None:
         if item.name == "benchmark_route_obligation"
     )
     assert check.status == "pass"
+
+
+def test_phase51_reports_typed_route_connection_coverage() -> None:
+    case, plan, skeleton = _artifact(1, ["Anchor Artist", "Musiq Soulchild", "Third Artist"])
+    connection = EditorialConnection(
+        relation_type=EditorialRelationType.SHARED_VOCAL_APPROACH,
+        musical_dimensions=["vocal phrasing"],
+        rationale="The next track carries the vocal phrasing into a related R&B context.",
+    )
+    skeleton = skeleton.model_copy(
+        update={
+            "chapters": [
+                skeleton.chapters[0],
+                skeleton.chapters[1].model_copy(update={"connection_from_previous_track": connection}),
+                skeleton.chapters[2].model_copy(update={"connection_from_previous_track": connection}),
+            ]
+        }
+    )
+
+    evaluation = build_phase51_evaluation(case, plan, skeleton)
+    check = next(item for item in evaluation.hard_checks if item.name == "route_connection_metadata")
+    assert check.status == "pass"
+    assert evaluation.diagnostics.connection_expected_count == 2
+    assert evaluation.diagnostics.connection_observed_count == 2
+    assert evaluation.diagnostics.connection_coverage == 1
+
+
+def test_phase51_marks_partial_route_connection_metadata_as_failed() -> None:
+    case, plan, skeleton = _artifact(1, ["Anchor Artist", "Musiq Soulchild", "Third Artist"])
+    connection = EditorialConnection(
+        relation_type=EditorialRelationType.SCENE_OR_LINEAGE,
+        rationale="fixture bridge",
+    )
+    skeleton = skeleton.model_copy(
+        update={
+            "chapters": [
+                skeleton.chapters[0],
+                skeleton.chapters[1].model_copy(update={"connection_from_previous_track": connection}),
+                skeleton.chapters[2],
+            ]
+        }
+    )
+
+    evaluation = build_phase51_evaluation(case, plan, skeleton)
+    check = next(item for item in evaluation.hard_checks if item.name == "route_connection_metadata")
+    assert check.status == "fail"
+    assert evaluation.diagnostics.connection_coverage == 0.5
