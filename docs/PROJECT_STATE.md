@@ -1,6 +1,6 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-18
+**Last updated:** 2026-09-19
 
 ## Product reminder
 
@@ -11,13 +11,13 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 4.8.2 — Research quality (Curator inference
-  policy repair is in progress; no live probe is authorized by this change).
-- **Main:** `87bf89e86e55682c879b9a6c3c11140fa14f75cb` (merged PR #23,
-  benchmark chapter-bound wiring).
-- **Immediate work:** preserve the existing 4.8.1 playback-slot contract while
-  isolating Curator onto a deep-sized, low-reasoning inference profile.
-  Timing/playback changes remain deferred to Phase 4.8.3.
+- **Current milestone:** Phase 4.8.3 - Program timing (PR A:
+  deterministic duration planning is in review; no live/paid probe is authorized).
+- **Main:** `ab013957e8ad11a228c7edf2a8436abc8b7bd637` (merged PR #24,
+  Curator low-reasoning policy repair).
+- **Immediate work:** complete PR A's credential-free timing implementation,
+  obtain exact-HEAD ChatGPT review, merge it, then implement PR B's computed
+  buffer-ahead metric. Phase 4.8.3 live probes remain disabled.
 
 ## Completed implementation
 
@@ -52,7 +52,7 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
   playback placement, normalizes chapter identity, fails explicitly on
   impossible narration placement, preserves multiple ordered blocks in a gap,
   and reports parsed/normalized Writer blocks safely.
-- **Phase 4.8.2 (in progress):** background research can regenerate one
+- **Phase 4.8.2 (complete, merged in PR #24):** background research can regenerate one
   bounded typed `ResearchPlan` after a FastStart fallback, while retaining the
   deterministic one-Exa/two-Tavily execution cap. URLs are canonicalized before
   evidence deduplication and IDs; Evidence carries conservative provenance
@@ -69,12 +69,12 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
   to transitions, adjacency, editorial framing, or explicit uncertainty.
   Failed assembly keeps a sanitized pre-Curator research snapshot and usage
   ledger for diagnosis.
-- **Current follow-up:** The first post-PR #20 Fujii Kaze regression reached
-  the Curator and was safely classified as `provider_output_limit` without a
-  retry. The next change forwards the existing `max_tracks` /
-  `max_chapters` request bounds into Curator prompting and caps the provider
-  schema's chapter array at 32 items. Phase 4.8.2 acceptance remains
-  incomplete; no second live run is authorized by this change.
+- **Phase 4.8.2 complete (PR #24):** the single authorized low-reasoning
+  Fujii Kaze probe passed readiness, bounded research, Curator policy,
+  4/6 chapter-track bounds, 3 resolved tracks, and zero unresolved tracks.
+- Safe metrics: Curator 35.713s with 11,553 input / 8,180 output /
+  4,807 reasoning tokens; output cap was not touched; Writer was 8/8/8
+  parsed/normalized/final blocks and all 11 timeline segments were AUDIO_READY.
 
 
 ## Invariants to preserve
@@ -143,10 +143,10 @@ credentials, hidden reasoning, or signed URLs are kept in the repository.
    chapter semantics, align transition/intro/outro references with actual track
    indices, keep narration-only beats in place, and flag unsupported claims for
    review.
-2. **4.8.2 — Research quality (current):** improve evidence source quality and provenance,
+2. **4.8.2 - Research quality (complete):** evidence quality, provenance, bounded planning,
    query/facet usefulness, candidate grounding, and uncertainty reporting without
    expanding search budgets.
-3. **4.8.3 — Program timing:** improve target-duration adherence, narration
+3. **4.8.3 - Program timing (current):** improve target-duration adherence, narration
    pacing/ratio, actual-vs-planned segment durations, and buffer-aware timing
    without reintroducing a server playback clock.
 
