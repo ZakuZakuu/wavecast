@@ -50,11 +50,19 @@ else:  # pragma: no cover - exercised by direct opt-in script execution
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-live", action="store_true", help="authorize one bounded live run")
     parser.add_argument("--topic", required=True)
     parser.add_argument("--anchor", action="append", default=[])
+    parser.add_argument("--desired-duration-seconds", type=_positive_int, default=900)
     parser.add_argument("--max-tracks", type=int, default=4)
     parser.add_argument("--max-chapters", type=int, default=16)
     parser.add_argument("--json-output", type=Path)
@@ -401,6 +409,16 @@ def _safe_asset_url(url: str | None) -> str | None:
     return "[external-redacted]"
 
 
+def _assembly_request(arguments: argparse.Namespace) -> LiveEpisodeAssemblyRequest:
+    return LiveEpisodeAssemblyRequest(
+        topic=arguments.topic,
+        anchor_tracks=arguments.anchor,
+        desired_duration_seconds=getattr(arguments, "desired_duration_seconds", 900),
+        max_tracks=arguments.max_tracks,
+        max_chapters=arguments.max_chapters,
+    )
+
+
 async def _run(arguments: argparse.Namespace) -> int:
     settings = replace(ProviderSettings.from_env(), max_attempts=1)
     if settings.mode != "live":
@@ -422,12 +440,7 @@ async def _run(arguments: argparse.Namespace) -> int:
     service = create_episode_assembly_service(settings)
     try:
         result = await service.assemble(
-            LiveEpisodeAssemblyRequest(
-                topic=arguments.topic,
-                anchor_tracks=arguments.anchor,
-                max_tracks=arguments.max_tracks,
-                max_chapters=arguments.max_chapters,
-            ),
+            _assembly_request(arguments),
             request_id="live-episode-probe",
         )
         report = _report(result)
