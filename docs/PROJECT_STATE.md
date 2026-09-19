@@ -52,7 +52,7 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
   playback placement, normalizes chapter identity, fails explicitly on
   impossible narration placement, preserves multiple ordered blocks in a gap,
   and reports parsed/normalized Writer blocks safely.
-- **Phase 4.8.2 (in progress):** background research can regenerate one
+- **Phase 4.8.2 (complete, merged in PR #24):** background research can regenerate one
   bounded typed `ResearchPlan` after a FastStart fallback, while retaining the
   deterministic one-Exa/two-Tavily execution cap. URLs are canonicalized before
   evidence deduplication and IDs; Evidence carries conservative provenance
