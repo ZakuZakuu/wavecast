@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -377,7 +378,7 @@ def _safe_asset_url(url: str | None) -> str | None:
 
 
 async def _run(arguments: argparse.Namespace) -> int:
-    settings = ProviderSettings.from_env()
+    settings = replace(ProviderSettings.from_env(), max_attempts=1)
     if settings.mode != "live":
         raise ProviderConfigurationError("set WAVECAST_PROVIDER_MODE=live in the local .env")
 
