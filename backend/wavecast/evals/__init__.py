@@ -15,6 +15,15 @@ from .quality import (
     build_phase51_evaluation,
     build_review_bundle,
 )
+from .listening import (
+    DurationMetrics,
+    ListeningEvaluation,
+    PacingMetrics,
+    PacingWindow,
+    RouteSurvivalMetrics,
+    WriterContinuityMetrics,
+    build_listening_evaluation,
+)
 from .retrieval import (
     RETRIEVAL_BENCHMARK_CASES,
     SYNTHETIC_RETRIEVAL_FIXTURES,
@@ -24,6 +33,13 @@ from .retrieval import (
 
 __all__ = [
     "GUIDED_DISCOVERY_CASES",
+    "DurationMetrics",
+    "ListeningEvaluation",
+    "PacingMetrics",
+    "PacingWindow",
+    "RouteSurvivalMetrics",
+    "WriterContinuityMetrics",
+    "build_listening_evaluation",
     "PHASE51_EDITORIAL_CASES",
     "GuidedDiscoveryCase",
     "GuidedDiscoveryReview",
