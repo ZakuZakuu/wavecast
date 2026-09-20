@@ -122,16 +122,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   const commitSeek = useCallback((value: number) => {
     if (!localEpisode || !isSeekAllowed(localEpisode, value)) return;
-    const previousPosition = browserPositionRef.current;
     setSeekPreview(null);
-    setBrowserPosition(value);
-    browserPositionRef.current = value;
     pendingTransportPositionRef.current = value;
     void update(api.seek(localEpisode.id, value)).then((succeeded) => {
       if (!succeeded && pendingTransportPositionRef.current === value) {
         pendingTransportPositionRef.current = null;
-        setBrowserPosition(previousPosition);
-        browserPositionRef.current = previousPosition;
       }
     });
   }, [localEpisode, update]);
