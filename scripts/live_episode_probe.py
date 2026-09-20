@@ -16,6 +16,7 @@ import asyncio
 import json
 import sys
 from dataclasses import replace
+from hashlib import sha1
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -66,6 +67,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-tracks", type=int, default=4)
     parser.add_argument("--max-chapters", type=int, default=16)
     parser.add_argument("--json-output", type=Path)
+    parser.add_argument(
+        "--episode-bundle-output",
+        type=Path,
+        help="write a playable episode bundle for the materialized runtime import",
+    )
+    parser.add_argument("--episode-title")
+    parser.add_argument("--episode-seed-id")
     return parser.parse_args()
 
 
@@ -179,6 +187,21 @@ def _failure_report(error: EpisodeAssemblyError, ledger: UsageLedger) -> dict[st
     if error.diagnostics:
         report.update(error.diagnostics)
     return report
+
+
+def _episode_bundle(result, arguments: argparse.Namespace) -> dict[str, object]:
+    topic = arguments.topic
+    seed_id = getattr(arguments, "episode_seed_id", None) or (
+        f"live-{sha1(topic.encode("utf-8")).hexdigest()[:12]}"
+    )
+    title = getattr(arguments, "episode_title", None) or topic
+    return {
+        "seed_id": seed_id,
+        "title": title,
+        "topic": topic,
+        "estimated_duration_seconds": result.duration_summary.total_seconds,
+        "playable_episode": result.playable_episode.model_dump(mode="json"),
+    }
 
 
 def _report(result) -> dict[str, object]:
@@ -444,6 +467,12 @@ async def _run(arguments: argparse.Namespace) -> int:
             request_id="live-episode-probe",
         )
         report = _report(result)
+        bundle_output = getattr(arguments, "episode_bundle_output", None)
+        if bundle_output:
+            bundle_output.write_text(
+                json.dumps(_episode_bundle(result, arguments), ensure_ascii=False, indent=2)
+                + "\n"
+            )
     except EpisodeAssemblyError as error:
         report = _failure_report(error, service.ledger)
         if arguments.json_output:

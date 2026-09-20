@@ -10,7 +10,7 @@ import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
 import { AudioPlayer } from "./audio-player";
 
-export function EpisodePlayer({ seedId }: { seedId: string }) {
+export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeId?: string }) {
   const { episode, setEpisode } = usePlayerStore();
   const [error, setError] = useState<string | null>(null);
   const [browserPosition, setBrowserPosition] = useState(0);
@@ -18,7 +18,10 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
   const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
   const playbackAnchorRef = useRef<ReturnType<typeof playbackAnchor>>(null);
-  const localEpisode = episode?.seed_id === seedId ? episode : null;
+  const localEpisode = episode
+    && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
+    ? episode
+    : null;
   const current = useMemo(
     () => localEpisode?.segments.find((segment) => segment.id === localEpisode.current_segment_id),
     [localEpisode],
@@ -33,7 +36,8 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
       }
     };
     window.addEventListener("pagehide", leaveOnPageExit);
-    api.start(seedId).then((started) => {
+    const load = episodeId ? api.get(episodeId) : api.start(seedId!);
+    load.then((started) => {
       episodeIdRef.current = started.id;
       if (mounted) setEpisode(started);
       else void api.leave(started.id);
@@ -43,7 +47,7 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
       window.removeEventListener("pagehide", leaveOnPageExit);
       if (episodeIdRef.current) void api.leave(episodeIdRef.current);
     };
-  }, [seedId, setEpisode]);
+  }, [episodeId, seedId, setEpisode]);
 
   useEffect(() => {
     if (!localEpisode) return;
@@ -138,6 +142,7 @@ export function EpisodePlayer({ seedId }: { seedId: string }) {
       />
       <nav className="nav"><Link href="/">← 返回节目</Link><span className="status-dot">{localEpisode.state === "MATERIALIZED" ? "fixed episode" : "building ahead"}</span></nav>
       <section className="now-playing">
+        <p className="eyebrow">{localEpisode.title ?? "GUIDED LISTENING"}</p>
         <p className="eyebrow">{current?.kind === "MUSIC" ? "NOW PLAYING" : "HOST ON MIC"}</p>
         <h1>{current?.title}</h1>
         <p>{current?.artist ?? current?.narration_text ?? "正在准备下一段"}</p>

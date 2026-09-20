@@ -59,12 +59,8 @@ class SidecarMusicProvider(MusicProvider):
 
     async def get_playback_asset(self, resolved_track: ResolvedTrack) -> AudioAsset:
         metadata = await self.resolve_track(resolved_track.track_ref)
-        playback_url = _string_value(metadata.metadata.get("playback_url"))
-        if not playback_url:
-            provider_id = _provider_id(metadata.track_ref, self.track_ref_prefix)
-            payload = await self._request(f"/tracks/{quote(provider_id, safe='')}/playback")
-            playback_url = _playback_url(payload)
-        if not playback_url or not metadata.playable:
+        upstream_url = await self._resolve_upstream_playback_url(metadata)
+        if not upstream_url or not metadata.playable:
             raise ProviderInvalidResponseError(
                 f"{self.provider_name} returned an unplayable track asset"
             )
@@ -72,10 +68,35 @@ class SidecarMusicProvider(MusicProvider):
             asset_id=metadata.track_ref,
             asset_type=AudioAssetType.MUSIC,
             provider=self.provider_name,
-            playback_url=playback_url,
+            playback_url=self.playback_proxy_url(metadata.track_ref),
             duration=metadata.duration_seconds,
-            metadata=metadata.metadata,
+            metadata=_safe_metadata(metadata.metadata),
         )
+
+    async def resolve_upstream_playback_url(self, track_ref: str) -> str:
+        """Resolve the current sidecar URL without exposing it to the browser."""
+        metadata = await self.resolve_track(track_ref)
+        playback_url = await self._resolve_upstream_playback_url(metadata)
+        if not playback_url or not metadata.playable:
+            raise ProviderInvalidResponseError(
+                f"{self.provider_name} returned an unplayable track asset"
+            )
+        return playback_url
+
+    def playback_proxy_url(self, track_ref: str) -> str:
+        provider_id = _provider_id(track_ref, self.track_ref_prefix)
+        return (
+            f"/api/audio/sidecar/{self.provider_name}/"
+            f"{quote(provider_id, safe='')}"
+        )
+
+    async def _resolve_upstream_playback_url(self, metadata: TrackMetadata) -> str | None:
+        playback_url = _string_value(metadata.metadata.get("playback_url"))
+        if not playback_url:
+            provider_id = _provider_id(metadata.track_ref, self.track_ref_prefix)
+            payload = await self._request(f"/tracks/{quote(provider_id, safe='')}/playback")
+            playback_url = _playback_url(payload)
+        return playback_url
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -150,6 +171,14 @@ def _provider_id(track_ref: str, prefix: str) -> str:
 
 def _string_value(value: object) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _safe_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in metadata.items()
+        if key not in {"playback_url", "stream_url", "url"}
+    }
 
 
 def _duration(value: object) -> int:
