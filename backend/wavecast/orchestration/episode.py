@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 
 from wavecast.models.episode import (
     EpisodeSeed,
@@ -10,6 +11,7 @@ from wavecast.models.episode import (
     LiveEpisode,
     MusicSegment,
     NarrationSegment,
+    PlayableEpisode,
     Segment,
     SegmentKind,
     SegmentState,
@@ -25,6 +27,17 @@ from wavecast.storage.episodes import (
 SESSION_TTL = timedelta(seconds=30)
 DEFAULT_BUFFER_CHAPTERS = 2
 DEFAULT_BUFFER_AHEAD_SECONDS = 5 * 60
+
+
+def _is_wavecast_owned_audio_url(value: str) -> bool:
+    '''Accept only same-origin API paths at the materialized runtime boundary.'''
+    parsed = urlsplit(value)
+    return (
+        value.startswith("/api/")
+        and not parsed.scheme
+        and not parsed.netloc
+        and not parsed.path.startswith("//")
+    )
 
 
 class EpisodeRuntimeError(ValueError):
@@ -103,6 +116,62 @@ class EpisodeOrchestrator:
     def start_or_resume(self, seed: EpisodeSeed, listener_id: str = "test-listener") -> LiveEpisode:
         existing = self.repository.find_by_listener_seed(listener_id, seed.id)
         return self.resume(existing.id) if existing else self.start(seed, listener_id)
+
+    def import_materialized(
+        self,
+        *,
+        seed_id: str,
+        title: str,
+        topic: str,
+        estimated_duration_seconds: int,
+        playable_episode: PlayableEpisode,
+        listener_id: str = "test-listener",
+    ) -> LiveEpisode:
+        """Persist a fully assembled episode through the normal runtime boundary."""
+        if not playable_episode.segments:
+            raise EpisodeRuntimeError("materialized episode must contain at least one segment")
+        if any(not segment.audio_source_url for segment in playable_episode.segments):
+            raise EpisodeRuntimeError("materialized episode contains a segment without audio")
+        if any(
+            not _is_wavecast_owned_audio_url(segment.audio_source_url or "")
+            for segment in playable_episode.segments
+        ):
+            raise EpisodeRuntimeError(
+                "materialized episode contains an external audio URL"
+            )
+
+        existing = self.repository.find_by_listener_seed(listener_id, seed_id)
+        if existing is not None:
+            return self.resume(existing.id)
+
+        now = self.now()
+        segments = [
+            segment.model_copy(
+                update={
+                    "state": (
+                        SegmentState.COMMITTED
+                        if index == 0
+                        else SegmentState.AUDIO_READY
+                    ),
+                    "committed_at": now if index == 0 else None,
+                }
+            )
+            for index, segment in enumerate(playable_episode.segments)
+        ]
+        episode = LiveEpisode(
+            seed_id=seed_id,
+            title=title,
+            topic=topic,
+            listener_id=listener_id,
+            state=EpisodeState.MATERIALIZED,
+            generation_mode=GenerationMode.FULL,
+            program_estimated_duration_seconds=estimated_duration_seconds,
+            segments=segments,
+            current_segment_id=segments[0].id,
+            last_activity_at=now,
+            last_heartbeat_at=now,
+        )
+        return self.repository.save(episode)
 
     def get(self, episode_id: str, listener_id: str | None = None) -> LiveEpisode:
         try:

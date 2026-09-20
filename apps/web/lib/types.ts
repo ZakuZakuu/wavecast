@@ -46,6 +46,8 @@ export type Segment = MusicSegment | NarrationSegment;
 export type LiveEpisode = {
   id: string;
   seed_id: string;
+  title?: string | null;
+  topic?: string | null;
   listener_id: string;
   version: number;
   state: "STREAMING" | "MATERIALIZING" | "MATERIALIZED" | string;

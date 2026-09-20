@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -91,7 +92,8 @@ def test_sidecar_adapters_use_provider_neutral_http_contract(
     assert tracks[0].metadata["album"] == "Night Signals"
     assert asset.asset_type is AudioAssetType.MUSIC
     assert asset.provider == provider_name
-    assert asset.playback_url == f"{base_url}/stream/track-1"
+    assert asset.playback_url == f"/api/audio/sidecar/{provider_name}/track-1"
+    assert base_url not in json.dumps(asset.model_dump(mode="json"))
     assert [request.url.path for request in requests] == [
         "/search",
         "/tracks/track-1",

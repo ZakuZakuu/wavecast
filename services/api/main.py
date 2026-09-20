@@ -22,6 +22,7 @@ from wavecast.models.episode import (
     EpisodeState,
     LiveEpisode,
     NarrationSegment,
+    PlayableEpisode,
 )
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
@@ -30,6 +31,9 @@ from wavecast.providers.contracts import ObjectStorageProvider
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
 from wavecast.providers.fakes import MockTTSProvider
 from wavecast.providers.minimax import MiniMaxTTSProvider
+from wavecast.providers.music_http import SidecarMusicProvider
+from wavecast.providers.netease import NeteaseMusicProvider
+from wavecast.providers.qqmusic import QQMusicProvider
 from wavecast.storage import (
     EpisodeConcurrencyError,
     LocalObjectStorageProvider,
@@ -135,6 +139,14 @@ class BufferRequest(BaseModel):
     target_chapters: int = Field(default=2, ge=1, le=2)
 
 
+class MaterializedEpisodeRequest(BaseModel):
+    seed_id: str = Field(min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=200)
+    topic: str = Field(min_length=1, max_length=500)
+    estimated_duration_seconds: int = Field(gt=0)
+    playable_episode: PlayableEpisode
+
+
 class PlaybackCheckpointRequest(BaseModel):
     position_seconds: int = Field(ge=0)
 
@@ -202,6 +214,70 @@ async def audio_asset(asset_key: str) -> Response:
         content=stored.content,
         media_type=stored.content_type,
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+def _build_sidecar_provider(provider_name: str) -> SidecarMusicProvider:
+    settings = ProviderSettings.from_env()
+    providers: dict[str, type[SidecarMusicProvider]] = {
+        "netease": NeteaseMusicProvider,
+        "qqmusic": QQMusicProvider,
+    }
+    provider_type = providers.get(provider_name)
+    if provider_type is None:
+        raise ProviderConfigurationError("sidecar music provider is not supported")
+    return provider_type(settings)
+
+
+async def _resolve_sidecar_playback_url(provider_name: str, track_id: str) -> str:
+    provider = _build_sidecar_provider(provider_name)
+    try:
+        return await provider.resolve_upstream_playback_url(f"{provider_name}:{track_id}")
+    finally:
+        await provider.aclose()
+
+
+@app.get("/api/audio/sidecar/{provider_name}/{track_id:path}")
+async def sidecar_audio(provider_name: str, track_id: str, request: Request) -> StreamingResponse:
+    try:
+        playback_url = await _resolve_sidecar_playback_url(provider_name, track_id)
+    except ProviderConfigurationError as error:
+        raise HTTPException(status_code=503, detail="Sidecar playback is not configured") from error
+    except ProviderError as error:
+        raise HTTPException(status_code=502, detail="Sidecar playback unavailable") from error
+
+    settings = ProviderSettings.from_env()
+    headers = {"Accept": "audio/mpeg"}
+    for header_name in ("range", "if-range"):
+        if value := request.headers.get(header_name):
+            headers[header_name.title()] = value
+    client = httpx.AsyncClient(timeout=settings.timeout_seconds, follow_redirects=True)
+    upstream = await client.send(
+        client.build_request("GET", playback_url, headers=headers),
+        stream=True,
+    )
+    if upstream.status_code >= 400:
+        await upstream.aclose()
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="Sidecar playback unavailable")
+
+    async def body() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    response_headers = {"Cache-Control": "private, max-age=60"}
+    for header_name in ("accept-ranges", "content-range", "content-length"):
+        if value := upstream.headers.get(header_name):
+            response_headers[header_name.title()] = value
+    return StreamingResponse(
+        body(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "audio/mpeg"),
+        headers=response_headers,
     )
 
 
@@ -273,6 +349,25 @@ def create_episode(seed_id: str, request: Request) -> LiveEpisode:
         return orchestrator.start_or_resume(seed, listener(request))
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode creation raced; retry") from error
+
+
+@app.post("/api/episodes/from-materialized", response_model=LiveEpisode)
+def import_materialized_episode(
+    body: MaterializedEpisodeRequest, request: Request
+) -> LiveEpisode:
+    try:
+        return orchestrator.import_materialized(
+            seed_id=body.seed_id,
+            title=body.title,
+            topic=body.topic,
+            estimated_duration_seconds=body.estimated_duration_seconds,
+            playable_episode=body.playable_episode,
+            listener_id=listener(request),
+        )
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode creation raced; retry") from error
+    except EpisodeRuntimeError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.get("/api/episodes/{episode_id}", response_model=LiveEpisode)
