@@ -48,6 +48,15 @@ describe("generated-frontier player behavior", () => {
     expect(reconcileBrowserPosition(12, previous, target, 42)).toBe(42);
   });
 
+  it("does not consume a seek target from an unrelated snapshot", () => {
+    const previous = { ...episode, current_segment_id: "opening", playback_position_seconds: 12 };
+    const checkpoint = { ...previous, playback_position_seconds: 13 };
+    const seekResponse = { ...previous, current_segment_id: "bridge", playback_position_seconds: 42 };
+
+    expect(reconcileBrowserPosition(12, previous, checkpoint)).toBe(12);
+    expect(reconcileBrowserPosition(12, checkpoint, seekResponse, 42)).toBe(42);
+  });
+
   it("keeps the browser clock ahead when an unrelated newer snapshot has the same playback anchor", () => {
     const serverSnapshot = { ...episode, version: 2, playback_position_seconds: 5 };
     const unrelatedNewerSnapshot = { ...serverSnapshot, version: 3, generated_frontier_seconds: 48 };
