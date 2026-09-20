@@ -1412,7 +1412,12 @@ class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
                 return RadioScript(blocks=[], intended_duration_seconds=1)
             blocks: list[RadioScriptBlock] = []
             for context in contexts:
-                allowed = set(context.get("allowed_block_kinds", []))
+                allowed_value = context.get("allowed_block_kinds", [])
+                allowed = (
+                    {item for item in allowed_value if isinstance(item, str)}
+                    if isinstance(allowed_value, list)
+                    else set()
+                )
                 if "track_intro" in allowed:
                     kind = RadioScriptBlockKind.TRACK_INTRO
                     text = f"\u73b0\u5728\u8fdb\u5165\u7b2c {index + 1} \u9996\u3002"
