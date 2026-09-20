@@ -14,9 +14,11 @@ export function reconcileBrowserPosition(
   browserPosition: number,
   previousAnchor: PlaybackAnchor | null,
   nextEpisode: LiveEpisode | null,
+  explicitTransportPosition: number | null = null,
 ): number {
   const nextAnchor = playbackAnchor(nextEpisode);
   if (!nextAnchor) return 0;
+  if (explicitTransportPosition !== null) return Math.max(0, explicitTransportPosition);
   if (
     !previousAnchor
     || previousAnchor.current_segment_id !== nextAnchor.current_segment_id
