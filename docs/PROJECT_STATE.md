@@ -12,18 +12,17 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 ## Current milestone and main state
 
 - **Current milestone:** Phase 5.2 — First Listening Episode.
-- **Current stage:** Phase 5.2 credential-free listening-path bridge is merged
-  in PR #36 and has passed exact-head review, full local validation, and GitHub
-  backend/web CI.
-- **Canonical main:** da15493757ed8f55b5192d47fe377821caef15d0 (merged PR #36);
-  verify the remote HEAD before acting.
-- **Last documented recovery baseline:** da15493757ed8f55b5192d47fe377821caef15d0
-  (canonical origin/main after PR #36).
+- **Current stage:** Phase 5.2 live listening artifact is available for human
+  editorial review after the credential-free bridge merged in PR #36 and passed
+  exact-head review, full local validation, and GitHub backend/web CI.
+- **Canonical main:** 22f1c96 (PR #36 merge commit da15493757ed8f55b5192d47fe377821caef15d0
+  plus the sanitized project-state update); verify the remote HEAD before acting.
+- **Last documented recovery baseline:** 22f1c96 (canonical origin/main).
 - **Latest code milestone:** da15493757ed8f55b5192d47fe377821caef15d0 (merged PR #36,
   completing the listening runtime bridge and owned-audio import boundary).
-- **Immediate work:** start the music readiness chain, execute exactly one bounded
-  Fang Datong live assembly, import its playable bundle into the existing Web
-  player, and present the real listening URL for human editorial review.
+- **Immediate work:** human-review the available Fang Datong episode, then use the
+  editorial verdict to decide whether Phase 5.2 curation/content follow-up is
+  needed. Do not spend live/paid calls on automatic retries.
 
 ## Phase 5.2 first listening episode
 
@@ -58,9 +57,21 @@ No live provider call is part of this implementation PR.
 Validation on merged PR #36: backend 283 passed, 6 skipped; backend Ruff and
 mypy pass; web ESLint, TypeScript, 9 Vitest tests, and production build pass;
 GitHub backend/web CI passed for review HEAD 0167ba282d8885a1f9b06a49b1998826a65e449e.
-Next action: start the music readiness chain, run the single authorized Fang
-Datong live assembly, import the resulting bundle, and present the real
-listening URL for human editorial review.
+
+The single authorized Fang Datong live assembly completed once with the bounded
+Phase 5.2 target (full-track playback, up to five tracks/eight chapters,
+max_attempts=1). The resulting materialized episode was imported once into the
+listener-scoped runtime and is available at:
+http://127.0.0.1:3001/episode/materialized/62850b54-0ebf-4498-a423-259387892f77
+
+Safe live summary: 5 playable music tracks and 14 narration blocks are present;
+all timeline audio assets use WaveCast-owned /api/... paths; the existing Web
+player successfully loaded the episode, began the opening track, and exposed
+pause, next-chapter, current-item, continuous timeline, and progress controls.
+The current human-review question is editorial quality, not transition effects,
+crossfade, voice character, or UI polish. The imported artifact is owned by the
+phase52-fang-datong listener session. No raw prompts, provider responses,
+reasoning, credentials, or signed URLs are retained in this state record.
 ## Completed implementation
 
 - **Phases 0–1:** typed episode/segment contracts, deterministic mock providers,
