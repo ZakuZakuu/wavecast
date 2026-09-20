@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
-import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentStart } from "../lib/playback";
+import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
 import { AudioPlayer } from "./audio-player";
@@ -14,6 +14,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const { episode, setEpisode } = usePlayerStore();
   const [error, setError] = useState<string | null>(null);
   const [browserPosition, setBrowserPosition] = useState(0);
+  const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const episodeIdRef = useRef<string | null>(null);
   const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
@@ -62,7 +63,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       playbackAnchorRef.current,
       localEpisode,
     );
-    setBrowserPosition(position);
+    if (seekPreview === null) setBrowserPosition(position);
     browserPositionRef.current = position;
     playbackAnchorRef.current = playbackAnchor(localEpisode);
   }, [localEpisode?.current_segment_id, localEpisode?.playback_position_seconds]);
@@ -88,12 +89,14 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     return () => window.clearInterval(interval);
   }, [localEpisode?.id, localEpisode?.is_listener_active, setEpisode]);
 
-  async function update(operation: Promise<LiveEpisode>) {
+  async function update(operation: Promise<LiveEpisode>): Promise<boolean> {
     try {
       setEpisode(await operation);
       setError(null);
+      return true;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Player action failed");
+      return false;
     }
   }
 
@@ -112,6 +115,24 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     }
   }, [current, localEpisode]);
 
+  const commitSeek = useCallback((value: number) => {
+    if (!localEpisode || !isSeekAllowed(localEpisode, value)) return;
+    setSeekPreview(null);
+    void api.seek(localEpisode.id, value).then((response) => {
+      setBrowserPosition(value);
+      browserPositionRef.current = value;
+      playbackAnchorRef.current = playbackAnchor(response);
+      setEpisode(response);
+      setError(null);
+    }).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : "Player action failed");
+    });
+  }, [localEpisode, setEpisode]);
+
+  const commitSeekPreview = useCallback(() => {
+    if (seekPreview !== null) commitSeek(seekPreview);
+  }, [commitSeek, seekPreview]);
+
   const pausePlayback = useCallback(async () => {
     if (!localEpisode) return;
     await update(api.checkpoint(localEpisode.id, browserPosition));
@@ -126,8 +147,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }
 
   const generatedPercent = Math.round((localEpisode.generated_frontier_seconds / localEpisode.timeline_duration_seconds) * 100);
+  const displayedPosition = seekPreview ?? browserPosition;
   const currentOffset = current
-    ? Math.max(0, browserPosition - segmentStart(localEpisode, current.id))
+    ? segmentOffset(localEpisode, current.id, browserPosition)
     : 0;
   const upcoming = current ? nextVisibleSegment(localEpisode) : undefined;
   return (
@@ -156,11 +178,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         </div>
       </section>
       <section className="timeline" aria-label="episode timeline">
-        <div className="timeline-label"><span>可回听 {formatSeconds(localEpisode.generated_frontier_seconds)}</span><span>节目约 {formatSeconds(localEpisode.program_estimated_duration_seconds)}</span></div>
-        <input aria-label="Seek within generated audio" type="range" min="0" max={localEpisode.generated_frontier_seconds} value={browserPosition} onChange={(event) => {
+        <div className="timeline-label"><span>当前 {formatSeconds(displayedPosition)} / {formatSeconds(localEpisode.timeline_duration_seconds)}</span><span>可回听 {formatSeconds(localEpisode.generated_frontier_seconds)}</span></div>
+        <input aria-label="Seek within generated audio" type="range" min="0" max={localEpisode.generated_frontier_seconds} value={displayedPosition} onChange={(event) => {
           const value = Number(event.target.value);
-          if (isSeekAllowed(localEpisode, value)) void update(api.seek(localEpisode.id, value));
-        }} style={{ "--generated": `${generatedPercent}%` } as React.CSSProperties} />
+          if (isSeekAllowed(localEpisode, value)) setSeekPreview(value);
+        }} onPointerUp={commitSeekPreview} onKeyUp={commitSeekPreview} onBlur={commitSeekPreview} style={{ "--generated": `${generatedPercent}%` } as React.CSSProperties} />
         <p>亮色区域可以回听；当前时间轴 {formatSeconds(localEpisode.timeline_duration_seconds)}，节目承诺不会随 mock 片段缩短。</p>
       </section>
       <section className="segment-list">

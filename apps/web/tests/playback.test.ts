@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds } from "../lib/playback";
+import { isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentOffset } from "../lib/playback";
 import type { LiveEpisode } from "../lib/types";
 
 const episode: LiveEpisode = {
@@ -30,10 +30,73 @@ describe("generated-frontier player behavior", () => {
     expect(remainingSegmentSeconds(restored, restored.segments[0])).toBe(10);
   });
 
+  it("keeps audio offset tied to committed position across segment changes", () => {
+    const committed = { ...episode, current_segment_id: "bridge", playback_position_seconds: 42 };
+    const previewPosition = 54;
+
+    expect(segmentOffset(committed, "bridge", committed.playback_position_seconds)).toBe(10);
+    expect(segmentOffset(committed, "bridge", committed.playback_position_seconds)).not.toBe(
+      segmentOffset(committed, "bridge", previewPosition),
+    );
+  });
+
+  it("keeps the old audio offset until a cross-segment seek response arrives", () => {
+    const previous = { ...episode, current_segment_id: "opening", playback_position_seconds: 12 };
+    const target = { ...episode, current_segment_id: "bridge", playback_position_seconds: 42 };
+
+    expect(reconcileBrowserPosition(12, previous, previous)).toBe(12);
+    expect(reconcileBrowserPosition(12, previous, target, 42)).toBe(42);
+  });
+
+  it("does not consume a seek target from an unrelated snapshot", () => {
+    const previous = { ...episode, current_segment_id: "opening", playback_position_seconds: 12 };
+    const checkpoint = { ...previous, playback_position_seconds: 13 };
+    const seekResponse = { ...previous, current_segment_id: "bridge", playback_position_seconds: 42 };
+
+    expect(reconcileBrowserPosition(12, previous, checkpoint)).toBe(12);
+    expect(reconcileBrowserPosition(12, checkpoint, seekResponse, 42)).toBe(42);
+  });
+
+  it("lets the successful seek response coexist with an equivalent SSE snapshot", () => {
+    const previous = { ...episode, current_segment_id: "opening", playback_position_seconds: 32 };
+    const sseSnapshot = { ...previous, playback_position_seconds: 10 };
+    const seekResponse = { ...sseSnapshot };
+
+    expect(reconcileBrowserPosition(32, previous, sseSnapshot)).toBe(32);
+    expect(reconcileBrowserPosition(10, sseSnapshot, seekResponse)).toBe(10);
+  });
+
   it("keeps the browser clock ahead when an unrelated newer snapshot has the same playback anchor", () => {
     const serverSnapshot = { ...episode, version: 2, playback_position_seconds: 5 };
     const unrelatedNewerSnapshot = { ...serverSnapshot, version: 3, generated_frontier_seconds: 48 };
 
     expect(reconcileBrowserPosition(11, serverSnapshot, unrelatedNewerSnapshot)).toBe(11);
+  });
+
+  it("does not let a late checkpoint move the browser clock backwards", () => {
+    const previousSnapshot = { ...episode, playback_position_seconds: 25 };
+    const checkpoint = { ...previousSnapshot, playback_position_seconds: 30 };
+
+    expect(reconcileBrowserPosition(32, previousSnapshot, checkpoint)).toBe(32);
+  });
+
+  it("applies an explicit backward seek even when the segment is unchanged", () => {
+    const serverSnapshot = { ...episode, playback_position_seconds: 32 };
+    const afterSeek = { ...serverSnapshot, playback_position_seconds: 10 };
+
+    expect(reconcileBrowserPosition(32, serverSnapshot, afterSeek, 10)).toBe(10);
+  });
+
+  it("adopts the new server anchor when the current segment changes", () => {
+    const previous = { ...episode, current_segment_id: "opening", playback_position_seconds: 21 };
+    const next = { ...episode, current_segment_id: "bridge", playback_position_seconds: 32 };
+
+    expect(reconcileBrowserPosition(21, previous, next)).toBe(32);
+  });
+
+  it("restores the persisted position on initial load", () => {
+    const restored = { ...episode, playback_position_seconds: 12 };
+
+    expect(reconcileBrowserPosition(0, null, restored)).toBe(12);
   });
 });
