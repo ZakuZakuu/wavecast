@@ -18,7 +18,6 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const episodeIdRef = useRef<string | null>(null);
   const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
-  const pendingTransportPositionRef = useRef<number | null>(null);
   const playbackAnchorRef = useRef<ReturnType<typeof playbackAnchor>>(null);
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
@@ -63,11 +62,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       browserPositionRef.current,
       playbackAnchorRef.current,
       localEpisode,
-      pendingTransportPositionRef.current,
     );
-    if (pendingTransportPositionRef.current !== null) {
-      pendingTransportPositionRef.current = null;
-    }
     if (seekPreview === null) setBrowserPosition(position);
     browserPositionRef.current = position;
     playbackAnchorRef.current = playbackAnchor(localEpisode);
@@ -124,7 +119,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (!localEpisode || !isSeekAllowed(localEpisode, value)) return;
     setSeekPreview(null);
     void api.seek(localEpisode.id, value).then((response) => {
-      pendingTransportPositionRef.current = value;
+      setBrowserPosition(value);
+      browserPositionRef.current = value;
+      playbackAnchorRef.current = playbackAnchor(response);
       setEpisode(response);
       setError(null);
     }).catch((reason: unknown) => {
