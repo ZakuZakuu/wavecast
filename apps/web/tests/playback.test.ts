@@ -36,4 +36,31 @@ describe("generated-frontier player behavior", () => {
 
     expect(reconcileBrowserPosition(11, serverSnapshot, unrelatedNewerSnapshot)).toBe(11);
   });
+
+  it("does not let a late checkpoint move the browser clock backwards", () => {
+    const serverSnapshot = { ...episode, playback_position_seconds: 30 };
+    const lateCheckpoint = { ...serverSnapshot, playback_position_seconds: 30 };
+
+    expect(reconcileBrowserPosition(32, serverSnapshot, lateCheckpoint)).toBe(32);
+  });
+
+  it("applies an explicit backward seek even when the segment is unchanged", () => {
+    const serverSnapshot = { ...episode, playback_position_seconds: 32 };
+    const afterSeek = { ...serverSnapshot, playback_position_seconds: 10 };
+
+    expect(reconcileBrowserPosition(32, serverSnapshot, afterSeek, 10)).toBe(10);
+  });
+
+  it("adopts the new server anchor when the current segment changes", () => {
+    const previous = { ...episode, current_segment_id: "opening", playback_position_seconds: 21 };
+    const next = { ...episode, current_segment_id: "bridge", playback_position_seconds: 32 };
+
+    expect(reconcileBrowserPosition(21, previous, next)).toBe(32);
+  });
+
+  it("restores the persisted position on initial load", () => {
+    const restored = { ...episode, playback_position_seconds: 12 };
+
+    expect(reconcileBrowserPosition(0, null, restored)).toBe(12);
+  });
 });
