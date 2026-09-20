@@ -35,6 +35,10 @@ export function segmentStart(episode: LiveEpisode, segmentId: string): number {
   return total;
 }
 
+export function segmentOffset(episode: LiveEpisode, segmentId: string, timelinePosition: number): number {
+  return Math.max(0, timelinePosition - segmentStart(episode, segmentId));
+}
+
 export function remainingSegmentSeconds(episode: LiveEpisode, segment: Segment): number {
   const duration = segment.duration_seconds ?? segment.actual_duration_seconds ?? segment.planned_duration_seconds;
   return Math.max(0, duration - Math.max(0, episode.playback_position_seconds - segmentStart(episode, segment.id)));

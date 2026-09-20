@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
-import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentStart } from "../lib/playback";
+import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
 import { AudioPlayer } from "./audio-player";
@@ -156,7 +156,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const generatedPercent = Math.round((localEpisode.generated_frontier_seconds / localEpisode.timeline_duration_seconds) * 100);
   const displayedPosition = seekPreview ?? browserPosition;
   const currentOffset = current
-    ? Math.max(0, displayedPosition - segmentStart(localEpisode, current.id))
+    ? segmentOffset(localEpisode, current.id, browserPosition)
     : 0;
   const upcoming = current ? nextVisibleSegment(localEpisode) : undefined;
   return (
