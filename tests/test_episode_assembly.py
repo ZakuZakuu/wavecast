@@ -1,1 +1,1079 @@
-@tests/test_episode_assembly.py
+import asyncio
+import json
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+from wavecast.assembly import (
+    EpisodeAssemblyError,
+    LiveEpisodeAssemblyRequest,
+    LiveEpisodeAssemblyService,
+    MockEpisodeAssemblyLLM,
+    NarrationPlacementError,
+    _assemble_radio_script,
+    _mock_writer_chapter_index,
+    create_episode_assembly_service,
+)
+from wavecast.composer import EpisodeComposer
+from wavecast.intelligence.background import BackgroundIntelligencePipeline
+from wavecast.intelligence.curation import CuratorService
+from wavecast.intelligence.fast_start import FastPathCoordinator, FastStartPlanner
+from wavecast.intelligence.models import (
+    ChapterPlan,
+    EditorialConnection,
+    EditorialRelationType,
+    NarrativeRole,
+    NoveltyDistance,
+    OutputLanguage,
+    ProgramSkeleton,
+    RadioScript,
+    RadioScriptBlock,
+    RadioScriptBlockKind,
+    ResolvedTrack,
+)
+from wavecast.intelligence.research import BackgroundResearchService, FastResearchService
+from wavecast.intelligence.writer import WriterService
+from wavecast.materialization import NarrationMaterializer
+from wavecast.providers.fakes import FakeSearchProvider, MockMusicProvider, MockTTSProvider
+from wavecast.providers.registry import MusicProviderRegistry
+from wavecast.providers.retrieval import MusicRetrievalService
+from wavecast.providers.usage import UsageLedger
+from wavecast.storage.assets import LocalObjectStorageProvider
+
+
+def block(
+    kind: RadioScriptBlockKind,
+    text: str,
+    *,
+    track_index: int | None = None,
+    cue: str = "",
+    evidence: str = "",
+    tts_text: str | None = None,
+) -> RadioScriptBlock:
+    return RadioScriptBlock(
+        kind=kind,
+        text=text,
+        tts_text=tts_text,
+        duration_seconds=3,
+        track_index=track_index,
+        tts_cues=[cue] if cue else [],
+        evidence_ids=[evidence] if evidence else [],
+    )
+
+
+def slot_blocks(prompt: str, prefix: str) -> list[RadioScriptBlock]:
+    marker = "Narration slot contexts: "
+    contexts = json.loads(prompt.split(marker, 1)[1].split(
+        "\nThe following legacy field", 1
+    )[0])
+    chapter = json.loads(prompt.split("Chapter: ", 1)[1].split(
+        "\nEvidence:", 1
+    )[0])
+    blocks: list[RadioScriptBlock] = []
+    for context in contexts:
+        allowed = set(context["allowed_block_kinds"])
+        if "track_intro" in allowed:
+            kind = RadioScriptBlockKind.TRACK_INTRO
+        elif "outro" in allowed:
+            kind = RadioScriptBlockKind.OUTRO
+        elif "intro" in allowed and (chapter["index"] == 0 or context["is_opening"]):
+            kind = RadioScriptBlockKind.INTRO
+        elif "transition" in allowed:
+            kind = RadioScriptBlockKind.TRANSITION
+        else:
+            continue
+        blocks.append(block(kind, f"{prefix}{chapter['index']}"))
+    return blocks
+
+
+class RecordingAssemblyLLM(MockEpisodeAssemblyLLM):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[dict[str, object]] = []
+
+    async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+        self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
+        return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+
+def service(tmp_path, llm: RecordingAssemblyLLM | None = None) -> LiveEpisodeAssemblyService:
+    ledger = UsageLedger()
+    llm = llm or RecordingAssemblyLLM()
+    discovery = FakeSearchProvider()
+    research = FakeSearchProvider()
+    fast_path = FastPathCoordinator(
+        research=FastResearchService(discovery=discovery, research=research, ledger=ledger),
+        planner=FastStartPlanner(llm),
+    )
+    background = BackgroundIntelligencePipeline(
+        research=BackgroundResearchService(
+            discovery=discovery, research=research, ledger=ledger
+        ),
+        curator=CuratorService(llm),
+        writer=WriterService(llm),
+    )
+    music = MockMusicProvider()
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    return LiveEpisodeAssemblyService(
+        fast_path=fast_path,
+        background_pipeline=background,
+        retrieval=MusicRetrievalService(MusicProviderRegistry({"mock": music})),
+        composer=EpisodeComposer(music),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+        ledger=ledger,
+    )
+
+
+def test_mock_factory_assembles_real_music_and_narration_assets(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assembly = create_episode_assembly_service()
+
+    result = asyncio.run(
+        assembly.assemble(
+            LiveEpisodeAssemblyRequest(
+                topic="night textures", anchor_tracks=["Neon First Light"], max_tracks=4
+            )
+        )
+    )
+
+    assert len(result.resolved_tracks) == 4
+    assert result.unresolved_proposals == []
+    assert result.playable_episode.segments[0].kind.value == "MUSIC"
+    assert all(segment.is_audio_ready for segment in result.playable_episode.segments)
+    assert result.duration_summary.total_seconds == result.playable_episode.duration_seconds
+    assert result.duration_summary.music_seconds > result.duration_summary.narration_seconds
+    assert [track.canonical_title for track in result.resolved_tracks] == [
+        "Neon First Light",
+        "Midnight Transfer",
+        "Daybreak in Stereo",
+        "Afterimage Avenue",
+    ]
+    assert [chapter.track.title for chapter in result.skeleton.chapters] == [
+        "Neon First Light",
+        "Midnight Transfer",
+        "Daybreak in Stereo",
+        "Afterimage Avenue",
+    ]
+    asyncio.run(assembly.aclose())
+
+
+def test_writer_runs_only_after_resolution_and_receives_next_track_context(tmp_path) -> None:
+    llm = RecordingAssemblyLLM()
+    assembly = service(tmp_path, llm)
+
+    result = asyncio.run(
+        assembly.assemble(
+            LiveEpisodeAssemblyRequest(topic="fixture", anchor_tracks=["Neon First Light"])
+        )
+    )
+
+    writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
+    assert len(writer_calls) == 4
+    assert "Next track metadata: Signal Garden — Midnight Transfer" in writer_calls[0]["prompt"]
+    assert "Previous context:" in writer_calls[1]["prompt"]
+    assert sum(block.kind is RadioScriptBlockKind.INTRO for block in result.radio_script.blocks) == 1
+    assert sum(block.kind is RadioScriptBlockKind.OUTRO for block in result.radio_script.blocks) == 1
+    assert all(
+        not (
+            block.kind is RadioScriptBlockKind.TRANSITION
+            and block.track_index == len(result.resolved_tracks) - 1
+        )
+        for block in result.radio_script.blocks
+    )
+
+
+def test_assembly_passes_request_limits_to_curator_prompt(tmp_path) -> None:
+    llm = RecordingAssemblyLLM()
+    assembly = service(tmp_path, llm)
+
+    asyncio.run(
+        assembly.assemble(
+            LiveEpisodeAssemblyRequest(
+                topic="bounded fixture",
+                max_tracks=4,
+                max_chapters=6,
+            )
+        )
+    )
+
+    curator_calls = [call for call in llm.calls if call["output_type"] is ProgramSkeleton]
+    assert len(curator_calls) == 1
+    prompt = curator_calls[0]["prompt"]
+    assert "Return no more than 6 chapters total" in prompt
+    assert "no more than 4 chapters with a TrackProposal" in prompt
+    asyncio.run(assembly.aclose())
+
+
+def test_radio_script_normalization_keeps_episode_anchors_in_their_owners() -> None:
+    script = _assemble_radio_script(
+        [
+            RadioScript(
+                blocks=[
+                    block(RadioScriptBlockKind.INTRO, "opening", cue="open", evidence="e0"),
+                    block(
+                        RadioScriptBlockKind.TRACK_INTRO,
+                        "track one intro",
+                        track_index=1,
+                        cue="track-first",
+                        evidence="e1",
+                    ),
+                    block(
+                        RadioScriptBlockKind.TRACK_INTRO,
+                        "duplicate track one intro",
+                        track_index=1,
+                        cue="track-duplicate",
+                    ),
+                    block(
+                        RadioScriptBlockKind.TRANSITION,
+                        "first gap",
+                        track_index=0,
+                        cue="gap-first",
+                        evidence="e2",
+                    ),
+                    block(
+                        RadioScriptBlockKind.TRANSITION,
+                        "duplicate first gap",
+                        track_index=0,
+                        cue="gap-duplicate",
+                    ),
+                ]
+            ),
+            RadioScript(
+                blocks=[
+                    block(RadioScriptBlockKind.INTRO, "late chapter intro", cue="late"),
+                    block(RadioScriptBlockKind.TRACK_INTRO, "duplicate by chapter"),
+                    block(RadioScriptBlockKind.TRANSITION, "second gap", cue="gap-second"),
+                ]
+            ),
+            RadioScript(
+                blocks=[
+                    block(RadioScriptBlockKind.OUTRO, "final outro", cue="outro", evidence="e3"),
+                ]
+            ),
+        ],
+        track_count=3,
+    )
+
+    assert [item.text for item in script.blocks if item.kind is RadioScriptBlockKind.INTRO] == [
+        "opening"
+    ]
+    track_intros = [item for item in script.blocks if item.kind is RadioScriptBlockKind.TRACK_INTRO]
+    assert [(item.track_index, item.text, item.tts_cues, item.evidence_ids) for item in track_intros] == [
+        (1, "track one intro", ["track-first"], ["e1"])
+    ]
+    transitions = [item for item in script.blocks if item.kind is RadioScriptBlockKind.TRANSITION]
+    assert [(item.track_index, item.text, item.tts_cues) for item in transitions] == [
+        (0, "first gap", ["gap-first"]),
+        (1, "second gap", ["gap-second"]),
+    ]
+    assert [item.text for item in script.blocks if item.kind is RadioScriptBlockKind.OUTRO] == [
+        "final outro"
+    ]
+    assert "late chapter intro" not in script.text
+
+
+def test_radio_script_normalization_rejects_duplicate_final_outros() -> None:
+    with pytest.raises(NarrationPlacementError, match="multiple OUTRO"):
+        _assemble_radio_script(
+            [
+                RadioScript(blocks=[]),
+                RadioScript(
+                    blocks=[
+                        block(RadioScriptBlockKind.OUTRO, "first outro"),
+                        block(RadioScriptBlockKind.OUTRO, "second outro"),
+                    ]
+                ),
+            ],
+            track_count=1,
+            chapter_music_indices=[0, None],
+        )
+
+
+def test_trackless_chapter_intro_is_not_promoted_to_episode_opening() -> None:
+    script = _assemble_radio_script(
+        [
+            RadioScript(
+                blocks=[block(RadioScriptBlockKind.INTRO, "opening")]
+            ),
+            RadioScript(
+                blocks=[block(RadioScriptBlockKind.INTRO, "trackless story beat")]
+            ),
+        ],
+        track_count=1,
+        chapter_music_indices=[0, None],
+    )
+
+    assert [item.kind for item in script.blocks] == [
+        RadioScriptBlockKind.INTRO,
+        RadioScriptBlockKind.TRANSITION,
+    ]
+    assert script.blocks[1].text == "trackless story beat"
+    # With one playable track, a later narration-only INTRO belongs after the
+    # final track rather than remaining unanchored or moving into the opening.
+    assert script.blocks[1].track_index == 0
+
+
+def test_registry_closes_each_unique_provider_once() -> None:
+    class ClosableProvider:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def search(self, query: str, *, limit: int = 5) -> list[Any]:
+            del query, limit
+            return []
+
+        async def resolve_track(self, track_ref: str) -> Any:
+            del track_ref
+            raise AssertionError("not used")
+
+        async def get_playback_asset(self, resolved_track: Any) -> Any:
+            del resolved_track
+            raise AssertionError("not used")
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+
+    provider = ClosableProvider()
+    registry = MusicProviderRegistry({"one": provider, "alias": provider})
+
+    asyncio.run(registry.aclose())
+
+    assert provider.close_calls == 1
+
+
+def test_request_requires_two_tracks_and_mock_repeats_deterministically(tmp_path) -> None:
+    with pytest.raises(ValidationError):
+        LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=1)
+
+    assembly = service(tmp_path)
+    first = asyncio.run(assembly.assemble(LiveEpisodeAssemblyRequest(topic="fixture")))
+    second = asyncio.run(assembly.assemble(LiveEpisodeAssemblyRequest(topic="fixture")))
+
+    first_blocks = [
+        (item.kind, item.text, item.track_index, item.tts_cues)
+        for item in first.radio_script.blocks
+    ]
+    second_blocks = [
+        (item.kind, item.text, item.track_index, item.tts_cues)
+        for item in second.radio_script.blocks
+    ]
+    assert first_blocks == second_blocks
+    assert [item.canonical_title for item in first.resolved_tracks] == [
+        item.canonical_title for item in second.resolved_tracks
+    ]
+
+
+def test_probe_asset_url_redacts_external_tokens() -> None:
+    from scripts.live_episode_probe import _safe_asset_url
+
+    assert _safe_asset_url("/api/assets/audio/abc.mp3?token=local") == "/api/assets/audio/abc.mp3?token=local"
+    assert _safe_asset_url("https://cdn.example.test/audio.mp3?token=secret") == (
+        "https://cdn.example.test/[external-redacted]"
+    )
+
+
+def test_unresolved_proposal_is_reported_but_narrative_is_still_written(tmp_path) -> None:
+    class MixedLLM(RecordingAssemblyLLM):
+        async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+            if output_type is ProgramSkeleton:
+                known = self._tracks[0]
+                unknown = ("Event Listing", "Festival doors 8-9-2026", NoveltyDistance.CLOSE)
+                chapters = [
+                    ChapterPlan(
+                        index=index,
+                        track=self._proposal(item),
+                        narrative_role=NarrativeRole.ANCHOR,
+                        reason="fixture",
+                        novelty_distance=item[2],
+                        narration_goal="fixture",
+                    )
+                    for index, item in enumerate((known, unknown, self._tracks[1]))
+                ]
+                return ProgramSkeleton(thesis="fixture", chapters=chapters, estimated_duration_seconds=900)
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = MixedLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3))
+    )
+
+    assert len(result.resolved_tracks) == 2
+    assert len(result.unresolved_proposals) == 1
+    assert result.skeleton.chapters[1].track is not None
+    assert result.skeleton.chapters[1].track.artist == "Event Listing"
+    assert result.unresolved_proposals[0].proposal.artist == "Event Listing"
+    writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
+    assert len(writer_calls) == 3
+    unresolved_writer_chapter = json.loads(
+        writer_calls[1]["prompt"].split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0]
+    )
+    assert unresolved_writer_chapter["track"] is None
+    assert any(
+        segment.narration_text == "现在进入第 2 首。"
+        for segment in result.playable_episode.segments
+    )
+
+
+def test_explicit_track_index_for_trackless_chapter_has_no_music_anchor() -> None:
+    script = _assemble_radio_script(
+        [
+            RadioScript(
+                blocks=[
+                    block(
+                        RadioScriptBlockKind.TRACK_INTRO,
+                        "opening context",
+                        track_index=0,
+                    )
+                ]
+            ),
+            RadioScript(
+                blocks=[
+                    block(
+                        RadioScriptBlockKind.TRACK_INTRO,
+                        "narrative context",
+                        track_index=1,
+                    )
+                ]
+            ),
+            RadioScript(blocks=[]),
+        ],
+        track_count=2,
+        chapter_music_indices=[0, None, 1],
+    )
+
+    narrative = next(item for item in script.blocks if item.text == "narrative context")
+    assert narrative.track_index is None
+    assert narrative.kind is RadioScriptBlockKind.TRANSITION
+
+
+def test_two_consecutive_narrative_chapters_share_one_music_gap() -> None:
+    script = _assemble_radio_script(
+        [
+            RadioScript(blocks=[]),
+            RadioScript(blocks=[block(RadioScriptBlockKind.TRANSITION, "Narration A")]),
+            RadioScript(blocks=[block(RadioScriptBlockKind.TRANSITION, "Narration B")]),
+            RadioScript(blocks=[]),
+        ],
+        track_count=2,
+        chapter_music_indices=[0, None, None, 1],
+    )
+    tracks = [
+        ResolvedTrack(
+            track_ref="mock:opening",
+            canonical_artist="Mira Fields",
+            canonical_title="Neon First Light",
+        ),
+        ResolvedTrack(
+            track_ref="mock:bridge",
+            canonical_artist="Signal Garden",
+            canonical_title="Midnight Transfer",
+        ),
+    ]
+
+    episode = asyncio.run(EpisodeComposer(MockMusicProvider()).compose(tracks, script))
+
+    assert [segment.narration_text or segment.track_ref for segment in episode.segments] == [
+        "mock:opening",
+        "Narration A",
+        "Narration B",
+        "mock:bridge",
+    ]
+
+
+def test_final_narrative_chapter_anchors_after_final_music_track() -> None:
+    script = _assemble_radio_script(
+        [
+            RadioScript(blocks=[]),
+            RadioScript(blocks=[]),
+            RadioScript(blocks=[block(RadioScriptBlockKind.TRANSITION, "Final beat")]),
+        ],
+        track_count=2,
+        chapter_music_indices=[0, 1, None],
+    )
+    tracks = [
+        ResolvedTrack(
+            track_ref="mock:opening",
+            canonical_artist="Mira Fields",
+            canonical_title="Neon First Light",
+        ),
+        ResolvedTrack(
+            track_ref="mock:bridge",
+            canonical_artist="Signal Garden",
+            canonical_title="Midnight Transfer",
+        ),
+    ]
+
+    episode = asyncio.run(EpisodeComposer(MockMusicProvider()).compose(tracks, script))
+
+    assert [segment.narration_text or segment.track_ref for segment in episode.segments] == [
+        "mock:opening",
+        "mock:bridge",
+        "Final beat",
+    ]
+
+
+def test_final_narrative_chapters_preserve_order_after_final_music_track() -> None:
+    script = _assemble_radio_script(
+        [
+            RadioScript(blocks=[]),
+            RadioScript(blocks=[]),
+            RadioScript(blocks=[block(RadioScriptBlockKind.TRANSITION, "Ending A")]),
+            RadioScript(blocks=[block(RadioScriptBlockKind.TRANSITION, "Ending B")]),
+        ],
+        track_count=2,
+        chapter_music_indices=[0, 1, None, None],
+    )
+    tracks = [
+        ResolvedTrack(
+            track_ref="mock:opening",
+            canonical_artist="Mira Fields",
+            canonical_title="Neon First Light",
+        ),
+        ResolvedTrack(
+            track_ref="mock:bridge",
+            canonical_artist="Signal Garden",
+            canonical_title="Midnight Transfer",
+        ),
+    ]
+
+    episode = asyncio.run(EpisodeComposer(MockMusicProvider()).compose(tracks, script))
+
+    assert [segment.narration_text or segment.track_ref for segment in episode.segments] == [
+        "mock:opening",
+        "mock:bridge",
+        "Ending A",
+        "Ending B",
+    ]
+
+
+def test_max_tracks_limits_music_but_preserves_narrative_only_chapters(tmp_path) -> None:
+    class MusicLimitLLM(RecordingAssemblyLLM):
+        async def structured(
+            self, prompt: str, output_type: type[object], **kwargs: object
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                chapters: list[ChapterPlan] = []
+                for index, item in enumerate(
+                    [
+                        self._tracks[0],
+                        None,
+                        self._tracks[1],
+                        None,
+                        self._tracks[2],
+                        self._tracks[3],
+                    ]
+                ):
+                    chapters.append(
+                        ChapterPlan(
+                            index=index,
+                            track=self._proposal(item) if item is not None else None,
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason=f"beat {index}",
+                            novelty_distance=(
+                                NoveltyDistance.VERY_CLOSE
+                                if index == 0
+                                else NoveltyDistance.CLOSE
+                                if index <= 2
+                                else NoveltyDistance.BRIDGE
+                                if index <= 4
+                                else NoveltyDistance.DISCOVERY
+                            ),
+                            narration_goal=f"explain beat {index}",
+                        )
+                    )
+                return ProgramSkeleton(
+                    thesis="four music beats and two narrative-only beats",
+                    chapters=chapters,
+                    estimated_duration_seconds=900,
+                )
+            if output_type is RadioScript:
+                self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
+                return RadioScript(blocks=slot_blocks(prompt, "narrative beat "))
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = MusicLimitLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=4)
+        )
+    )
+
+    assert len(result.resolved_tracks) == 4
+    assert [chapter.index for chapter in result.skeleton.chapters] == [0, 1, 2, 3, 4, 5]
+    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 6
+    assert {"narrative beat 1", "narrative beat 3"}.issubset(
+        {segment.narration_text for segment in result.playable_episode.segments}
+    )
+
+
+def test_narrative_only_chapter_survives_writer_and_assembly(tmp_path) -> None:
+    class NarrativeOnlyLLM(RecordingAssemblyLLM):
+        async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+            if output_type is ProgramSkeleton:
+                self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
+                first = self._proposal(self._tracks[0])
+                last = self._proposal(self._tracks[1])
+                return ProgramSkeleton(
+                    thesis="A story with a beat between songs.",
+                    estimated_duration_seconds=900,
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=first,
+                            narrative_role=NarrativeRole.ANCHOR,
+                            reason="open",
+                            novelty_distance=NoveltyDistance.VERY_CLOSE,
+                            narration_goal="open",
+                        ),
+                        ChapterPlan(
+                            index=1,
+                            track=None,
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="explain the context",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="tell a context beat",
+                        ),
+                        ChapterPlan(
+                            index=2,
+                            track=last,
+                            narrative_role=NarrativeRole.RESOLUTION,
+                            reason="resolve",
+                            novelty_distance=NoveltyDistance.BRIDGE,
+                            narration_goal="close",
+                        ),
+                    ],
+                )
+            if output_type is RadioScript:
+                index = _mock_writer_chapter_index(prompt)
+                if index == 1:
+                    self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
+                    return RadioScript(
+                        blocks=[
+                            block(
+                                RadioScriptBlockKind.TRANSITION,
+                                "A narrative beat without a song.",
+                            )
+                        ]
+                    )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = NarrativeOnlyLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3)
+        )
+    )
+
+    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 3
+    assert [chapter.track is None for chapter in result.skeleton.chapters] == [False, True, False]
+    assert len(result.resolved_tracks) == 2
+    assert any(
+        segment.narration_text == "A narrative beat without a song."
+        for segment in result.playable_episode.segments
+    )
+
+
+def test_writer_uses_resolved_narration_slots_for_sparse_playback_sequence(tmp_path) -> None:
+    class SlotFixtureLLM(RecordingAssemblyLLM):
+        async def structured(
+            self, prompt: str, output_type: type[object], **kwargs: object
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                known = [self._tracks[0], self._tracks[1], self._tracks[2]]
+                unknown = ("Event Listing", "STAY piano cover", NoveltyDistance.CLOSE)
+                chapters = [
+                    ChapterPlan(
+                        index=index,
+                        track=self._proposal(item) if item is not None else None,
+                        narrative_role=(
+                            NarrativeRole.ANCHOR
+                            if index == 0
+                            else NarrativeRole.RESOLUTION
+                            if index == 4
+                            else NarrativeRole.BRIDGE
+                        ),
+                        reason=f"beat {index}",
+                        novelty_distance=(
+                            item[2] if item is not None else NoveltyDistance.CLOSE
+                        ),
+                        narration_goal=f"explain beat {index}",
+                    )
+                    for index, item in enumerate(
+                        (known[0], known[1], unknown, known[2], None)
+                    )
+                ]
+                chapters[-1] = chapters[-1].model_copy(
+                    update={"index": 6, "novelty_distance": NoveltyDistance.DISCOVERY}
+                )
+                # Deliberately sparse Curator identity; application code must
+                # normalize it before returning the skeleton and calling Writer.
+                return ProgramSkeleton(
+                    thesis="resolved tracks with a narrative-only middle and ending",
+                    chapters=chapters,
+                    estimated_duration_seconds=900,
+                )
+            if output_type is RadioScript:
+                self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
+                return RadioScript(blocks=slot_blocks(prompt, "slot "))
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = SlotFixtureLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=4)
+        )
+    )
+
+    assert [chapter.index for chapter in result.skeleton.chapters] == [0, 1, 2, 3, 4]
+    assert result.skeleton.chapters[2].track is not None
+    assert result.unresolved_proposals[0].chapter_index == 2
+    assert [track.canonical_title for track in result.resolved_tracks] == [
+        "Neon First Light",
+        "Midnight Transfer",
+        "Daybreak in Stereo",
+    ]
+    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 5
+
+    middle_prompt = next(
+        call["prompt"]
+        for call in llm.calls
+        if call["output_type"] is RadioScript and '"index":2' in call["prompt"]
+    )
+    assert '"track":null' in middle_prompt
+    assert "Midnight Transfer" in middle_prompt
+    assert "Daybreak in Stereo" in middle_prompt
+    final_prompt = next(
+        call["prompt"]
+        for call in llm.calls
+        if call["output_type"] is RadioScript and '"index":4' in call["prompt"]
+    )
+    assert "Daybreak in Stereo" in final_prompt
+    assert '"upcoming_track": null' in final_prompt
+
+    assert len(result.writer_chapters) == 5
+    middle_context = result.writer_chapters[2]
+    assert len(middle_context.available_slots) == 1
+    middle_slot = middle_context.available_slots[0]
+    assert middle_slot.chapter_track is None
+    assert middle_slot.just_played_track is not None
+    assert middle_slot.just_played_track.canonical_title == "Midnight Transfer"
+    assert middle_slot.upcoming_track is not None
+    assert middle_slot.upcoming_track.canonical_title == "Daybreak in Stereo"
+    final_context = result.writer_chapters[4]
+    final_slot = final_context.available_slots[0]
+    assert final_slot.just_played_track is not None
+    assert final_slot.just_played_track.canonical_title == "Daybreak in Stereo"
+    assert final_slot.upcoming_track is None
+    assert sum(len(item.parsed_blocks) for item in result.writer_chapters) == 4
+    assert sum(len(item.normalized_blocks) for item in result.writer_chapters) == 4
+    assert sum(segment.kind.value == "NARRATION" for segment in result.playable_episode.segments) == 4
+    assert [segment.narration_text for segment in result.playable_episode.segments if segment.narration_text] == [
+        "slot 0",
+        "slot 1",
+        "slot 2",
+        "slot 4",
+    ]
+
+
+def test_writer_slots_match_each_final_playback_adjacency_and_preserve_blocks(tmp_path) -> None:
+    class AdjacencyLLM(RecordingAssemblyLLM):
+        async def structured(
+            self, prompt: str, output_type: type[object], **kwargs: object
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                known = [self._tracks[0], self._tracks[1], self._tracks[2]]
+                unknown = ("Event Listing", "unresolved beat", NoveltyDistance.CLOSE)
+                chapters = [
+                    ChapterPlan(
+                        index=index,
+                        track=self._proposal(item) if item is not None else None,
+                        narrative_role=(
+                            NarrativeRole.ANCHOR if index == 0 else NarrativeRole.RESOLUTION
+                        ),
+                        reason=f"beat {index}",
+                        novelty_distance=(
+                            item[2] if item is not None else NoveltyDistance.BRIDGE
+                        ),
+                        narration_goal=f"explain beat {index}",
+                    )
+                    for index, item in enumerate((known[0], known[1], unknown, known[2]))
+                ]
+                return ProgramSkeleton(thesis="adjacency", chapters=chapters, estimated_duration_seconds=900)
+            if output_type is RadioScript:
+                chapter = json.loads(prompt.split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0])
+                self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
+                index = chapter["index"]
+                if index == 0:
+                    blocks = [block(RadioScriptBlockKind.INTRO, "after A")]
+                elif index == 1:
+                    blocks = [block(RadioScriptBlockKind.TRACK_INTRO, "before B")]
+                elif index == 2:
+                    blocks = [block(RadioScriptBlockKind.TRANSITION, "unresolved middle")]
+                else:
+                    blocks = [block(RadioScriptBlockKind.OUTRO, "after C")]
+                return RadioScript(blocks=blocks, intended_duration_seconds=6)
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = AdjacencyLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=4)
+        )
+    )
+
+    diagnostics = result.writer_chapters
+    middle_prompt = next(
+        call["prompt"]
+        for call in llm.calls
+        if call["output_type"] is RadioScript and '"index":1' in call["prompt"]
+    )
+    assert 'chapter-1:before-track' in middle_prompt
+    assert 'chapter-1:after-track' not in middle_prompt
+    opening_after = diagnostics[0].normalized_slot_contexts[0]
+    assert opening_after.just_played_track is not None
+    assert opening_after.just_played_track.canonical_title == "Neon First Light"
+    assert opening_after.upcoming_track is not None
+    assert opening_after.upcoming_track.canonical_title == "Midnight Transfer"
+
+    middle = diagnostics[1]
+    before_b = middle.normalized_slot_contexts[0]
+    assert before_b.just_played_track is not None
+    assert before_b.just_played_track.canonical_title == "Neon First Light"
+    assert before_b.upcoming_track is not None
+    assert before_b.upcoming_track.canonical_title == "Midnight Transfer"
+
+    unresolved = diagnostics[2].normalized_slot_contexts[0]
+    assert unresolved.just_played_track is not None
+    assert unresolved.just_played_track.canonical_title == "Midnight Transfer"
+    assert unresolved.upcoming_track is not None
+    assert unresolved.upcoming_track.canonical_title == "Daybreak in Stereo"
+
+    final = diagnostics[3].normalized_slot_contexts[0]
+    assert final.just_played_track is not None
+    assert final.just_played_track.canonical_title == "Daybreak in Stereo"
+    assert final.upcoming_track is None
+    assert result.radio_script.blocks[-1].kind is RadioScriptBlockKind.OUTRO
+
+    narration = [
+        segment.narration_text
+        for segment in result.playable_episode.segments
+        if segment.narration_text is not None
+    ]
+    assert narration == ["after A", "before B", "unresolved middle", "after C"]
+    assert len(narration) == sum(len(item.parsed_blocks) for item in diagnostics)
+
+
+def test_leading_narrative_slot_uses_opening_music_as_just_played(tmp_path) -> None:
+    class LeadingNarrativeLLM(RecordingAssemblyLLM):
+        async def structured(
+            self, prompt: str, output_type: type[object], **kwargs: object
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                return ProgramSkeleton(
+                    thesis="opening narrative",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=None,
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="opening setup",
+                            narration_goal="set the scene",
+                        ),
+                        ChapterPlan(
+                            index=1,
+                            track=self._proposal(self._tracks[0]),
+                            narrative_role=NarrativeRole.ANCHOR,
+                            reason="first song",
+                            narration_goal="introduce the song",
+                        ),
+                        ChapterPlan(
+                            index=2,
+                            track=self._proposal(self._tracks[1]),
+                            narrative_role=NarrativeRole.RESOLUTION,
+                            reason="close",
+                            narration_goal="close the route",
+                        ),
+                    ],
+                    estimated_duration_seconds=900,
+                )
+            if output_type is RadioScript:
+                chapter = json.loads(prompt.split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0])
+                if chapter["track"] is None:
+                    kind, text = RadioScriptBlockKind.INTRO, "lead"
+                elif chapter["index"] == 1:
+                    return RadioScript(blocks=[], intended_duration_seconds=1)
+                else:
+                    kind, text = RadioScriptBlockKind.OUTRO, "outro"
+                return RadioScript(blocks=[block(kind, text)], intended_duration_seconds=3)
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = LeadingNarrativeLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=2)
+        )
+    )
+
+    opening = result.writer_chapters[0].normalized_slot_contexts[0]
+    assert opening.just_played_track is not None
+    assert opening.just_played_track.canonical_title == "Neon First Light"
+    assert opening.upcoming_track is not None
+    assert opening.upcoming_track.canonical_title == "Midnight Transfer"
+    assert result.playable_episode.segments[0].track_ref == result.resolved_tracks[0].track_ref
+    assert result.playable_episode.segments[1].narration_text == "lead"
+
+
+def test_assembly_preserves_auto_language_and_duration_budget(tmp_path) -> None:
+    llm = RecordingAssemblyLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(
+                topic="藤井风的音乐背景",
+                anchor_tracks=["Neon First Light"],
+                desired_duration_seconds=600,
+                output_language=OutputLanguage.AUTO,
+            )
+        )
+    )
+    writer_prompts = [call["prompt"] for call in llm.calls if call["output_type"] is RadioScript]
+    assert writer_prompts
+    assert all("output language zh-CN" in prompt for prompt in writer_prompts)
+    assert all(
+        f"Target narration duration seconds: {budget.target_narration_seconds}" in prompt
+        for prompt, budget in zip(writer_prompts, result.timing_plan.chapter_budgets, strict=True)
+    )
+    assert result.duration_summary.narration_seconds >= 0
+
+
+def test_assembly_explicit_english_overrides_chinese_topic(tmp_path) -> None:
+    llm = RecordingAssemblyLLM()
+    asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(
+                topic="藤井风的音乐背景",
+                output_language=OutputLanguage.EN_US,
+            )
+        )
+    )
+    writer_prompts = [call["prompt"] for call in llm.calls if call["output_type"] is RadioScript]
+    assert writer_prompts
+    assert all("output language en-US" in prompt for prompt in writer_prompts)
+
+
+def test_middle_unresolved_chapter_keeps_narrative_writer_order(tmp_path) -> None:
+    class ExplicitIndexLLM(RecordingAssemblyLLM):
+        async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+            self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
+            if output_type is ProgramSkeleton:
+                known = self._tracks[0]
+                unknown = ("Event Listing", "Festival doors 8-9-2026", NoveltyDistance.CLOSE)
+                surviving = self._tracks[2]
+                chapters = [
+                    ChapterPlan(
+                        index=index,
+                        track=self._proposal(item),
+                        narrative_role=NarrativeRole.ANCHOR,
+                        reason="fixture",
+                        novelty_distance=item[2],
+                        connection_from_previous_track=(
+                            EditorialConnection(
+                                relation_type=EditorialRelationType.SCENE_OR_LINEAGE,
+                                rationale="fixture selected-route connection",
+                            )
+                            if index > 0
+                            else None
+                        ),
+                        narration_goal="fixture",
+                    )
+                    for index, item in enumerate((known, unknown, surviving))
+                ]
+                return ProgramSkeleton(
+                    thesis="fixture", chapters=chapters, estimated_duration_seconds=900
+                )
+            if output_type is RadioScript:
+                payload = json.loads(prompt.split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0])
+                writer_index = payload["index"]
+                if payload["track"] is None:
+                    kind = RadioScriptBlockKind.TRANSITION
+                elif writer_index == 0:
+                    kind = RadioScriptBlockKind.INTRO
+                elif writer_index == 2:
+                    kind = RadioScriptBlockKind.OUTRO
+                else:
+                    kind = RadioScriptBlockKind.TRACK_INTRO
+                return RadioScript(
+                    blocks=[
+                        RadioScriptBlock(
+                            kind=kind,
+                            text=f"writer track {writer_index}",
+                            duration_seconds=3,
+                            track_index=writer_index,
+                        )
+                    ]
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = ExplicitIndexLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3))
+    )
+
+    writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
+    assert '"index":1' in writer_calls[1]["prompt"]
+    assert '"index":2' not in writer_calls[1]["prompt"]
+    assert [chapter.index for chapter in result.skeleton.chapters] == [0, 1, 2]
+    assert [
+        chapter.connection_from_previous_track for chapter in result.writer_chapters
+    ] == [None, None, None]
+    assert [track.canonical_title for track in result.resolved_tracks] == [
+        "Neon First Light",
+        "Daybreak in Stereo",
+    ]
+
+    second_track_ref = result.resolved_tracks[1].track_ref
+    second_music_index = next(
+        index
+        for index, segment in enumerate(result.playable_episode.segments)
+        if segment.track_ref == second_track_ref
+    )
+    assert result.playable_episode.segments[second_music_index - 1].narration_text == "writer track 1"
+
+
+def test_fewer_than_two_resolved_tracks_is_a_typed_assembly_failure(tmp_path) -> None:
+    class OneTrackLLM(RecordingAssemblyLLM):
+        async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+            if output_type is ProgramSkeleton:
+                item = self._tracks[0]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(item),
+                            narrative_role=NarrativeRole.ANCHOR,
+                            reason="fixture",
+                            novelty_distance=NoveltyDistance.VERY_CLOSE,
+                            narration_goal="fixture",
+                        )
+                    ],
+                    estimated_duration_seconds=900,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    with pytest.raises(EpisodeAssemblyError, match="at least two resolved tracks") as failure:
+        asyncio.run(service(tmp_path, OneTrackLLM()).assemble(LiveEpisodeAssemblyRequest(topic="fixture")))
+    assert failure.value.stage == "resolution"
+    assert failure.value.reason_code == "insufficient_resolved_tracks"
+    assert failure.value.diagnostics == {
+        "resolved_track_count": 1,
+        "unresolved_track_count": 0,
+        "required_resolved_track_count": 2,
+    }
+
+
+def test_live_factory_requires_a_real_music_provider(monkeypatch) -> None:
+    from wavecast.providers.config import ProviderSettings
+    from wavecast.providers.errors import ProviderConfigurationError
+
+    with pytest.raises(ProviderConfigurationError, match="real music provider"):
+        create_episode_assembly_service(ProviderSettings(mode="live"))
