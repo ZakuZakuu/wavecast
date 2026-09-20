@@ -90,3 +90,27 @@ def test_import_materialized_episode_rejects_missing_browser_audio() -> None:
             estimated_duration_seconds=12,
             playable_episode=invalid,
         )
+
+
+def test_import_materialized_episode_rejects_external_audio_url() -> None:
+    runtime = EpisodeOrchestrator(InMemoryEpisodeRepository())
+    base = playable_episode()
+    invalid = base.model_copy(
+        update={
+            "segments": [
+                base.segments[0].model_copy(
+                    update={"audio_source_url": "https://cdn.example.test/temporary.mp3"}
+                ),
+                base.segments[1],
+            ]
+        }
+    )
+
+    with pytest.raises(EpisodeRuntimeError, match="external audio URL"):
+        runtime.import_materialized(
+            seed_id="invalid-external-url",
+            title="Invalid",
+            topic="Invalid",
+            estimated_duration_seconds=17,
+            playable_episode=invalid,
+        )

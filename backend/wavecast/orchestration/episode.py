@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 
 from wavecast.models.episode import (
     EpisodeSeed,
@@ -26,6 +27,17 @@ from wavecast.storage.episodes import (
 SESSION_TTL = timedelta(seconds=30)
 DEFAULT_BUFFER_CHAPTERS = 2
 DEFAULT_BUFFER_AHEAD_SECONDS = 5 * 60
+
+
+def _is_wavecast_owned_audio_url(value: str) -> bool:
+    '''Accept only same-origin API paths at the materialized runtime boundary.'''
+    parsed = urlsplit(value)
+    return (
+        value.startswith("/api/")
+        and not parsed.scheme
+        and not parsed.netloc
+        and not parsed.path.startswith("//")
+    )
 
 
 class EpisodeRuntimeError(ValueError):
@@ -120,6 +132,13 @@ class EpisodeOrchestrator:
             raise EpisodeRuntimeError("materialized episode must contain at least one segment")
         if any(not segment.audio_source_url for segment in playable_episode.segments):
             raise EpisodeRuntimeError("materialized episode contains a segment without audio")
+        if any(
+            not _is_wavecast_owned_audio_url(segment.audio_source_url or "")
+            for segment in playable_episode.segments
+        ):
+            raise EpisodeRuntimeError(
+                "materialized episode contains an external audio URL"
+            )
 
         existing = self.repository.find_by_listener_seed(listener_id, seed_id)
         if existing is not None:
