@@ -42,7 +42,9 @@ runtime. The current implementation adds:
   semantics and listener ownership preserved;
 - POST /api/episodes/from-materialized;
 - /episode/materialized/[episodeId], reusing the existing player;
-- opt-in live-probe bundle export and a small bundle import script.
+- opt-in live-probe bundle export and a small bundle import script;
+- WaveCast-owned sidecar music proxy URLs, with the current upstream URL resolved
+  only at playback time and Range headers streamed through the API.
 
 The bundle contains only the playable episode contract and safe episode metadata;
 it does not retain prompts, provider responses, hidden reasoning, credentials, or
