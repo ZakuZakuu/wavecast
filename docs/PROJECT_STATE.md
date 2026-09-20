@@ -12,17 +12,18 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 ## Current milestone and main state
 
 - **Current milestone:** Phase 5.2 — First Listening Episode.
-- **Current stage:** Phase 5.2 credential-free listening-path bridge is implemented
-  on a feature branch and is awaiting exact-head PR review before the single
-  authorized Fang Datong live generation.
-- **Canonical main:** origin/main; verify the remote HEAD before acting.
-- **Last documented recovery baseline:** 1853aca60a8dcbeabb96c164c4449b2a1a3d9038
-  (merged PR #35; canonical origin/main).
-- **Latest code milestone:** 1853aca60a8dcbeabb96c164c4449b2a1a3d9038 (merged PR #35,
-  completing the latest merged runtime and diagnostic work).
-- **Immediate work:** complete PR review and merge for the Phase 5.2 listening
-  runtime bridge, then execute exactly one bounded Fang Datong live assembly and
-  import its playable bundle into the existing Web player.
+- **Current stage:** Phase 5.2 credential-free listening-path bridge is merged
+  in PR #36 and has passed exact-head review, full local validation, and GitHub
+  backend/web CI.
+- **Canonical main:** da15493757ed8f55b5192d47fe377821caef15d0 (merged PR #36);
+  verify the remote HEAD before acting.
+- **Last documented recovery baseline:** da15493757ed8f55b5192d47fe377821caef15d0
+  (canonical origin/main after PR #36).
+- **Latest code milestone:** da15493757ed8f55b5192d47fe377821caef15d0 (merged PR #36,
+  completing the listening runtime bridge and owned-audio import boundary).
+- **Immediate work:** start the music readiness chain, execute exactly one bounded
+  Fang Datong live assembly, import its playable bundle into the existing Web
+  player, and present the real listening URL for human editorial review.
 
 ## Phase 5.2 first listening episode
 
@@ -44,7 +45,9 @@ runtime. The current implementation adds:
 - /episode/materialized/[episodeId], reusing the existing player;
 - opt-in live-probe bundle export and a small bundle import script;
 - WaveCast-owned sidecar music proxy URLs, with the current upstream URL resolved
-  only at playback time and Range headers streamed through the API.
+  only at playback time and Range headers streamed through the API;
+- materialized import accepts only WaveCast-owned same-origin /api/... audio
+  paths and returns a safe 422 for external URLs.
 
 The bundle contains only the playable episode contract and safe episode metadata;
 it does not retain prompts, provider responses, hidden reasoning, credentials, or
@@ -52,11 +55,12 @@ signed URLs. The live target remains one case, 1,200 seconds, at most five
 tracks/eight chapters, full-track playback, and max_attempts=1 with no retry.
 No live provider call is part of this implementation PR.
 
-Validation on this branch: backend 280 passed, 6 skipped; backend Ruff and
-mypy pass; web ESLint, TypeScript, 9 Vitest tests, and production build pass.
-Next action after exact-head review and merge: start the music readiness chain,
-run the single authorized Fang Datong live assembly, import the resulting bundle,
-and present the real listening URL for human editorial review.
+Validation on merged PR #36: backend 283 passed, 6 skipped; backend Ruff and
+mypy pass; web ESLint, TypeScript, 9 Vitest tests, and production build pass;
+GitHub backend/web CI passed for review HEAD 0167ba282d8885a1f9b06a49b1998826a65e449e.
+Next action: start the music readiness chain, run the single authorized Fang
+Datong live assembly, import the resulting bundle, and present the real
+listening URL for human editorial review.
 ## Completed implementation
 
 - **Phases 0–1:** typed episode/segment contracts, deterministic mock providers,
