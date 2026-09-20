@@ -123,13 +123,14 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const commitSeek = useCallback((value: number) => {
     if (!localEpisode || !isSeekAllowed(localEpisode, value)) return;
     setSeekPreview(null);
-    pendingTransportPositionRef.current = value;
-    void update(api.seek(localEpisode.id, value)).then((succeeded) => {
-      if (!succeeded && pendingTransportPositionRef.current === value) {
-        pendingTransportPositionRef.current = null;
-      }
+    void api.seek(localEpisode.id, value).then((response) => {
+      pendingTransportPositionRef.current = value;
+      setEpisode(response);
+      setError(null);
+    }).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : "Player action failed");
     });
-  }, [localEpisode, update]);
+  }, [localEpisode, setEpisode]);
 
   const commitSeekPreview = useCallback(() => {
     if (seekPreview !== null) commitSeek(seekPreview);
