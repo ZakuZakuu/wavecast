@@ -148,6 +148,8 @@ class PlayableEpisode(BaseModel):
 class LiveEpisode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     seed_id: str
+    title: str | None = None
+    topic: str | None = None
     listener_id: str = "test-listener"
     version: int = Field(default=0, ge=0)
     state: EpisodeState = EpisodeState.STARTED

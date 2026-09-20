@@ -22,6 +22,7 @@ from wavecast.models.episode import (
     EpisodeState,
     LiveEpisode,
     NarrationSegment,
+    PlayableEpisode,
 )
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
@@ -133,6 +134,14 @@ class ReplaceRequest(BaseModel):
 
 class BufferRequest(BaseModel):
     target_chapters: int = Field(default=2, ge=1, le=2)
+
+
+class MaterializedEpisodeRequest(BaseModel):
+    seed_id: str = Field(min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=200)
+    topic: str = Field(min_length=1, max_length=500)
+    estimated_duration_seconds: int = Field(gt=0)
+    playable_episode: PlayableEpisode
 
 
 class PlaybackCheckpointRequest(BaseModel):
@@ -273,6 +282,25 @@ def create_episode(seed_id: str, request: Request) -> LiveEpisode:
         return orchestrator.start_or_resume(seed, listener(request))
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode creation raced; retry") from error
+
+
+@app.post("/api/episodes/from-materialized", response_model=LiveEpisode)
+def import_materialized_episode(
+    body: MaterializedEpisodeRequest, request: Request
+) -> LiveEpisode:
+    try:
+        return orchestrator.import_materialized(
+            seed_id=body.seed_id,
+            title=body.title,
+            topic=body.topic,
+            estimated_duration_seconds=body.estimated_duration_seconds,
+            playable_episode=body.playable_episode,
+            listener_id=listener(request),
+        )
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode creation raced; retry") from error
+    except EpisodeRuntimeError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.get("/api/episodes/{episode_id}", response_model=LiveEpisode)

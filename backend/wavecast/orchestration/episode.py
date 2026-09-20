@@ -10,6 +10,7 @@ from wavecast.models.episode import (
     LiveEpisode,
     MusicSegment,
     NarrationSegment,
+    PlayableEpisode,
     Segment,
     SegmentKind,
     SegmentState,
@@ -103,6 +104,55 @@ class EpisodeOrchestrator:
     def start_or_resume(self, seed: EpisodeSeed, listener_id: str = "test-listener") -> LiveEpisode:
         existing = self.repository.find_by_listener_seed(listener_id, seed.id)
         return self.resume(existing.id) if existing else self.start(seed, listener_id)
+
+    def import_materialized(
+        self,
+        *,
+        seed_id: str,
+        title: str,
+        topic: str,
+        estimated_duration_seconds: int,
+        playable_episode: PlayableEpisode,
+        listener_id: str = "test-listener",
+    ) -> LiveEpisode:
+        """Persist a fully assembled episode through the normal runtime boundary."""
+        if not playable_episode.segments:
+            raise EpisodeRuntimeError("materialized episode must contain at least one segment")
+        if any(not segment.audio_source_url for segment in playable_episode.segments):
+            raise EpisodeRuntimeError("materialized episode contains a segment without audio")
+
+        existing = self.repository.find_by_listener_seed(listener_id, seed_id)
+        if existing is not None:
+            return self.resume(existing.id)
+
+        now = self.now()
+        segments = [
+            segment.model_copy(
+                update={
+                    "state": (
+                        SegmentState.COMMITTED
+                        if index == 0
+                        else SegmentState.AUDIO_READY
+                    ),
+                    "committed_at": now if index == 0 else None,
+                }
+            )
+            for index, segment in enumerate(playable_episode.segments)
+        ]
+        episode = LiveEpisode(
+            seed_id=seed_id,
+            title=title,
+            topic=topic,
+            listener_id=listener_id,
+            state=EpisodeState.MATERIALIZED,
+            generation_mode=GenerationMode.FULL,
+            program_estimated_duration_seconds=estimated_duration_seconds,
+            segments=segments,
+            current_segment_id=segments[0].id,
+            last_activity_at=now,
+            last_heartbeat_at=now,
+        )
+        return self.repository.save(episode)
 
     def get(self, episode_id: str, listener_id: str | None = None) -> LiveEpisode:
         try:

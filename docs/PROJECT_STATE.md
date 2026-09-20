@@ -1,6 +1,6 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-19
+**Last updated:** 2026-09-20
 
 ## Product reminder
 
@@ -11,17 +11,50 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 5.1 — Discovery & Editorial Quality.
-- **Current stage:** Phase 5.1A evaluation foundation and typed route-contract
-  implementation are proceeding from the approved read-only audit PLAN.
+- **Current milestone:** Phase 5.2 — First Listening Episode.
+- **Current stage:** Phase 5.2 credential-free listening-path bridge is implemented
+  on a feature branch and is awaiting exact-head PR review before the single
+  authorized Fang Datong live generation.
 - **Canonical main:** origin/main; verify the remote HEAD before acting.
-- **Last documented recovery baseline:** 8650c1de709ecf9231e049e0744968def401f7d6
-  (merged PR #28).
-- **Latest code milestone:** b1ca70880150149623016babcf7650719e15bf10 (merged PR #26,
-  completing Phase 4.8.3 program timing).
-- **Immediate work:** implement the credential-free Phase 5.1 evaluation foundation,
-  then the typed local editorial route contract; live/paid providers remain disabled.
+- **Last documented recovery baseline:** 1853aca60a8dcbeabb96c164c4449b2a1a3d9038
+  (merged PR #35; canonical origin/main).
+- **Latest code milestone:** 1853aca60a8dcbeabb96c164c4449b2a1a3d9038 (merged PR #35,
+  completing the latest merged runtime and diagnostic work).
+- **Immediate work:** complete PR review and merge for the Phase 5.2 listening
+  runtime bridge, then execute exactly one bounded Fang Datong live assembly and
+  import its playable bundle into the existing Web player.
 
+## Phase 5.2 first listening episode
+
+The current task is to produce the first human-listenable full-track episode
+from the Fang Datong Soul / R&B brief. Acceptance is editorial and musical:
+selection, reasons, sequence, discovery value, and whether the program creates a
+new understanding. Crossfade, transition effects, voice character, section
+selection, and UI polish are explicitly deferred.
+
+The credential-free audit found that the existing Web player already supports
+play/pause, progress, current segment, continuous HTML5 audio, SSE updates,
+resume, and generated-frontier seeking. The missing last mile was a formal
+bridge from PlayableEpisode returned by live assembly into the listener-scoped
+runtime. The current implementation adds:
+
+- EpisodeOrchestrator.import_materialized() with MATERIALIZED/FULL lifecycle
+  semantics and listener ownership preserved;
+- POST /api/episodes/from-materialized;
+- /episode/materialized/[episodeId], reusing the existing player;
+- opt-in live-probe bundle export and a small bundle import script.
+
+The bundle contains only the playable episode contract and safe episode metadata;
+it does not retain prompts, provider responses, hidden reasoning, credentials, or
+signed URLs. The live target remains one case, 1,200 seconds, at most five
+tracks/eight chapters, full-track playback, and max_attempts=1 with no retry.
+No live provider call is part of this implementation PR.
+
+Validation on this branch: backend 280 passed, 6 skipped; backend Ruff and
+mypy pass; web ESLint, TypeScript, 9 Vitest tests, and production build pass.
+Next action after exact-head review and merge: start the music readiness chain,
+run the single authorized Fang Datong live assembly, import the resulting bundle,
+and present the real listening URL for human editorial review.
 ## Completed implementation
 
 - **Phases 0–1:** typed episode/segment contracts, deterministic mock providers,
@@ -293,7 +326,14 @@ credentials, or signed playback URLs.
   [PR #24](https://github.com/ZakuZakuu/wavecast/pull/24),
   [PR #25](https://github.com/ZakuZakuu/wavecast/pull/25),
   [PR #26](https://github.com/ZakuZakuu/wavecast/pull/26),
-  [PR #27](https://github.com/ZakuZakuu/wavecast/pull/27). Earlier milestones
+  [PR #27](https://github.com/ZakuZakuu/wavecast/pull/27),
+  [PR #29](https://github.com/ZakuZakuu/wavecast/pull/29),
+  [PR #30](https://github.com/ZakuZakuu/wavecast/pull/30),
+  [PR #31](https://github.com/ZakuZakuu/wavecast/pull/31),
+  [PR #32](https://github.com/ZakuZakuu/wavecast/pull/32),
+  [PR #33](https://github.com/ZakuZakuu/wavecast/pull/33),
+  [PR #34](https://github.com/ZakuZakuu/wavecast/pull/34),
+  [PR #35](https://github.com/ZakuZakuu/wavecast/pull/35). Earlier milestones
   remain available in Git history and the preceding project-state entries.
 - Timing decision: [ADR 0012](adr/0012-deterministic-program-timing.md).
 
