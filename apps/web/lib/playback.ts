@@ -19,11 +19,7 @@ export function reconcileBrowserPosition(
   const nextAnchor = playbackAnchor(nextEpisode);
   if (!nextAnchor) return 0;
   if (explicitTransportPosition !== null) return Math.max(0, explicitTransportPosition);
-  if (
-    !previousAnchor
-    || previousAnchor.current_segment_id !== nextAnchor.current_segment_id
-    || previousAnchor.playback_position_seconds !== nextAnchor.playback_position_seconds
-  ) {
+  if (!previousAnchor || previousAnchor.current_segment_id !== nextAnchor.current_segment_id) {
     return nextAnchor.playback_position_seconds;
   }
   return browserPosition;

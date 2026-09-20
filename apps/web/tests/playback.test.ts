@@ -38,10 +38,10 @@ describe("generated-frontier player behavior", () => {
   });
 
   it("does not let a late checkpoint move the browser clock backwards", () => {
-    const serverSnapshot = { ...episode, playback_position_seconds: 30 };
-    const lateCheckpoint = { ...serverSnapshot, playback_position_seconds: 30 };
+    const previousSnapshot = { ...episode, playback_position_seconds: 25 };
+    const checkpoint = { ...previousSnapshot, playback_position_seconds: 30 };
 
-    expect(reconcileBrowserPosition(32, serverSnapshot, lateCheckpoint)).toBe(32);
+    expect(reconcileBrowserPosition(32, previousSnapshot, checkpoint)).toBe(32);
   });
 
   it("applies an explicit backward seek even when the segment is unchanged", () => {
