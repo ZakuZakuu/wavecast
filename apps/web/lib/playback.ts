@@ -14,14 +14,12 @@ export function reconcileBrowserPosition(
   browserPosition: number,
   previousAnchor: PlaybackAnchor | null,
   nextEpisode: LiveEpisode | null,
+  explicitTransportPosition: number | null = null,
 ): number {
   const nextAnchor = playbackAnchor(nextEpisode);
   if (!nextAnchor) return 0;
-  if (
-    !previousAnchor
-    || previousAnchor.current_segment_id !== nextAnchor.current_segment_id
-    || previousAnchor.playback_position_seconds !== nextAnchor.playback_position_seconds
-  ) {
+  if (explicitTransportPosition !== null) return Math.max(0, explicitTransportPosition);
+  if (!previousAnchor || previousAnchor.current_segment_id !== nextAnchor.current_segment_id) {
     return nextAnchor.playback_position_seconds;
   }
   return browserPosition;
@@ -35,6 +33,10 @@ export function segmentStart(episode: LiveEpisode, segmentId: string): number {
     total += segment.duration_seconds ?? segment.actual_duration_seconds ?? segment.planned_duration_seconds;
   }
   return total;
+}
+
+export function segmentOffset(episode: LiveEpisode, segmentId: string, timelinePosition: number): number {
+  return Math.max(0, timelinePosition - segmentStart(episode, segmentId));
 }
 
 export function remainingSegmentSeconds(episode: LiveEpisode, segment: Segment): number {
