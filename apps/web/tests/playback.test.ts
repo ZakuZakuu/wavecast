@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds } from "../lib/playback";
+import { isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentOffset } from "../lib/playback";
 import type { LiveEpisode } from "../lib/types";
 
 const episode: LiveEpisode = {
@@ -28,6 +28,16 @@ describe("generated-frontier player behavior", () => {
   it("uses only the segment-local remaining duration after seek or restore", () => {
     const restored = { ...episode, playback_position_seconds: 12 };
     expect(remainingSegmentSeconds(restored, restored.segments[0])).toBe(10);
+  });
+
+  it("keeps audio offset tied to committed position across segment changes", () => {
+    const committed = { ...episode, current_segment_id: "bridge", playback_position_seconds: 42 };
+    const previewPosition = 54;
+
+    expect(segmentOffset(committed, "bridge", committed.playback_position_seconds)).toBe(10);
+    expect(segmentOffset(committed, "bridge", committed.playback_position_seconds)).not.toBe(
+      segmentOffset(committed, "bridge", previewPosition),
+    );
   });
 
   it("keeps the browser clock ahead when an unrelated newer snapshot has the same playback anchor", () => {
