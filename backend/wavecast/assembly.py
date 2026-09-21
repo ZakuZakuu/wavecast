@@ -404,7 +404,12 @@ class LiveEpisodeAssemblyService:
         try:
             slot_contexts = _build_narration_slot_contexts(resolved_chapters)
         except NarrationPlacementError as error:
-            raise EpisodeAssemblyError(str(error), stage="writer_normalization") from error
+            raise EpisodeAssemblyError(
+                str(error),
+                stage="writer_normalization",
+                reason_code="narration_slot_derivation_failed",
+                diagnostics={"narration_failure_boundary": "slot_derivation"},
+            ) from error
         timing_plan = build_program_timing_plan(
             desired_total_seconds=request.desired_duration_seconds,
             target_narration_ratio=self.narration_ratio,
@@ -456,7 +461,12 @@ class LiveEpisodeAssemblyService:
                 ],
             )
         except NarrationPlacementError as error:
-            raise EpisodeAssemblyError(str(error), stage="writer_normalization") from error
+            raise EpisodeAssemblyError(
+                str(error),
+                stage="writer_normalization",
+                reason_code="narration_slot_normalization_failed",
+                diagnostics={"narration_failure_boundary": "writer_slot_normalization"},
+            ) from error
 
         composition_started = perf_counter()
         try:

@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 from wavecast.assembly import (
     EpisodeAssemblyError,
     LiveEpisodeAssemblyRequest,
+    NarrationPlacementError,
     create_episode_assembly_service,
 )
 from wavecast.evals.listening import build_listening_evaluation
@@ -123,10 +124,14 @@ _KNOWN_PROVIDER_ERRORS = (
 )
 
 
-def _nearest_known_cause(error: EpisodeAssemblyError) -> ProviderError | CuratorContractError | None:
+def _nearest_known_cause(
+    error: EpisodeAssemblyError,
+) -> ProviderError | CuratorContractError | NarrationPlacementError | None:
     cause = error.__cause__
     while cause is not None:
-        if isinstance(cause, _KNOWN_PROVIDER_ERRORS) or isinstance(cause, CuratorContractError):
+        if isinstance(cause, _KNOWN_PROVIDER_ERRORS) or isinstance(
+            cause, (CuratorContractError, NarrationPlacementError)
+        ):
             return cause
         cause = cause.__cause__
     return None
@@ -134,13 +139,19 @@ def _nearest_known_cause(error: EpisodeAssemblyError) -> ProviderError | Curator
 
 def _failure_reason_code(
     stage: str,
-    cause: ProviderError | CuratorContractError | None,
+    cause: ProviderError | CuratorContractError | NarrationPlacementError | None,
     explicit_reason_code: str | None = None,
 ) -> str:
     if explicit_reason_code:
         return explicit_reason_code
     if isinstance(cause, CuratorContractError):
         return cause.reason_code
+    if isinstance(cause, NarrationPlacementError):
+        return (
+            "narration_slot_normalization_failed"
+            if stage == "writer_normalization"
+            else "narration_placement_failed"
+        )
     if isinstance(cause, ProviderTimeoutError):
         return "provider_timeout"
     if isinstance(cause, ProviderRateLimitError):
