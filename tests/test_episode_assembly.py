@@ -387,6 +387,56 @@ def test_final_playable_slot_allows_before_track_and_exactly_one_outro() -> None
     ]
 
 
+def test_duplicate_before_track_intro_is_typed_failure() -> None:
+    with pytest.raises(NarrationPlacementError, match="narration slot returned multiple blocks"):
+        _assemble_writer_fixture(
+            [0, 1],
+            [
+                RadioScript(blocks=[]),
+                RadioScript(
+                    blocks=[
+                        block(RadioScriptBlockKind.TRACK_INTRO, "first intro"),
+                        block(RadioScriptBlockKind.TRACK_INTRO, "duplicate intro"),
+                        block(RadioScriptBlockKind.OUTRO, "final outro"),
+                    ]
+                ),
+            ],
+        )
+
+
+def test_duplicate_opening_intro_is_typed_failure() -> None:
+    with pytest.raises(NarrationPlacementError, match="narration slot returned multiple blocks"):
+        _assemble_writer_fixture(
+            [0, 1],
+            [
+                RadioScript(
+                    blocks=[
+                        block(RadioScriptBlockKind.INTRO, "opening"),
+                        block(RadioScriptBlockKind.INTRO, "duplicate opening"),
+                    ]
+                ),
+                RadioScript(blocks=[block(RadioScriptBlockKind.OUTRO, "final outro")]),
+            ],
+        )
+
+
+def test_duplicate_narrative_middle_transition_is_typed_failure() -> None:
+    with pytest.raises(NarrationPlacementError, match="narration slot returned multiple blocks"):
+        _assemble_writer_fixture(
+            [0, None, 1],
+            [
+                RadioScript(blocks=[]),
+                RadioScript(
+                    blocks=[
+                        block(RadioScriptBlockKind.TRANSITION, "middle one"),
+                        block(RadioScriptBlockKind.TRANSITION, "middle two"),
+                    ]
+                ),
+                RadioScript(blocks=[block(RadioScriptBlockKind.OUTRO, "final outro")]),
+            ],
+        )
+
+
 def test_only_last_trailing_narrative_chapter_owns_final_tail() -> None:
     chapters = [
         _resolved_chapter(0, 0),
