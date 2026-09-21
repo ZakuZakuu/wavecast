@@ -4,7 +4,165 @@ Cases intentionally describe failure modes rather than prescribing exact tracks.
 should reward musical reasoning, evidence discipline, and a coherent arc instead of memorization.
 """
 
+from wavecast.intelligence.models import (
+    NarrationSlotContext,
+    NarrationSlotPlacement,
+    RadioScriptBlockKind,
+    ResolvedTrack,
+)
+
 from .quality import GuidedDiscoveryCase, RadioWritingCriterion, RadioWritingFixture
+from .radio_writing import RadioWritingEvidenceMode, RadioWritingReviewExample
+
+PHASE53C_RADIO_WRITING_REVIEW_EXAMPLES: tuple[RadioWritingReviewExample, ...] = (
+    RadioWritingReviewExample(
+        example_id="opening-empty-evidence",
+        slot_context=NarrationSlotContext(
+            slot_id="opening",
+            chapter_index=0,
+            placement=NarrationSlotPlacement.BEFORE_TRACK,
+            allowed_block_kinds=[RadioScriptBlockKind.INTRO],
+            chapter_track=ResolvedTrack(
+                track_ref="fixture:anchor",
+                canonical_artist="Anchor Artist",
+                canonical_title="Anchor Song",
+            ),
+            upcoming_track=ResolvedTrack(
+                track_ref="fixture:anchor",
+                canonical_artist="Anchor Artist",
+                canonical_title="Anchor Song",
+            ),
+            is_opening=True,
+        ),
+        block_kind=RadioScriptBlockKind.INTRO,
+        weak_text="这首歌来自一个重要时期，复杂的节奏和深刻的情感马上会带你进入今天的主题。",
+        stronger_text="先从这首歌本身开始听。背景资料还不够时，我们先不替它下结论，等听见更多线索再往下走。",
+        criteria=[
+            RadioWritingCriterion.GROUNDED_INTERPRETATION,
+            RadioWritingCriterion.ONE_SPOKEN_BEAT,
+        ],
+        evidence_mode=RadioWritingEvidenceMode.EMPTY,
+        reviewer_note="无 evidence 时，stronger fixture 保持克制，不用具体音乐或事实断言填空。",
+    ),
+    RadioWritingReviewExample(
+        example_id="opening-supported",
+        slot_context=NarrationSlotContext(
+            slot_id="opening-supported",
+            chapter_index=0,
+            placement=NarrationSlotPlacement.BEFORE_TRACK,
+            allowed_block_kinds=[RadioScriptBlockKind.INTRO],
+            chapter_track=ResolvedTrack(
+                track_ref="fixture:anchor",
+                canonical_artist="Anchor Artist",
+                canonical_title="Anchor Song",
+            ),
+            upcoming_track=ResolvedTrack(
+                track_ref="fixture:anchor",
+                canonical_artist="Anchor Artist",
+                canonical_title="Anchor Song",
+            ),
+            is_opening=True,
+        ),
+        block_kind=RadioScriptBlockKind.INTRO,
+        weak_text="我们先从一首很有氛围的歌开始，等下会聊到它为什么特别。",
+        stronger_text="先听开头留下的那一小块空间：人声还没进来，鼓和 bass 已经把方向定住了。后面我们再看这种松紧怎样延伸。",
+        criteria=[
+            RadioWritingCriterion.CONCRETE_BEFORE_ABSTRACT,
+            RadioWritingCriterion.LISTEN_FOR_CUE,
+            RadioWritingCriterion.ONE_SPOKEN_BEAT,
+        ],
+        evidence_mode=RadioWritingEvidenceMode.SUPPORTED,
+        reviewer_note="有 supporting evidence 时，opening 可以给一个短而可验证的 listen-for cue。",
+    ),
+    RadioWritingReviewExample(
+        example_id="direct-track-intro",
+        slot_context=NarrationSlotContext(
+            slot_id="track-intro-a-to-b",
+            chapter_index=1,
+            placement=NarrationSlotPlacement.BEFORE_TRACK,
+            allowed_block_kinds=[RadioScriptBlockKind.TRACK_INTRO],
+            chapter_track=ResolvedTrack(
+                track_ref="fixture:bridge",
+                canonical_artist="Bridge Artist",
+                canonical_title="Bridge Song",
+            ),
+            just_played_track=ResolvedTrack(
+                track_ref="fixture:anchor",
+                canonical_artist="Anchor Artist",
+                canonical_title="Anchor Song",
+            ),
+            upcoming_track=ResolvedTrack(
+                track_ref="fixture:bridge",
+                canonical_artist="Bridge Artist",
+                canonical_title="Bridge Song",
+            ),
+        ),
+        block_kind=RadioScriptBlockKind.TRACK_INTRO,
+        weak_text="接下来是 Bridge Song，希望你会喜欢。",
+        stronger_text="刚才 Anchor Song 把人声放在拍子后面，下一首 Bridge Song 把这种松弛感交给更轻的鼓组；听听它怎样换一种方式稳住律动。",
+        criteria=[
+            RadioWritingCriterion.FACT_SOUND_CONNECTION,
+            RadioWritingCriterion.CONTEXTUAL_DEIXIS,
+            RadioWritingCriterion.LISTEN_FOR_CUE,
+        ],
+        evidence_mode=RadioWritingEvidenceMode.SUPPORTED,
+        reviewer_note="direct A→B 的 stronger fixture 必须说明下一首为什么值得听，而不只是报歌名。",
+    ),
+    RadioWritingReviewExample(
+        example_id="narrative-only-transition",
+        slot_context=NarrationSlotContext(
+            slot_id="narrative-only-middle",
+            chapter_index=2,
+            placement=NarrationSlotPlacement.AFTER_TRACK,
+            allowed_block_kinds=[RadioScriptBlockKind.TRANSITION],
+            just_played_track=ResolvedTrack(
+                track_ref="fixture:bridge",
+                canonical_artist="Bridge Artist",
+                canonical_title="Bridge Song",
+            ),
+            upcoming_track=ResolvedTrack(
+                track_ref="fixture:discovery",
+                canonical_artist="Discovery Artist",
+                canonical_title="Discovery Song",
+            ),
+        ),
+        block_kind=RadioScriptBlockKind.TRANSITION,
+        weak_text="刚才这首很有意思，下一首也会继续我们的音乐探索。",
+        stronger_text="刚才 Bridge Song 用留白把律动放松下来，下一首 Discovery Song 会把同样的空间感推向更密的和声；你可以留意两首歌的鼓和人声谁先改变。",
+        criteria=[
+            RadioWritingCriterion.CONTEXTUAL_DEIXIS,
+            RadioWritingCriterion.FACT_SOUND_CONNECTION,
+            RadioWritingCriterion.ONE_SPOKEN_BEAT,
+        ],
+        evidence_mode=RadioWritingEvidenceMode.SUPPORTED,
+        reviewer_note="这是 narrative-only middle transition：没有 chapter_track，只有真实的前后邻接。",
+    ),
+    RadioWritingReviewExample(
+        example_id="final-outro",
+        slot_context=NarrationSlotContext(
+            slot_id="final-outro",
+            chapter_index=3,
+            placement=NarrationSlotPlacement.AFTER_FINAL_TRACK,
+            allowed_block_kinds=[RadioScriptBlockKind.OUTRO],
+            just_played_track=ResolvedTrack(
+                track_ref="fixture:discovery",
+                canonical_artist="Discovery Artist",
+                canonical_title="Discovery Song",
+            ),
+            is_final=True,
+        ),
+        block_kind=RadioScriptBlockKind.OUTRO,
+        weak_text="今天我们从熟悉的歌听到更广的音乐，希望你喜欢这期节目。",
+        stronger_text="下次再听到人声稍微往后靠，不妨先别把它当成松散；也许正是鼓和 bass 在替它稳住方向。",
+        criteria=[
+            RadioWritingCriterion.OUTRO_CALLBACK,
+            RadioWritingCriterion.NO_FORCED_CLEVERNESS,
+        ],
+        evidence_mode=RadioWritingEvidenceMode.SUPPORTED,
+        reviewer_note="Outro 回扣前面真实听到的节奏细节，并留下一个可以带走的听法。",
+    ),
+)
+
 
 PHASE53_RADIO_WRITING_FIXTURES: tuple[RadioWritingFixture, ...] = (
     RadioWritingFixture(
