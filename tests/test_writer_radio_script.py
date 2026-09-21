@@ -97,6 +97,36 @@ def test_writer_prompt_is_tts_aware_and_receives_budget_and_language() -> None:
     assert "display `3rd Coast`" in recorder.prompt
 
 
+def test_writer_radio_guidance_is_scoped_to_zh_cn() -> None:
+    class PromptRecorder(RadioWriterFixture):
+        def __init__(self) -> None:
+            self.prompt = ""
+
+        async def structured(self, prompt: str, _output_type: type[object], **_kwargs: object) -> object:
+            self.prompt = prompt
+            return RadioScript.from_blocks([], intended_duration_seconds=1)
+
+    chapter = ChapterPlan(
+        index=0,
+        track=None,
+        narrative_role=NarrativeRole.BRIDGE,
+        reason="connect context",
+        narration_goal="connect",
+    )
+
+    zh = PromptRecorder()
+    asyncio.run(WriterService(zh).write(chapter, [], output_language=OutputLanguage.ZH_CN))
+    assert "先说具体可听的声音" in zh.prompt
+    assert "证据不足时宁可简单准确" in zh.prompt
+    assert "OUTRO 回扣本期 thesis" in zh.prompt
+
+    for language in (OutputLanguage.EN_US, OutputLanguage.JA_JP):
+        recorder = PromptRecorder()
+        asyncio.run(WriterService(recorder).write(chapter, [], output_language=language))
+        assert "先说具体可听的声音" not in recorder.prompt
+        assert "OUTRO 回扣本期 thesis" not in recorder.prompt
+
+
 def test_writer_uses_synthesis_profile() -> None:
     class ProfileRecorder(RadioWriterFixture):
         def __init__(self) -> None:
