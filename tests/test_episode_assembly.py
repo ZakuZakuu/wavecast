@@ -3,14 +3,19 @@ import json
 from typing import Any
 
 import pytest
+import wavecast.assembly as assembly_module
 from pydantic import ValidationError
 from wavecast.assembly import (
     EpisodeAssemblyError,
     LiveEpisodeAssemblyRequest,
     LiveEpisodeAssemblyService,
     MockEpisodeAssemblyLLM,
+    NarrationPlacementError,
     _assemble_radio_script,
+    _assemble_writer_scripts,
+    _build_narration_slot_contexts,
     _mock_writer_chapter_index,
+    _ResolvedChapter,
     create_episode_assembly_service,
 )
 from wavecast.composer import EpisodeComposer
@@ -58,6 +63,31 @@ def block(
         tts_cues=[cue] if cue else [],
         evidence_ids=[evidence] if evidence else [],
     )
+
+
+def slot_blocks(prompt: str, prefix: str) -> list[RadioScriptBlock]:
+    marker = "Narration slot contexts: "
+    contexts = json.loads(prompt.split(marker, 1)[1].split(
+        "\nThe following legacy field", 1
+    )[0])
+    chapter = json.loads(prompt.split("Chapter: ", 1)[1].split(
+        "\nEvidence:", 1
+    )[0])
+    blocks: list[RadioScriptBlock] = []
+    for context in contexts:
+        allowed = set(context["allowed_block_kinds"])
+        if "track_intro" in allowed:
+            kind = RadioScriptBlockKind.TRACK_INTRO
+        elif "outro" in allowed:
+            kind = RadioScriptBlockKind.OUTRO
+        elif "intro" in allowed and (chapter["index"] == 0 or context["is_opening"]):
+            kind = RadioScriptBlockKind.INTRO
+        elif "transition" in allowed:
+            kind = RadioScriptBlockKind.TRANSITION
+        else:
+            continue
+        blocks.append(block(kind, f"{prefix}{chapter['index']}"))
+    return blocks
 
 
 class RecordingAssemblyLLM(MockEpisodeAssemblyLLM):
@@ -222,7 +252,6 @@ def test_radio_script_normalization_keeps_episode_anchors_in_their_owners() -> N
             RadioScript(
                 blocks=[
                     block(RadioScriptBlockKind.OUTRO, "final outro", cue="outro", evidence="e3"),
-                    block(RadioScriptBlockKind.OUTRO, "duplicate outro", cue="outro-duplicate"),
                 ]
             ),
         ],
@@ -245,6 +274,248 @@ def test_radio_script_normalization_keeps_episode_anchors_in_their_owners() -> N
         "final outro"
     ]
     assert "late chapter intro" not in script.text
+
+
+def test_radio_script_normalization_rejects_duplicate_final_outros() -> None:
+    with pytest.raises(NarrationPlacementError, match="multiple OUTRO"):
+        _assemble_radio_script(
+            [
+                RadioScript(blocks=[]),
+                RadioScript(
+                    blocks=[
+                        block(RadioScriptBlockKind.OUTRO, "first outro"),
+                        block(RadioScriptBlockKind.OUTRO, "second outro"),
+                    ]
+                ),
+            ],
+            track_count=1,
+            chapter_music_indices=[0, None],
+        )
+
+
+def _resolved_chapter(index: int, music_index: int | None) -> _ResolvedChapter:
+    chapter = ChapterPlan(
+        index=index,
+        track=None,
+        narrative_role=NarrativeRole.RESOLUTION,
+        reason="fixture",
+        novelty_distance=NoveltyDistance.BRIDGE,
+        narration_goal="fixture",
+    )
+    track = (
+        ResolvedTrack(
+            track_ref=f"mock:{index}",
+            canonical_artist="Fixture Artist",
+            canonical_title=f"Fixture Track {index}",
+        )
+        if music_index is not None
+        else None
+    )
+    return _ResolvedChapter(
+        chapter=chapter,
+        writer_chapter=chapter,
+        track=track,
+        music_index=music_index,
+    )
+
+
+def _assemble_writer_fixture(
+    chapter_music_indices: list[int | None],
+    scripts: list[RadioScript],
+) -> tuple[RadioScript, list[object]]:
+    chapters = [
+        _resolved_chapter(index, music_index)
+        for index, music_index in enumerate(chapter_music_indices)
+    ]
+    slot_contexts = _build_narration_slot_contexts(chapters)
+    return _assemble_writer_scripts(
+        scripts,
+        track_count=max(
+            (music_index for music_index in chapter_music_indices if music_index is not None),
+            default=-1,
+        )
+        + 1,
+        chapter_music_indices=chapter_music_indices,
+        slot_contexts=slot_contexts,
+    )
+
+
+def test_final_narrative_slot_requires_exactly_one_outro() -> None:
+    with pytest.raises(
+        NarrationPlacementError,
+        match="final narration slot must return exactly one OUTRO",
+    ):
+        _assemble_writer_fixture(
+            [0, 1, None],
+            [RadioScript(blocks=[]), RadioScript(blocks=[]), RadioScript(blocks=[])],
+        )
+
+
+def test_final_slot_rejects_transition_before_outro() -> None:
+    with pytest.raises(NarrationPlacementError, match="no deterministic narration slot"):
+        _assemble_writer_fixture(
+            [0, 1, None],
+            [
+                RadioScript(blocks=[]),
+                RadioScript(blocks=[]),
+                RadioScript(
+                    blocks=[
+                        block(RadioScriptBlockKind.TRANSITION, "tail transition"),
+                        block(RadioScriptBlockKind.OUTRO, "final outro"),
+                    ]
+                ),
+            ],
+        )
+
+
+def test_final_playable_slot_allows_before_track_and_exactly_one_outro() -> None:
+    script, _ = _assemble_writer_fixture(
+        [0, 1],
+        [
+            RadioScript(blocks=[]),
+            RadioScript(
+                blocks=[
+                    block(RadioScriptBlockKind.TRACK_INTRO, "before final track"),
+                    block(RadioScriptBlockKind.OUTRO, "final outro"),
+                ]
+            ),
+        ],
+    )
+
+    assert [item.kind for item in script.blocks] == [
+        RadioScriptBlockKind.TRACK_INTRO,
+        RadioScriptBlockKind.OUTRO,
+    ]
+
+
+def test_duplicate_before_track_intro_is_typed_failure() -> None:
+    with pytest.raises(NarrationPlacementError, match="narration slot returned multiple blocks"):
+        _assemble_writer_fixture(
+            [0, 1],
+            [
+                RadioScript(blocks=[]),
+                RadioScript(
+                    blocks=[
+                        block(RadioScriptBlockKind.TRACK_INTRO, "first intro"),
+                        block(RadioScriptBlockKind.TRACK_INTRO, "duplicate intro"),
+                        block(RadioScriptBlockKind.OUTRO, "final outro"),
+                    ]
+                ),
+            ],
+        )
+
+
+def test_duplicate_opening_intro_is_typed_failure() -> None:
+    with pytest.raises(NarrationPlacementError, match="narration slot returned multiple blocks"):
+        _assemble_writer_fixture(
+            [0, 1],
+            [
+                RadioScript(
+                    blocks=[
+                        block(RadioScriptBlockKind.INTRO, "opening"),
+                        block(RadioScriptBlockKind.INTRO, "duplicate opening"),
+                    ]
+                ),
+                RadioScript(blocks=[block(RadioScriptBlockKind.OUTRO, "final outro")]),
+            ],
+        )
+
+
+def test_duplicate_narrative_middle_transition_is_typed_failure() -> None:
+    with pytest.raises(NarrationPlacementError, match="narration slot returned multiple blocks"):
+        _assemble_writer_fixture(
+            [0, None, 1],
+            [
+                RadioScript(blocks=[]),
+                RadioScript(
+                    blocks=[
+                        block(RadioScriptBlockKind.TRANSITION, "middle one"),
+                        block(RadioScriptBlockKind.TRANSITION, "middle two"),
+                    ]
+                ),
+                RadioScript(blocks=[block(RadioScriptBlockKind.OUTRO, "final outro")]),
+            ],
+        )
+
+
+def test_multiple_middle_narrative_chapters_cannot_share_one_physical_gap() -> None:
+    with pytest.raises(
+        NarrationPlacementError,
+        match="physical playback gap has multiple narration owners",
+    ):
+        _build_narration_slot_contexts(
+            [
+                _resolved_chapter(0, 0),
+                _resolved_chapter(1, None),
+                _resolved_chapter(2, None),
+                _resolved_chapter(3, 1),
+            ]
+        )
+
+
+def test_multiple_leading_narrative_chapters_cannot_share_opening_gap() -> None:
+    with pytest.raises(
+        NarrationPlacementError,
+        match="physical playback gap has multiple narration owners",
+    ):
+        _build_narration_slot_contexts(
+            [
+                _resolved_chapter(0, None),
+                _resolved_chapter(1, None),
+                _resolved_chapter(2, 0),
+                _resolved_chapter(3, 1),
+            ]
+        )
+
+
+def test_assembly_wraps_narration_placement_failure_at_writer_boundary(tmp_path, monkeypatch) -> None:
+    assembly = service(tmp_path)
+
+    def fail_slot_derivation(chapters: list[_ResolvedChapter]) -> list[list[object]]:
+        raise NarrationPlacementError(
+            "physical playback gap has multiple narration owners (fixture)"
+        )
+
+    monkeypatch.setattr(
+        assembly_module,
+        "_build_narration_slot_contexts",
+        fail_slot_derivation,
+    )
+
+    with pytest.raises(EpisodeAssemblyError, match="physical playback gap") as failure:
+        asyncio.run(
+            assembly.assemble(
+                LiveEpisodeAssemblyRequest(topic="fixture", anchor_tracks=["Neon First Light"])
+            )
+        )
+
+    assert failure.value.stage == "writer_normalization"
+    assert isinstance(failure.value.__cause__, NarrationPlacementError)
+
+
+def test_only_last_trailing_narrative_chapter_owns_final_tail() -> None:
+    chapters = [
+        _resolved_chapter(0, 0),
+        _resolved_chapter(1, 1),
+        _resolved_chapter(2, None),
+        _resolved_chapter(3, None),
+    ]
+    contexts = _build_narration_slot_contexts(chapters)
+
+    assert contexts[2] == []
+    assert [context.allowed_block_kinds for context in contexts[3]] == [
+        [RadioScriptBlockKind.OUTRO]
+    ]
+
+    script, _ = _assemble_writer_scripts(
+        [RadioScript(blocks=[]), RadioScript(blocks=[]), RadioScript(blocks=[]), RadioScript(
+            blocks=[block(RadioScriptBlockKind.OUTRO, "final outro")]
+        )],
+        track_count=2,
+        chapter_music_indices=[0, 1, None, None],
+        slot_contexts=contexts,
+    )
+    assert [item.kind for item in script.blocks] == [RadioScriptBlockKind.OUTRO]
 
 
 def test_trackless_chapter_intro_is_not_promoted_to_episode_opening() -> None:
@@ -545,16 +816,8 @@ def test_max_tracks_limits_music_but_preserves_narrative_only_chapters(tmp_path)
                     estimated_duration_seconds=900,
                 )
             if output_type is RadioScript:
-                index = _mock_writer_chapter_index(prompt)
                 self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
-                return RadioScript(
-                    blocks=[
-                        block(
-                            RadioScriptBlockKind.TRANSITION,
-                            f"narrative beat {index}",
-                        )
-                    ]
-                )
+                return RadioScript(blocks=slot_blocks(prompt, "narrative beat "))
             return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
 
     llm = MusicLimitLLM()
@@ -679,17 +942,8 @@ def test_writer_uses_resolved_narration_slots_for_sparse_playback_sequence(tmp_p
                     estimated_duration_seconds=900,
                 )
             if output_type is RadioScript:
-                chapter = json.loads(prompt.split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0])
                 self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
-                return RadioScript(
-                    blocks=[
-                        RadioScriptBlock(
-                            kind=RadioScriptBlockKind.TRANSITION,
-                            text=f"slot {chapter['index']}",
-                            duration_seconds=3,
-                        )
-                    ]
-                )
+                return RadioScript(blocks=slot_blocks(prompt, "slot "))
             return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
 
     llm = SlotFixtureLLM()
@@ -739,14 +993,13 @@ def test_writer_uses_resolved_narration_slots_for_sparse_playback_sequence(tmp_p
     assert final_slot.just_played_track is not None
     assert final_slot.just_played_track.canonical_title == "Daybreak in Stereo"
     assert final_slot.upcoming_track is None
-    assert sum(len(item.parsed_blocks) for item in result.writer_chapters) == 5
-    assert sum(len(item.normalized_blocks) for item in result.writer_chapters) == 5
-    assert sum(segment.kind.value == "NARRATION" for segment in result.playable_episode.segments) == 5
+    assert sum(len(item.parsed_blocks) for item in result.writer_chapters) == 4
+    assert sum(len(item.normalized_blocks) for item in result.writer_chapters) == 4
+    assert sum(segment.kind.value == "NARRATION" for segment in result.playable_episode.segments) == 4
     assert [segment.narration_text for segment in result.playable_episode.segments if segment.narration_text] == [
         "slot 0",
         "slot 1",
         "slot 2",
-        "slot 3",
         "slot 4",
     ]
 
@@ -782,17 +1035,11 @@ def test_writer_slots_match_each_final_playback_adjacency_and_preserve_blocks(tm
                 if index == 0:
                     blocks = [block(RadioScriptBlockKind.INTRO, "after A")]
                 elif index == 1:
-                    blocks = [
-                        block(RadioScriptBlockKind.TRACK_INTRO, "before B"),
-                        block(RadioScriptBlockKind.TRANSITION, "after B"),
-                    ]
+                    blocks = [block(RadioScriptBlockKind.TRACK_INTRO, "before B")]
                 elif index == 2:
                     blocks = [block(RadioScriptBlockKind.TRANSITION, "unresolved middle")]
                 else:
-                    blocks = [
-                        block(RadioScriptBlockKind.TRACK_INTRO, "before C"),
-                        block(RadioScriptBlockKind.OUTRO, "after C"),
-                    ]
+                    blocks = [block(RadioScriptBlockKind.OUTRO, "after C")]
                 return RadioScript(blocks=blocks, intended_duration_seconds=6)
             return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
 
@@ -810,7 +1057,7 @@ def test_writer_slots_match_each_final_playback_adjacency_and_preserve_blocks(tm
         if call["output_type"] is RadioScript and '"index":1' in call["prompt"]
     )
     assert 'chapter-1:before-track' in middle_prompt
-    assert 'chapter-1:after-track' in middle_prompt
+    assert 'chapter-1:after-track' not in middle_prompt
     opening_after = diagnostics[0].normalized_slot_contexts[0]
     assert opening_after.just_played_track is not None
     assert opening_after.just_played_track.canonical_title == "Neon First Light"
@@ -818,15 +1065,11 @@ def test_writer_slots_match_each_final_playback_adjacency_and_preserve_blocks(tm
     assert opening_after.upcoming_track.canonical_title == "Midnight Transfer"
 
     middle = diagnostics[1]
-    before_b, after_b = middle.normalized_slot_contexts
+    before_b = middle.normalized_slot_contexts[0]
     assert before_b.just_played_track is not None
     assert before_b.just_played_track.canonical_title == "Neon First Light"
     assert before_b.upcoming_track is not None
     assert before_b.upcoming_track.canonical_title == "Midnight Transfer"
-    assert after_b.just_played_track is not None
-    assert after_b.just_played_track.canonical_title == "Midnight Transfer"
-    assert after_b.upcoming_track is not None
-    assert after_b.upcoming_track.canonical_title == "Daybreak in Stereo"
 
     unresolved = diagnostics[2].normalized_slot_contexts[0]
     assert unresolved.just_played_track is not None
@@ -834,7 +1077,7 @@ def test_writer_slots_match_each_final_playback_adjacency_and_preserve_blocks(tm
     assert unresolved.upcoming_track is not None
     assert unresolved.upcoming_track.canonical_title == "Daybreak in Stereo"
 
-    final = diagnostics[3].normalized_slot_contexts[1]
+    final = diagnostics[3].normalized_slot_contexts[0]
     assert final.just_played_track is not None
     assert final.just_played_track.canonical_title == "Daybreak in Stereo"
     assert final.upcoming_track is None
@@ -845,7 +1088,7 @@ def test_writer_slots_match_each_final_playback_adjacency_and_preserve_blocks(tm
         for segment in result.playable_episode.segments
         if segment.narration_text is not None
     ]
-    assert narration == ["after A", "before B", "after B", "unresolved middle", "before C", "after C"]
+    assert narration == ["after A", "before B", "unresolved middle", "after C"]
     assert len(narration) == sum(len(item.parsed_blocks) for item in diagnostics)
 
 
@@ -887,7 +1130,7 @@ def test_leading_narrative_slot_uses_opening_music_as_just_played(tmp_path) -> N
                 if chapter["track"] is None:
                     kind, text = RadioScriptBlockKind.INTRO, "lead"
                 elif chapter["index"] == 1:
-                    kind, text = RadioScriptBlockKind.TRANSITION, "after opening"
+                    return RadioScript(blocks=[], intended_duration_seconds=1)
                 else:
                     kind, text = RadioScriptBlockKind.OUTRO, "outro"
                 return RadioScript(blocks=[block(kind, text)], intended_duration_seconds=3)
@@ -983,6 +1226,8 @@ def test_middle_unresolved_chapter_keeps_narrative_writer_order(tmp_path) -> Non
                     kind = RadioScriptBlockKind.TRANSITION
                 elif writer_index == 0:
                     kind = RadioScriptBlockKind.INTRO
+                elif writer_index == 2:
+                    kind = RadioScriptBlockKind.OUTRO
                 else:
                     kind = RadioScriptBlockKind.TRACK_INTRO
                 return RadioScript(
@@ -1020,7 +1265,7 @@ def test_middle_unresolved_chapter_keeps_narrative_writer_order(tmp_path) -> Non
         for index, segment in enumerate(result.playable_episode.segments)
         if segment.track_ref == second_track_ref
     )
-    assert result.playable_episode.segments[second_music_index - 1].narration_text == "writer track 2"
+    assert result.playable_episode.segments[second_music_index - 1].narration_text == "writer track 1"
 
 
 def test_fewer_than_two_resolved_tracks_is_a_typed_assembly_failure(tmp_path) -> None:
