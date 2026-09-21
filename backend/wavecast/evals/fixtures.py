@@ -18,19 +18,24 @@ PHASE53C_RADIO_WRITING_REVIEW_EXAMPLES: tuple[RadioWritingReviewExample, ...] = 
     RadioWritingReviewExample(
         example_id="opening-empty-evidence",
         slot_context=NarrationSlotContext(
-            slot_id="opening",
+            slot_id="opening-after-track",
             chapter_index=0,
-            placement=NarrationSlotPlacement.BEFORE_TRACK,
+            placement=NarrationSlotPlacement.AFTER_TRACK,
             allowed_block_kinds=[RadioScriptBlockKind.INTRO],
             chapter_track=ResolvedTrack(
                 track_ref="fixture:anchor",
                 canonical_artist="Anchor Artist",
                 canonical_title="Anchor Song",
             ),
-            upcoming_track=ResolvedTrack(
+            just_played_track=ResolvedTrack(
                 track_ref="fixture:anchor",
                 canonical_artist="Anchor Artist",
                 canonical_title="Anchor Song",
+            ),
+            upcoming_track=ResolvedTrack(
+                track_ref="fixture:bridge",
+                canonical_artist="Bridge Artist",
+                canonical_title="Bridge Song",
             ),
             is_opening=True,
         ),
@@ -47,19 +52,24 @@ PHASE53C_RADIO_WRITING_REVIEW_EXAMPLES: tuple[RadioWritingReviewExample, ...] = 
     RadioWritingReviewExample(
         example_id="opening-supported",
         slot_context=NarrationSlotContext(
-            slot_id="opening-supported",
+            slot_id="opening-supported-after-track",
             chapter_index=0,
-            placement=NarrationSlotPlacement.BEFORE_TRACK,
+            placement=NarrationSlotPlacement.AFTER_TRACK,
             allowed_block_kinds=[RadioScriptBlockKind.INTRO],
             chapter_track=ResolvedTrack(
                 track_ref="fixture:anchor",
                 canonical_artist="Anchor Artist",
                 canonical_title="Anchor Song",
             ),
-            upcoming_track=ResolvedTrack(
+            just_played_track=ResolvedTrack(
                 track_ref="fixture:anchor",
                 canonical_artist="Anchor Artist",
                 canonical_title="Anchor Song",
+            ),
+            upcoming_track=ResolvedTrack(
+                track_ref="fixture:bridge",
+                canonical_artist="Bridge Artist",
+                canonical_title="Bridge Song",
             ),
             is_opening=True,
         ),

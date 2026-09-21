@@ -37,7 +37,10 @@ def test_phase53c_examples_cover_real_adjacency_shapes() -> None:
 
     opening = examples["opening-supported"].slot_context
     assert opening.is_opening is True
-    assert opening.just_played_track is None
+    assert opening.placement is NarrationSlotPlacement.AFTER_TRACK
+    assert opening.chapter_track is not None
+    assert opening.just_played_track is not None
+    assert opening.just_played_track.canonical_title == "Anchor Song"
     assert opening.upcoming_track is not None
 
     direct = examples["direct-track-intro"].slot_context
