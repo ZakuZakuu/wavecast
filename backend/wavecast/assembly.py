@@ -749,6 +749,23 @@ def _build_narration_slot_contexts(
     """
 
     contexts: list[list[NarrationSlotContext]] = []
+    owned_gap_keys: set[tuple[str, int | None, int | None]] = set()
+
+    def claim_gap(
+        kind: str,
+        left_music_index: int | None,
+        right_music_index: int | None,
+        chapter_index: int,
+    ) -> None:
+        key = (kind, left_music_index, right_music_index)
+        if key in owned_gap_keys:
+            raise NarrationPlacementError(
+                "physical playback gap has multiple narration owners "
+                f"(kind={kind}, left={left_music_index}, right={right_music_index}, "
+                f"chapter={chapter_index})"
+            )
+        owned_gap_keys.add(key)
+
     for index, item in enumerate(chapters):
         previous_index = next(
             (
@@ -762,8 +779,19 @@ def _build_narration_slot_contexts(
             (candidate.track for candidate in reversed(chapters[:index]) if candidate.track is not None),
             None,
         )
+        previous_music_index = (
+            chapters[previous_index].music_index if previous_index is not None else None
+        )
         upcoming = next(
             (candidate.track for candidate in chapters[index + 1 :] if candidate.track is not None),
+            None,
+        )
+        upcoming_music_index = next(
+            (
+                candidate.music_index
+                for candidate in chapters[index + 1 :]
+                if candidate.track is not None
+            ),
             None,
         )
         is_final_chapter = index == len(chapters) - 1
@@ -784,6 +812,12 @@ def _build_narration_slot_contexts(
             and just_played is not None
             and not has_narrative_between_previous_and_current
         ):
+            claim_gap(
+                "inter-track",
+                previous_music_index,
+                item.music_index,
+                item.chapter.index,
+            )
             chapter_slots.append(
                 NarrationSlotContext(
                     slot_id=f"chapter-{item.chapter.index}:before-track",
@@ -800,6 +834,7 @@ def _build_narration_slot_contexts(
         # inter-track gap belongs to the upcoming track or an intervening
         # narrative-only chapter.
         if item.track is not None and previous_index is None and index == 0:
+            claim_gap("opening", None, item.music_index, item.chapter.index)
             chapter_slots.append(
                 NarrationSlotContext(
                     slot_id=f"chapter-{item.chapter.index}:after-track",
@@ -814,6 +849,7 @@ def _build_narration_slot_contexts(
             )
         elif item.track is not None and is_final_chapter:
             # Only the final chapter owns the tail.
+            claim_gap("final", item.music_index, None, item.chapter.index)
             chapter_slots.append(
                 NarrationSlotContext(
                     slot_id=f"chapter-{item.chapter.index}:after-final",
@@ -833,6 +869,12 @@ def _build_narration_slot_contexts(
                 # trailing chapter owns that physical slot.
                 contexts.append(chapter_slots)
                 continue
+            claim_gap(
+                "final" if is_final_chapter else "inter-track",
+                previous_music_index,
+                None if is_final_chapter else upcoming_music_index,
+                item.chapter.index,
+            )
             chapter_slots.append(
                 NarrationSlotContext(
                     slot_id=f"chapter-{item.chapter.index}:after-previous",
@@ -854,6 +896,7 @@ def _build_narration_slot_contexts(
                 )
             )
         elif item.track is None and upcoming is not None:
+            claim_gap("opening", None, upcoming_music_index, item.chapter.index)
             # Immediate playback starts the first playable track even when
             # leading narrative chapters are trackless.  Those chapters own
             # the opening gap after that music.
