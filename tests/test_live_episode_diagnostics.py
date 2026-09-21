@@ -7,7 +7,7 @@ from argparse import Namespace
 from pathlib import Path
 
 import pytest
-from wavecast.assembly import EpisodeAssemblyError
+from wavecast.assembly import EpisodeAssemblyError, NarrationPlacementError
 from wavecast.intelligence.curation import CuratorContractError, ensure_distance_curve
 from wavecast.intelligence.models import (
     ChapterPlan,
@@ -210,6 +210,31 @@ def test_unknown_failure_uses_stable_safe_diagnostics() -> None:
     assert report["cause_type"] == "UnknownError"
     assert report["reason_code"] == "unknown_provider_failure"
     assert "secret arbitrary" not in json.dumps(report)
+
+
+@pytest.mark.parametrize(
+    ("reason_code", "boundary"),
+    [
+        ("narration_slot_derivation_failed", "slot_derivation"),
+        ("narration_slot_normalization_failed", "writer_slot_normalization"),
+    ],
+)
+def test_narration_placement_failures_are_not_classified_as_provider_errors(
+    reason_code: str, boundary: str
+) -> None:
+    error = _wrapped(
+        NarrationPlacementError("do not expose this internal placement detail"),
+        stage="writer_normalization",
+    )
+    error.reason_code = reason_code
+    error.diagnostics = {"narration_failure_boundary": boundary}
+
+    report = live_episode_probe._failure_report(error, UsageLedger())
+
+    assert report["cause_type"] == "NarrationPlacementError"
+    assert report["reason_code"] == reason_code
+    assert report["narration_failure_boundary"] == boundary
+    assert "internal placement detail" not in json.dumps(report)
 
 
 def test_curator_contract_report_preserves_safe_reason_and_snapshot() -> None:
