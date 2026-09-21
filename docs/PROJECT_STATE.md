@@ -12,19 +12,17 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 ## Current milestone and main state
 
 - **Current milestone:** Phase 5.3 — Radio writing quality.
-- **Current stage:** Phase 5.3A is implementing a language-scoped Chinese
-  music-radio rubric, corpus notes, self-authored fixtures, and credential-free
-  tests. Writer prompts and runtime contracts remain unchanged in this slice.
-- **Canonical main:** 70dc2f0f446e8e1ab7e28eb930a2fb8665416b24 (PR #39 merge commit; includes
-  merged PR #39 and subsequent sanitized mainline updates); verify remote HEAD
-  before acting.
-- **Last completed code milestone:** PR #39 merged at
-  70dc2f0f446e8e1ab7e28eb930a2fb8665416b24, closing Phase 5.2 narration/playback
-  correctness and physical-gap cardinality.
-- **Immediate work:** finish Phase 5.3A, run credential-free tests and static
+- **Current stage:** Phase 5.3B is implementing the minimal zh-CN Writer
+  guidance justified by the completed Phase 5.3A rubric, corpus notes, and
+  self-authored fixtures. Schema and runtime contracts remain unchanged.
+- **Canonical main:** 516e94ea0f81183fb07f0b4cf760dc79226bddf8 (PR #40 merge
+  commit; includes Phase 5.3A); verify remote HEAD before acting.
+- **Last completed code milestone:** PR #40 merged at
+  516e94ea0f81183fb07f0b4cf760dc79226bddf8, closing Phase 5.3A radio-writing
+  rubric and fixture coverage.
+- **Immediate work:** finish Phase 5.3B, run credential-free tests and static
   validation, then open the normal PR Loop review. Do not run live/paid
-  providers; Phase 5.3B will decide whether a minimal zh-CN Writer prompt
-  change is justified.
+  providers; an offline fixture/eval sanity check follows only after review.
 
 ## Phase 5.3A radio-writing rubric
 
@@ -45,6 +43,19 @@ NarrationSlotContext, EpisodeAssembly, playback, TTS, overlay/ducking,
 crossfade, or any live provider configuration. The corpus boundary is recorded
 in docs/research/phase53-radio-writing-corpus.md; the design decision is
 recorded in ADR 0013.
+
+## Phase 5.3B Writer guidance
+
+Phase 5.3B turns the reviewed rubric into a concise prompt guidance block that
+is injected only for zh-CN. It emphasizes concrete listen-for cues, fact to
+sound to connection, one editorial action per block, speakable Chinese,
+cultural precision, contextual transitions, and thesis-linked outros. Empty
+evidence still forbids invented musical or factual detail; en-US and ja-JP do
+not receive the Chinese guidance.
+
+This slice does not add schema fields, perform regex or deterministic prose
+rewriting, or change evidence, claim-support, slot, cardinality, physical-gap,
+assembly, playback, or provider behavior.
 
 ## Phase 5.2 first listening episode
 

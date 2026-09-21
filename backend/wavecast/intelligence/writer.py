@@ -19,6 +19,16 @@ from .models import (
     resolve_output_language,
 )
 
+ZH_CN_RADIO_WRITING_GUIDANCE = (
+    "For zh-CN narration only, apply these concise radio-writing constraints: "
+    "先说具体可听的声音，再给出较大的风格或文化解释；有证据时优先给一个 listener 能实际听到的 "
+    "listen-for cue，但证据不足时宁可简单准确，不要编造听觉或事实细节。背景事实必须服务于当前听感 "
+    "或下一首的连接。一个 block 只完成一个主要 editorial action；使用短分句、自然停顿和口语中文， "
+    "减少论文腔与名词化。区分事实、听感和编辑判断，文化描述具体克制，避免宽泛的族群化概括。 "
+    "TRACK_INTRO/TRANSITION 要说明下一首为什么值得听；OUTRO 回扣本期 thesis 或前面真实听到的细节， "
+    "不要用模板式总结。不要为了高级感强造比喻、大词或结论。"
+)
+
 
 class WriterService:
     def __init__(self, llm: FastStructuredProvider) -> None:
@@ -68,6 +78,11 @@ class WriterService:
                 }
             ]
         )
+        language_guidance = (
+            ZH_CN_RADIO_WRITING_GUIDANCE
+            if selected_language is OutputLanguage.ZH_CN
+            else ""
+        )
         prompt = (
             "Write a structured radio script for this chapter, not an article. Use only the "
             "scoped evidence; keep factual claims separately identified by evidence IDs, avoid "
@@ -92,6 +107,7 @@ class WriterService:
             "correlation must not be phrased as proven causation. "
             f"{empty_scope_instruction}\n"
             f"Write in output language {selected_language.value}.\n"
+            f"{language_guidance}\n"
             f"Chapter: {chapter.model_dump_json()}\n"
             f"Evidence: {[item.model_dump() for item in scoped]}\n"
             f"Previous context: {previous_committed_context[:1000]}\n"
