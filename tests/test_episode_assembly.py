@@ -490,6 +490,31 @@ def test_assembly_wraps_narration_placement_failure_at_writer_boundary(tmp_path,
         )
 
     assert failure.value.stage == "writer_normalization"
+    assert failure.value.reason_code == "narration_slot_derivation_failed"
+    assert failure.value.diagnostics == {"narration_failure_boundary": "slot_derivation"}
+    assert isinstance(failure.value.__cause__, NarrationPlacementError)
+
+
+def test_assembly_wraps_writer_slot_normalization_failure_with_safe_reason(tmp_path, monkeypatch) -> None:
+    assembly = service(tmp_path)
+
+    def fail_writer_normalization(*args: object, **kwargs: object) -> tuple[object, object]:
+        raise NarrationPlacementError("writer slot cardinality failed (fixture)")
+
+    monkeypatch.setattr(assembly_module, "_assemble_writer_scripts", fail_writer_normalization)
+
+    with pytest.raises(EpisodeAssemblyError, match="writer slot cardinality") as failure:
+        asyncio.run(
+            assembly.assemble(
+                LiveEpisodeAssemblyRequest(topic="fixture", anchor_tracks=["Neon First Light"])
+            )
+        )
+
+    assert failure.value.stage == "writer_normalization"
+    assert failure.value.reason_code == "narration_slot_normalization_failed"
+    assert failure.value.diagnostics == {
+        "narration_failure_boundary": "writer_slot_normalization"
+    }
     assert isinstance(failure.value.__cause__, NarrationPlacementError)
 
 
