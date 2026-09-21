@@ -15,6 +15,7 @@ from wavecast.assembly import (
     _assemble_writer_scripts,
     _build_narration_slot_contexts,
     _mock_writer_chapter_index,
+    _mock_writer_slot_contexts,
     _ResolvedChapter,
     create_episode_assembly_service,
 )
@@ -184,6 +185,75 @@ def test_writer_runs_only_after_resolution_and_receives_next_track_context(tmp_p
         )
         for block in result.radio_script.blocks
     )
+
+
+def test_writer_skips_chapters_without_owned_slots(tmp_path) -> None:
+    class TrailingNarrativeLLM(RecordingAssemblyLLM):
+        async def structured(
+            self, prompt: str, output_type: type[object], **kwargs: object
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                tracks = self._tracks[:2]
+                chapters = [
+                    ChapterPlan(
+                        index=index,
+                        track=self._proposal(item),
+                        narrative_role=(
+                            NarrativeRole.ANCHOR if index == 0 else NarrativeRole.RESOLUTION
+                        ),
+                        reason="fixture",
+                        novelty_distance=item[2],
+                        narration_goal="fixture",
+                    )
+                    for index, item in enumerate(tracks)
+                ]
+                chapters.extend(
+                    [
+                        ChapterPlan(
+                            index=2,
+                            track=None,
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="trailing context",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="fixture",
+                        ),
+                        ChapterPlan(
+                            index=3,
+                            track=None,
+                            narrative_role=NarrativeRole.RESOLUTION,
+                            reason="trailing outro",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="fixture",
+                        ),
+                    ]
+                )
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=chapters,
+                    estimated_duration_seconds=900,
+                )
+            if output_type is RadioScript and not _mock_writer_slot_contexts(prompt):
+                raise AssertionError("Writer must not be called for an unowned chapter")
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    llm = TrailingNarrativeLLM()
+    result = asyncio.run(
+        service(tmp_path, llm).assemble(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=2, max_chapters=4)
+        )
+    )
+
+    writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
+    called_indices = [
+        json.loads(call["prompt"].split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0])["index"]
+        for call in writer_calls
+    ]
+    assert called_indices == [0, 1, 3]
+    assert result.writer_chapters[2].available_slots == []
+    assert result.writer_chapters[2].normalized_blocks == []
+    assert any(block.kind is RadioScriptBlockKind.OUTRO for block in result.radio_script.blocks)
+    previous_context = writer_calls[-1]["prompt"].split("Previous context:", 1)[1]
+    assert previous_context.split("\nNext track metadata:", 1)[0].strip()
 
 
 def test_assembly_passes_request_limits_to_curator_prompt(tmp_path) -> None:
@@ -883,7 +953,7 @@ def test_max_tracks_limits_music_but_preserves_narrative_only_chapters(tmp_path)
 
     assert len(result.resolved_tracks) == 4
     assert [chapter.index for chapter in result.skeleton.chapters] == [0, 1, 2, 3, 4, 5]
-    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 6
+    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 4
     assert {"narrative beat 1", "narrative beat 3"}.issubset(
         {segment.narration_text for segment in result.playable_episode.segments}
     )
@@ -1015,7 +1085,7 @@ def test_writer_uses_resolved_narration_slots_for_sparse_playback_sequence(tmp_p
         "Midnight Transfer",
         "Daybreak in Stereo",
     ]
-    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 5
+    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 4
 
     middle_prompt = next(
         call["prompt"]
