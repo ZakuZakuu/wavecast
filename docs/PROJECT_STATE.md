@@ -1,6 +1,6 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-20
+**Last updated:** 2026-09-21
 
 ## Product reminder
 
@@ -11,18 +11,40 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 5.2 — First Listening Episode.
-- **Current stage:** Phase 5.2 live listening artifact is available for human
-  editorial review after the credential-free bridge merged in PR #36 and passed
-  exact-head review, full local validation, and GitHub backend/web CI.
-- **Canonical main:** 22f1c96 (PR #36 merge commit da15493757ed8f55b5192d47fe377821caef15d0
-  plus the sanitized project-state update); verify the remote HEAD before acting.
-- **Last documented recovery baseline:** 22f1c96 (canonical origin/main).
-- **Latest code milestone:** da15493757ed8f55b5192d47fe377821caef15d0 (merged PR #36,
-  completing the listening runtime bridge and owned-audio import boundary).
-- **Immediate work:** human-review the available Fang Datong episode, then use the
-  editorial verdict to decide whether Phase 5.2 curation/content follow-up is
-  needed. Do not spend live/paid calls on automatic retries.
+- **Current milestone:** Phase 5.3 — Radio writing quality.
+- **Current stage:** Phase 5.3A is implementing a language-scoped Chinese
+  music-radio rubric, corpus notes, self-authored fixtures, and credential-free
+  tests. Writer prompts and runtime contracts remain unchanged in this slice.
+- **Canonical main:** 70dc2f0f446e8e1ab7e28eb930a2fb8665416b24 (PR #39 merge commit; includes
+  merged PR #39 and subsequent sanitized mainline updates); verify remote HEAD
+  before acting.
+- **Last completed code milestone:** PR #39 merged at
+  70dc2f0f446e8e1ab7e28eb930a2fb8665416b24, closing Phase 5.2 narration/playback
+  correctness and physical-gap cardinality.
+- **Immediate work:** finish Phase 5.3A, run credential-free tests and static
+  validation, then open the normal PR Loop review. Do not run live/paid
+  providers; Phase 5.3B will decide whether a minimal zh-CN Writer prompt
+  change is justified.
+
+## Phase 5.3A radio-writing rubric
+
+Phase 5.2 human listening accepted the track selection and editorial arc but
+identified article-like Chinese phrasing, broad cultural generalizations, and a
+generic outro. GPT's Phase 5.3 plan narrows the next slice to:
+
+- public source links plus abstract corpus notes; no copied transcripts or
+  host-specific imitation;
+- a typed zh-CN human-review rubric covering concrete listening cues, fact to
+  sound to connection, spoken pacing, cultural precision, contextual deixis,
+  and outro callbacks;
+- a small set of self-authored weak/strong contrast fixtures;
+- credential-free tests that verify rubric completeness and language scope.
+
+This slice deliberately does not change RadioScriptBlock, Writer prompts,
+NarrationSlotContext, EpisodeAssembly, playback, TTS, overlay/ducking,
+crossfade, or any live provider configuration. The corpus boundary is recorded
+in docs/research/phase53-radio-writing-corpus.md; the design decision is
+recorded in ADR 0013.
 
 ## Phase 5.2 first listening episode
 

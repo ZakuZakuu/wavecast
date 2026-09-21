@@ -1,6 +1,10 @@
 """Credential-free Guided Discovery evaluation contracts and benchmark fixtures."""
 
-from .fixtures import GUIDED_DISCOVERY_CASES, PHASE51_EDITORIAL_CASES
+from .fixtures import (
+    GUIDED_DISCOVERY_CASES,
+    PHASE51_EDITORIAL_CASES,
+    PHASE53_RADIO_WRITING_FIXTURES,
+)
 from .listening import (
     DurationMetrics,
     ListeningEvaluation,
@@ -12,6 +16,7 @@ from .listening import (
 )
 from .quality import (
     PHASE51_RUBRIC,
+    PHASE53_RADIO_WRITING_RUBRIC,
     GuidedDiscoveryCase,
     GuidedDiscoveryReview,
     HardCheckResult,
@@ -20,6 +25,10 @@ from .quality import (
     Phase51Evaluation,
     QualityDimension,
     QualityRubric,
+    RadioWritingCriterion,
+    RadioWritingFixture,
+    RadioWritingRubric,
+    RadioWritingRubricItem,
     ReviewCandidate,
     build_phase51_evaluation,
     build_review_bundle,
@@ -41,6 +50,7 @@ __all__ = [
     "WriterContinuityMetrics",
     "build_listening_evaluation",
     "PHASE51_EDITORIAL_CASES",
+    "PHASE53_RADIO_WRITING_FIXTURES",
     "GuidedDiscoveryCase",
     "GuidedDiscoveryReview",
     "HardCheckResult",
@@ -48,6 +58,11 @@ __all__ = [
     "Phase51Diagnostics",
     "Phase51Evaluation",
     "PHASE51_RUBRIC",
+    "PHASE53_RADIO_WRITING_RUBRIC",
+    "RadioWritingCriterion",
+    "RadioWritingFixture",
+    "RadioWritingRubric",
+    "RadioWritingRubricItem",
     "QualityDimension",
     "QualityRubric",
     "RETRIEVAL_BENCHMARK_CASES",
