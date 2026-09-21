@@ -65,6 +65,47 @@ class QualityRubric(BaseModel):
     human_review_questions: list[str]
 
 
+class RadioWritingCriterion(StrEnum):
+    """Reusable review criteria for Chinese music-radio narration."""
+
+    CONCRETE_BEFORE_ABSTRACT = "concrete_before_abstract"
+    LISTEN_FOR_CUE = "listen_for_cue"
+    FACT_SOUND_CONNECTION = "fact_sound_connection"
+    ONE_SPOKEN_BEAT = "one_spoken_beat"
+    SPEAKABLE_CHINESE = "speakable_chinese"
+    GROUNDED_INTERPRETATION = "grounded_interpretation"
+    CONTEXTUAL_DEIXIS = "contextual_deixis"
+    CULTURAL_PRECISION = "cultural_precision"
+    OUTRO_CALLBACK = "outro_callback"
+    NO_FORCED_CLEVERNESS = "no_forced_cleverness"
+
+
+class RadioWritingRubricItem(BaseModel):
+    """One human-review question, not an automatic quality score."""
+
+    criterion: RadioWritingCriterion
+    question: str = Field(min_length=1, max_length=240)
+    guidance: str = Field(min_length=1, max_length=500)
+
+
+class RadioWritingRubric(BaseModel):
+    """Typed, language-scoped guidance for reviewing radio writing."""
+
+    language: Literal["zh-CN"] = "zh-CN"
+    items: list[RadioWritingRubricItem] = Field(min_length=1, max_length=16)
+    human_review_questions: list[str] = Field(min_length=1, max_length=16)
+
+
+class RadioWritingFixture(BaseModel):
+    """A self-authored contrast used without provider calls."""
+
+    fixture_id: str = Field(min_length=1, max_length=80)
+    criterion: RadioWritingCriterion
+    weak_text: str = Field(min_length=1, max_length=500)
+    stronger_text: str = Field(min_length=1, max_length=500)
+    rationale: str = Field(min_length=1, max_length=500)
+
+
 class ReviewCandidate(BaseModel):
     artist: str
     title: str
@@ -174,6 +215,70 @@ PHASE51_RUBRIC = QualityRubric(
         "Which transition had the strongest or weakest editorial reason?",
         "Did the narration change how you heard any music?",
         "Would you keep listening or save a new track afterward?",
+    ],
+)
+
+
+PHASE53_RADIO_WRITING_RUBRIC = RadioWritingRubric(
+    items=[
+        RadioWritingRubricItem(
+            criterion=RadioWritingCriterion.CONCRETE_BEFORE_ABSTRACT,
+            question="这段话是否先说清楚音乐里具体发生了什么，再提出风格或文化判断？",
+            guidance="先落到可听的声音、编曲或演唱细节，再上升到较大的解释。",
+        ),
+        RadioWritingRubricItem(
+            criterion=RadioWritingCriterion.LISTEN_FOR_CUE,
+            question="听众能否从这段话得到一个实际可寻找的聆听线索？",
+            guidance="优先指出鼓点、bass、和声、唱腔、音色或编曲进入等可听特征。",
+        ),
+        RadioWritingRubricItem(
+            criterion=RadioWritingCriterion.FACT_SOUND_CONNECTION,
+            question="背景事实是否服务于刚听到的声音或下一首歌的连接？",
+            guidance="事实不是终点；说明它如何帮助听众理解当前音乐或下一步。",
+        ),
+        RadioWritingRubricItem(
+            criterion=RadioWritingCriterion.ONE_SPOKEN_BEAT,
+            question="一个旁白 block 是否只完成一个主要动作？",
+            guidance="拆开小论文式的多重解释，让每段只负责一个引入、观察、连接或收束。",
+        ),
+        RadioWritingRubricItem(
+            criterion=RadioWritingCriterion.SPEAKABLE_CHINESE,
+            question="这段话听起来像人在说，还是像文章被朗读出来？",
+            guidance="使用短分句和自然停顿，减少嵌套定语、名词化和论文腔。",
+        ),
+        RadioWritingRubricItem(
+            criterion=RadioWritingCriterion.GROUNDED_INTERPRETATION,
+            question="事实、听感和编辑判断是否被清楚地区分？",
+            guidance="不要把主观判断伪装成事实；不确定处要保留合适的限定。",
+        ),
+        RadioWritingRubricItem(
+            criterion=RadioWritingCriterion.CONTEXTUAL_DEIXIS,
+            question="“刚才这首”“下一首”等指代是否和真实播放邻接一致？",
+            guidance="只在 typed slot context 提供对应歌曲时使用时间指代，不依赖 chapter index 猜测。",
+        ),
+        RadioWritingRubricItem(
+            criterion=RadioWritingCriterion.CULTURAL_PRECISION,
+            question="文化和音乐传统的概括是否具体、克制且不本质化？",
+            guidance="避免宽泛的族群化标签，尽量落到具体传统、时期、音乐语言或听觉特征。",
+        ),
+        RadioWritingRubricItem(
+            criterion=RadioWritingCriterion.OUTRO_CALLBACK,
+            question="Outro 是否回扣本期 thesis 或一个真正听过的细节？",
+            guidance="让听众带着新的听法离开，避免模板式的“今天从 A 走到 B”。",
+        ),
+        RadioWritingRubricItem(
+            criterion=RadioWritingCriterion.NO_FORCED_CLEVERNESS,
+            question="是否为了文采制造大词、比喻或结论？",
+            guidance="清楚、准确、可说优先；不为了显得深刻而牺牲音乐理解。",
+        ),
+    ],
+    human_review_questions=[
+        "这段话听起来是在说，还是在写文章？",
+        "是否包含具体且可验证或可听的 musical observation？",
+        "背景事实有没有服务于当前或下一首音乐？",
+        "是否出现空泛、过度抽象或不准确的文化概括？",
+        "transition 是否让下一首歌变得更值得听？",
+        "outro 是否真正回扣本期内容，而非模板式收尾？",
     ],
 )
 
