@@ -437,6 +437,36 @@ def test_duplicate_narrative_middle_transition_is_typed_failure() -> None:
         )
 
 
+def test_multiple_middle_narrative_chapters_cannot_share_one_physical_gap() -> None:
+    with pytest.raises(
+        NarrationPlacementError,
+        match="physical playback gap has multiple narration owners",
+    ):
+        _build_narration_slot_contexts(
+            [
+                _resolved_chapter(0, 0),
+                _resolved_chapter(1, None),
+                _resolved_chapter(2, None),
+                _resolved_chapter(3, 1),
+            ]
+        )
+
+
+def test_multiple_leading_narrative_chapters_cannot_share_opening_gap() -> None:
+    with pytest.raises(
+        NarrationPlacementError,
+        match="physical playback gap has multiple narration owners",
+    ):
+        _build_narration_slot_contexts(
+            [
+                _resolved_chapter(0, None),
+                _resolved_chapter(1, None),
+                _resolved_chapter(2, 0),
+                _resolved_chapter(3, 1),
+            ]
+        )
+
+
 def test_only_last_trailing_narrative_chapter_owns_final_tail() -> None:
     chapters = [
         _resolved_chapter(0, 0),
