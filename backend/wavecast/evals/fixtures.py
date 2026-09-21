@@ -4,7 +4,39 @@ Cases intentionally describe failure modes rather than prescribing exact tracks.
 should reward musical reasoning, evidence discipline, and a coherent arc instead of memorization.
 """
 
-from .quality import GuidedDiscoveryCase
+from .quality import GuidedDiscoveryCase, RadioWritingCriterion, RadioWritingFixture
+
+PHASE53_RADIO_WRITING_FIXTURES: tuple[RadioWritingFixture, ...] = (
+    RadioWritingFixture(
+        fixture_id="cultural-precision",
+        criterion=RadioWritingCriterion.CULTURAL_PRECISION,
+        weak_text="这首歌让中文歌词承载了某族群音乐复杂而深厚的律动传统。",
+        stronger_text="刚才副歌里，人声没有一直贴着正拍走；它稍微往后靠，bass 和鼓把这点松紧托住了。",
+        rationale="把宽泛的族群化判断改成具体、可听的节奏观察。",
+    ),
+    RadioWritingFixture(
+        fixture_id="listen-for-cue",
+        criterion=RadioWritingCriterion.LISTEN_FOR_CUE,
+        weak_text="这首歌的音乐性很丰富，情绪也很有层次。",
+        stronger_text="留意第二遍副歌前鼓组怎么收窄；人声进来以后，空间反而被留得更开。",
+        rationale="给听众一个可以在播放中验证的聆听线索。",
+    ),
+    RadioWritingFixture(
+        fixture_id="one-spoken-beat",
+        criterion=RadioWritingCriterion.ONE_SPOKEN_BEAT,
+        weak_text="这首歌来自一个重要时期，它的编曲、歌词和演唱都体现了作者的成长，也影响了后来很多音乐人。",
+        stronger_text="先听编曲怎么把空间留给人声。至于它为什么重要，我们下一段再接着说。",
+        rationale="把多个解释动作拆成一个可说、可继续推进的旁白 beat。",
+    ),
+    RadioWritingFixture(
+        fixture_id="outro-callback",
+        criterion=RadioWritingCriterion.OUTRO_CALLBACK,
+        weak_text="今天我们从熟悉的歌听到更广的音乐，希望你喜欢这期节目。",
+        stronger_text="下次再听到那种稍微往后的唱腔，可以先别急着把它当成松散；也许正是鼓和 bass 在替它稳住方向。",
+        rationale="Outro 回扣本期实际听到的细节，并留下可带走的听法。",
+    ),
+)
+
 
 GUIDED_DISCOVERY_CASES: tuple[GuidedDiscoveryCase, ...] = (
     GuidedDiscoveryCase(
