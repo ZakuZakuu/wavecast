@@ -351,21 +351,23 @@ def test_final_narrative_slot_requires_exactly_one_outro() -> None:
         )
 
 
-def test_final_slot_rejects_transition_before_outro() -> None:
-    with pytest.raises(NarrationPlacementError, match="no deterministic narration slot"):
-        _assemble_writer_fixture(
-            [0, 1, None],
-            [
-                RadioScript(blocks=[]),
-                RadioScript(blocks=[]),
-                RadioScript(
-                    blocks=[
-                        block(RadioScriptBlockKind.TRANSITION, "tail transition"),
-                        block(RadioScriptBlockKind.OUTRO, "final outro"),
-                    ]
-                ),
-            ],
-        )
+def test_final_slot_canonicalizes_writer_kinds_and_merges() -> None:
+    script, _ = _assemble_writer_fixture(
+        [0, 1, None],
+        [
+            RadioScript(blocks=[]),
+            RadioScript(blocks=[]),
+            RadioScript(
+                blocks=[
+                    block(RadioScriptBlockKind.TRANSITION, "tail transition"),
+                    block(RadioScriptBlockKind.OUTRO, "final outro"),
+                ]
+            ),
+        ],
+    )
+
+    assert [item.kind for item in script.blocks] == [RadioScriptBlockKind.OUTRO]
+    assert script.blocks[0].text == "tail transition final outro"
 
 
 def test_final_playable_slot_allows_before_track_and_exactly_one_outro() -> None:
@@ -388,54 +390,81 @@ def test_final_playable_slot_allows_before_track_and_exactly_one_outro() -> None
     ]
 
 
-def test_duplicate_before_track_intro_is_typed_failure() -> None:
-    with pytest.raises(NarrationPlacementError, match="narration slot returned multiple blocks"):
-        _assemble_writer_fixture(
-            [0, 1],
-            [
-                RadioScript(blocks=[]),
-                RadioScript(
-                    blocks=[
-                        block(RadioScriptBlockKind.TRACK_INTRO, "first intro"),
-                        block(RadioScriptBlockKind.TRACK_INTRO, "duplicate intro"),
-                        block(RadioScriptBlockKind.OUTRO, "final outro"),
-                    ]
-                ),
-            ],
-        )
+def test_final_playable_slot_with_one_block_keeps_required_outro() -> None:
+    script, _ = _assemble_writer_fixture(
+        [0, 1],
+        [
+            RadioScript(blocks=[]),
+            RadioScript(blocks=[block(RadioScriptBlockKind.TRANSITION, "final narration")]),
+        ],
+    )
+
+    assert [item.kind for item in script.blocks] == [RadioScriptBlockKind.OUTRO]
 
 
-def test_duplicate_opening_intro_is_typed_failure() -> None:
-    with pytest.raises(NarrationPlacementError, match="narration slot returned multiple blocks"):
-        _assemble_writer_fixture(
-            [0, 1],
-            [
-                RadioScript(
-                    blocks=[
-                        block(RadioScriptBlockKind.INTRO, "opening"),
-                        block(RadioScriptBlockKind.INTRO, "duplicate opening"),
-                    ]
-                ),
-                RadioScript(blocks=[block(RadioScriptBlockKind.OUTRO, "final outro")]),
-            ],
-        )
+def test_duplicate_before_track_intro_blocks_collapse_into_final_slots() -> None:
+    script, _ = _assemble_writer_fixture(
+        [0, 1],
+        [
+            RadioScript(blocks=[]),
+            RadioScript(
+                blocks=[
+                    block(RadioScriptBlockKind.TRACK_INTRO, "first intro"),
+                    block(RadioScriptBlockKind.TRACK_INTRO, "duplicate intro"),
+                    block(RadioScriptBlockKind.OUTRO, "final outro"),
+                ]
+            ),
+        ],
+    )
+
+    assert [item.kind for item in script.blocks] == [
+        RadioScriptBlockKind.TRACK_INTRO,
+        RadioScriptBlockKind.OUTRO,
+    ]
+    assert script.blocks[1].text == "duplicate intro final outro"
 
 
-def test_duplicate_narrative_middle_transition_is_typed_failure() -> None:
-    with pytest.raises(NarrationPlacementError, match="narration slot returned multiple blocks"):
-        _assemble_writer_fixture(
-            [0, None, 1],
-            [
-                RadioScript(blocks=[]),
-                RadioScript(
-                    blocks=[
-                        block(RadioScriptBlockKind.TRANSITION, "middle one"),
-                        block(RadioScriptBlockKind.TRANSITION, "middle two"),
-                    ]
-                ),
-                RadioScript(blocks=[block(RadioScriptBlockKind.OUTRO, "final outro")]),
-            ],
-        )
+def test_duplicate_opening_intro_blocks_collapse_to_one_intro() -> None:
+    script, _ = _assemble_writer_fixture(
+        [0, 1],
+        [
+            RadioScript(
+                blocks=[
+                    block(RadioScriptBlockKind.INTRO, "opening"),
+                    block(RadioScriptBlockKind.INTRO, "duplicate opening"),
+                ]
+            ),
+            RadioScript(blocks=[block(RadioScriptBlockKind.OUTRO, "final outro")]),
+        ],
+    )
+
+    assert [item.kind for item in script.blocks] == [
+        RadioScriptBlockKind.INTRO,
+        RadioScriptBlockKind.OUTRO,
+    ]
+    assert script.blocks[0].text == "opening duplicate opening"
+
+
+def test_duplicate_narrative_middle_transitions_collapse_to_one_slot() -> None:
+    script, _ = _assemble_writer_fixture(
+        [0, None, 1],
+        [
+            RadioScript(blocks=[]),
+            RadioScript(
+                blocks=[
+                    block(RadioScriptBlockKind.TRANSITION, "middle one"),
+                    block(RadioScriptBlockKind.TRANSITION, "middle two"),
+                ]
+            ),
+            RadioScript(blocks=[block(RadioScriptBlockKind.OUTRO, "final outro")]),
+        ],
+    )
+
+    assert [item.kind for item in script.blocks] == [
+        RadioScriptBlockKind.TRANSITION,
+        RadioScriptBlockKind.OUTRO,
+    ]
+    assert script.blocks[0].text == "middle one middle two"
 
 
 def test_multiple_middle_narrative_chapters_cannot_share_one_physical_gap() -> None:

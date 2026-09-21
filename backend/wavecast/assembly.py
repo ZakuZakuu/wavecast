@@ -944,6 +944,94 @@ def _build_narration_slot_contexts(
         contexts.append(chapter_slots)
     return contexts
 
+def _merge_writer_blocks(
+    blocks: list[RadioScriptBlock],
+    *,
+    kind: RadioScriptBlockKind,
+) -> RadioScriptBlock | None:
+    """Collapse Writer segmentation while preserving application-owned placement."""
+
+    if not blocks:
+        return None
+    text = " ".join(block.text.strip() for block in blocks)
+    if len(text) > 4000:
+        raise NarrationPlacementError("merged Writer narration exceeds block text limit")
+    tts_text = (
+        " ".join((block.tts_text or block.text).strip() for block in blocks)
+        if any(block.tts_text is not None for block in blocks)
+        else None
+    )
+    claim_support = [
+        support
+        for block in blocks
+        for support in block.claim_support
+    ]
+    if len(claim_support) > 8:
+        raise NarrationPlacementError("merged Writer narration exceeds claim support limit")
+    return blocks[0].model_copy(
+        update={
+            "kind": kind,
+            "text": text,
+            "tts_text": tts_text,
+            "duration_seconds": min(300, sum(block.duration_seconds for block in blocks)),
+            "tts_cues": [cue for block in blocks for cue in block.tts_cues],
+            "evidence_ids": [
+                evidence_id
+                for block in blocks
+                for evidence_id in block.evidence_ids
+            ],
+            "claim_support": claim_support,
+            "track_index": None,
+        }
+    )
+
+
+def _canonical_slot_blocks(
+    blocks: list[RadioScriptBlock],
+    contexts: list[NarrationSlotContext],
+) -> list[tuple[RadioScriptBlock, NarrationSlotContext]]:
+    """Adapt current production slot shapes without inventing a generic solver."""
+
+    if not contexts:
+        return []
+    if len(contexts) == 1:
+        merged = _merge_writer_blocks(
+            blocks,
+            kind=(
+                RadioScriptBlockKind.INTRO
+                if contexts[0].is_opening
+                else (
+                    RadioScriptBlockKind.TRACK_INTRO
+                    if contexts[0].placement is NarrationSlotPlacement.BEFORE_TRACK
+                    else (
+                        RadioScriptBlockKind.OUTRO
+                        if contexts[0].placement is NarrationSlotPlacement.AFTER_FINAL_TRACK
+                        else RadioScriptBlockKind.TRANSITION
+                    )
+                )
+            ),
+        )
+        return [(merged, contexts[0])] if merged is not None else []
+
+    if (
+        len(contexts) == 2
+        and contexts[0].placement is NarrationSlotPlacement.BEFORE_TRACK
+        and contexts[1].placement is NarrationSlotPlacement.AFTER_FINAL_TRACK
+        and contexts[1].is_final
+    ):
+        if not blocks:
+            return []
+        if len(blocks) == 1:
+            merged = _merge_writer_blocks(blocks, kind=RadioScriptBlockKind.OUTRO)
+            return [(merged, contexts[1])] if merged is not None else []
+        before = _merge_writer_blocks([blocks[0]], kind=RadioScriptBlockKind.TRACK_INTRO)
+        final = _merge_writer_blocks(blocks[1:], kind=RadioScriptBlockKind.OUTRO)
+        assert before is not None and final is not None
+        return [(before, contexts[0]), (final, contexts[1])]
+
+    raise NarrationPlacementError("unsupported narration slot shape")
+
+
 def _assemble_writer_scripts(
     scripts: list[RadioScript | NarrationScript],
     track_count: int,
@@ -989,32 +1077,12 @@ def _assemble_writer_scripts(
             None,
         )
         normalized_slots: list[NarrationSlotContext] = []
-        used_slot_ids: set[str] = set()
-        track_intro_seen = False
         if not contexts and parsed_blocks:
             raise NarrationPlacementError(
                 "writer returned narration for a chapter without an owned playback slot "
                 f"(chapter={chapter_index})"
             )
-        for block_index, block in enumerate(parsed_blocks):
-            context = next(
-                (
-                    candidate
-                    for candidate in contexts
-                    if block.kind in candidate.allowed_block_kinds
-                ),
-                None,
-            )
-            if context is None:
-                raise NarrationPlacementError(
-                    "writer block has no deterministic narration slot "
-                    f"(chapter={chapter_index}, block={block_index}, kind={block.kind.value})"
-                )
-            if context.slot_id in used_slot_ids:
-                raise NarrationPlacementError(
-                    "narration slot returned multiple blocks "
-                    f"(slot={context.slot_id}, chapter={chapter_index})"
-                )
+        for block, context in _canonical_slot_blocks(parsed_blocks, contexts):
             placed = _place_writer_block_in_slot(
                 block,
                 context=context,
@@ -1022,19 +1090,19 @@ def _assemble_writer_scripts(
                 previous_music_index=previous_music_index,
                 opening_intro_seen=opening_intro_seen,
                 final_outro_seen=final_outro_seen,
-                track_intro_seen=track_intro_seen,
+                track_intro_seen=any(
+                    item.kind is RadioScriptBlockKind.TRACK_INTRO for item in normalized
+                ),
             )
             normalized.append(placed)
             normalized_slots.append(context)
-            used_slot_ids.add(context.slot_id)
             if placed.kind is RadioScriptBlockKind.INTRO:
                 opening_intro_seen = True
             if placed.kind is RadioScriptBlockKind.OUTRO:
                 final_outro_seen = True
                 if context.slot_id in final_slot_ids:
                     final_slot_outro_count += 1
-            if placed.kind is RadioScriptBlockKind.TRACK_INTRO:
-                track_intro_seen = True
+
         diagnostics.append(
             WriterChapterDiagnostic(
                 chapter_index=contexts[0].chapter_index if contexts else chapter_index,
@@ -1068,7 +1136,6 @@ def _assemble_writer_scripts(
         ),
         diagnostics,
     )
-
 
 def _place_writer_block_in_slot(
     block: RadioScriptBlock,
