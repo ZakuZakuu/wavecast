@@ -71,6 +71,32 @@ class ResolutionFixture:
         )
 
 
+class QueryAwareFixture:
+    def __init__(self, results_by_query: dict[str, list[TrackMetadata]]) -> None:
+        self.results_by_query = results_by_query
+        self.queries: list[str] = []
+
+    async def search(self, query: str, *, limit: int = 5) -> list[TrackMetadata]:
+        self.queries.append(query)
+        return self.results_by_query.get(query, [])[:limit]
+
+    async def resolve_track(self, track_ref: str) -> TrackMetadata:
+        for tracks in self.results_by_query.values():
+            for track in tracks:
+                if track.track_ref == track_ref:
+                    return track
+        raise AssertionError(f"unknown track ref: {track_ref}")
+
+    async def get_playback_asset(self, resolved_track: object) -> AudioAsset:
+        return AudioAsset(
+            asset_id=resolved_track.track_ref,
+            asset_type=AudioAssetType.MUSIC,
+            provider="fixture",
+            playback_url="https://sidecar.test/stream/track",
+            duration=180,
+        )
+
+
 def test_ensemble_resolution_requires_exact_catalog_identity() -> None:
     retrieval = MusicRetrievalService(MusicProviderRegistry({"netease": CatalogFixture()}))
 
@@ -90,6 +116,82 @@ def test_ensemble_resolution_requires_exact_catalog_identity() -> None:
     assert resolved is not None
     assert resolved.track_ref == "netease:jealousy"
     assert unresolved is None
+
+
+def test_ensemble_resolution_uses_title_only_recall_after_combined_query_misses() -> None:
+    target = TrackMetadata(
+        track_ref="netease:target",
+        artist="3rd Coast",
+        title="Jealousy",
+        duration_seconds=180,
+        playable=True,
+    )
+    provider = QueryAwareFixture(
+        {
+            "3rd Coast Jealousy": [
+                target.model_copy(update={"artist": "Other Artist", "title": "Other Song"})
+            ],
+            "Jealousy": [target],
+        }
+    )
+    retrieval = MusicRetrievalService(MusicProviderRegistry({"netease": provider}))
+
+    resolved = asyncio.run(
+        resolve_track_proposal_across_providers(
+            retrieval,
+            TrackProposal(artist="3rd Coast", title="Jealousy", confidence=0.9),
+        )
+    )
+
+    assert resolved is not None
+    assert resolved.track_ref == "netease:target"
+    assert provider.queries == ["3rd Coast Jealousy", "Jealousy"]
+
+
+def test_title_only_recall_still_requires_exact_identity() -> None:
+    wrong = TrackMetadata(
+        track_ref="netease:wrong",
+        artist="Other Artist",
+        title="Jealousy",
+        duration_seconds=180,
+        playable=True,
+    )
+    provider = QueryAwareFixture(
+        {"3rd Coast Jealousy": [wrong], "Jealousy": [wrong]}
+    )
+    retrieval = MusicRetrievalService(MusicProviderRegistry({"netease": provider}))
+
+    resolved = asyncio.run(
+        resolve_track_proposal_across_providers(
+            retrieval,
+            TrackProposal(artist="3rd Coast", title="Jealousy", confidence=0.9),
+        )
+    )
+
+    assert resolved is None
+    assert provider.queries == ["3rd Coast Jealousy", "Jealousy"]
+
+
+def test_ensemble_resolution_does_not_run_title_only_query_after_exact_match() -> None:
+    target = TrackMetadata(
+        track_ref="netease:target",
+        artist="3rd Coast",
+        title="Jealousy",
+        duration_seconds=180,
+        playable=True,
+    )
+    provider = QueryAwareFixture({"3rd Coast Jealousy": [target], "Jealousy": []})
+    retrieval = MusicRetrievalService(MusicProviderRegistry({"netease": provider}))
+
+    resolved = asyncio.run(
+        resolve_track_proposal_across_providers(
+            retrieval,
+            TrackProposal(artist="3rd Coast", title="Jealousy", confidence=0.9),
+        )
+    )
+
+    assert resolved is not None
+    assert provider.queries == ["3rd Coast Jealousy"]
 
 
 def test_search_exact_unplayable_is_confirmed_by_playable_provider_detail() -> None:

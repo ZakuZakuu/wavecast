@@ -103,41 +103,46 @@ async def resolve_track_proposal_across_providers(
     rank base-title/version alternatives, but it cannot silently promote a
     near-match or an unqualified provider reference into the episode timeline.
     """
-    query = f"{proposal.artist} {proposal.title}"
-    candidates = await retrieval.search(
-        query,
-        requested_artist=proposal.artist,
-        requested_title=proposal.title,
-        limit=limit,
-    )
-    for candidate in candidates:
-        if not candidate.track_ref.startswith(f"{candidate.provider}:"):
-            continue
-        if not _same_catalog_name(candidate.artist, proposal.artist) or not _same_catalog_name(
-            candidate.title, proposal.title
-        ):
-            continue
-        if candidate.playable:
-            return ResolvedTrack(
-                track_ref=candidate.track_ref,
-                canonical_artist=candidate.artist,
-                canonical_title=candidate.title,
-            )
-        try:
-            provider = retrieval.registry.provider_for_track_ref(candidate.track_ref)
-        except ProviderError:
-            continue
-        metadata = TrackMetadata(
-            track_ref=candidate.track_ref,
-            title=candidate.title,
-            artist=candidate.artist,
-            duration_seconds=candidate.duration_seconds,
-            playable=candidate.playable,
-            metadata=candidate.metadata,
+    combined_query = f"{proposal.artist} {proposal.title}"
+    queries = [combined_query]
+    if proposal.title and proposal.title != combined_query:
+        queries.append(proposal.title)
+
+    for query in queries:
+        candidates = await retrieval.search(
+            query,
+            requested_artist=proposal.artist,
+            requested_title=proposal.title,
+            limit=limit,
         )
-        resolved = await _resolve_exact_metadata(provider, proposal, metadata)
-        if resolved is not None:
-            return resolved
+        for candidate in candidates:
+            if not candidate.track_ref.startswith(f"{candidate.provider}:"):
+                continue
+            if not _same_catalog_name(candidate.artist, proposal.artist) or not _same_catalog_name(
+                candidate.title, proposal.title
+            ):
+                continue
+            if candidate.playable:
+                return ResolvedTrack(
+                    track_ref=candidate.track_ref,
+                    canonical_artist=candidate.artist,
+                    canonical_title=candidate.title,
+                )
+            try:
+                provider = retrieval.registry.provider_for_track_ref(candidate.track_ref)
+            except ProviderError:
+                continue
+            metadata = TrackMetadata(
+                track_ref=candidate.track_ref,
+                title=candidate.title,
+                artist=candidate.artist,
+                duration_seconds=candidate.duration_seconds,
+                playable=candidate.playable,
+                metadata=candidate.metadata,
+            )
+            resolved = await _resolve_exact_metadata(provider, proposal, metadata)
+            if resolved is not None:
+                return resolved
     return None
 
 
