@@ -15,7 +15,7 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 - **Current stage:** Phase 5.3A is implementing a language-scoped Chinese
   music-radio rubric, corpus notes, self-authored fixtures, and credential-free
   tests. Writer prompts and runtime contracts remain unchanged in this slice.
-- **Canonical main:** 71bc98560a9c57c76eb8021791350f29b0c1a225 (origin/main; includes
+- **Canonical main:** 70dc2f0f446e8e1ab7e28eb930a2fb8665416b24 (PR #39 merge commit; includes
   merged PR #39 and subsequent sanitized mainline updates); verify remote HEAD
   before acting.
 - **Last completed code milestone:** PR #39 merged at
