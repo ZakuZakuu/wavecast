@@ -95,6 +95,9 @@ def test_writer_prompt_is_tts_aware_and_receives_budget_and_language() -> None:
     assert "output language zh-CN" in recorder.prompt
     assert "Target narration duration seconds: 42" in recorder.prompt
     assert "display `3rd Coast`" in recorder.prompt
+    assert "at most one block for each provided slot" in recorder.prompt
+    assert "do not add extra blocks just to fill the target duration" in recorder.prompt
+    assert "must return exactly one `outro` block" in recorder.prompt
 
 
 def test_writer_radio_guidance_is_scoped_to_zh_cn() -> None:
