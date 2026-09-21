@@ -401,7 +401,10 @@ class LiveEpisodeAssemblyService:
             raise EpisodeAssemblyError(str(error), stage="music_preparation") from error
 
         resolved_music_seconds = sum(item.asset.duration for item in prepared_tracks)
-        slot_contexts = _build_narration_slot_contexts(resolved_chapters)
+        try:
+            slot_contexts = _build_narration_slot_contexts(resolved_chapters)
+        except NarrationPlacementError as error:
+            raise EpisodeAssemblyError(str(error), stage="writer_normalization") from error
         timing_plan = build_program_timing_plan(
             desired_total_seconds=request.desired_duration_seconds,
             target_narration_ratio=self.narration_ratio,
@@ -749,6 +752,23 @@ def _build_narration_slot_contexts(
     """
 
     contexts: list[list[NarrationSlotContext]] = []
+    owned_gap_keys: set[tuple[str, int | None, int | None]] = set()
+
+    def claim_gap(
+        kind: str,
+        left_music_index: int | None,
+        right_music_index: int | None,
+        chapter_index: int,
+    ) -> None:
+        key = (kind, left_music_index, right_music_index)
+        if key in owned_gap_keys:
+            raise NarrationPlacementError(
+                "physical playback gap has multiple narration owners "
+                f"(kind={kind}, left={left_music_index}, right={right_music_index}, "
+                f"chapter={chapter_index})"
+            )
+        owned_gap_keys.add(key)
+
     for index, item in enumerate(chapters):
         previous_index = next(
             (
@@ -762,8 +782,19 @@ def _build_narration_slot_contexts(
             (candidate.track for candidate in reversed(chapters[:index]) if candidate.track is not None),
             None,
         )
+        previous_music_index = (
+            chapters[previous_index].music_index if previous_index is not None else None
+        )
         upcoming = next(
             (candidate.track for candidate in chapters[index + 1 :] if candidate.track is not None),
+            None,
+        )
+        upcoming_music_index = next(
+            (
+                candidate.music_index
+                for candidate in chapters[index + 1 :]
+                if candidate.track is not None
+            ),
             None,
         )
         is_final_chapter = index == len(chapters) - 1
@@ -784,6 +815,12 @@ def _build_narration_slot_contexts(
             and just_played is not None
             and not has_narrative_between_previous_and_current
         ):
+            claim_gap(
+                "inter-track",
+                previous_music_index,
+                item.music_index,
+                item.chapter.index,
+            )
             chapter_slots.append(
                 NarrationSlotContext(
                     slot_id=f"chapter-{item.chapter.index}:before-track",
@@ -800,6 +837,7 @@ def _build_narration_slot_contexts(
         # inter-track gap belongs to the upcoming track or an intervening
         # narrative-only chapter.
         if item.track is not None and previous_index is None and index == 0:
+            claim_gap("opening", None, item.music_index, item.chapter.index)
             chapter_slots.append(
                 NarrationSlotContext(
                     slot_id=f"chapter-{item.chapter.index}:after-track",
@@ -814,6 +852,7 @@ def _build_narration_slot_contexts(
             )
         elif item.track is not None and is_final_chapter:
             # Only the final chapter owns the tail.
+            claim_gap("final", item.music_index, None, item.chapter.index)
             chapter_slots.append(
                 NarrationSlotContext(
                     slot_id=f"chapter-{item.chapter.index}:after-final",
@@ -833,6 +872,12 @@ def _build_narration_slot_contexts(
                 # trailing chapter owns that physical slot.
                 contexts.append(chapter_slots)
                 continue
+            claim_gap(
+                "final" if is_final_chapter else "inter-track",
+                previous_music_index,
+                None if is_final_chapter else upcoming_music_index,
+                item.chapter.index,
+            )
             chapter_slots.append(
                 NarrationSlotContext(
                     slot_id=f"chapter-{item.chapter.index}:after-previous",
@@ -854,6 +899,7 @@ def _build_narration_slot_contexts(
                 )
             )
         elif item.track is None and upcoming is not None:
+            claim_gap("opening", None, upcoming_music_index, item.chapter.index)
             # Immediate playback starts the first playable track even when
             # leading narrative chapters are trackless.  Those chapters own
             # the opening gap after that music.
@@ -933,6 +979,7 @@ def _assemble_writer_scripts(
             None,
         )
         normalized_slots: list[NarrationSlotContext] = []
+        used_slot_ids: set[str] = set()
         track_intro_seen = False
         if not contexts and parsed_blocks:
             raise NarrationPlacementError(
@@ -953,6 +1000,11 @@ def _assemble_writer_scripts(
                     "writer block has no deterministic narration slot "
                     f"(chapter={chapter_index}, block={block_index}, kind={block.kind.value})"
                 )
+            if context.slot_id in used_slot_ids:
+                raise NarrationPlacementError(
+                    "narration slot returned multiple blocks "
+                    f"(slot={context.slot_id}, chapter={chapter_index})"
+                )
             placed = _place_writer_block_in_slot(
                 block,
                 context=context,
@@ -964,6 +1016,7 @@ def _assemble_writer_scripts(
             )
             normalized.append(placed)
             normalized_slots.append(context)
+            used_slot_ids.add(context.slot_id)
             if placed.kind is RadioScriptBlockKind.INTRO:
                 opening_intro_seen = True
             if placed.kind is RadioScriptBlockKind.OUTRO:
@@ -1033,8 +1086,8 @@ def _place_writer_block_in_slot(
         # A duplicate track intro remains audible in the same gap without
         # claiming another before-track anchor.
         if block.kind is RadioScriptBlockKind.TRACK_INTRO:
-            return block.model_copy(
-                update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": current_music_index}
+            raise NarrationPlacementError(
+                f"slot {context.slot_id} accepts only one TRACK_INTRO block"
             )
         raise NarrationPlacementError(
             f"slot {context.slot_id} cannot place {block.kind.value} before its track"
@@ -1054,7 +1107,11 @@ def _place_writer_block_in_slot(
         raise NarrationPlacementError(f"slot {context.slot_id} has no playable preceding track")
 
     if block.kind is RadioScriptBlockKind.INTRO:
-        if context.is_opening and not opening_intro_seen:
+        if context.is_opening:
+            if opening_intro_seen:
+                raise NarrationPlacementError(
+                    f"slot {context.slot_id} accepts only one opening INTRO block"
+                )
             return block.model_copy(update={"track_index": None})
         return block.model_copy(update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": anchor})
     if block.kind is RadioScriptBlockKind.TRANSITION:
