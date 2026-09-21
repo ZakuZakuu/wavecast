@@ -4,18 +4,18 @@
 
 ## Primary corpus
 
-- [《音乐五四三》2016 五月天《自传》访谈文字稿](https://www.pttweb.cc/bbs/MayDay/M.1472330061.A.8BB?utm_source=chatgpt.com)
+- [《音乐五四三》2016 五月天《自传》访谈文字稿](https://www.pttweb.cc/bbs/MayDay/M.1472330061.A.8BB)
   - 观察重点：歌曲播放后的具体聆听细节、编曲与演奏解释，以及如何自然引出下一步。
-- [《今晚，请将耳朵借我——李宗盛×马世芳》校订逐字稿](https://honeypie.wordpress.com/2014/07/29/%E4%BB%8A%E6%99%9A%EF%BC%8C%E8%AB%8B%E5%B0%87%E8%80%B3%E6%9C%B5%E5%80%9F%E6%88%91-%E2%94%80%E2%94%80-%E6%9D%8E%E5%AE%97%E7%9B%9Bx%E9%A6%AC%E4%B8%96%E8%8A%B3%E5%B0%8D%E8%AB%87%E9%80%90%E5%AD%97/?utm_source=chatgpt.com)
+- [《今晚，请将耳朵借我——李宗盛×马世芳》校订逐字稿](https://honeypie.wordpress.com/2014/07/29/%E4%BB%8A%E6%99%9A%EF%BC%8C%E8%AB%8B%E5%B0%87%E8%80%B3%E6%9C%B5%E5%80%9F%E6%88%91-%E2%94%80%E2%94%80-%E6%9D%8E%E5%AE%97%E7%9B%9Bx%E9%A6%AC%E4%B8%96%E8%8A%B3%E5%B0%8D%E8%AB%87%E9%80%90%E5%AD%97/)
   - 观察重点：如何把制作、歌词和创作史讲清楚；不把个人腔调或节目结构当作模板。
-- [央广《uē歌予你聽》〈火来了，快跑！流行音乐中的死亡议题〉](https://archive.program.rti.org.tw/radio/programMessageView/id/142397?utm_source=chatgpt.com)
+- [央广《uē歌予你聽》〈火来了，快跑！流行音乐中的死亡议题〉](https://archive.program.rti.org.tw/radio/programMessageView/id/142397)
   - 观察重点：以一首歌或一个画面进入主题，再扩展到听众为什么值得继续听。
-- [央广《音乐本事》〈民谣乐音—白银饭店与万松岭的歌〉](https://archive.program.rti.org.tw/radio/programMessageView/programId/1633/id/122354?utm_source=chatgpt.com)
+- [央广《音乐本事》〈民谣乐音—白银饭店与万松岭的歌〉](https://archive.program.rti.org.tw/radio/programMessageView/programId/1633/id/122354)
   - 观察重点：从地景或个人经验进入音乐人和作品，避免百科式人物简介。
 
 ## Secondary reference
 
-- [《音乐后视镜》节目页](https://archive.program.rti.org.tw/radio/programView/id/1694/page/27?utm_source=chatgpt.com)
+- [《音乐后视镜》节目页](https://archive.program.rti.org.tw/radio/programView/id/1694/page/27)
   - 只观察更轻、更日常的主持语气和“故事—歌曲”连接，不作为主要写作模板。
 
 ## 要提炼的通用机制
