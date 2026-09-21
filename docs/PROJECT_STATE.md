@@ -12,17 +12,17 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 ## Current milestone and main state
 
 - **Current milestone:** Phase 5.3 — Radio writing quality.
-- **Current stage:** Phase 5.3B is implementing the minimal zh-CN Writer
-  guidance justified by the completed Phase 5.3A rubric, corpus notes, and
-  self-authored fixtures. Schema and runtime contracts remain unchanged.
-- **Canonical main:** 516e94ea0f81183fb07f0b4cf760dc79226bddf8 (PR #40 merge
-  commit; includes Phase 5.3A); verify remote HEAD before acting.
-- **Last completed code milestone:** PR #40 merged at
-  516e94ea0f81183fb07f0b4cf760dc79226bddf8, closing Phase 5.3A radio-writing
-  rubric and fixture coverage.
-- **Immediate work:** finish Phase 5.3B, run credential-free tests and static
+- **Current stage:** Phase 5.3C is building a small credential-free,
+  slot-aware human-review bundle on top of the completed 5.3A rubric and 5.3B
+  zh-CN Writer guidance. No automatic prose score is introduced.
+- **Canonical main:** 9d5ba01c997b1ce0d6fadc6bec583bf57fc1b8f2 (PR #41 merge
+  commit; includes Phase 5.3B); verify remote HEAD before acting.
+- **Last completed code milestone:** PR #41 merged at
+  9d5ba01c997b1ce0d6fadc6bec583bf57fc1b8f2, closing Phase 5.3B Writer
+  guidance and language-scope coverage.
+- **Immediate work:** finish Phase 5.3C, run credential-free tests and static
   validation, then open the normal PR Loop review. Do not run live/paid
-  providers; an offline fixture/eval sanity check follows only after review.
+  providers; live Writer validation follows only after this offline slice.
 
 ## Phase 5.3A radio-writing rubric
 
@@ -56,6 +56,15 @@ not receive the Chinese guidance.
 This slice does not add schema fields, perform regex or deterministic prose
 rewriting, or change evidence, claim-support, slot, cardinality, physical-gap,
 assembly, playback, or provider behavior.
+
+## Phase 5.3C offline writing sanity
+
+Phase 5.3C provides a typed review artifact with self-authored weak/strong
+comparisons for opening narration, direct A to B track intros, narrative-only
+middle transitions, and final outros. Every example carries its real
+NarrationSlotContext, including an explicit empty-evidence case. The bundle is
+for human comparison only: it has no automatic quality pass/fail and is not
+imported by production Writer code.
 
 ## Phase 5.2 first listening episode
 
