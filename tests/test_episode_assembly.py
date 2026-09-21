@@ -11,7 +11,10 @@ from wavecast.assembly import (
     MockEpisodeAssemblyLLM,
     NarrationPlacementError,
     _assemble_radio_script,
+    _assemble_writer_scripts,
+    _build_narration_slot_contexts,
     _mock_writer_chapter_index,
+    _ResolvedChapter,
     create_episode_assembly_service,
 )
 from wavecast.composer import EpisodeComposer
@@ -287,6 +290,126 @@ def test_radio_script_normalization_rejects_duplicate_final_outros() -> None:
             track_count=1,
             chapter_music_indices=[0, None],
         )
+
+
+def _resolved_chapter(index: int, music_index: int | None) -> _ResolvedChapter:
+    chapter = ChapterPlan(
+        index=index,
+        track=None,
+        narrative_role=NarrativeRole.RESOLUTION,
+        reason="fixture",
+        novelty_distance=NoveltyDistance.BRIDGE,
+        narration_goal="fixture",
+    )
+    track = (
+        ResolvedTrack(
+            track_ref=f"mock:{index}",
+            canonical_artist="Fixture Artist",
+            canonical_title=f"Fixture Track {index}",
+        )
+        if music_index is not None
+        else None
+    )
+    return _ResolvedChapter(
+        chapter=chapter,
+        writer_chapter=chapter,
+        track=track,
+        music_index=music_index,
+    )
+
+
+def _assemble_writer_fixture(
+    chapter_music_indices: list[int | None],
+    scripts: list[RadioScript],
+) -> tuple[RadioScript, list[object]]:
+    chapters = [
+        _resolved_chapter(index, music_index)
+        for index, music_index in enumerate(chapter_music_indices)
+    ]
+    slot_contexts = _build_narration_slot_contexts(chapters)
+    return _assemble_writer_scripts(
+        scripts,
+        track_count=max(
+            (music_index for music_index in chapter_music_indices if music_index is not None),
+            default=-1,
+        )
+        + 1,
+        chapter_music_indices=chapter_music_indices,
+        slot_contexts=slot_contexts,
+    )
+
+
+def test_final_narrative_slot_requires_exactly_one_outro() -> None:
+    with pytest.raises(
+        NarrationPlacementError,
+        match="final narration slot must return exactly one OUTRO",
+    ):
+        _assemble_writer_fixture(
+            [0, 1, None],
+            [RadioScript(blocks=[]), RadioScript(blocks=[]), RadioScript(blocks=[])],
+        )
+
+
+def test_final_slot_rejects_transition_before_outro() -> None:
+    with pytest.raises(NarrationPlacementError, match="no deterministic narration slot"):
+        _assemble_writer_fixture(
+            [0, 1, None],
+            [
+                RadioScript(blocks=[]),
+                RadioScript(blocks=[]),
+                RadioScript(
+                    blocks=[
+                        block(RadioScriptBlockKind.TRANSITION, "tail transition"),
+                        block(RadioScriptBlockKind.OUTRO, "final outro"),
+                    ]
+                ),
+            ],
+        )
+
+
+def test_final_playable_slot_allows_before_track_and_exactly_one_outro() -> None:
+    script, _ = _assemble_writer_fixture(
+        [0, 1],
+        [
+            RadioScript(blocks=[]),
+            RadioScript(
+                blocks=[
+                    block(RadioScriptBlockKind.TRACK_INTRO, "before final track"),
+                    block(RadioScriptBlockKind.OUTRO, "final outro"),
+                ]
+            ),
+        ],
+    )
+
+    assert [item.kind for item in script.blocks] == [
+        RadioScriptBlockKind.TRACK_INTRO,
+        RadioScriptBlockKind.OUTRO,
+    ]
+
+
+def test_only_last_trailing_narrative_chapter_owns_final_tail() -> None:
+    chapters = [
+        _resolved_chapter(0, 0),
+        _resolved_chapter(1, 1),
+        _resolved_chapter(2, None),
+        _resolved_chapter(3, None),
+    ]
+    contexts = _build_narration_slot_contexts(chapters)
+
+    assert contexts[2] == []
+    assert [context.allowed_block_kinds for context in contexts[3]] == [
+        [RadioScriptBlockKind.OUTRO]
+    ]
+
+    script, _ = _assemble_writer_scripts(
+        [RadioScript(blocks=[]), RadioScript(blocks=[]), RadioScript(blocks=[]), RadioScript(
+            blocks=[block(RadioScriptBlockKind.OUTRO, "final outro")]
+        )],
+        track_count=2,
+        chapter_music_indices=[0, 1, None, None],
+        slot_contexts=contexts,
+    )
+    assert [item.kind for item in script.blocks] == [RadioScriptBlockKind.OUTRO]
 
 
 def test_trackless_chapter_intro_is_not_promoted_to_episode_opening() -> None:

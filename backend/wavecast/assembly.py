@@ -819,10 +819,7 @@ def _build_narration_slot_contexts(
                     slot_id=f"chapter-{item.chapter.index}:after-final",
                     chapter_index=item.chapter.index,
                     placement=NarrationSlotPlacement.AFTER_FINAL_TRACK,
-                    allowed_block_kinds=[
-                        RadioScriptBlockKind.TRANSITION,
-                        RadioScriptBlockKind.OUTRO,
-                    ],
+                    allowed_block_kinds=[RadioScriptBlockKind.OUTRO],
                     chapter_track=item.track,
                     just_played_track=item.track,
                     upcoming_track=None,
@@ -830,6 +827,12 @@ def _build_narration_slot_contexts(
                 )
             )
         elif item.track is None and just_played is not None:
+            if not is_final_chapter and upcoming is None:
+                # Several trailing narrative-only chapters would otherwise
+                # compete for the same final music tail. Only the last
+                # trailing chapter owns that physical slot.
+                contexts.append(chapter_slots)
+                continue
             chapter_slots.append(
                 NarrationSlotContext(
                     slot_id=f"chapter-{item.chapter.index}:after-previous",
@@ -840,7 +843,7 @@ def _build_narration_slot_contexts(
                         else NarrationSlotPlacement.AFTER_TRACK
                     ),
                     allowed_block_kinds=(
-                        [RadioScriptBlockKind.TRANSITION, RadioScriptBlockKind.OUTRO]
+                        [RadioScriptBlockKind.OUTRO]
                         if is_final_chapter and upcoming is None
                         else [RadioScriptBlockKind.TRANSITION]
                     ),
@@ -909,6 +912,13 @@ def _assemble_writer_scripts(
     diagnostics: list[WriterChapterDiagnostic] = []
     opening_intro_seen = False
     final_outro_seen = False
+    final_slot_ids = {
+        context.slot_id
+        for contexts in slot_contexts
+        for context in contexts
+        if context.placement is NarrationSlotPlacement.AFTER_FINAL_TRACK
+    }
+    final_slot_outro_count = 0
 
     for chapter_index, (script, contexts) in enumerate(zip(scripts, slot_contexts, strict=True)):
         parsed_blocks = _script_blocks(script)
@@ -958,6 +968,8 @@ def _assemble_writer_scripts(
                 opening_intro_seen = True
             if placed.kind is RadioScriptBlockKind.OUTRO:
                 final_outro_seen = True
+                if context.slot_id in final_slot_ids:
+                    final_slot_outro_count += 1
             if placed.kind is RadioScriptBlockKind.TRACK_INTRO:
                 track_intro_seen = True
         diagnostics.append(
@@ -971,6 +983,13 @@ def _assemble_writer_scripts(
             )
         )
         blocks.extend(normalized)
+
+    if len(final_slot_ids) != 1:
+        raise NarrationPlacementError("expected exactly one final narration slot")
+    if final_slot_outro_count != 1:
+        raise NarrationPlacementError(
+            "final narration slot must return exactly one OUTRO block"
+        )
 
     return (
         RadioScript(
