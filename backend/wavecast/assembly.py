@@ -933,6 +933,7 @@ def _assemble_writer_scripts(
             None,
         )
         normalized_slots: list[NarrationSlotContext] = []
+        used_slot_ids: set[str] = set()
         track_intro_seen = False
         if not contexts and parsed_blocks:
             raise NarrationPlacementError(
@@ -953,6 +954,11 @@ def _assemble_writer_scripts(
                     "writer block has no deterministic narration slot "
                     f"(chapter={chapter_index}, block={block_index}, kind={block.kind.value})"
                 )
+            if context.slot_id in used_slot_ids:
+                raise NarrationPlacementError(
+                    "narration slot returned multiple blocks "
+                    f"(slot={context.slot_id}, chapter={chapter_index})"
+                )
             placed = _place_writer_block_in_slot(
                 block,
                 context=context,
@@ -964,6 +970,7 @@ def _assemble_writer_scripts(
             )
             normalized.append(placed)
             normalized_slots.append(context)
+            used_slot_ids.add(context.slot_id)
             if placed.kind is RadioScriptBlockKind.INTRO:
                 opening_intro_seen = True
             if placed.kind is RadioScriptBlockKind.OUTRO:
@@ -1033,8 +1040,8 @@ def _place_writer_block_in_slot(
         # A duplicate track intro remains audible in the same gap without
         # claiming another before-track anchor.
         if block.kind is RadioScriptBlockKind.TRACK_INTRO:
-            return block.model_copy(
-                update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": current_music_index}
+            raise NarrationPlacementError(
+                f"slot {context.slot_id} accepts only one TRACK_INTRO block"
             )
         raise NarrationPlacementError(
             f"slot {context.slot_id} cannot place {block.kind.value} before its track"
@@ -1054,7 +1061,11 @@ def _place_writer_block_in_slot(
         raise NarrationPlacementError(f"slot {context.slot_id} has no playable preceding track")
 
     if block.kind is RadioScriptBlockKind.INTRO:
-        if context.is_opening and not opening_intro_seen:
+        if context.is_opening:
+            if opening_intro_seen:
+                raise NarrationPlacementError(
+                    f"slot {context.slot_id} accepts only one opening INTRO block"
+                )
             return block.model_copy(update={"track_index": None})
         return block.model_copy(update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": anchor})
     if block.kind is RadioScriptBlockKind.TRANSITION:
