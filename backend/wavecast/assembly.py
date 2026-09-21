@@ -421,6 +421,11 @@ class LiveEpisodeAssemblyService:
         previous_context = ""
         for index, resolved_chapter in enumerate(resolved_chapters):
             chapter_slots = slot_contexts[index]
+            if not chapter_slots:
+                writer_scripts.append(
+                    RadioScript(blocks=[], intended_duration_seconds=1)
+                )
+                continue
             next_metadata = ""
             next_track = next(
                 (
