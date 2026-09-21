@@ -115,7 +115,7 @@ def test_music_preflight_rejects_unresolved_anchor_without_playback_call() -> No
             await client.aclose()
 
     asyncio.run(run())
-    assert catalog.search_calls == 1
+    assert catalog.search_calls == 2
 
 
 def test_live_probe_aborts_before_assembly_when_music_preflight_fails(
