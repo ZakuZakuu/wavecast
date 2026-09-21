@@ -751,6 +751,10 @@ def test_unresolved_proposal_is_reported_but_narrative_is_still_written(tmp_path
     )
 
     assert len(result.resolved_tracks) == 2
+    assert [track.canonical_title for track in result.resolved_tracks] == [
+        "Neon First Light",
+        "Midnight Transfer",
+    ]
     assert len(result.unresolved_proposals) == 1
     assert result.skeleton.chapters[1].track is not None
     assert result.skeleton.chapters[1].track.artist == "Event Listing"
@@ -764,6 +768,9 @@ def test_unresolved_proposal_is_reported_but_narrative_is_still_written(tmp_path
     assert any(
         segment.narration_text == "现在进入第 2 首。"
         for segment in result.playable_episode.segments
+    )
+    assert any(
+        item.kind is RadioScriptBlockKind.OUTRO for item in result.radio_script.blocks
     )
 
 

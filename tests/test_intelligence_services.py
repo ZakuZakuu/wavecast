@@ -139,6 +139,9 @@ def test_curator_preserves_narrative_distance_curve_without_search_dependency() 
     assert "Playback order is exactly chapter order" in fixture.prompts[0]
     assert "very_close keeps the same core sonic identity" in fixture.prompts[0]
     assert "new artists or scenes" in fixture.prompts[0]
+    assert "prefer a 3-5 track-bearing listening arc" in fixture.prompts[0]
+    assert "not alternate or unused backup proposals" in fixture.prompts[0]
+    assert "max_tracks is at least 3" in fixture.prompts[0]
     assert "first_narration" not in fixture.prompts[0]
     assert fixture.prompts[0].count('"central_question"') == 1
     assert "Bundle candidate" in fixture.prompts[0]
