@@ -401,7 +401,10 @@ class LiveEpisodeAssemblyService:
             raise EpisodeAssemblyError(str(error), stage="music_preparation") from error
 
         resolved_music_seconds = sum(item.asset.duration for item in prepared_tracks)
-        slot_contexts = _build_narration_slot_contexts(resolved_chapters)
+        try:
+            slot_contexts = _build_narration_slot_contexts(resolved_chapters)
+        except NarrationPlacementError as error:
+            raise EpisodeAssemblyError(str(error), stage="writer_normalization") from error
         timing_plan = build_program_timing_plan(
             desired_total_seconds=request.desired_duration_seconds,
             target_narration_ratio=self.narration_ratio,
