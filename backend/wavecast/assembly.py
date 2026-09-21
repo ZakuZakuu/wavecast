@@ -739,17 +739,25 @@ def _normalize_chapters(chapters: list[ChapterPlan]) -> list[ChapterPlan]:
 def _build_narration_slot_contexts(
     chapters: list[_ResolvedChapter],
 ) -> list[list[NarrationSlotContext]]:
-    """Derive one or more truthful Writer slots for each chapter.
+    """Derive truthful Writer slots with one owner per physical music gap.
 
-    A track-bearing chapter can own a before-track intro and an after-track
-    transition.  Narrative-only chapters own the gap after the nearest prior
-    playable track (including the final-track boundary).  The returned
-    contexts never contain numeric playback indices; those remain an assembly
-    concern.
+    By default the upcoming playable chapter owns A -> B through its
+    before-track slot.  If one or more narrative-only chapters intervene,
+    those chapters own the gap instead.  The final tail is owned by the last
+    chapter, so a final playable chapter cannot compete with a trailing
+    narrative-only resolution chapter.
     """
 
     contexts: list[list[NarrationSlotContext]] = []
     for index, item in enumerate(chapters):
+        previous_index = next(
+            (
+                candidate
+                for candidate in range(index - 1, -1, -1)
+                if chapters[candidate].track is not None
+            ),
+            None,
+        )
         just_played = next(
             (candidate.track for candidate in reversed(chapters[:index]) if candidate.track is not None),
             None,
@@ -758,9 +766,24 @@ def _build_narration_slot_contexts(
             (candidate.track for candidate in chapters[index + 1 :] if candidate.track is not None),
             None,
         )
-        is_final = index == len(chapters) - 1
+        is_final_chapter = index == len(chapters) - 1
+        has_narrative_between_previous_and_current = (
+            previous_index is not None
+            and any(
+                chapters[candidate].track is None
+                for candidate in range(previous_index + 1, index)
+            )
+        )
         chapter_slots: list[NarrationSlotContext] = []
-        if item.track is not None and item.music_index is not None and just_played is not None:
+
+        # The upcoming playable chapter owns a direct A -> B gap.  A
+        # narrative-only chapter between them owns the gap instead.
+        if (
+            item.track is not None
+            and item.music_index is not None
+            and just_played is not None
+            and not has_narrative_between_previous_and_current
+        ):
             chapter_slots.append(
                 NarrationSlotContext(
                     slot_id=f"chapter-{item.chapter.index}:before-track",
@@ -773,53 +796,67 @@ def _build_narration_slot_contexts(
                 )
             )
 
-        if item.track is not None:
+        # The first playable chapter owns only the opening INTRO.  Its next
+        # inter-track gap belongs to the upcoming track or an intervening
+        # narrative-only chapter.
+        if item.track is not None and previous_index is None and index == 0:
             chapter_slots.append(
                 NarrationSlotContext(
                     slot_id=f"chapter-{item.chapter.index}:after-track",
                     chapter_index=item.chapter.index,
-                    placement=(
-                        NarrationSlotPlacement.AFTER_FINAL_TRACK
-                        if is_final
-                        else NarrationSlotPlacement.AFTER_TRACK
-                    ),
-                    allowed_block_kinds=(
-                        [RadioScriptBlockKind.TRANSITION, RadioScriptBlockKind.OUTRO]
-                        if is_final
-                        else (
-                            [RadioScriptBlockKind.INTRO, RadioScriptBlockKind.TRANSITION]
-                            if index == 0
-                            else [RadioScriptBlockKind.TRANSITION]
-                        )
-                    ),
+                    placement=NarrationSlotPlacement.AFTER_TRACK,
+                    allowed_block_kinds=[RadioScriptBlockKind.INTRO],
                     chapter_track=item.track,
                     just_played_track=item.track,
                     upcoming_track=upcoming,
-                    is_opening=index == 0,
-                    is_final=is_final,
+                    is_opening=True,
                 )
             )
-        elif just_played is not None:
+        elif item.track is not None and is_final_chapter:
+            # Only the final chapter owns the tail.
+            chapter_slots.append(
+                NarrationSlotContext(
+                    slot_id=f"chapter-{item.chapter.index}:after-final",
+                    chapter_index=item.chapter.index,
+                    placement=NarrationSlotPlacement.AFTER_FINAL_TRACK,
+                    allowed_block_kinds=[RadioScriptBlockKind.OUTRO],
+                    chapter_track=item.track,
+                    just_played_track=item.track,
+                    upcoming_track=None,
+                    is_final=True,
+                )
+            )
+        elif item.track is None and just_played is not None:
+            if not is_final_chapter and upcoming is None:
+                # Several trailing narrative-only chapters would otherwise
+                # compete for the same final music tail. Only the last
+                # trailing chapter owns that physical slot.
+                contexts.append(chapter_slots)
+                continue
             chapter_slots.append(
                 NarrationSlotContext(
                     slot_id=f"chapter-{item.chapter.index}:after-previous",
                     chapter_index=item.chapter.index,
                     placement=(
                         NarrationSlotPlacement.AFTER_FINAL_TRACK
-                        if is_final and upcoming is None
+                        if is_final_chapter and upcoming is None
                         else NarrationSlotPlacement.AFTER_TRACK
                     ),
-                    allowed_block_kinds=[RadioScriptBlockKind.TRANSITION, RadioScriptBlockKind.OUTRO],
+                    allowed_block_kinds=(
+                        [RadioScriptBlockKind.OUTRO]
+                        if is_final_chapter and upcoming is None
+                        else [RadioScriptBlockKind.TRANSITION]
+                    ),
                     chapter_track=None,
                     just_played_track=just_played,
                     upcoming_track=upcoming,
-                    is_final=is_final and upcoming is None,
+                    is_final=is_final_chapter and upcoming is None,
                 )
             )
-        elif upcoming is not None:
-            # Immediate playback starts the first playable track even when the
-            # first narrative chapter is trackless.  Therefore this chapter's
-            # spoken slot is after that opening track, not before it.
+        elif item.track is None and upcoming is not None:
+            # Immediate playback starts the first playable track even when
+            # leading narrative chapters are trackless.  Those chapters own
+            # the opening gap after that music.
             upcoming_position = next(
                 position
                 for position in range(index + 1, len(chapters))
@@ -838,7 +875,10 @@ def _build_narration_slot_contexts(
                     slot_id=f"chapter-{item.chapter.index}:after-opening",
                     chapter_index=item.chapter.index,
                     placement=NarrationSlotPlacement.AFTER_TRACK,
-                    allowed_block_kinds=[RadioScriptBlockKind.INTRO, RadioScriptBlockKind.TRANSITION],
+                    allowed_block_kinds=[
+                        RadioScriptBlockKind.INTRO,
+                        RadioScriptBlockKind.TRANSITION,
+                    ],
                     chapter_track=None,
                     just_played_track=upcoming,
                     upcoming_track=following,
@@ -847,7 +887,6 @@ def _build_narration_slot_contexts(
             )
         contexts.append(chapter_slots)
     return contexts
-
 
 def _assemble_writer_scripts(
     scripts: list[RadioScript | NarrationScript],
@@ -873,6 +912,13 @@ def _assemble_writer_scripts(
     diagnostics: list[WriterChapterDiagnostic] = []
     opening_intro_seen = False
     final_outro_seen = False
+    final_slot_ids = {
+        context.slot_id
+        for contexts in slot_contexts
+        for context in contexts
+        if context.placement is NarrationSlotPlacement.AFTER_FINAL_TRACK
+    }
+    final_slot_outro_count = 0
 
     for chapter_index, (script, contexts) in enumerate(zip(scripts, slot_contexts, strict=True)):
         parsed_blocks = _script_blocks(script)
@@ -888,6 +934,11 @@ def _assemble_writer_scripts(
         )
         normalized_slots: list[NarrationSlotContext] = []
         track_intro_seen = False
+        if not contexts and parsed_blocks:
+            raise NarrationPlacementError(
+                "writer returned narration for a chapter without an owned playback slot "
+                f"(chapter={chapter_index})"
+            )
         for block_index, block in enumerate(parsed_blocks):
             context = next(
                 (
@@ -917,6 +968,8 @@ def _assemble_writer_scripts(
                 opening_intro_seen = True
             if placed.kind is RadioScriptBlockKind.OUTRO:
                 final_outro_seen = True
+                if context.slot_id in final_slot_ids:
+                    final_slot_outro_count += 1
             if placed.kind is RadioScriptBlockKind.TRACK_INTRO:
                 track_intro_seen = True
         diagnostics.append(
@@ -930,6 +983,13 @@ def _assemble_writer_scripts(
             )
         )
         blocks.extend(normalized)
+
+    if len(final_slot_ids) != 1:
+        raise NarrationPlacementError("expected exactly one final narration slot")
+    if final_slot_outro_count != 1:
+        raise NarrationPlacementError(
+            "final narration slot must return exactly one OUTRO block"
+        )
 
     return (
         RadioScript(
@@ -1000,7 +1060,11 @@ def _place_writer_block_in_slot(
     if block.kind is RadioScriptBlockKind.TRANSITION:
         return block.model_copy(update={"track_index": anchor})
     if block.kind is RadioScriptBlockKind.OUTRO:
-        if context.is_final and not final_outro_seen:
+        if context.is_final:
+            if final_outro_seen:
+                raise NarrationPlacementError(
+                    "final narration slot returned multiple OUTRO blocks"
+                )
             return block.model_copy(update={"track_index": None})
         return block.model_copy(update={"kind": RadioScriptBlockKind.TRANSITION, "track_index": anchor})
     if block.kind is RadioScriptBlockKind.TRACK_INTRO:
@@ -1161,8 +1225,14 @@ def _assemble_radio_script(
                     transition_targets.add(target)
                 blocks.append(block.model_copy(update={"track_index": target}))
             elif block.kind is RadioScriptBlockKind.OUTRO:
-                if chapter_index != len(scripts) - 1 or outro_added:
-                    continue
+                if chapter_index != len(scripts) - 1:
+                    raise NarrationPlacementError(
+                        "OUTRO is only valid in the final narration chapter"
+                    )
+                if outro_added:
+                    raise NarrationPlacementError(
+                        "final narration slot returned multiple OUTRO blocks"
+                    )
                 outro_added = True
                 blocks.append(block.model_copy(update={"track_index": None}))
 
@@ -1268,6 +1338,20 @@ def _mock_chapter_has_no_track(prompt: str) -> bool:
         return False
 
 
+def _mock_writer_slot_contexts(prompt: str) -> list[dict[str, object]]:
+    marker = "Narration slot contexts: "
+    if marker not in prompt:
+        return []
+    serialized = prompt.split(marker, 1)[1].split(
+        "\nThe following legacy field", 1
+    )[0]
+    try:
+        value = json.loads(serialized)
+    except (TypeError, ValueError):
+        return []
+    return value if isinstance(value, list) else []
+
+
 class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
     """Deterministic structured provider used by the zero-credential factory."""
 
@@ -1342,51 +1426,46 @@ class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
             )
         if output_type is RadioScript:
             index = _mock_writer_chapter_index(prompt)
+            contexts = _mock_writer_slot_contexts(prompt)
+            if not contexts:
+                return RadioScript(blocks=[], intended_duration_seconds=1)
             blocks: list[RadioScriptBlock] = []
-            if _mock_chapter_has_no_track(prompt):
-                return RadioScript(
-                    blocks=[
-                        RadioScriptBlock(
-                            kind=RadioScriptBlockKind.TRANSITION,
-                            text=f"现在进入第 {index + 1} 首。",
-                            duration_seconds=4,
-                        )
-                    ],
-                    intended_duration_seconds=4,
+            for context in contexts:
+                allowed_value = context.get("allowed_block_kinds", [])
+                allowed = (
+                    {item for item in allowed_value if isinstance(item, str)}
+                    if isinstance(allowed_value, list)
+                    else set()
                 )
-            if index == 0:
-                blocks.append(
-                    RadioScriptBlock(
-                        kind=RadioScriptBlockKind.INTRO,
-                        text="欢迎来到今晚的听歌路线。",
-                        duration_seconds=5,
+                if "track_intro" in allowed:
+                    kind = RadioScriptBlockKind.TRACK_INTRO
+                    text = f"\u73b0\u5728\u8fdb\u5165\u7b2c {index + 1} \u9996\u3002"
+                    duration = 4
+                elif "outro" in allowed:
+                    kind = RadioScriptBlockKind.OUTRO
+                    text = "This route comes to a close here."
+                    duration = 5
+                elif "intro" in allowed and index == 0:
+                    kind = RadioScriptBlockKind.INTRO
+                    text = "\u6b22\u8fce\u6765\u5230\u4eca\u665a\u7684\u542c\u6b4c\u8def\u7ebf\u3002"
+                    duration = 5
+                elif "transition" in allowed:
+                    kind = RadioScriptBlockKind.TRANSITION
+                    text = (
+                        f"\u73b0\u5728\u8fdb\u5165\u7b2c {index + 1} \u9996\u3002"
+                        if _mock_chapter_has_no_track(prompt)
+                        else "\u63a5\u4e0b\u6765\uff0c\u6211\u4eec\u628a\u955c\u5934\u63a8\u5411\u66f4\u8fdc\u7684\u5730\u65b9\u3002"
                     )
-                )
-            if index > 0:
+                    duration = 4
+                else:
+                    continue
                 blocks.append(
-                    RadioScriptBlock(
-                        kind=RadioScriptBlockKind.TRACK_INTRO,
-                        text=f"现在进入第 {index + 1} 首。",
-                        duration_seconds=4,
-                    )
+                    RadioScriptBlock(kind=kind, text=text, duration_seconds=duration)
                 )
-            if not _mock_next_track_metadata(prompt):
-                blocks.append(
-                    RadioScriptBlock(
-                        kind=RadioScriptBlockKind.OUTRO,
-                        text="这条路线先在这里收束。",
-                        duration_seconds=5,
-                    )
-                )
-            else:
-                blocks.append(
-                    RadioScriptBlock(
-                        kind=RadioScriptBlockKind.TRANSITION,
-                        text="接下来，我们把镜头推向更远的地方。",
-                        duration_seconds=4,
-                    )
-                )
-            return RadioScript(blocks=blocks, intended_duration_seconds=13)
+            return RadioScript(
+                blocks=blocks,
+                intended_duration_seconds=max(1, sum(block.duration_seconds for block in blocks)),
+            )
         raise TypeError(f"mock assembly provider does not support {output_type.__name__}")
 
     @staticmethod
