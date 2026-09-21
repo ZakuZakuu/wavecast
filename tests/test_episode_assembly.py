@@ -3,6 +3,7 @@ import json
 from typing import Any
 
 import pytest
+import wavecast.assembly as assembly_module
 from pydantic import ValidationError
 from wavecast.assembly import (
     EpisodeAssemblyError,
@@ -465,6 +466,31 @@ def test_multiple_leading_narrative_chapters_cannot_share_opening_gap() -> None:
                 _resolved_chapter(3, 1),
             ]
         )
+
+
+def test_assembly_wraps_narration_placement_failure_at_writer_boundary(tmp_path, monkeypatch) -> None:
+    assembly = service(tmp_path)
+
+    def fail_slot_derivation(chapters: list[_ResolvedChapter]) -> list[list[object]]:
+        raise NarrationPlacementError(
+            "physical playback gap has multiple narration owners (fixture)"
+        )
+
+    monkeypatch.setattr(
+        assembly_module,
+        "_build_narration_slot_contexts",
+        fail_slot_derivation,
+    )
+
+    with pytest.raises(EpisodeAssemblyError, match="physical playback gap") as failure:
+        asyncio.run(
+            assembly.assemble(
+                LiveEpisodeAssemblyRequest(topic="fixture", anchor_tracks=["Neon First Light"])
+            )
+        )
+
+    assert failure.value.stage == "writer_normalization"
+    assert isinstance(failure.value.__cause__, NarrationPlacementError)
 
 
 def test_only_last_trailing_narrative_chapter_owns_final_tail() -> None:
