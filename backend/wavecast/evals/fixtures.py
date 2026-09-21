@@ -40,8 +40,8 @@ PHASE53C_RADIO_WRITING_REVIEW_EXAMPLES: tuple[RadioWritingReviewExample, ...] = 
             is_opening=True,
         ),
         block_kind=RadioScriptBlockKind.INTRO,
-        weak_text="这首歌来自一个重要时期，复杂的节奏和深刻的情感马上会带你进入今天的主题。",
-        stronger_text="先从这首歌本身开始听。背景资料还不够时，我们先不替它下结论，等听见更多线索再往下走。",
+        weak_text="刚才这首来自一个重要时期，复杂的节奏和深刻的情感已经把我们带进今天的主题。",
+        stronger_text="刚才这首先让我们听见它自己。背景资料还不够时，我们先不替它下结论，等听见更多线索再往下走。",
         criteria=[
             RadioWritingCriterion.GROUNDED_INTERPRETATION,
             RadioWritingCriterion.ONE_SPOKEN_BEAT,
@@ -74,8 +74,8 @@ PHASE53C_RADIO_WRITING_REVIEW_EXAMPLES: tuple[RadioWritingReviewExample, ...] = 
             is_opening=True,
         ),
         block_kind=RadioScriptBlockKind.INTRO,
-        weak_text="我们先从一首很有氛围的歌开始，等下会聊到它为什么特别。",
-        stronger_text="先听开头留下的那一小块空间：人声还没进来，鼓和 bass 已经把方向定住了。后面我们再看这种松紧怎样延伸。",
+        weak_text="刚才这首很有氛围，接下来我们会聊聊它为什么特别。",
+        stronger_text="刚才这首开头留下了一小块空间：人声还没进来，鼓和 bass 已经把方向定住了。接下来再听这种松紧怎样延伸。",
         criteria=[
             RadioWritingCriterion.CONCRETE_BEFORE_ABSTRACT,
             RadioWritingCriterion.LISTEN_FOR_CUE,

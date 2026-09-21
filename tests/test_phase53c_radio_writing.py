@@ -42,6 +42,10 @@ def test_phase53c_examples_cover_real_adjacency_shapes() -> None:
     assert opening.just_played_track is not None
     assert opening.just_played_track.canonical_title == "Anchor Song"
     assert opening.upcoming_track is not None
+    assert "刚才" in examples["opening-empty-evidence"].weak_text
+    assert "刚才" in examples["opening-empty-evidence"].stronger_text
+    assert "刚才" in examples["opening-supported"].weak_text
+    assert "刚才" in examples["opening-supported"].stronger_text
 
     direct = examples["direct-track-intro"].slot_context
     assert direct.placement is NarrationSlotPlacement.BEFORE_TRACK
