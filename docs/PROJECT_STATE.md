@@ -1,6 +1,6 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-21
+**Last updated:** 2026-09-22
 
 ## Product reminder
 
@@ -11,18 +11,19 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 5.3 — Radio writing quality.
-- **Current stage:** Phase 5.3C is building a small credential-free,
-  slot-aware human-review bundle on top of the completed 5.3A rubric and 5.3B
-  zh-CN Writer guidance. No automatic prose score is introduced.
-- **Canonical main:** 9d5ba01c997b1ce0d6fadc6bec583bf57fc1b8f2 (PR #41 merge
-  commit; includes Phase 5.3B); verify remote HEAD before acting.
-- **Last completed code milestone:** PR #41 merged at
-  9d5ba01c997b1ce0d6fadc6bec583bf57fc1b8f2, closing Phase 5.3B Writer
-  guidance and language-scope coverage.
-- **Immediate work:** finish Phase 5.3C, run credential-free tests and static
-  validation, then open the normal PR Loop review. Do not run live/paid
-  providers; live Writer validation follows only after this offline slice.
+- **Current milestone:** Phase 5.3 — demo-ready closure.
+- **Current stage:** Phase 5.3 bounded live validation and artifact review are
+  complete. The primary candidate is frozen for human listening; no automatic
+  prose score or TTS quality claim is made.
+- **Canonical main:** e42166f13ea07a6b667b49bec16fa37b092ca746 (PR #50 merge
+  commit; includes the narrow structured-output incomplete-response retry).
+- **Last completed code milestone:** PR #50 merged at
+  e42166f13ea07a6b667b49bec16fa37b092ca746 after exact-head GPT review and
+  green backend/web CI.
+- **Immediate work:** human-listen to the primary materialized episode and
+  confirm TTS pronunciation, pauses, bilingual rhythm, and overall editorial
+  feel. Keep the primary and fallback artifacts; do not reopen Phase 5.3
+  pipeline polish unless listening finds a real blocker.
 
 ## Phase 5.3A radio-writing rubric
 
@@ -114,6 +115,55 @@ The current human-review question is editorial quality, not transition effects,
 crossfade, voice character, or UI polish. The imported artifact is owned by the
 phase52-fang-datong listener session. No raw prompts, provider responses,
 reasoning, credentials, or signed URLs are retained in this state record.
+
+## Phase 5.3 final bounded live validation and artifact review
+
+PR #50 added one same-stage retry only for typed Responses
+status=incomplete failures that are not max_output_tokens, alongside the
+existing schema-validation retry. Output-limit, empty, failed-status, generic
+contract, authentication, budget, and provider-outage failures remain bounded
+without this extra retry. The PR was exact-head reviewed by GPT and merged with
+backend/web CI green at e42166f13ea07a6b667b49bec16fa37b092ca746.
+
+The post-merge Phase 5.3 live run used the established Fang Datong benchmark:
+full-track playback, desired duration 1,200 seconds, at most five tracks/eight
+chapters, and max_attempts=1 for the assembly. It succeeded with 5/5 tracks
+resolved and 4/4 transitions surviving:
+
+1. 方大同 — 春风吹
+2. 方大同 — 每天每天
+3. Musiq Soulchild — Just Friends (Sunny)
+4. Erykah Badu — Other Side Of The Game
+5. D'Angelo — Brown Sugar
+
+Safe materialization metadata: 1,359 seconds of music, 157 seconds of
+narration, 1,516 seconds total, narration ratio 10.36%, five final timeline
+narration segments, and no unresolved proposals. The 1,200-second target is
+non-blocking infeasible for this run because five full tracks already exceed
+the target; tracks were not shortened. The safe usage report recorded 17
+provider events, five search queries, three search credits, and reported actual
+cost USD 0.014.
+
+Primary listening route:
+http://127.0.0.1:3001/episode/materialized/2205b6ed-7318-4642-bf6b-35053a1e8d69
+
+Fallback known-good route:
+http://127.0.0.1:3001/episode/materialized/4a1937ae-761d-464b-ad22-e05cc9f12881
+
+Web smoke passed for the primary: opening play, pause/resume, next-chapter
+progression, current-item/timeline synchronization, and continuous
+MUSIC/NARRATION playback assets. GPT's final artifact review marked
+PHASE_5_3_DEMO_READY: YES and KEEP_BOTH, with the new episode as primary
+and the previous episode as fallback.
+
+Known non-blocking editorial debt: when the final artist is not the opening
+anchor artist, the Outro should eventually return explicitly to the opening
+Fang Datong anchor and explain why the route can reach the explored lineage.
+Do not reopen Phase 5.3 solely for this issue. Human listening is still
+required for English artist/genre pronunciation, Chinese-English transitions,
+TTS pacing, and subjective program quality. No raw prompt, provider response,
+hidden reasoning, credential, or signed URL is retained in this state record.
+
 ## Completed implementation
 
 - **Phases 0–1:** typed episode/segment contracts, deterministic mock providers,
