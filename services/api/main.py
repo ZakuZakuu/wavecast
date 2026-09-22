@@ -98,6 +98,8 @@ def configure_runtime(episode_repository: EpisodeRepository) -> None:
 def configure_music_snapshot_store(store: MusicSnapshotStore) -> None:
     """Injection seam for credential-free snapshot tests and deployments."""
     global music_snapshot_store
+    if store.storage is not audio_storage:
+        raise ValueError("music snapshot store must use the shared audio storage")
     music_snapshot_store = store
 
 
