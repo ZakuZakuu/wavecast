@@ -15,8 +15,9 @@ import httpx
 
 from .config import ProviderSettings
 from .contracts import AudioAsset, AudioAssetType, TrackMetadata
-from .errors import ProviderInvalidResponseError
+from .errors import ProviderConfigurationError, ProviderInvalidResponseError
 from .http import request_json
+from .playback import ResolvedPlaybackRequest
 
 if TYPE_CHECKING:
     from wavecast.intelligence.models import ResolvedTrack
@@ -85,6 +86,23 @@ class AudiusMusicProvider:
             playback_url=f"{self.playback_proxy_base_url}/{quote(audius_id, safe='')}",
             duration=metadata.duration_seconds,
             metadata=metadata.metadata,
+        )
+
+    async def resolve_upstream_playback_request(
+        self, track_id: str
+    ) -> ResolvedPlaybackRequest:
+        """Build the credentialed upstream stream request for server-side consumers."""
+        if self.settings.mode != "live" or not (self.api_key or self.bearer_token):
+            raise ProviderConfigurationError("audius playback is not configured")
+        headers = {"Accept": "audio/mpeg"}
+        if self.bearer_token:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        params = {"api_key": self.api_key} if self.api_key else {}
+        return ResolvedPlaybackRequest(
+            provider=self.provider_name,
+            url=f"{self.base_url}/tracks/{quote(track_id, safe='')}/stream",
+            headers=headers,
+            params=params,
         )
 
     async def aclose(self) -> None:
