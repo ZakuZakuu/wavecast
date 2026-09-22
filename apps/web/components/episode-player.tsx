@@ -8,7 +8,9 @@ import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
-import { AudioPlayer } from "./audio-player";
+import { buildMixPlan, linearPositionToMixPosition, mixPositionToLinearPosition } from "../lib/mix-timeline";
+import { createLatestSegmentCommitQueue, type LatestSegmentCommitQueue } from "../lib/mix-commit-queue";
+import { MixAudioPlayer } from "./mix-audio-player";
 
 export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeId?: string }) {
   const { episode, setEpisode } = usePlayerStore();
@@ -19,6 +21,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
   const playbackAnchorRef = useRef<ReturnType<typeof playbackAnchor>>(null);
+  const localEpisodeRef = useRef<LiveEpisode | null>(null);
+  const mixPlanRef = useRef<ReturnType<typeof buildMixPlan> | null>(null);
+  const mixCommitQueueRef = useRef<LatestSegmentCommitQueue | null>(null);
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
     ? episode
@@ -27,12 +32,50 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     () => localEpisode?.segments.find((segment) => segment.id === localEpisode.current_segment_id),
     [localEpisode],
   );
+  const mixPlanKey = localEpisode?.segments.map((item) => (
+    `${item.id}:${item.order}:${item.kind}:${item.audio_source_url ? "ready" : "not-ready"}:${item.audio_source_url}:${item.duration_seconds}`
+  )).join("|") ?? "";
+  if (localEpisodeRef.current?.id !== localEpisode?.id) {
+    mixCommitQueueRef.current?.reset();
+    mixCommitQueueRef.current = null;
+  }
+  localEpisodeRef.current = localEpisode;
+  if (localEpisode && mixPlanKey) {
+    try {
+      mixPlanRef.current = buildMixPlan(localEpisode);
+    } catch {
+      mixPlanRef.current = null;
+    }
+  } else {
+    mixPlanRef.current = null;
+  }
+
+  if (!mixCommitQueueRef.current && localEpisode) {
+    mixCommitQueueRef.current = createLatestSegmentCommitQueue({
+      commit: (segmentId) => api.commit(localEpisode.id, segmentId),
+      isCurrent: (segmentId) => localEpisodeRef.current?.current_segment_id === segmentId,
+      onResponse: (response) => {
+        playbackAnchorRef.current = playbackAnchor(response);
+        setEpisode(response);
+        setBrowserPosition(browserPositionRef.current);
+        setError(null);
+      },
+      onError: (reason) => {
+        setError(reason instanceof Error ? reason.message : "Playback synchronization failed");
+      },
+    });
+  }
 
   useEffect(() => {
     let mounted = true;
     const leaveOnPageExit = () => {
-      if (episodeIdRef.current) {
-        void api.checkpoint(episodeIdRef.current, browserPositionRef.current);
+      const currentEpisode = localEpisodeRef.current;
+      const plan = mixPlanRef.current;
+      if (episodeIdRef.current && currentEpisode) {
+        const transport = plan
+          ? mixPositionToLinearPosition(currentEpisode, plan, browserPositionRef.current)
+          : { linearPositionSeconds: browserPositionRef.current };
+        void api.checkpoint(episodeIdRef.current, Math.floor(transport.linearPositionSeconds));
         navigator.sendBeacon(`/api/episodes/${episodeIdRef.current}/leave`);
       }
     };
@@ -58,15 +101,18 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [localEpisode?.id, setEpisode]);
 
   useEffect(() => {
-    const position = reconcileBrowserPosition(
+    const linearPosition = reconcileBrowserPosition(
       browserPositionRef.current,
       playbackAnchorRef.current,
       localEpisode,
     );
+    const position = localEpisode && mixPlanRef.current
+      ? linearPositionToMixPosition(localEpisode, mixPlanRef.current, linearPosition).mixPositionSeconds
+      : linearPosition;
     if (seekPreview === null) setBrowserPosition(position);
     browserPositionRef.current = position;
     playbackAnchorRef.current = playbackAnchor(localEpisode);
-  }, [localEpisode?.current_segment_id, localEpisode?.playback_position_seconds]);
+  }, [localEpisode?.current_segment_id, localEpisode?.playback_position_seconds, mixPlanKey]);
 
   useEffect(() => {
     if (!localEpisode?.is_listener_active) return;
@@ -104,6 +150,28 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (localEpisode?.is_playing) void update(api.completed(localEpisode.id));
   }, [localEpisode?.id, localEpisode?.is_playing]);
 
+  const handleMixPosition = useCallback((positionSeconds: number) => {
+    if (!localEpisode || !mixPlanRef.current) return;
+    const transport = mixPositionToLinearPosition(localEpisode, mixPlanRef.current, positionSeconds);
+    const linearPosition = Math.floor(transport.linearPositionSeconds);
+    setBrowserPosition(positionSeconds);
+    browserPositionRef.current = positionSeconds;
+
+    if (transport.segmentId && transport.segmentId !== localEpisode.current_segment_id) {
+      mixCommitQueueRef.current?.request(transport.segmentId);
+    }
+
+    if (
+      transport.segmentId === localEpisode.current_segment_id
+      && linearPosition > localEpisode.playback_position_seconds
+      && linearPosition % 5 === 0
+      && checkpointRef.current !== linearPosition
+    ) {
+      checkpointRef.current = linearPosition;
+      void api.checkpoint(localEpisode.id, linearPosition);
+    }
+  }, [localEpisode, setEpisode]);
+
   const handleAudioPosition = useCallback((segmentPosition: number) => {
     if (!localEpisode || !current) return;
     const position = Math.floor(segmentStart(localEpisode, current.id) + Math.max(0, segmentPosition));
@@ -116,17 +184,28 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [current, localEpisode]);
 
   const commitSeek = useCallback((value: number) => {
-    if (!localEpisode || !isSeekAllowed(localEpisode, value)) return;
+    if (!localEpisode) return;
+    const linearValue = mixPlanRef.current
+      ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, value).linearPositionSeconds
+      : value;
+    if (!isSeekAllowed(localEpisode, linearValue)) return;
     setSeekPreview(null);
-    void api.seek(localEpisode.id, value).then((response) => {
-      setBrowserPosition(value);
-      browserPositionRef.current = value;
+    const runSeek = async () => {
+      const response = await api.seek(localEpisode.id, Math.floor(linearValue));
+      mixCommitQueueRef.current?.acknowledge(response.current_segment_id);
+      const mixValue = mixPlanRef.current
+        ? linearPositionToMixPosition(localEpisode, mixPlanRef.current, linearValue).mixPositionSeconds
+        : value;
+      setBrowserPosition(mixValue);
+      browserPositionRef.current = mixValue;
       playbackAnchorRef.current = playbackAnchor(response);
       setEpisode(response);
       setError(null);
-    }).catch((reason: unknown) => {
-      setError(reason instanceof Error ? reason.message : "Player action failed");
-    });
+    };
+    void (mixCommitQueueRef.current ? mixCommitQueueRef.current.runExclusive(runSeek) : runSeek())
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : "Player action failed");
+      });
   }, [localEpisode, setEpisode]);
 
   const commitSeekPreview = useCallback(() => {
@@ -135,9 +214,31 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   const pausePlayback = useCallback(async () => {
     if (!localEpisode) return;
-    await update(api.checkpoint(localEpisode.id, browserPosition));
-    await update(api.pause(localEpisode.id));
-  }, [browserPosition, localEpisode]);
+    const runPause = async () => {
+      const currentEpisode = localEpisodeRef.current ?? localEpisode;
+      const transport = mixPlanRef.current
+        ? mixPositionToLinearPosition(currentEpisode, mixPlanRef.current, browserPositionRef.current)
+        : { linearPositionSeconds: browserPositionRef.current, segmentId: currentEpisode.current_segment_id };
+      let checkpointEpisode = currentEpisode;
+      if (transport.segmentId && transport.segmentId !== currentEpisode.current_segment_id) {
+        checkpointEpisode = await api.commit(currentEpisode.id, transport.segmentId);
+        mixCommitQueueRef.current?.acknowledge(checkpointEpisode.current_segment_id);
+        playbackAnchorRef.current = playbackAnchor(checkpointEpisode);
+        setEpisode(checkpointEpisode);
+      }
+      const checkpointed = await api.checkpoint(checkpointEpisode.id, Math.floor(transport.linearPositionSeconds));
+      setEpisode(checkpointed);
+      const paused = await api.pause(checkpointEpisode.id);
+      mixCommitQueueRef.current?.acknowledge(paused.current_segment_id);
+      setEpisode(paused);
+      setError(null);
+    };
+    try {
+      await (mixCommitQueueRef.current ? mixCommitQueueRef.current.runExclusive(runPause) : runPause());
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Player action failed");
+    }
+  }, [localEpisode, setEpisode]);
 
   if (error && !localEpisode) {
     return <main className="shell"><Link href="/">← Home</Link><p className="error">{error} — 请先启动 API 服务。</p></main>;
@@ -146,19 +247,41 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     return <main className="shell"><p className="eyebrow">STARTING THE OPENING TRACK</p><h1>正在接入节目…</h1></main>;
   }
 
-  const generatedPercent = Math.round((localEpisode.generated_frontier_seconds / localEpisode.timeline_duration_seconds) * 100);
+  const maxSeekPosition = mixPlanRef.current
+    ? linearPositionToMixPosition(localEpisode, mixPlanRef.current, localEpisode.generated_frontier_seconds).mixPositionSeconds
+    : localEpisode.generated_frontier_seconds;
+  const generatedPercent = Math.round((maxSeekPosition / (mixPlanRef.current?.durationSeconds ?? localEpisode.timeline_duration_seconds)) * 100);
   const displayedPosition = seekPreview ?? browserPosition;
+  const displayedLinearPosition = mixPlanRef.current
+    ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, browserPosition).linearPositionSeconds
+    : browserPosition;
   const currentOffset = current
-    ? segmentOffset(localEpisode, current.id, browserPosition)
+    ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
   const upcoming = current ? nextVisibleSegment(localEpisode) : undefined;
+  const nextPlayback = async () => {
+    const runNext = async () => {
+      const response = await api.next(localEpisode.id);
+      mixCommitQueueRef.current?.acknowledge(response.current_segment_id);
+      setEpisode(response);
+      setError(null);
+    };
+    try {
+      await (mixCommitQueueRef.current ? mixCommitQueueRef.current.runExclusive(runNext) : runNext());
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Player action failed");
+    }
+  };
   return (
     <main className="shell player-shell">
-      <AudioPlayer
+      <MixAudioPlayer
+        episode={localEpisode}
         segment={current}
         playing={localEpisode.is_playing && localEpisode.is_listener_active}
-        positionSeconds={currentOffset}
-        onPositionChange={handleAudioPosition}
+        positionSeconds={browserPosition}
+        legacyPositionSeconds={currentOffset}
+        onPositionChange={handleMixPosition}
+        onLegacyPositionChange={handleAudioPosition}
         onEnded={completeBrowserSegment}
         onError={() => setError("Audio source failed")}
       />
@@ -173,15 +296,18 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           {localEpisode.is_playing
             ? <button onClick={() => void pausePlayback()}>暂停</button>
             : <button onClick={() => void update(api.resume(localEpisode.id))}>继续</button>}
-          <button onClick={() => void update(api.next(localEpisode.id))}>下一章节</button>
+          <button onClick={() => void nextPlayback()}>下一章节</button>
           <button className="quiet" onClick={() => void update(api.materialize(localEpisode.id))}>生成完整节目</button>
         </div>
       </section>
       <section className="timeline" aria-label="episode timeline">
-        <div className="timeline-label"><span>当前 {formatSeconds(displayedPosition)} / {formatSeconds(localEpisode.timeline_duration_seconds)}</span><span>可回听 {formatSeconds(localEpisode.generated_frontier_seconds)}</span></div>
-        <input aria-label="Seek within generated audio" type="range" min="0" max={localEpisode.generated_frontier_seconds} value={displayedPosition} onChange={(event) => {
+        <div className="timeline-label"><span>当前 {formatSeconds(displayedPosition)} / {formatSeconds(mixPlanRef.current?.durationSeconds ?? localEpisode.timeline_duration_seconds)}</span><span>可回听 {formatSeconds(maxSeekPosition)}</span></div>
+        <input aria-label="Seek within generated audio" type="range" min="0" max={maxSeekPosition} value={displayedPosition} onChange={(event) => {
           const value = Number(event.target.value);
-          if (isSeekAllowed(localEpisode, value)) setSeekPreview(value);
+          const linearValue = mixPlanRef.current
+            ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, value).linearPositionSeconds
+            : value;
+          if (isSeekAllowed(localEpisode, linearValue)) setSeekPreview(value);
         }} onPointerUp={commitSeekPreview} onKeyUp={commitSeekPreview} onBlur={commitSeekPreview} style={{ "--generated": `${generatedPercent}%` } as React.CSSProperties} />
         <p>亮色区域可以回听；当前时间轴 {formatSeconds(localEpisode.timeline_duration_seconds)}，节目承诺不会随 mock 片段缩短。</p>
       </section>
