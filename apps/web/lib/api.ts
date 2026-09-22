@@ -1,3 +1,4 @@
+import { parseMixPlan, type MixPlan } from "./mix-timeline";
 import type { LiveEpisode, Seed } from "./types";
 
 const listenerStorageKey = "wavecast-anonymous-listener";
@@ -25,6 +26,7 @@ export const api = {
   seeds: () => request<Seed[]>("/seeds"),
   start: (seedId: string) => request<LiveEpisode>(`/episodes/from-seed/${seedId}`, { method: "POST" }),
   get: (id: string) => request<LiveEpisode>(`/episodes/${id}`),
+  mixPlan: async (id: string): Promise<MixPlan> => parseMixPlan(await request<unknown>(`/episodes/${id}/mix-plan`)),
   ensureBuffer: (id: string, targetChapters = 2) => request<LiveEpisode>(`/episodes/${id}/ensure-buffer`, { method: "POST", body: JSON.stringify({ target_chapters: targetChapters }) }),
   completed: (id: string) => request<LiveEpisode>(`/episodes/${id}/completed`, { method: "POST" }),
   heartbeat: (id: string) => request<LiveEpisode>(`/episodes/${id}/heartbeat`, { method: "POST" }),

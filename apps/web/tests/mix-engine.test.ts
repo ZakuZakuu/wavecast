@@ -1,22 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MixEngine } from "../lib/mix-engine";
-import { buildMixPlan } from "../lib/mix-timeline";
-import type { LiveEpisode } from "../lib/types";
-
-const episode: LiveEpisode = {
-  id: "engine-fixture", seed_id: "seed", listener_id: "listener", version: 1,
-  state: "MATERIALIZED", generation_mode: "FULL", current_segment_id: "music-a",
-  playback_position_seconds: 0, is_listener_active: true, is_playing: true,
-  program_estimated_duration_seconds: 20, generated_frontier_seconds: 20,
-  buffer_ahead_seconds: 20, committed_frontier_seconds: 20, timeline_duration_seconds: 20,
-  segments: [{
-    id: "music-a", chapter_id: "a", order: 0, kind: "MUSIC", state: "AUDIO_READY",
-    planned_duration_seconds: 20, actual_duration_seconds: 20, audio_source_url: "/a.mp3",
-    duration_seconds: 20, track_ref: "a", title: "A", artist: "Artist", narration_text: null, asset_ref: null,
-  }],
-};
-
+import { canonicalPlan } from "./fixtures/canonical-mix-plan";
 function fakeAudioContext(): AudioContext {
   const node = { connect: vi.fn(() => node) };
   return {
@@ -46,7 +31,7 @@ describe("MixEngine transport ownership", () => {
       audioContextFactory: fakeAudioContext,
       clock: () => now,
     });
-    engine.setPlan(buildMixPlan(episode));
+    engine.setPlan(canonicalPlan);
     engine.sync(0, true);
     now = 0.1;
     (engine as unknown as { tick: () => void }).tick();
