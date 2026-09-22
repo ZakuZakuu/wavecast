@@ -11,19 +11,20 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 6B.3 - owned music snapshot/materialization seam.
-- **Current stage:** credential-free implementation and targeted E2E checks are
-  complete locally; PR/review/CI are next. No live or paid provider call is
-  part of this slice.
-- **Canonical main:** 405b83254b3ce14efb114b7dc8e6554a8dc6b439 (PR #54 merge
+- **Current milestone:** Phase 6B.4 - production playback snapshot wiring.
+- **Current stage:** implementation and full backend verification are complete
+  locally; PR/review/CI are next. No live or paid provider call is part of
+  this slice.
+- **Canonical main:** 93dffe66101d697d00a81618c523c94fcff16daf (PR #55 merge
   commit).
-- **Last completed code milestone:** PR #54, Phase 6B.2 offline mixdown
-  renderer and CI ffmpeg checks, merged after exact-head GPT review with
+- **Last completed code milestone:** PR #55, Phase 6B.3 owned music
+  snapshot/materialization seam, merged after exact-head GPT review with
   backend and web CI green.
-- **Immediate work:** create the Phase 6B.3 PR from the canonical main, obtain
-  exact-head GPT review, and merge only after DONE and green CI. The snapshot
-  seam must persist provider-backed music as owned /api/assets/audio/... paths
-  without relaxing the renderer boundary or calling live providers.
+- **Immediate work:** create the Phase 6B.4 PR from the canonical main, obtain
+  exact-head GPT review, and merge only after DONE and green CI. The shared
+  server-only playback request seam must be used by both browser proxy routes
+  and bounded snapshot fetching; no credentials, raw upstream URLs, or live
+  calls may enter episode state or API responses.
 
 ## Phase 6B.1 canonical mix-plan contract
 
@@ -53,6 +54,18 @@ listener-owned episode is updated atomically only after every required music
 source succeeds. Cache hits avoid a second fetch. The existing canonical
 MixPlan and mixdown endpoint remain unchanged. This is credential-free work;
 real provider snapshots and live episodes are intentionally excluded.
+
+## Phase 6B.4 production playback snapshot wiring
+
+Phase 6B.4 extracts an in-memory ResolvedPlaybackRequest seam from the
+existing sidecar and Audius playback paths. Browser proxies and
+ProviderPlaybackSnapshotFetcher share this resolver, while snapshot fetching
+performs one bounded full-track GET with audio content-type validation,
+streaming byte limits, redirect following, and safe reason codes. Existing
+segment duration is passed into the snapshot contract so the preparation step
+does not re-resolve timing metadata. The default API store is now wired to this
+fetcher, but tests remain credential-free and no live provider request is
+performed by the development workflow.
 
 ## Phase 5.3A radio-writing rubric
 
