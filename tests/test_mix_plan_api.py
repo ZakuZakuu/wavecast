@@ -106,6 +106,30 @@ def test_mix_plan_is_owned_deterministic_and_read_only(canonical_episode: LiveEp
     assert api_module.repository.get(canonical_episode.id).model_dump(mode="json") == before
 
 
+def test_mix_plan_exposes_only_ready_prefix(canonical_episode: LiveEpisode) -> None:
+    pending = canonical_episode.model_copy(deep=True)
+    pending.segments[2] = pending.segments[2].model_copy(update={"state": SegmentState.PLANNED})
+    api_module.repository.save(pending)
+
+    client = TestClient(api_module.app)
+    endpoint = f"/api/episodes/{canonical_episode.id}/mix-plan"
+    headers = {"X-Wavecast-Listener": "listener-a"}
+
+    prefix = client.get(endpoint, headers=headers)
+    assert prefix.status_code == 200
+    assert [clip["segmentId"] for clip in prefix.json()["clips"]] == ["music-a", "voice-a"]
+
+    pending.segments[2] = pending.segments[2].model_copy(update={"state": SegmentState.AUDIO_READY})
+    api_module.repository.save(pending)
+    complete = client.get(endpoint, headers=headers)
+    assert complete.status_code == 200
+    assert [clip["segmentId"] for clip in complete.json()["clips"]] == [
+        "music-a",
+        "voice-a",
+        "music-b",
+    ]
+
+
 def test_mix_plan_rejects_other_listener(canonical_episode: LiveEpisode) -> None:
     response = TestClient(api_module.app).get(
         f"/api/episodes/{canonical_episode.id}/mix-plan",

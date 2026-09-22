@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { activeMixClipsAt, clampMixPosition, evaluateGain, linearPositionToMixPosition, mixPositionToLinearPosition, scheduleAt } from "../lib/mix-timeline";
+import { activeMixClipsAt, clampMixPosition, evaluateGain, linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, scheduleAt } from "../lib/mix-timeline";
 import { canonicalPlan } from "./fixtures/canonical-mix-plan";
 import type { LiveEpisode } from "../lib/types";
 
@@ -18,6 +18,22 @@ const episode: LiveEpisode = {
 };
 
 describe("deterministic mix timeline", () => {
+  it("refreshes only for arrangement-relevant segment state changes", () => {
+    const signatureFor = (state: LiveEpisode["segments"][number]["state"]) => mixPlanSignature({
+      ...episode,
+      segments: episode.segments.map((segment, index) => (
+        index === 2 ? { ...segment, state } : segment
+      )),
+    });
+
+    expect(signatureFor("PLANNED")).not.toBe(signatureFor("AUDIO_READY"));
+    expect(signatureFor("AUDIO_READY")).toBe(signatureFor("COMMITTED"));
+    expect(signatureFor("COMMITTED")).toBe(signatureFor("PLAYED"));
+    expect(signatureFor("PLANNED")).not.toBe(signatureFor("SKIPPED"));
+    const heartbeatEpisode = { ...episode, version: 2 };
+    expect(mixPlanSignature(heartbeatEpisode)).toBe(mixPlanSignature(episode));
+  });
+
   it("creates music and voice overlap with an incoming crossfade", () => {
     const plan = canonicalPlan;
     const musicA = plan.clips.find((clip) => clip.segmentId === "music-a")!;
