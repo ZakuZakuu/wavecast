@@ -4,6 +4,8 @@ import os
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import cast
 from urllib.parse import quote
 from uuid import uuid4
@@ -36,6 +38,15 @@ from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.music_http import SidecarMusicProvider
 from wavecast.providers.netease import NeteaseMusicProvider
 from wavecast.providers.qqmusic import QQMusicProvider
+from wavecast.rendering import (
+    MixdownArtifact,
+    MixRenderError,
+    MixRendererUnavailableError,
+    MixSourceUnavailableError,
+    render_mix,
+    resolve_mix_sources,
+)
+from wavecast.rendering.fingerprint import mix_plan_fingerprint
 from wavecast.storage import (
     EpisodeConcurrencyError,
     LocalObjectStorageProvider,
@@ -378,11 +389,8 @@ def episode(episode_id: str, request: Request) -> LiveEpisode:
     return orchestrator.get(episode_id)
 
 
-@app.get("/api/episodes/{episode_id}/mix-plan", response_model=MixPlan)
-def episode_mix_plan(episode_id: str, request: Request) -> MixPlan:
-    """Return the deterministic server-owned arrangement for the ready prefix."""
-    listener_id = listener(request)
-    owned(episode_id, listener_id)
+def canonical_mix_plan_for_episode(episode_id: str, listener_id: str) -> MixPlan:
+    """Build the canonical arrangement for the currently ready timeline prefix."""
     current = orchestrator.get(episode_id, listener_id)
     ready_segments: list[MusicSegment | NarrationSegment] = []
     for segment in current.timeline_segments:
@@ -390,13 +398,60 @@ def episode_mix_plan(episode_id: str, request: Request) -> MixPlan:
             break
         ready_segments.append(cast(MusicSegment | NarrationSegment, segment))
     if not ready_segments:
-        raise HTTPException(status_code=409, detail="Mix plan is not ready")
+        raise ValueError("mix plan is not ready")
+    return plan_episode_mix(PlayableEpisode(id=current.id, segments=ready_segments))
+
+
+@app.get("/api/episodes/{episode_id}/mix-plan", response_model=MixPlan)
+def episode_mix_plan(episode_id: str, request: Request) -> MixPlan:
+    """Return the deterministic server-owned arrangement for the ready prefix."""
+    listener_id = listener(request)
+    owned(episode_id, listener_id)
     try:
-        return plan_episode_mix(
-            PlayableEpisode(id=current.id, segments=ready_segments)
-        )
+        return canonical_mix_plan_for_episode(episode_id, listener_id)
     except ValueError as error:
         raise HTTPException(status_code=409, detail="Mix plan is not ready") from error
+
+
+@app.post("/api/episodes/{episode_id}/mixdown", response_model=MixdownArtifact)
+async def episode_mixdown(episode_id: str, request: Request) -> MixdownArtifact:
+    """Render the current canonical plan from already-owned local audio assets."""
+    listener_id = listener(request)
+    owned(episode_id, listener_id)
+    try:
+        plan = canonical_mix_plan_for_episode(episode_id, listener_id)
+        with TemporaryDirectory(prefix="wavecast-mixdown-") as temporary:
+            sources = await resolve_mix_sources(plan, audio_storage, Path(temporary) / "inputs")
+            output_path = Path(temporary) / "mixdown.mp3"
+            result = await to_thread.run_sync(
+                lambda: render_mix(plan, sources, output_path)
+            )
+            content = output_path.read_bytes()
+            fingerprint = mix_plan_fingerprint(plan)
+            safe_episode_id = re.sub(r"[^a-zA-Z0-9_-]", "_", episode_id)
+            key = f"mixdowns/{safe_episode_id}/{fingerprint}.mp3"
+            audio_url = await audio_storage.put(
+                key,
+                content,
+                "audio/mpeg",
+                {"episode_id": episode_id, "plan_fingerprint": fingerprint},
+            )
+            return MixdownArtifact(
+                episode_id=episode_id,
+                plan_fingerprint=fingerprint,
+                audio_url=audio_url,
+                duration_seconds=result.duration_seconds,
+            )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail="Mix plan is not ready") from error
+    except MixRendererUnavailableError as error:
+        raise HTTPException(status_code=503, detail="Mix renderer is unavailable") from error
+    except MixSourceUnavailableError as error:
+        raise HTTPException(status_code=409, detail="Mix source is unavailable") from error
+    except MixRenderError as error:
+        raise HTTPException(status_code=502, detail="Mix renderer failed") from error
+    except OSError as error:
+        raise HTTPException(status_code=500, detail="Mixdown storage failed") from error
 
 
 @app.post("/api/episodes/{episode_id}/ensure-buffer", response_model=LiveEpisode)

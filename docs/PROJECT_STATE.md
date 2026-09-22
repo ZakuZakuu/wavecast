@@ -11,19 +11,27 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 5.3 — demo-ready closure.
-- **Current stage:** Phase 5.3 bounded live validation and artifact review are
-  complete. The primary candidate is frozen for human listening; no automatic
-  prose score or TTS quality claim is made.
-- **Canonical main:** e42166f13ea07a6b667b49bec16fa37b092ca746 (PR #50 merge
-  commit; includes the narrow structured-output incomplete-response retry).
-- **Last completed code milestone:** PR #50 merged at
-  e42166f13ea07a6b667b49bec16fa37b092ca746 after exact-head GPT review and
-  green backend/web CI.
-- **Immediate work:** human-listen to the primary materialized episode and
-  confirm TTS pronunciation, pauses, bilingual rhythm, and overall editorial
-  feel. Keep the primary and fallback artifacts; do not reopen Phase 5.3
-  pipeline polish unless listening finds a real blocker.
+- **Current milestone:** Phase 6B.2 - offline mixdown vertical slice.
+- **Current stage:** credential-free implementation is complete locally and is
+  pending PR creation, CI, and exact-head GPT review. No live or paid provider
+  call is part of this slice.
+- **Canonical main:** 8b8cc99b6d0feee11a0a1ed67712d3a1838f013c (PR #53 merge
+  commit).
+- **Last completed code milestone:** PR #53, Phase 6B.1 canonical MixPlan
+  contract and Web consumer, merged after exact-head GPT review with backend
+  and web CI green.
+- **Immediate work:** review the offline renderer PR against the exact remote
+  HEAD, then merge only after GPT DONE and green CI. The renderer must consume
+  only the canonical MixPlan and already-owned WaveCast audio assets; it must
+  never recompute episode timing or call providers.
+
+## Phase 6B.1 canonical mix-plan contract
+
+PR #53 made MixPlan the server-owned deterministic arrangement consumed by the
+Web runtime. GET /api/episodes/{episode_id}/mix-plan exposes only the
+listener-owned ready prefix, and the Web player derives readiness from an
+arrangement signature that refreshes when a segment moves between pending,
+ready, or skipped states. This milestone added no live/provider behavior.
 
 ## Phase 5.3A radio-writing rubric
 
