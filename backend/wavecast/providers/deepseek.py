@@ -21,6 +21,7 @@ from .config import ProviderSettings
 from .errors import (
     ProviderAuthenticationError,
     ProviderError,
+    ProviderIncompleteResponseError,
     ProviderInvalidResponseError,
     ProviderOutputLimitError,
     ProviderRateLimitError,
@@ -92,8 +93,17 @@ class DeepSeekLLMProvider:
         if transport is StructuredTransport.CHAT_JSON:
             policy = replace(policy, transport=transport, reasoning_effort=None)
         attempt_limit = 1 if profile is InferenceProfile.FAST else self.max_attempts
+        # A live assembly may deliberately set max_attempts=1.  Allow one
+        # same-stage recovery for a transient schema-invalid response only;
+        # output limits, contract errors, auth, budget, and provider outages
+        # must keep their existing bounded behavior.
+        allow_single_structured_retry = (
+            attempt_limit == 1 and profile is not InferenceProfile.FAST
+        )
+        structured_retry_used = False
         last_failure: ProviderError | None = None
-        for attempt in range(attempt_limit):
+        total_attempts = attempt_limit + int(allow_single_structured_retry)
+        for attempt in range(total_attempts):
             started_at = perf_counter()
             try:
                 response = await asyncio.wait_for(
@@ -155,7 +165,19 @@ class DeepSeekLLMProvider:
             if isinstance(last_failure, ProviderOutputLimitError):
                 raise last_failure
             retry_invalid_output = isinstance(last_failure, ProviderInvalidResponseError)
-            if attempt == attempt_limit - 1 or (
+            if (
+                attempt == attempt_limit - 1
+                and isinstance(
+                    last_failure,
+                    (ProviderSchemaValidationError, ProviderIncompleteResponseError),
+                )
+                and allow_single_structured_retry
+                and not structured_retry_used
+            ):
+                structured_retry_used = True
+                await self.sleep(0.25)
+                continue
+            if attempt >= attempt_limit - 1 or (
                 not retry_invalid_output and not is_retryable(last_failure)
             ):
                 raise last_failure
@@ -211,6 +233,10 @@ class DeepSeekLLMProvider:
                     "deepseek response was incomplete (max_output_tokens)"
                 )
             suffix = f" ({normalized_reason})" if normalized_reason else ""
+            if status == "incomplete":
+                raise ProviderIncompleteResponseError(
+                    f"deepseek response was {status}{suffix}"
+                )
             raise ProviderInvalidResponseError(f"deepseek response was {status}{suffix}")
 
         # Parse the explicit Responses payload.  The SDK's output_text convenience

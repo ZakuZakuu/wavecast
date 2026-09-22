@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.errors import (
+    ProviderIncompleteResponseError,
     ProviderInvalidResponseError,
     ProviderOutputLimitError,
     ProviderSchemaValidationError,
@@ -249,6 +250,76 @@ def test_responses_max_output_incomplete_records_usage_and_does_not_retry() -> N
     assert ledger.events[0].request_id == "response-incomplete"
     assert ledger.totals().input_tokens == 3
     assert ledger.totals().output_tokens == 4
+
+
+def test_responses_non_output_limit_incomplete_retries_once_when_attempts_are_one() -> None:
+    responses = SequencedResponses(
+        [
+            SimpleNamespace(
+                id="response-incomplete-transient",
+                status="incomplete",
+                incomplete_details=SimpleNamespace(reason="content_filter"),
+                output=[],
+                usage=SimpleNamespace(input_tokens=3, output_tokens=4),
+            ),
+            SimpleNamespace(
+                id="response-recovered-after-incomplete",
+                status="completed",
+                output=[
+                    SimpleNamespace(
+                        type="message",
+                        content=[
+                            SimpleNamespace(
+                                type="output_text", text='{"answer":"ok"}'
+                            )
+                        ],
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=3, output_tokens=4),
+            ),
+        ]
+    )
+    client = SimpleNamespace(responses=responses)
+
+    async def run() -> None:
+        provider = DeepSeekLLMProvider(
+            response_settings(), client=client, max_attempts=1
+        )
+        assert await provider.structured(
+            "tiny test",
+            ResponseAnswer,
+            transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
+            profile=InferenceProfile.SYNTHESIS,
+        ) == ResponseAnswer(answer="ok")
+
+    asyncio.run(run())
+    assert len(responses.calls) == 2
+
+
+def test_responses_non_output_limit_incomplete_is_typed() -> None:
+    response = SimpleNamespace(
+        id="response-incomplete-typed",
+        status="incomplete",
+        incomplete_details=SimpleNamespace(reason="content_filter"),
+        output=[],
+        usage=SimpleNamespace(input_tokens=3, output_tokens=4),
+    )
+    client, responses = response_client(response)
+
+    async def run() -> None:
+        provider = DeepSeekLLMProvider(
+            response_settings(), client=client, max_attempts=1
+        )
+        with pytest.raises(ProviderIncompleteResponseError, match="incomplete"):
+            await provider.structured(
+                "tiny test",
+                ResponseAnswer,
+                transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
+                profile=InferenceProfile.FAST,
+            )
+
+    asyncio.run(run())
+    assert len(responses.calls) == 1
 
 
 def test_responses_malformed_json_keeps_bounded_retry_behavior() -> None:
