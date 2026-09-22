@@ -25,7 +25,7 @@ ZH_CN_RADIO_WRITING_GUIDANCE = (
     "listen-for cue，但证据不足时宁可简单准确，不要编造听觉或事实细节。背景事实必须服务于当前听感 "
     "或下一首的连接。一个 block 只完成一个主要 editorial action；使用短分句、自然停顿和口语中文， "
     "减少论文腔与名词化。区分事实、听感和编辑判断，文化描述具体克制，避免宽泛的族群化概括。 "
-    "TRACK_INTRO/TRANSITION 要说明下一首为什么值得听；OUTRO 回扣本期 thesis 或前面真实听到的细节， "
+    "TRACK_INTRO/TRANSITION 要说明下一首为什么值得听；通常用 2–4 个短句、约 20–35 秒，先给 concrete listen-for 再给最多一个必要背景解释，编辑动作完成就停，不要扩写成 40–50 秒。OUTRO 回扣本期 thesis 或前面真实听到的细节；如果上下文提供了已经听过的中间 artist/track/listen-for detail，至少具体回扣其中一个再落回 thesis，不要用模板式总结。 "
     "不要用模板式总结。不要为了高级感强造比喻、大词或结论。"
 )
 
@@ -90,7 +90,7 @@ class WriterService:
             "Return ordered blocks using only intro, track_intro, transition, or outro. Each "
             "block must be speakable and independently timed. The chapter is a "
             "narrative beat and may have no playable track; do not invent or substitute a song. "
-            "Aim for the allocated narration duration across all blocks returned for this chapter, rather than a generic short answer. "
+            "Treat the allocated narration duration as a soft pacing guide, not a quota: stop when the editorial action is complete and do not add background facts just to fill time. "
             "Keep `text` as the listener-visible copy and optionally provide `tts_text` when "
             "spoken pronunciation should differ. For example, display `3rd Coast` but use "
             "`Third Coast` for TTS. Do not use broad regex or dictionary substitutions. "
