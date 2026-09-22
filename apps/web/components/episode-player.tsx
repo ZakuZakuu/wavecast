@@ -8,7 +8,8 @@ import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
-import { AudioPlayer } from "./audio-player";
+import { buildMixPlan, segmentIdAt } from "../lib/mix-timeline";
+import { MixAudioPlayer } from "./mix-audio-player";
 
 export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeId?: string }) {
   const { episode, setEpisode } = usePlayerStore();
@@ -104,6 +105,27 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (localEpisode?.is_playing) void update(api.completed(localEpisode.id));
   }, [localEpisode?.id, localEpisode?.is_playing]);
 
+  const handleMixPosition = useCallback((positionSeconds: number) => {
+    if (!localEpisode) return;
+    const position = Math.floor(positionSeconds);
+    setBrowserPosition(position);
+    browserPositionRef.current = position;
+    try {
+      const plan = buildMixPlan(localEpisode);
+      const segmentId = segmentIdAt(plan, positionSeconds);
+      const arrangedStart = segmentId ? plan.segmentStarts[segmentId] ?? 0 : 0;
+      const linearPosition = segmentId
+        ? Math.floor(segmentStart(localEpisode, segmentId) + Math.max(0, positionSeconds - arrangedStart))
+        : position;
+      if (linearPosition > localEpisode.playback_position_seconds && linearPosition % 5 === 0 && checkpointRef.current !== linearPosition) {
+        checkpointRef.current = linearPosition;
+        void api.checkpoint(localEpisode.id, linearPosition);
+      }
+    } catch {
+      // Keep the local mix clock usable if a progressive snapshot is incomplete.
+    }
+  }, [localEpisode]);
+
   const handleAudioPosition = useCallback((segmentPosition: number) => {
     if (!localEpisode || !current) return;
     const position = Math.floor(segmentStart(localEpisode, current.id) + Math.max(0, segmentPosition));
@@ -154,11 +176,14 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const upcoming = current ? nextVisibleSegment(localEpisode) : undefined;
   return (
     <main className="shell player-shell">
-      <AudioPlayer
+      <MixAudioPlayer
+        episode={localEpisode}
         segment={current}
         playing={localEpisode.is_playing && localEpisode.is_listener_active}
-        positionSeconds={currentOffset}
-        onPositionChange={handleAudioPosition}
+        positionSeconds={browserPosition}
+        legacyPositionSeconds={currentOffset}
+        onPositionChange={handleMixPosition}
+        onLegacyPositionChange={handleAudioPosition}
         onEnded={completeBrowserSegment}
         onError={() => setError("Audio source failed")}
       />
