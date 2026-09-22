@@ -8,6 +8,7 @@ import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
+import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
 import { linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition } from "../lib/mix-timeline";
 import type { MixPlan } from "../lib/mix-timeline";
 import { createLatestSegmentCommitQueue, type LatestSegmentCommitQueue } from "../lib/mix-commit-queue";
@@ -18,6 +19,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const [error, setError] = useState<string | null>(null);
   const [browserPosition, setBrowserPosition] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
+  const [exportState, setExportState] = useState<"idle" | "preparing" | "ready" | "error">("idle");
+  const [exportArtifact, setExportArtifact] = useState<MixdownArtifact | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const episodeIdRef = useRef<string | null>(null);
   const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
@@ -93,6 +97,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [localEpisode?.id, setEpisode]);
 
   useEffect(() => {
+    setExportState("idle");
+    setExportArtifact(null);
+    setExportError(null);
+  }, [localEpisode?.id]);
+
+  useEffect(() => {
     if (!localEpisode || !mixPlanKey) {
       setMixPlan(null);
       return undefined;
@@ -159,6 +169,27 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const completeBrowserSegment = useCallback(() => {
     if (localEpisode?.is_playing) void update(api.completed(localEpisode.id));
   }, [localEpisode?.id, localEpisode?.is_playing]);
+
+  const exportEpisode = useCallback(async () => {
+    if (!localEpisode || localEpisode.state !== "MATERIALIZED" || exportState === "preparing") return;
+    setExportState("preparing");
+    setExportError(null);
+    try {
+      const artifact = await prepareEpisodeExport(localEpisode.id, {
+        prepareMixdown: api.prepareMixdown,
+        mixdown: api.mixdown,
+      }, exportArtifact);
+      setExportArtifact(artifact);
+      setExportState("ready");
+      triggerMixdownDownload(artifact, localEpisode.id);
+    } catch (reason: unknown) {
+      setExportState("error");
+      setExportError(reason instanceof ExportBlockedError
+        ? "部分音源暂时无法准备导出，请稍后重试。"
+        : reason instanceof Error ? reason.message : "导出失败，请稍后重试。");
+    }
+  }, [exportArtifact, exportState, localEpisode]);
+
 
   const handleMixPosition = useCallback((positionSeconds: number) => {
     if (!localEpisode || !mixPlanRef.current) return;
@@ -308,6 +339,17 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
             : <button onClick={() => void update(api.resume(localEpisode.id))}>继续</button>}
           <button onClick={() => void nextPlayback()}>下一章节</button>
           <button className="quiet" onClick={() => void update(api.materialize(localEpisode.id))}>生成完整节目</button>
+          <button
+            className="quiet"
+            disabled={localEpisode.state !== "MATERIALIZED" || exportState === "preparing"}
+            onClick={() => void exportEpisode()}
+            aria-busy={exportState === "preparing"}
+          >
+            {exportState === "preparing"
+              ? "正在准备导出…"
+              : localEpisode.state === "MATERIALIZED" ? "导出 MP3" : "导出 MP3（先生成完整节目）"}
+          </button>
+          {exportArtifact ? <a className="export-download" href={exportArtifact.audioUrl} download={downloadFilename(exportArtifact.episodeId)}>下载 MP3</a> : null}
         </div>
       </section>
       <section className="timeline" aria-label="episode timeline">
@@ -329,6 +371,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       <div className="session-actions">
         {localEpisode.is_listener_active ? <button className="quiet" onClick={() => void update(api.leave(localEpisode.id))}>离开并停止后续生成</button> : <button onClick={() => void update(api.resume(localEpisode.id))}>返回并继续生成</button>}
         {error ? <p className="error">{error}</p> : null}
+        {exportError ? <p className="error">{exportError}</p> : null}
       </div>
     </main>
   );
