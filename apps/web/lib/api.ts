@@ -1,5 +1,6 @@
 import { parseMixPlan, type MixPlan } from "./mix-timeline";
 import type { LiveEpisode, Seed } from "./types";
+import type { MixdownArtifact, MixdownPreparationResult } from "./episode-export";
 
 const listenerStorageKey = "wavecast-anonymous-listener";
 
@@ -38,4 +39,6 @@ export const api = {
   pause: (id: string) => request<LiveEpisode>(`/episodes/${id}/pause`, { method: "POST" }),
   resume: (id: string) => request<LiveEpisode>(`/episodes/${id}/resume`, { method: "POST" }),
   materialize: (id: string) => request<LiveEpisode>(`/episodes/${id}/materialize`, { method: "POST" }),
+  prepareMixdown: (id: string) => request<MixdownPreparationResult>(`/episodes/${id}/prepare-mixdown`, { method: "POST" }),
+  mixdown: (id: string) => request<MixdownArtifact>(`/episodes/${id}/mixdown`, { method: "POST" }),
 };
