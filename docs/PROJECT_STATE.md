@@ -1,6 +1,6 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-22
+**Last updated:** 2026-09-23
 
 ## Product reminder
 
@@ -11,19 +11,20 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 6B.5 - thin export UX / next contract analysis.
-- **Current stage:** Phase 6B.4 is merged and verified. PR #56 was accepted by
-  exact-head GPT review and merged with backend/web CI green. No live or paid
-  provider call was part of this slice.
-- **Canonical main:** 2b0f7d1dac0250911c0473f262875eb54031104e (PR #56 merge
+- **Current milestone:** Phase 6C - adaptive TTS director.
+- **Current stage:** Phase 6B.5 thin export UX is merged and verified as PR #57.
+  Phase 6C is the active credential-free implementation slice; no live or paid
+  provider call is authorized or required.
+- **Canonical main:** c7b0b3a68b3c30d878aa76218c32361b92e8aeaa (PR #57 merge
   commit).
-- **Last completed code milestone:** PR #56, Phase 6B.4 production playback
-  snapshot wiring, merged after exact-head GPT review with bounded-streaming
-  regression coverage and backend/web CI green.
-- **Immediate work:** continue the same PR Loop from the merged Phase 6B.4
-  main and obtain the next GPT contract-analysis PLAN. The next likely slice
-  is the explicitly requested thin export UX; keep snapshot credentials,
-  upstream URLs, and provider calls out of episode state/API responses.
+- **Last completed code milestone:** PR #57, Phase 6B.5 thin export UX, merged
+  after exact-head GPT review with backend/web CI green.
+- **Immediate work:** complete the Phase 6C deterministic NarrationRole and
+  SpeechDirector slice, including typed narration roles, profile-aware TTS
+  cache identity, and MiniMax mapping through the same exact-head PR Loop.
+  Live listening is deferred to a later bounded human-validation slice; this
+  change does not alter Writer, MixPlan, ducking, crossfade, export, or
+  playback behavior.
 
 ## Phase 6B.1 canonical mix-plan contract
 
@@ -559,3 +560,23 @@ reversible operational faults (for example, a stopped local service) should be
 fixed autonomously. Block only for missing authority or credentials,
 destructive actions, external provider/API changes, or a genuine
 product/architecture decision.
+
+## Phase 6C adaptive TTS director
+
+Phase 6C adds a provider-neutral NarrationRole to composed narration
+segments and a pure, bounded SpeechDirector that selects a SpeechProfile
+from role plus a mixed CJK/Latin signal. The first profile is deliberately
+small: role-specific speed values remain between 0.85 and 0.96, mixed-script
+text is slowed by a fixed bounded delta, and no provider, search, LLM,
+randomness, or episode mutation is involved.
+
+Narration materialization selects the profile before cache lookup and passes
+it to TTSProvider. Mock and MiniMax adapters include selected speed and
+language fallback/override in cache identity; MiniMax maps only the documented
+speed and language fields while retaining existing voice, volume, pitch, and
+audio settings. Safe metadata records profile id/version, speed,
+language_boost, narration role, and cache hit without storing text or provider
+responses. Targeted regression coverage verifies role mapping, deterministic
+bounded profiles, cache sensitivity, materializer propagation, and MiniMax
+payload mapping. Actual pacing and pronunciation still require a later
+bounded human listening pass.

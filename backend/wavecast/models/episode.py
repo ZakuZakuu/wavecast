@@ -34,6 +34,16 @@ class SegmentKind(StrEnum):
     NARRATION = "NARRATION"
 
 
+class NarrationRole(StrEnum):
+    """Provider-neutral semantic role for one spoken timeline segment."""
+
+    INTRO = "INTRO"
+    TRACK_INTRO = "TRACK_INTRO"
+    TRANSITION = "TRANSITION"
+    OUTRO = "OUTRO"
+    GENERAL = "GENERAL"
+
+
 class SegmentState(StrEnum):
     PLANNED = "PLANNED"
     SCRIPT_READY = "SCRIPT_READY"
@@ -126,6 +136,7 @@ class NarrationSegment(Segment):
     # an optional pronunciation-aware rendering supplied by the Writer.
     tts_text: str | None = Field(default=None, min_length=1)
     tts_cues: list[str] = Field(default_factory=list)
+    narration_role: NarrationRole = NarrationRole.GENERAL
 
 
 class PlayableEpisode(BaseModel):
@@ -137,7 +148,9 @@ class PlayableEpisode(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def duration_seconds(self) -> int:
-        return sum(segment.duration_seconds for segment in self.segments if segment.is_timeline_active)
+        return sum(
+            segment.duration_seconds for segment in self.segments if segment.is_timeline_active
+        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
