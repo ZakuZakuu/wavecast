@@ -96,6 +96,7 @@ def test_writer_prompt_is_tts_aware_and_receives_budget_and_language() -> None:
     assert "Target narration duration seconds: 42" in recorder.prompt
     assert "display `3rd Coast`" in recorder.prompt
     assert "at most one block for each provided slot" in recorder.prompt
+    assert "soft pacing guide, not a quota" in recorder.prompt
     assert "do not add extra blocks just to fill the target duration" in recorder.prompt
     assert "must return exactly one `outro` block" in recorder.prompt
 
@@ -121,6 +122,8 @@ def test_writer_radio_guidance_is_scoped_to_zh_cn() -> None:
     asyncio.run(WriterService(zh).write(chapter, [], output_language=OutputLanguage.ZH_CN))
     assert "先说具体可听的声音" in zh.prompt
     assert "证据不足时宁可简单准确" in zh.prompt
+    assert "20–35 秒" in zh.prompt
+    assert "已经听过的中间 artist/track/listen-for detail" in zh.prompt
     assert "OUTRO 回扣本期 thesis" in zh.prompt
 
     for language in (OutputLanguage.EN_US, OutputLanguage.JA_JP):

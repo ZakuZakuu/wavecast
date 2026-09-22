@@ -848,23 +848,26 @@ def _build_narration_slot_contexts(
                 )
             )
 
-        # The first playable chapter owns only the opening INTRO.  Its next
-        # inter-track gap belongs to the upcoming track or an intervening
-        # narrative-only chapter.
+        # The first playable chapter is the immediate playback promise.  When
+        # later content exists, it must not also claim the gap after its track:
+        # the next playable chapter (or an intervening narrative chapter) owns
+        # that physical A -> B gap.  A single-track episode still needs a final
+        # OUTRO, so let its first-and-final chapter own the tail instead.
         if item.track is not None and previous_index is None and index == 0:
-            claim_gap("opening", None, item.music_index, item.chapter.index)
-            chapter_slots.append(
-                NarrationSlotContext(
-                    slot_id=f"chapter-{item.chapter.index}:after-track",
-                    chapter_index=item.chapter.index,
-                    placement=NarrationSlotPlacement.AFTER_TRACK,
-                    allowed_block_kinds=[RadioScriptBlockKind.INTRO],
-                    chapter_track=item.track,
-                    just_played_track=item.track,
-                    upcoming_track=upcoming,
-                    is_opening=True,
+            if is_final_chapter:
+                claim_gap("final", item.music_index, None, item.chapter.index)
+                chapter_slots.append(
+                    NarrationSlotContext(
+                        slot_id=f"chapter-{item.chapter.index}:after-final",
+                        chapter_index=item.chapter.index,
+                        placement=NarrationSlotPlacement.AFTER_FINAL_TRACK,
+                        allowed_block_kinds=[RadioScriptBlockKind.OUTRO],
+                        chapter_track=item.track,
+                        just_played_track=item.track,
+                        upcoming_track=None,
+                        is_final=True,
+                    )
                 )
-            )
         elif item.track is not None and is_final_chapter:
             # Only the final chapter owns the tail.
             claim_gap("final", item.music_index, None, item.chapter.index)
