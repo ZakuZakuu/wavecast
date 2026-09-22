@@ -35,6 +35,12 @@ class ProviderSchemaValidationError(ProviderInvalidResponseError):
     pass
 
 
+class ProviderIncompleteResponseError(ProviderInvalidResponseError):
+    """The provider stopped before completing a non-output-limit response."""
+
+    pass
+
+
 class ProviderOutputLimitError(ProviderInvalidResponseError):
     """The provider stopped before producing a complete structured response."""
 

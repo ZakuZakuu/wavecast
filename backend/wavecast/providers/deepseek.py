@@ -21,6 +21,7 @@ from .config import ProviderSettings
 from .errors import (
     ProviderAuthenticationError,
     ProviderError,
+    ProviderIncompleteResponseError,
     ProviderInvalidResponseError,
     ProviderOutputLimitError,
     ProviderRateLimitError,
@@ -166,7 +167,10 @@ class DeepSeekLLMProvider:
             retry_invalid_output = isinstance(last_failure, ProviderInvalidResponseError)
             if (
                 attempt == attempt_limit - 1
-                and isinstance(last_failure, ProviderSchemaValidationError)
+                and isinstance(
+                    last_failure,
+                    (ProviderSchemaValidationError, ProviderIncompleteResponseError),
+                )
                 and allow_single_structured_retry
                 and not structured_retry_used
             ):
@@ -229,6 +233,10 @@ class DeepSeekLLMProvider:
                     "deepseek response was incomplete (max_output_tokens)"
                 )
             suffix = f" ({normalized_reason})" if normalized_reason else ""
+            if status == "incomplete":
+                raise ProviderIncompleteResponseError(
+                    f"deepseek response was {status}{suffix}"
+                )
             raise ProviderInvalidResponseError(f"deepseek response was {status}{suffix}")
 
         # Parse the explicit Responses payload.  The SDK's output_text convenience
