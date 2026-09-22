@@ -40,6 +40,9 @@ def test_planner_creates_voice_music_overlap_and_ducking() -> None:
     assert music_b.timeline_start_seconds < voice.timeline_end_seconds
     assert any(0 < point.gain <= 0.35 for point in music_a.gain_automation)
     assert music_a.timeline_end_seconds > music_b.timeline_start_seconds
+    assert next(point for point in music_a.gain_automation if point.offset_seconds == 0).gain == 1
+    assert next(point for point in music_b.gain_automation if point.offset_seconds == 10).gain == 0.35
+    assert next(point for point in music_b.gain_automation if point.offset_seconds == 10.5).gain == 1
 
 
 def test_planner_is_deterministic_and_bounds_all_clips() -> None:

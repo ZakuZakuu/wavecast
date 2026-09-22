@@ -35,6 +35,8 @@ export const MIX_DEFAULTS = {
   musicFadeOutSeconds: 3,
   voiceFadeSeconds: 0.08,
   duckGain: 0.35,
+  duckAttackSeconds: 0.5,
+  duckReleaseSeconds: 0.5,
 } as const;
 
 type ActiveSegment = Segment & { audio_source_url: string };
@@ -87,25 +89,41 @@ function musicAutomation(
   fadeIn: number,
   fadeOut: number,
   narrationIntervals: Array<[number, number]>,
+  duckAttack: number,
+  duckRelease: number,
 ): GainPoint[] {
   const offsets = new Set<number>([0, duration]);
   if (fadeIn) offsets.add(Math.min(duration, fadeIn));
   if (fadeOut) offsets.add(Math.max(0, duration - fadeOut));
   for (const [narrationStart, narrationEnd] of narrationIntervals) {
     if (narrationEnd > start && narrationStart < start + duration) {
+      offsets.add(Math.max(0, narrationStart - duckAttack - start));
       offsets.add(Math.max(0, narrationStart - start));
       offsets.add(Math.min(duration, narrationEnd - start));
+      offsets.add(Math.min(duration, narrationEnd + duckRelease - start));
     }
   }
 
-  return uniquePoints([...offsets].sort((left, right) => left - right).map((offset) => {
-    const absolute = start + offset;
-    const ducked = narrationIntervals.some(([begin, end]) => absolute >= begin && absolute < end);
-    return {
-      offsetSeconds: offset,
-      gain: fadeFactor(offset, duration, fadeIn, fadeOut) * (ducked ? MIX_DEFAULTS.duckGain : 1),
-    };
-  }));
+  const duckFactor = (absolute: number): number => {
+    let factor = 1;
+    for (const [narrationStart, narrationEnd] of narrationIntervals) {
+      if (narrationStart - duckAttack < absolute && absolute < narrationStart) {
+        const progress = (absolute - (narrationStart - duckAttack)) / duckAttack;
+        factor = Math.min(factor, 1 + (MIX_DEFAULTS.duckGain - 1) * progress);
+      } else if (absolute >= narrationStart && absolute < narrationEnd) {
+        factor = Math.min(factor, MIX_DEFAULTS.duckGain);
+      } else if (absolute >= narrationEnd && absolute < narrationEnd + duckRelease) {
+        const progress = (absolute - narrationEnd) / duckRelease;
+        factor = Math.min(factor, MIX_DEFAULTS.duckGain + (1 - MIX_DEFAULTS.duckGain) * progress);
+      }
+    }
+    return factor;
+  };
+
+  return uniquePoints([...offsets].sort((left, right) => left - right).map((offset) => ({
+    offsetSeconds: offset,
+    gain: fadeFactor(offset, duration, fadeIn, fadeOut) * duckFactor(start + offset),
+  })));
 }
 
 export function buildMixPlan(episode: LiveEpisode): MixPlan {
@@ -168,7 +186,15 @@ export function buildMixPlan(episode: LiveEpisode): MixPlan {
       id: `${segment.id}:music`, segmentId: segment.id, sourceUrl: segment.audio_source_url,
       lane: "MUSIC", timelineStartSeconds: start, sourceOffsetSeconds: 0,
       playableDurationSeconds: duration, gain: 1, fadeInSeconds: fadeIn, fadeOutSeconds: fadeOut,
-      gainAutomation: musicAutomation(start, duration, fadeIn, fadeOut, narrationIntervals),
+      gainAutomation: musicAutomation(
+        start,
+        duration,
+        fadeIn,
+        fadeOut,
+        narrationIntervals,
+        MIX_DEFAULTS.duckAttackSeconds,
+        MIX_DEFAULTS.duckReleaseSeconds,
+      ),
     };
   });
 
@@ -223,4 +249,72 @@ export function segmentIdAt(plan: MixPlan, positionSeconds: number): string | un
   const active = activeMixClipsAt(plan, positionSeconds);
   return active.find((clip) => clip.lane === "VOICE")?.segmentId
     ?? active[active.length - 1]?.segmentId;
+}
+
+
+export type MixTransport = {
+  mixPositionSeconds: number;
+  linearPositionSeconds: number;
+  segmentId?: string;
+};
+
+function linearSegmentStart(episode: LiveEpisode, segmentId: string): number {
+  let total = 0;
+  for (const segment of [...episode.segments].sort((left, right) => left.order - right.order)) {
+    if (segment.state !== "SKIPPED") {
+      if (segment.id === segmentId) return total;
+      total += segment.duration_seconds ?? segment.actual_duration_seconds ?? segment.planned_duration_seconds;
+    }
+  }
+  return total;
+}
+
+function linearSegmentAt(episode: LiveEpisode, positionSeconds: number): Segment | undefined {
+  let total = 0;
+  for (const segment of [...episode.segments].sort((left, right) => left.order - right.order)) {
+    if (segment.state === "SKIPPED") continue;
+    const duration = segment.duration_seconds ?? segment.actual_duration_seconds ?? segment.planned_duration_seconds;
+    if (positionSeconds >= total && positionSeconds < total + duration) return segment;
+    total += duration;
+  }
+  return undefined;
+}
+
+export function mixPositionToLinearPosition(
+  episode: LiveEpisode,
+  plan: MixPlan,
+  positionSeconds: number,
+): MixTransport {
+  const mixPosition = clampMixPosition(plan, positionSeconds);
+  const active = activeMixClipsAt(plan, mixPosition);
+  const clip = active.find((candidate) => candidate.lane === "VOICE") ?? active[active.length - 1];
+  if (!clip) return { mixPositionSeconds: mixPosition, linearPositionSeconds: mixPosition };
+
+  const offset = Math.max(
+    0,
+    Math.min(clip.playableDurationSeconds, mixPosition - clip.timelineStartSeconds),
+  );
+  return {
+    mixPositionSeconds: mixPosition,
+    linearPositionSeconds: linearSegmentStart(episode, clip.segmentId) + offset,
+    segmentId: clip.segmentId,
+  };
+}
+
+export function linearPositionToMixPosition(
+  episode: LiveEpisode,
+  plan: MixPlan,
+  positionSeconds: number,
+): MixTransport {
+  const linearPosition = Math.max(0, positionSeconds);
+  const segment = linearSegmentAt(episode, linearPosition);
+  if (!segment) return { mixPositionSeconds: clampMixPosition(plan, linearPosition), linearPositionSeconds: linearPosition };
+  const clip = plan.clips.find((candidate) => candidate.segmentId === segment.id);
+  if (!clip) return { mixPositionSeconds: clampMixPosition(plan, linearPosition), linearPositionSeconds: linearPosition };
+  const offset = Math.max(0, Math.min(clip.playableDurationSeconds, linearPosition - linearSegmentStart(episode, segment.id)));
+  return {
+    mixPositionSeconds: clampMixPosition(plan, clip.timelineStartSeconds + offset),
+    linearPositionSeconds: linearPosition,
+    segmentId: segment.id,
+  };
 }

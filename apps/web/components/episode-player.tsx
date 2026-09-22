@@ -8,7 +8,7 @@ import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
-import { buildMixPlan, segmentIdAt } from "../lib/mix-timeline";
+import { buildMixPlan, linearPositionToMixPosition, mixPositionToLinearPosition } from "../lib/mix-timeline";
 import { MixAudioPlayer } from "./mix-audio-player";
 
 export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeId?: string }) {
@@ -20,6 +20,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
   const playbackAnchorRef = useRef<ReturnType<typeof playbackAnchor>>(null);
+  const localEpisodeRef = useRef<LiveEpisode | null>(null);
+  const mixPlanRef = useRef<ReturnType<typeof buildMixPlan> | null>(null);
+  const mixSegmentRef = useRef<string | undefined>(undefined);
+  const mixCommitInFlightRef = useRef<string | null>(null);
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
     ? episode
@@ -28,12 +32,34 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     () => localEpisode?.segments.find((segment) => segment.id === localEpisode.current_segment_id),
     [localEpisode],
   );
+  const mixPlanKey = localEpisode?.segments.map((item) => (
+    `${item.id}:${item.order}:${item.kind}:${item.audio_source_url ? "ready" : "not-ready"}:${item.audio_source_url}:${item.duration_seconds}`
+  )).join("|") ?? "";
+  if (localEpisodeRef.current?.id !== localEpisode?.id) {
+    mixSegmentRef.current = undefined;
+    mixCommitInFlightRef.current = null;
+  }
+  localEpisodeRef.current = localEpisode;
+  if (localEpisode && mixPlanKey) {
+    try {
+      mixPlanRef.current = buildMixPlan(localEpisode);
+    } catch {
+      mixPlanRef.current = null;
+    }
+  } else {
+    mixPlanRef.current = null;
+  }
 
   useEffect(() => {
     let mounted = true;
     const leaveOnPageExit = () => {
-      if (episodeIdRef.current) {
-        void api.checkpoint(episodeIdRef.current, browserPositionRef.current);
+      const currentEpisode = localEpisodeRef.current;
+      const plan = mixPlanRef.current;
+      if (episodeIdRef.current && currentEpisode) {
+        const transport = plan
+          ? mixPositionToLinearPosition(currentEpisode, plan, browserPositionRef.current)
+          : { linearPositionSeconds: browserPositionRef.current };
+        void api.checkpoint(episodeIdRef.current, Math.floor(transport.linearPositionSeconds));
         navigator.sendBeacon(`/api/episodes/${episodeIdRef.current}/leave`);
       }
     };
@@ -59,15 +85,18 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [localEpisode?.id, setEpisode]);
 
   useEffect(() => {
-    const position = reconcileBrowserPosition(
+    const linearPosition = reconcileBrowserPosition(
       browserPositionRef.current,
       playbackAnchorRef.current,
       localEpisode,
     );
+    const position = localEpisode && mixPlanRef.current
+      ? linearPositionToMixPosition(localEpisode, mixPlanRef.current, linearPosition).mixPositionSeconds
+      : linearPosition;
     if (seekPreview === null) setBrowserPosition(position);
     browserPositionRef.current = position;
     playbackAnchorRef.current = playbackAnchor(localEpisode);
-  }, [localEpisode?.current_segment_id, localEpisode?.playback_position_seconds]);
+  }, [localEpisode?.current_segment_id, localEpisode?.playback_position_seconds, mixPlanKey]);
 
   useEffect(() => {
     if (!localEpisode?.is_listener_active) return;
@@ -106,25 +135,47 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [localEpisode?.id, localEpisode?.is_playing]);
 
   const handleMixPosition = useCallback((positionSeconds: number) => {
-    if (!localEpisode) return;
-    const position = Math.floor(positionSeconds);
-    setBrowserPosition(position);
-    browserPositionRef.current = position;
-    try {
-      const plan = buildMixPlan(localEpisode);
-      const segmentId = segmentIdAt(plan, positionSeconds);
-      const arrangedStart = segmentId ? plan.segmentStarts[segmentId] ?? 0 : 0;
-      const linearPosition = segmentId
-        ? Math.floor(segmentStart(localEpisode, segmentId) + Math.max(0, positionSeconds - arrangedStart))
-        : position;
-      if (linearPosition > localEpisode.playback_position_seconds && linearPosition % 5 === 0 && checkpointRef.current !== linearPosition) {
-        checkpointRef.current = linearPosition;
-        void api.checkpoint(localEpisode.id, linearPosition);
-      }
-    } catch {
-      // Keep the local mix clock usable if a progressive snapshot is incomplete.
+    if (!localEpisode || !mixPlanRef.current) return;
+    const transport = mixPositionToLinearPosition(localEpisode, mixPlanRef.current, positionSeconds);
+    const linearPosition = Math.floor(transport.linearPositionSeconds);
+    setBrowserPosition(positionSeconds);
+    browserPositionRef.current = positionSeconds;
+
+    if (
+      transport.segmentId
+      && transport.segmentId !== localEpisode.current_segment_id
+      && mixCommitInFlightRef.current !== transport.segmentId
+    ) {
+      mixSegmentRef.current = transport.segmentId;
+      mixCommitInFlightRef.current = transport.segmentId;
+      void api.commit(localEpisode.id, transport.segmentId)
+        .then((response) => {
+          playbackAnchorRef.current = playbackAnchor(response);
+          setEpisode(response);
+          setBrowserPosition(browserPositionRef.current);
+          setError(null);
+        })
+        .catch((reason: unknown) => {
+          if (mixSegmentRef.current === transport.segmentId) mixSegmentRef.current = undefined;
+          setError(reason instanceof Error ? reason.message : "Playback synchronization failed");
+        })
+        .finally(() => {
+          if (mixCommitInFlightRef.current === transport.segmentId) {
+            mixCommitInFlightRef.current = null;
+          }
+        });
     }
-  }, [localEpisode]);
+
+    if (
+      transport.segmentId === localEpisode.current_segment_id
+      && linearPosition > localEpisode.playback_position_seconds
+      && linearPosition % 5 === 0
+      && checkpointRef.current !== linearPosition
+    ) {
+      checkpointRef.current = linearPosition;
+      void api.checkpoint(localEpisode.id, linearPosition);
+    }
+  }, [localEpisode, setEpisode]);
 
   const handleAudioPosition = useCallback((segmentPosition: number) => {
     if (!localEpisode || !current) return;
@@ -138,11 +189,18 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [current, localEpisode]);
 
   const commitSeek = useCallback((value: number) => {
-    if (!localEpisode || !isSeekAllowed(localEpisode, value)) return;
+    if (!localEpisode) return;
+    const linearValue = mixPlanRef.current
+      ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, value).linearPositionSeconds
+      : value;
+    if (!isSeekAllowed(localEpisode, linearValue)) return;
     setSeekPreview(null);
-    void api.seek(localEpisode.id, value).then((response) => {
-      setBrowserPosition(value);
-      browserPositionRef.current = value;
+    void api.seek(localEpisode.id, Math.floor(linearValue)).then((response) => {
+      const mixValue = mixPlanRef.current
+        ? linearPositionToMixPosition(localEpisode, mixPlanRef.current, linearValue).mixPositionSeconds
+        : value;
+      setBrowserPosition(mixValue);
+      browserPositionRef.current = mixValue;
       playbackAnchorRef.current = playbackAnchor(response);
       setEpisode(response);
       setError(null);
@@ -157,9 +215,22 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   const pausePlayback = useCallback(async () => {
     if (!localEpisode) return;
-    await update(api.checkpoint(localEpisode.id, browserPosition));
-    await update(api.pause(localEpisode.id));
-  }, [browserPosition, localEpisode]);
+    try {
+      const transport = mixPlanRef.current
+        ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, browserPositionRef.current)
+        : { linearPositionSeconds: browserPositionRef.current, segmentId: localEpisode.current_segment_id };
+      let checkpointEpisode = localEpisode;
+      if (transport.segmentId && transport.segmentId !== localEpisode.current_segment_id) {
+        checkpointEpisode = await api.commit(localEpisode.id, transport.segmentId);
+        playbackAnchorRef.current = playbackAnchor(checkpointEpisode);
+        setEpisode(checkpointEpisode);
+      }
+      await update(api.checkpoint(checkpointEpisode.id, Math.floor(transport.linearPositionSeconds)));
+      await update(api.pause(checkpointEpisode.id));
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Player action failed");
+    }
+  }, [localEpisode, setEpisode]);
 
   if (error && !localEpisode) {
     return <main className="shell"><Link href="/">← Home</Link><p className="error">{error} — 请先启动 API 服务。</p></main>;
@@ -168,10 +239,16 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     return <main className="shell"><p className="eyebrow">STARTING THE OPENING TRACK</p><h1>正在接入节目…</h1></main>;
   }
 
-  const generatedPercent = Math.round((localEpisode.generated_frontier_seconds / localEpisode.timeline_duration_seconds) * 100);
+  const maxSeekPosition = mixPlanRef.current
+    ? linearPositionToMixPosition(localEpisode, mixPlanRef.current, localEpisode.generated_frontier_seconds).mixPositionSeconds
+    : localEpisode.generated_frontier_seconds;
+  const generatedPercent = Math.round((maxSeekPosition / (mixPlanRef.current?.durationSeconds ?? localEpisode.timeline_duration_seconds)) * 100);
   const displayedPosition = seekPreview ?? browserPosition;
+  const displayedLinearPosition = mixPlanRef.current
+    ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, browserPosition).linearPositionSeconds
+    : browserPosition;
   const currentOffset = current
-    ? segmentOffset(localEpisode, current.id, browserPosition)
+    ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
   const upcoming = current ? nextVisibleSegment(localEpisode) : undefined;
   return (
@@ -203,10 +280,13 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         </div>
       </section>
       <section className="timeline" aria-label="episode timeline">
-        <div className="timeline-label"><span>当前 {formatSeconds(displayedPosition)} / {formatSeconds(localEpisode.timeline_duration_seconds)}</span><span>可回听 {formatSeconds(localEpisode.generated_frontier_seconds)}</span></div>
-        <input aria-label="Seek within generated audio" type="range" min="0" max={localEpisode.generated_frontier_seconds} value={displayedPosition} onChange={(event) => {
+        <div className="timeline-label"><span>当前 {formatSeconds(displayedPosition)} / {formatSeconds(mixPlanRef.current?.durationSeconds ?? localEpisode.timeline_duration_seconds)}</span><span>可回听 {formatSeconds(maxSeekPosition)}</span></div>
+        <input aria-label="Seek within generated audio" type="range" min="0" max={maxSeekPosition} value={displayedPosition} onChange={(event) => {
           const value = Number(event.target.value);
-          if (isSeekAllowed(localEpisode, value)) setSeekPreview(value);
+          const linearValue = mixPlanRef.current
+            ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, value).linearPositionSeconds
+            : value;
+          if (isSeekAllowed(localEpisode, linearValue)) setSeekPreview(value);
         }} onPointerUp={commitSeekPreview} onKeyUp={commitSeekPreview} onBlur={commitSeekPreview} style={{ "--generated": `${generatedPercent}%` } as React.CSSProperties} />
         <p>亮色区域可以回听；当前时间轴 {formatSeconds(localEpisode.timeline_duration_seconds)}，节目承诺不会随 mock 片段缩短。</p>
       </section>
