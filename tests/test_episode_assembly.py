@@ -173,10 +173,10 @@ def test_writer_runs_only_after_resolution_and_receives_next_track_context(tmp_p
     )
 
     writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
-    assert len(writer_calls) == 4
-    assert "Next track metadata: Signal Garden — Midnight Transfer" in writer_calls[0]["prompt"]
+    assert len(writer_calls) == 3
+    assert "\"canonical_title\": \"Midnight Transfer\"" in writer_calls[0]["prompt"]
     assert "Previous context:" in writer_calls[1]["prompt"]
-    assert sum(block.kind is RadioScriptBlockKind.INTRO for block in result.radio_script.blocks) == 1
+    assert sum(block.kind is RadioScriptBlockKind.INTRO for block in result.radio_script.blocks) == 0
     assert sum(block.kind is RadioScriptBlockKind.OUTRO for block in result.radio_script.blocks) == 1
     assert all(
         not (
@@ -248,7 +248,7 @@ def test_writer_skips_chapters_without_owned_slots(tmp_path) -> None:
         json.loads(call["prompt"].split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0])["index"]
         for call in writer_calls
     ]
-    assert called_indices == [0, 1, 3]
+    assert called_indices == [1, 3]
     assert result.writer_chapters[2].available_slots == []
     assert result.writer_chapters[2].normalized_blocks == []
     assert any(block.kind is RadioScriptBlockKind.OUTRO for block in result.radio_script.blocks)
@@ -494,25 +494,26 @@ def test_duplicate_before_track_intro_blocks_collapse_into_final_slots() -> None
     assert script.blocks[1].text == "duplicate intro final outro"
 
 
-def test_duplicate_opening_intro_blocks_collapse_to_one_intro() -> None:
-    script, _ = _assemble_writer_fixture(
-        [0, 1],
-        [
-            RadioScript(
-                blocks=[
-                    block(RadioScriptBlockKind.INTRO, "opening"),
-                    block(RadioScriptBlockKind.INTRO, "duplicate opening"),
-                ]
-            ),
-            RadioScript(blocks=[block(RadioScriptBlockKind.OUTRO, "final outro")]),
-        ],
+def test_direct_music_gap_has_one_slot_owner() -> None:
+    contexts = _build_narration_slot_contexts(
+        [_resolved_chapter(0, 0), _resolved_chapter(1, 1)]
     )
 
-    assert [item.kind for item in script.blocks] == [
-        RadioScriptBlockKind.INTRO,
-        RadioScriptBlockKind.OUTRO,
+    assert contexts[0] == []
+    assert [context.slot_id for context in contexts[1]] == [
+        "chapter-1:before-track",
+        "chapter-1:after-final",
     ]
-    assert script.blocks[0].text == "opening duplicate opening"
+    assert contexts[1][0].allowed_block_kinds == [RadioScriptBlockKind.TRACK_INTRO]
+    assert contexts[1][1].allowed_block_kinds == [RadioScriptBlockKind.OUTRO]
+
+
+def test_single_track_episode_keeps_final_outro_slot() -> None:
+    contexts = _build_narration_slot_contexts([_resolved_chapter(0, 0)])
+
+    assert [context.allowed_block_kinds for context in contexts[0]] == [
+        [RadioScriptBlockKind.OUTRO]
+    ]
 
 
 def test_duplicate_narrative_middle_transitions_collapse_to_one_slot() -> None:
@@ -760,9 +761,9 @@ def test_unresolved_proposal_is_reported_but_narrative_is_still_written(tmp_path
     assert result.skeleton.chapters[1].track.artist == "Event Listing"
     assert result.unresolved_proposals[0].proposal.artist == "Event Listing"
     writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
-    assert len(writer_calls) == 3
+    assert len(writer_calls) == 2
     unresolved_writer_chapter = json.loads(
-        writer_calls[1]["prompt"].split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0]
+        writer_calls[0]["prompt"].split("Chapter: ", 1)[1].split("\nEvidence:", 1)[0]
     )
     assert unresolved_writer_chapter["track"] is None
     assert any(
@@ -960,7 +961,7 @@ def test_max_tracks_limits_music_but_preserves_narrative_only_chapters(tmp_path)
 
     assert len(result.resolved_tracks) == 4
     assert [chapter.index for chapter in result.skeleton.chapters] == [0, 1, 2, 3, 4, 5]
-    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 4
+    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 3
     assert {"narrative beat 1", "narrative beat 3"}.issubset(
         {segment.narration_text for segment in result.playable_episode.segments}
     )
@@ -1024,7 +1025,7 @@ def test_narrative_only_chapter_survives_writer_and_assembly(tmp_path) -> None:
         )
     )
 
-    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 3
+    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 2
     assert [chapter.track is None for chapter in result.skeleton.chapters] == [False, True, False]
     assert len(result.resolved_tracks) == 2
     assert any(
@@ -1092,7 +1093,7 @@ def test_writer_uses_resolved_narration_slots_for_sparse_playback_sequence(tmp_p
         "Midnight Transfer",
         "Daybreak in Stereo",
     ]
-    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 4
+    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 3
 
     middle_prompt = next(
         call["prompt"]
@@ -1124,11 +1125,10 @@ def test_writer_uses_resolved_narration_slots_for_sparse_playback_sequence(tmp_p
     assert final_slot.just_played_track is not None
     assert final_slot.just_played_track.canonical_title == "Daybreak in Stereo"
     assert final_slot.upcoming_track is None
-    assert sum(len(item.parsed_blocks) for item in result.writer_chapters) == 4
-    assert sum(len(item.normalized_blocks) for item in result.writer_chapters) == 4
-    assert sum(segment.kind.value == "NARRATION" for segment in result.playable_episode.segments) == 4
+    assert sum(len(item.parsed_blocks) for item in result.writer_chapters) == 3
+    assert sum(len(item.normalized_blocks) for item in result.writer_chapters) == 3
+    assert sum(segment.kind.value == "NARRATION" for segment in result.playable_episode.segments) == 3
     assert [segment.narration_text for segment in result.playable_episode.segments if segment.narration_text] == [
-        "slot 0",
         "slot 1",
         "slot 2",
         "slot 4",
@@ -1189,11 +1189,7 @@ def test_writer_slots_match_each_final_playback_adjacency_and_preserve_blocks(tm
     )
     assert 'chapter-1:before-track' in middle_prompt
     assert 'chapter-1:after-track' not in middle_prompt
-    opening_after = diagnostics[0].normalized_slot_contexts[0]
-    assert opening_after.just_played_track is not None
-    assert opening_after.just_played_track.canonical_title == "Neon First Light"
-    assert opening_after.upcoming_track is not None
-    assert opening_after.upcoming_track.canonical_title == "Midnight Transfer"
+    assert diagnostics[0].available_slots == []
 
     middle = diagnostics[1]
     before_b = middle.normalized_slot_contexts[0]
@@ -1219,7 +1215,7 @@ def test_writer_slots_match_each_final_playback_adjacency_and_preserve_blocks(tm
         for segment in result.playable_episode.segments
         if segment.narration_text is not None
     ]
-    assert narration == ["after A", "before B", "unresolved middle", "after C"]
+    assert narration == ["before B", "unresolved middle", "after C"]
     assert len(narration) == sum(len(item.parsed_blocks) for item in diagnostics)
 
 
@@ -1298,9 +1294,18 @@ def test_assembly_preserves_auto_language_and_duration_budget(tmp_path) -> None:
     writer_prompts = [call["prompt"] for call in llm.calls if call["output_type"] is RadioScript]
     assert writer_prompts
     assert all("output language zh-CN" in prompt for prompt in writer_prompts)
+    writer_budgets = [
+        budget
+        for budget, chapter in zip(
+            result.timing_plan.chapter_budgets,
+            result.writer_chapters,
+            strict=True,
+        )
+        if chapter.available_slots
+    ]
     assert all(
         f"Target narration duration seconds: {budget.target_narration_seconds}" in prompt
-        for prompt, budget in zip(writer_prompts, result.timing_plan.chapter_budgets, strict=True)
+        for prompt, budget in zip(writer_prompts, writer_budgets, strict=True)
     )
     assert result.duration_summary.narration_seconds >= 0
 
@@ -1379,8 +1384,8 @@ def test_middle_unresolved_chapter_keeps_narrative_writer_order(tmp_path) -> Non
     )
 
     writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
-    assert '"index":1' in writer_calls[1]["prompt"]
-    assert '"index":2' not in writer_calls[1]["prompt"]
+    assert '"index":1' in writer_calls[0]["prompt"]
+    assert '"index":2' in writer_calls[1]["prompt"]
     assert [chapter.index for chapter in result.skeleton.chapters] == [0, 1, 2]
     assert [
         chapter.connection_from_previous_track for chapter in result.writer_chapters
