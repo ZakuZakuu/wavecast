@@ -8,7 +8,8 @@ import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
-import { buildMixPlan, linearPositionToMixPosition, mixPositionToLinearPosition } from "../lib/mix-timeline";
+import { linearPositionToMixPosition, mixPositionToLinearPosition } from "../lib/mix-timeline";
+import type { MixPlan } from "../lib/mix-timeline";
 import { createLatestSegmentCommitQueue, type LatestSegmentCommitQueue } from "../lib/mix-commit-queue";
 import { MixAudioPlayer } from "./mix-audio-player";
 
@@ -22,7 +23,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const browserPositionRef = useRef(0);
   const playbackAnchorRef = useRef<ReturnType<typeof playbackAnchor>>(null);
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
-  const mixPlanRef = useRef<ReturnType<typeof buildMixPlan> | null>(null);
+  const mixPlanRef = useRef<MixPlan | null>(null);
   const mixCommitQueueRef = useRef<LatestSegmentCommitQueue | null>(null);
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
@@ -32,6 +33,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     () => localEpisode?.segments.find((segment) => segment.id === localEpisode.current_segment_id),
     [localEpisode],
   );
+  const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
   const mixPlanKey = localEpisode?.segments.map((item) => (
     `${item.id}:${item.order}:${item.kind}:${item.audio_source_url ? "ready" : "not-ready"}:${item.audio_source_url}:${item.duration_seconds}`
   )).join("|") ?? "";
@@ -40,15 +42,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     mixCommitQueueRef.current = null;
   }
   localEpisodeRef.current = localEpisode;
-  if (localEpisode && mixPlanKey) {
-    try {
-      mixPlanRef.current = buildMixPlan(localEpisode);
-    } catch {
-      mixPlanRef.current = null;
-    }
-  } else {
-    mixPlanRef.current = null;
-  }
+  mixPlanRef.current = mixPlan;
 
   if (!mixCommitQueueRef.current && localEpisode) {
     mixCommitQueueRef.current = createLatestSegmentCommitQueue({
@@ -99,6 +93,24 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       setEpisode(incoming);
     });
   }, [localEpisode?.id, setEpisode]);
+
+  useEffect(() => {
+    if (!localEpisode || !mixPlanKey) {
+      setMixPlan(null);
+      return undefined;
+    }
+    let active = true;
+    void api.mixPlan(localEpisode.id)
+      .then((plan) => {
+        if (active) setMixPlan(plan);
+      })
+      .catch(() => {
+        if (active) setMixPlan(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [localEpisode?.id, mixPlanKey]);
 
   useEffect(() => {
     const linearPosition = reconcileBrowserPosition(
@@ -275,8 +287,8 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   return (
     <main className="shell player-shell">
       <MixAudioPlayer
-        episode={localEpisode}
         segment={current}
+        plan={mixPlan}
         playing={localEpisode.is_playing && localEpisode.is_listener_active}
         positionSeconds={browserPosition}
         legacyPositionSeconds={currentOffset}

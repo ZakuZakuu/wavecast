@@ -12,7 +12,7 @@ class GainPoint(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    offset_seconds: float = Field(ge=0)
+    offset_seconds: float = Field(ge=0, serialization_alias="offsetSeconds")
     gain: float = Field(ge=0, le=1)
 
 
@@ -22,16 +22,16 @@ class AudioClip(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: str = Field(min_length=1)
-    segment_id: str = Field(min_length=1)
-    source_url: str = Field(min_length=1)
+    segment_id: str = Field(min_length=1, serialization_alias="segmentId")
+    source_url: str = Field(min_length=1, serialization_alias="sourceUrl")
     lane: MixLane
-    timeline_start_seconds: float = Field(ge=0)
-    source_offset_seconds: float = Field(ge=0)
-    playable_duration_seconds: float = Field(gt=0)
+    timeline_start_seconds: float = Field(ge=0, serialization_alias="timelineStartSeconds")
+    source_offset_seconds: float = Field(ge=0, serialization_alias="sourceOffsetSeconds")
+    playable_duration_seconds: float = Field(gt=0, serialization_alias="playableDurationSeconds")
     gain: float = Field(ge=0, le=1, default=1)
-    fade_in_seconds: float = Field(ge=0, default=0)
-    fade_out_seconds: float = Field(ge=0, default=0)
-    gain_automation: tuple[GainPoint, ...] = ()
+    fade_in_seconds: float = Field(ge=0, default=0, serialization_alias="fadeInSeconds")
+    fade_out_seconds: float = Field(ge=0, default=0, serialization_alias="fadeOutSeconds")
+    gain_automation: tuple[GainPoint, ...] = Field(default=(), serialization_alias="gainAutomation")
 
     @model_validator(mode="after")
     def validate_timing(self) -> AudioClip:
@@ -58,10 +58,11 @@ class MixPlan(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    episode_id: str = Field(min_length=1)
-    duration_seconds: float = Field(gt=0)
+    schema_version: Literal[1] = Field(default=1, serialization_alias="schemaVersion")
+    episode_id: str = Field(min_length=1, serialization_alias="episodeId")
+    duration_seconds: float = Field(gt=0, serialization_alias="durationSeconds")
     clips: tuple[AudioClip, ...] = Field(min_length=1)
-    segment_starts: dict[str, float] = Field(default_factory=dict)
+    segment_starts: dict[str, float] = Field(default_factory=dict, serialization_alias="segmentStarts")
 
     @model_validator(mode="after")
     def validate_clips(self) -> MixPlan:
