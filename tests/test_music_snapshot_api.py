@@ -56,6 +56,33 @@ class FakeFetcher:
         )
 
 
+def test_configure_music_snapshot_store_rejects_different_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage_a = LocalObjectStorageProvider(tmp_path / "audio-a")
+    storage_b = LocalObjectStorageProvider(tmp_path / "audio-b")
+    monkeypatch.setattr(api_module, "audio_storage", storage_a)
+    store = MusicSnapshotStore(storage_b, FakeFetcher())
+
+    with pytest.raises(ValueError, match="shared audio storage"):
+        api_module.configure_music_snapshot_store(store)
+
+
+def test_configure_music_snapshot_store_accepts_shared_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    previous = api_module.music_snapshot_store
+    monkeypatch.setattr(api_module, "audio_storage", storage)
+    store = MusicSnapshotStore(storage, FakeFetcher())
+
+    try:
+        api_module.configure_music_snapshot_store(store)
+        assert api_module.music_snapshot_store is store
+    finally:
+        api_module.music_snapshot_store = previous
+
+
 @pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="ffmpeg is not installed")
 def test_prepare_mixdown_snapshots_music_then_existing_mixdown_renders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
