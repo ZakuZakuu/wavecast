@@ -47,7 +47,9 @@ class FakeFetcher:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def fetch(self, source: object) -> SnapshotBytes:
+    async def fetch(
+        self, source: object, *, duration_seconds: int
+    ) -> SnapshotBytes:
         self.calls += 1
         return SnapshotBytes(
             content=wav_bytes(2, 220 + self.calls * 110),
@@ -189,10 +191,12 @@ def test_prepare_mixdown_failure_does_not_partially_mutate_episode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class FailingFetcher(FakeFetcher):
-        async def fetch(self, source: object) -> SnapshotBytes:
+        async def fetch(
+            self, source: object, *, duration_seconds: int
+        ) -> SnapshotBytes:
             if self.calls:
                 raise RuntimeError("provider failure")
-            return await super().fetch(source)
+            return await super().fetch(source, duration_seconds=duration_seconds)
 
     storage = LocalObjectStorageProvider(tmp_path / "audio")
     fetcher = FailingFetcher()

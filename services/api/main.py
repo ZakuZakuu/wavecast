@@ -7,7 +7,6 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
-from urllib.parse import quote
 from uuid import uuid4
 from wave import open as open_wave
 
@@ -21,9 +20,10 @@ from wavecast.arrangement import MixPlan, plan_episode_mix
 from wavecast.materialization import (
     MusicSnapshotError,
     MusicSnapshotStore,
+    MusicSourceClassification,
     MusicSourceKind,
     NarrationMaterializer,
-    UnavailablePlaybackSnapshotFetcher,
+    ProviderPlaybackSnapshotFetcher,
     classify_music_source,
 )
 from wavecast.models.episode import (
@@ -37,6 +37,7 @@ from wavecast.models.episode import (
 )
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
+from wavecast.providers.audius import AudiusMusicProvider
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import ObjectStorageProvider
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
@@ -44,6 +45,7 @@ from wavecast.providers.fakes import MockTTSProvider
 from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.music_http import SidecarMusicProvider
 from wavecast.providers.netease import NeteaseMusicProvider
+from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
 from wavecast.rendering import (
     MixdownArtifact,
@@ -82,8 +84,31 @@ def _build_tts_provider(
 
 _tts_provider = _build_tts_provider(_provider_settings, audio_storage)
 narration_materializer = NarrationMaterializer(_tts_provider, audio_storage)
+
+
+async def _resolve_provider_playback_request(
+    source: MusicSourceClassification,
+) -> ResolvedPlaybackRequest:
+    if source.kind is MusicSourceKind.SIDECAR_PROXY:
+        provider_name, track_id = source.identity.split("/", 1)
+        provider = _build_sidecar_provider(provider_name)
+        try:
+            return await provider.resolve_upstream_playback_request(
+                f"{provider_name}:{track_id}"
+            )
+        finally:
+            await provider.aclose()
+    if source.kind is MusicSourceKind.AUDIUS_PROXY:
+        audius_provider = _build_audius_provider()
+        try:
+            return await audius_provider.resolve_upstream_playback_request(source.identity)
+        finally:
+            await audius_provider.aclose()
+    raise MusicSnapshotError("unsupported_music_source")
+
+
 music_snapshot_store = MusicSnapshotStore(
-    audio_storage, UnavailablePlaybackSnapshotFetcher()
+    audio_storage, ProviderPlaybackSnapshotFetcher(_resolve_provider_playback_request)
 )
 
 
@@ -109,7 +134,7 @@ def configure_narration_materializer(materializer: NarrationMaterializer) -> Non
     narration_materializer = materializer
     audio_storage = materializer.storage
     music_snapshot_store = MusicSnapshotStore(
-        audio_storage, UnavailablePlaybackSnapshotFetcher()
+        audio_storage, ProviderPlaybackSnapshotFetcher(_resolve_provider_playback_request)
     )
 
 app = FastAPI(title="Wavecast API", version="0.2.0")
@@ -270,6 +295,10 @@ async def audio_asset(asset_key: str) -> Response:
     )
 
 
+def _build_audius_provider() -> AudiusMusicProvider:
+    return AudiusMusicProvider(ProviderSettings.from_env())
+
+
 def _build_sidecar_provider(provider_name: str) -> SidecarMusicProvider:
     settings = ProviderSettings.from_env()
     providers: dict[str, type[SidecarMusicProvider]] = {
@@ -282,33 +311,61 @@ def _build_sidecar_provider(provider_name: str) -> SidecarMusicProvider:
     return provider_type(settings)
 
 
-async def _resolve_sidecar_playback_url(provider_name: str, track_id: str) -> str:
+async def _resolve_sidecar_playback_request(
+    provider_name: str, track_id: str
+) -> ResolvedPlaybackRequest:
     provider = _build_sidecar_provider(provider_name)
     try:
-        return await provider.resolve_upstream_playback_url(f"{provider_name}:{track_id}")
+        if hasattr(provider, "resolve_upstream_playback_request"):
+            return await provider.resolve_upstream_playback_request(
+                f"{provider_name}:{track_id}"
+            )
+        return ResolvedPlaybackRequest(
+            provider=provider_name,
+            url=await provider.resolve_upstream_playback_url(
+                f"{provider_name}:{track_id}"
+            ),
+        )
     finally:
         await provider.aclose()
+
+
+async def _resolve_sidecar_playback_url(provider_name: str, track_id: str) -> str:
+    return (await _resolve_sidecar_playback_request(provider_name, track_id)).url
 
 
 @app.get("/api/audio/sidecar/{provider_name}/{track_id:path}")
 async def sidecar_audio(provider_name: str, track_id: str, request: Request) -> StreamingResponse:
     try:
-        playback_url = await _resolve_sidecar_playback_url(provider_name, track_id)
+        playback_request = await _resolve_sidecar_playback_request(
+            provider_name, track_id
+        )
     except ProviderConfigurationError as error:
         raise HTTPException(status_code=503, detail="Sidecar playback is not configured") from error
     except ProviderError as error:
         raise HTTPException(status_code=502, detail="Sidecar playback unavailable") from error
 
     settings = ProviderSettings.from_env()
-    headers = {"Accept": "audio/mpeg"}
+    headers = {"Accept": "audio/mpeg", **playback_request.headers}
     for header_name in ("range", "if-range"):
         if value := request.headers.get(header_name):
             headers[header_name.title()] = value
     client = httpx.AsyncClient(timeout=settings.timeout_seconds, follow_redirects=True)
-    upstream = await client.send(
-        client.build_request("GET", playback_url, headers=headers),
-        stream=True,
-    )
+    if playback_request.params:
+        upstream = await client.send(
+            client.build_request(
+                "GET",
+                playback_request.url,
+                params=playback_request.params,
+                headers=headers,
+            ),
+            stream=True,
+        )
+    else:
+        upstream = await client.send(
+            client.build_request("GET", playback_request.url, headers=headers),
+            stream=True,
+        )
     if upstream.status_code >= 400:
         await upstream.aclose()
         await client.aclose()
@@ -337,29 +394,24 @@ async def sidecar_audio(provider_name: str, track_id: str, request: Request) -> 
 @app.get("/api/audio/audius/{track_id:path}")
 async def audius_audio(track_id: str, request: Request) -> StreamingResponse:
     """Proxy Audius streams without putting backend credentials in the browser."""
-    settings = ProviderSettings.from_env()
-    if settings.mode != "live" or not (
-        settings.audius_api_key or settings.audius_bearer_token
-    ):
-        raise HTTPException(status_code=503, detail="Audius playback is not configured")
+    provider = _build_audius_provider()
+    try:
+        playback_request = await provider.resolve_upstream_playback_request(track_id)
+    except ProviderConfigurationError as error:
+        await provider.aclose()
+        raise HTTPException(status_code=503, detail="Audius playback is not configured") from error
+    await provider.aclose()
 
-    params: dict[str, str] = {}
-    if settings.audius_api_key:
-        params["api_key"] = settings.audius_api_key
-    headers = {"Accept": "audio/mpeg"}
+    headers = {"Accept": "audio/mpeg", **playback_request.headers}
     for header_name in ("range", "if-range"):
         if value := request.headers.get(header_name):
             headers[header_name.title()] = value
-    if settings.audius_bearer_token:
-        headers["Authorization"] = f"Bearer {settings.audius_bearer_token}"
 
+    settings = ProviderSettings.from_env()
     client = httpx.AsyncClient(timeout=settings.timeout_seconds, follow_redirects=True)
     upstream = await client.send(
         client.build_request(
-            "GET",
-            f"{settings.audius_base_url.rstrip('/')}/tracks/{quote(track_id, safe='')}/stream",
-            params=params,
-            headers=headers,
+            "GET", playback_request.url, params=playback_request.params, headers=headers
         ),
         stream=True,
     )
@@ -487,7 +539,9 @@ async def prepare_mixdown(episode_id: str, request: Request) -> MixdownPreparati
             continue
         try:
             snapshot = await music_snapshot_store.snapshot(
-                classification, track_ref=segment.track_ref
+                classification,
+                track_ref=segment.track_ref,
+                duration_seconds=segment.duration_seconds,
             )
         except MusicSnapshotError as error:
             blocked.append(

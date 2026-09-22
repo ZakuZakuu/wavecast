@@ -16,6 +16,7 @@ from .config import ProviderSettings
 from .contracts import AudioAsset, AudioAssetType, MusicProvider, TrackMetadata
 from .errors import ProviderConfigurationError, ProviderInvalidResponseError
 from .http import request_json
+from .playback import ResolvedPlaybackRequest
 
 if TYPE_CHECKING:
     from wavecast.intelligence.models import ResolvedTrack
@@ -75,13 +76,20 @@ class SidecarMusicProvider(MusicProvider):
 
     async def resolve_upstream_playback_url(self, track_ref: str) -> str:
         """Resolve the current sidecar URL without exposing it to the browser."""
+        request = await self.resolve_upstream_playback_request(track_ref)
+        return request.url
+
+    async def resolve_upstream_playback_request(
+        self, track_ref: str
+    ) -> ResolvedPlaybackRequest:
+        """Resolve a provider request shared by browser and snapshot playback."""
         metadata = await self.resolve_track(track_ref)
         playback_url = await self._resolve_upstream_playback_url(metadata)
         if not playback_url or not metadata.playable:
             raise ProviderInvalidResponseError(
                 f"{self.provider_name} returned an unplayable track asset"
             )
-        return playback_url
+        return ResolvedPlaybackRequest(provider=self.provider_name, url=playback_url)
 
     def playback_proxy_url(self, track_ref: str) -> str:
         provider_id = _provider_id(track_ref, self.track_ref_prefix)

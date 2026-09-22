@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+import httpx
+
+if TYPE_CHECKING:
+    from wavecast.providers.playback import ResolvedPlaybackRequest
 from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,7 +50,9 @@ class StoredMusicAsset(BaseModel):
 
 
 class PlaybackSnapshotFetcher(Protocol):
-    async def fetch(self, source: MusicSourceClassification) -> SnapshotBytes: ...
+    async def fetch(
+        self, source: MusicSourceClassification, *, duration_seconds: int
+    ) -> SnapshotBytes: ...
 
 
 class MusicSnapshotError(ValueError):
@@ -54,8 +62,93 @@ class MusicSnapshotError(ValueError):
 
 
 class UnavailablePlaybackSnapshotFetcher:
-    async def fetch(self, source: MusicSourceClassification) -> SnapshotBytes:
+    async def fetch(
+        self, source: MusicSourceClassification, *, duration_seconds: int
+    ) -> SnapshotBytes:
         raise MusicSnapshotError("snapshot_not_configured")
+
+
+class ProviderPlaybackSnapshotFetcher:
+    """Fetch complete provider playback assets through the shared request seam."""
+
+    def __init__(
+        self,
+        resolver: Callable[
+            [MusicSourceClassification], Awaitable[ResolvedPlaybackRequest]
+        ],
+        *,
+        max_bytes: int = 64 * 1024 * 1024,
+        timeout_seconds: float = 30.0,
+        client_factory: Callable[[float], httpx.AsyncClient] | None = None,
+    ) -> None:
+        self.resolver = resolver
+        self.max_bytes = max_bytes
+        self.timeout_seconds = timeout_seconds
+        self.client_factory = client_factory or _default_snapshot_client
+
+    async def fetch(
+        self, source: MusicSourceClassification, *, duration_seconds: int
+    ) -> SnapshotBytes:
+        from wavecast.providers.playback import ResolvedPlaybackRequest
+
+        try:
+            request = await self.resolver(source)
+        except MusicSnapshotError:
+            raise
+        except Exception as exc:
+            raise MusicSnapshotError("snapshot_provider_unavailable") from exc
+        if not isinstance(request, ResolvedPlaybackRequest):
+            raise MusicSnapshotError("snapshot_provider_unavailable")
+
+        client = self.client_factory(self.timeout_seconds)
+        try:
+            async with client.stream(
+                "GET",
+                request.url,
+                headers={"Accept": "audio/*", **request.headers},
+                params=request.params,
+            ) as response:
+                if not 200 <= response.status_code < 300:
+                    raise MusicSnapshotError("snapshot_upstream_status")
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if content_type not in MusicSnapshotStore._SUPPORTED_CONTENT_TYPES:
+                    raise MusicSnapshotError("unsupported_snapshot_content_type")
+                content_length = response.headers.get("content-length")
+                if content_length and _is_over_limit(content_length, self.max_bytes):
+                    raise MusicSnapshotError("snapshot_size_limit_exceeded")
+                chunks: list[bytes] = []
+                size = 0
+                async for chunk in response.aiter_bytes():
+                    size += len(chunk)
+                    if size > self.max_bytes:
+                        raise MusicSnapshotError("snapshot_size_limit_exceeded")
+                    chunks.append(chunk)
+                if not chunks:
+                    raise MusicSnapshotError("snapshot_empty_response")
+                return SnapshotBytes(
+                    content=b"".join(chunks),
+                    content_type=content_type,
+                    duration_seconds=duration_seconds,
+                )
+        except MusicSnapshotError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise MusicSnapshotError("snapshot_timeout") from exc
+        except Exception as exc:
+            raise MusicSnapshotError("snapshot_upstream_unavailable") from exc
+        finally:
+            await client.aclose()
+
+
+def _default_snapshot_client(timeout_seconds: float) -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=True)
+
+
+def _is_over_limit(value: str, max_bytes: int) -> bool:
+    try:
+        return int(value) > max_bytes
+    except ValueError:
+        return False
 
 
 def _safe_path_parts(path: str) -> list[str] | None:
@@ -158,6 +251,7 @@ class MusicSnapshotStore:
         source: MusicSourceClassification,
         *,
         track_ref: str,
+        duration_seconds: int = 1,
     ) -> StoredMusicAsset:
         if source.kind is MusicSourceKind.OWNED_ASSET:
             return StoredMusicAsset(
@@ -181,7 +275,9 @@ class MusicSnapshotStore:
                 return cached_result
 
         try:
-            snapshot = await self.fetcher.fetch(source)
+            snapshot = await self.fetcher.fetch(
+                source, duration_seconds=duration_seconds
+            )
         except MusicSnapshotError:
             raise
         except Exception as exc:
