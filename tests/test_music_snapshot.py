@@ -3,14 +3,17 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import httpx
 import pytest
 from wavecast.materialization import (
     MusicSnapshotError,
     MusicSnapshotStore,
     MusicSourceKind,
+    ProviderPlaybackSnapshotFetcher,
     SnapshotBytes,
     classify_music_source,
 )
+from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.storage import LocalObjectStorageProvider
 
 
@@ -23,7 +26,9 @@ class FakeFetcher:
             duration_seconds=7,
         )
 
-    async def fetch(self, source: object) -> SnapshotBytes:
+    async def fetch(
+        self, source: object, *, duration_seconds: int
+    ) -> SnapshotBytes:
         self.calls += 1
         return self.result
 
@@ -90,5 +95,169 @@ def test_snapshot_rejects_size_limit(tmp_path: Path) -> None:
 
         with pytest.raises(MusicSnapshotError, match="snapshot_size_limit_exceeded"):
             await store.snapshot(source, track_ref="track-ref")
+
+    asyncio.run(run())
+
+
+def test_provider_snapshot_fetcher_uses_shared_request_and_segment_duration() -> None:
+    async def run() -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                headers={"content-type": "audio/mpeg; charset=utf-8"},
+                content=b"full-track",
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        async def resolve(_source: object) -> ResolvedPlaybackRequest:
+            return ResolvedPlaybackRequest(
+                provider="audius",
+                url="https://upstream.example.test/tracks/track-1/stream",
+                headers={"Authorization": "Bearer server-only"},
+                params={"api_key": "app-key"},
+            )
+
+        fetcher = ProviderPlaybackSnapshotFetcher(
+            resolve,
+            client_factory=lambda _timeout: client,
+        )
+        snapshot = await fetcher.fetch(
+            classify_music_source("/api/audio/audius/track-1"),
+            duration_seconds=184,
+        )
+
+        assert snapshot.content == b"full-track"
+        assert snapshot.content_type == "audio/mpeg"
+        assert snapshot.duration_seconds == 184
+        assert len(requests) == 1
+        assert requests[0].url.params["api_key"] == "app-key"
+        assert requests[0].headers["authorization"] == "Bearer server-only"
+        assert requests[0].headers["accept"] == "audio/*"
+        assert "range" not in requests[0].headers
+
+    asyncio.run(run())
+
+
+class _TrackedChunks(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = chunks
+        self.yielded = 0
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            self.yielded += 1
+            yield chunk
+
+    async def aclose(self) -> None:
+        pass
+
+
+async def _fetch_snapshot_response(
+    response: httpx.Response, *, max_bytes: int = 4
+) -> None:
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _request: response)
+    )
+
+    async def resolve(_source: object) -> ResolvedPlaybackRequest:
+        return ResolvedPlaybackRequest(
+            provider="test",
+            url="https://upstream.example.test/audio",
+        )
+
+    fetcher = ProviderPlaybackSnapshotFetcher(
+        resolve,
+        max_bytes=max_bytes,
+        client_factory=lambda _timeout: client,
+    )
+    await fetcher.fetch(
+        classify_music_source("/api/audio/sidecar/netease/track-1"),
+        duration_seconds=7,
+    )
+
+
+def test_provider_snapshot_fetcher_rejects_content_length_before_consuming_body() -> None:
+    async def run() -> None:
+        body = _TrackedChunks([b"not-read"])
+        response = httpx.Response(
+            200,
+            headers={
+                "content-type": "audio/mpeg",
+                "content-length": "5",
+            },
+            stream=body,
+        )
+        with pytest.raises(MusicSnapshotError, match="snapshot_size_limit_exceeded"):
+            await _fetch_snapshot_response(response)
+        assert body.yielded == 0
+
+    asyncio.run(run())
+
+
+def test_provider_snapshot_fetcher_enforces_stream_limit_without_content_length() -> None:
+    async def run() -> None:
+        body = _TrackedChunks([b"123", b"456", b"789"])
+        response = httpx.Response(
+            200,
+            headers={"content-type": "audio/mpeg"},
+            stream=body,
+        )
+        with pytest.raises(MusicSnapshotError, match="snapshot_size_limit_exceeded"):
+            await _fetch_snapshot_response(response)
+        assert body.yielded == 2
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("status_code", "content_type", "expected_reason"),
+    [
+        (200, "audio/mpeg", "snapshot_empty_response"),
+        (503, "audio/mpeg", "snapshot_upstream_status"),
+        (200, "application/octet-stream", "unsupported_snapshot_content_type"),
+    ],
+)
+def test_provider_snapshot_fetcher_maps_response_boundaries(
+    status_code: int, content_type: str, expected_reason: str
+) -> None:
+    async def run() -> None:
+        response = httpx.Response(
+            status_code,
+            headers={"content-type": content_type},
+            content=b"" if status_code == 200 and content_type == "audio/mpeg" else b"body",
+        )
+        with pytest.raises(MusicSnapshotError, match=expected_reason):
+            await _fetch_snapshot_response(response)
+
+    asyncio.run(run())
+
+
+def test_provider_snapshot_fetcher_maps_timeout() -> None:
+    async def run() -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("upstream timeout")
+
+        response = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=response)
+
+        async def resolve(_source: object) -> ResolvedPlaybackRequest:
+            return ResolvedPlaybackRequest(
+                provider="test",
+                url="https://upstream.example.test/audio",
+            )
+
+        fetcher = ProviderPlaybackSnapshotFetcher(
+            resolve,
+            client_factory=lambda _timeout: client,
+        )
+        with pytest.raises(MusicSnapshotError, match="snapshot_timeout"):
+            await fetcher.fetch(
+                classify_music_source("/api/audio/sidecar/netease/track-1"),
+                duration_seconds=7,
+            )
 
     asyncio.run(run())
