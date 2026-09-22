@@ -11,20 +11,19 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 6B.4 - production playback snapshot wiring.
-- **Current stage:** implementation and full backend verification are complete
-  locally; PR/review/CI are next. No live or paid provider call is part of
-  this slice.
-- **Canonical main:** 93dffe66101d697d00a81618c523c94fcff16daf (PR #55 merge
+- **Current milestone:** Phase 6B.5 - thin export UX / next contract analysis.
+- **Current stage:** Phase 6B.4 is merged and verified. PR #56 was accepted by
+  exact-head GPT review and merged with backend/web CI green. No live or paid
+  provider call was part of this slice.
+- **Canonical main:** 2b0f7d1dac0250911c0473f262875eb54031104e (PR #56 merge
   commit).
-- **Last completed code milestone:** PR #55, Phase 6B.3 owned music
-  snapshot/materialization seam, merged after exact-head GPT review with
-  backend and web CI green.
-- **Immediate work:** create the Phase 6B.4 PR from the canonical main, obtain
-  exact-head GPT review, and merge only after DONE and green CI. The shared
-  server-only playback request seam must be used by both browser proxy routes
-  and bounded snapshot fetching; no credentials, raw upstream URLs, or live
-  calls may enter episode state or API responses.
+- **Last completed code milestone:** PR #56, Phase 6B.4 production playback
+  snapshot wiring, merged after exact-head GPT review with bounded-streaming
+  regression coverage and backend/web CI green.
+- **Immediate work:** continue the same PR Loop from the merged Phase 6B.4
+  main and obtain the next GPT contract-analysis PLAN. The next likely slice
+  is the explicitly requested thin export UX; keep snapshot credentials,
+  upstream URLs, and provider calls out of episode state/API responses.
 
 ## Phase 6B.1 canonical mix-plan contract
 
@@ -66,6 +65,24 @@ segment duration is passed into the snapshot contract so the preparation step
 does not re-resolve timing metadata. The default API store is now wired to this
 fetcher, but tests remain credential-free and no live provider request is
 performed by the development workflow.
+
+## Phase 6B.5 thin export UX
+
+Phase 6B.5 adds the first user-visible export path in the Web EpisodePlayer:
+a MATERIALIZED episode can explicitly run prepare-mixdown, then mixdown, and
+download the returned MP3 without adding a backend state machine or changing
+the playback engine. The UI keeps export state and errors separate from
+playback state, prevents duplicate submissions, reuses a successful artifact,
+and exposes a visible fallback download link. Preparation with ready=false
+never calls mixdown; artifact URLs must be WaveCast-owned
+/api/assets/audio/ paths with audio/mpeg content type. This slice is
+credential-free and makes no live or paid provider calls.
+
+Known UX debt: prepare-mixdown promotes provider sources to owned URLs, so an
+active player may observe one MixEngine refresh through the existing
+heartbeat/SSE convergence. The export flow does not proactively pause, seek,
+commit, or refresh the episode; a later human playback check should decide
+whether that refresh needs a separate fix.
 
 ## Phase 5.3A radio-writing rubric
 
