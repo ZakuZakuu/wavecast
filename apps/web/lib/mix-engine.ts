@@ -13,6 +13,7 @@ export type MixEngineOptions = {
   onEnded: () => void;
   onError?: () => void;
   audioContextFactory?: () => AudioContext;
+  clock?: () => number;
 };
 
 function defaultAudioContext(): AudioContext {
@@ -29,6 +30,7 @@ export class MixEngine {
   private plan: MixPlan | null = null;
   private positionSeconds = 0;
   private lastClockSeconds = 0;
+  private lastEmittedPositionSeconds: number | null = null;
   private timer: number | null = null;
   private playing = false;
 
@@ -51,12 +53,24 @@ export class MixEngine {
     });
     this.plan = plan;
     this.positionSeconds = 0;
+    this.lastEmittedPositionSeconds = null;
     this.lastClockSeconds = this.nowSeconds();
   }
 
   sync(positionSeconds: number, playing: boolean): void {
     if (!this.plan) return;
-    this.positionSeconds = clampMixPosition(this.plan, positionSeconds);
+    const nextPositionSeconds = clampMixPosition(this.plan, positionSeconds);
+    if (
+      this.lastEmittedPositionSeconds !== null
+      && playing
+      && this.playing
+      && Math.abs(this.lastEmittedPositionSeconds - nextPositionSeconds) < 0.001
+    ) {
+      this.lastEmittedPositionSeconds = null;
+      return;
+    }
+    this.lastEmittedPositionSeconds = null;
+    this.positionSeconds = nextPositionSeconds;
     this.lastClockSeconds = this.nowSeconds();
     this.playing = playing;
     if (playing) {
@@ -77,7 +91,9 @@ export class MixEngine {
   }
 
   private nowSeconds(): number {
-    return typeof performance === "undefined" ? Date.now() / 1000 : performance.now() / 1000;
+    return (this.options.clock ?? (() => (
+      typeof performance === "undefined" ? Date.now() / 1000 : performance.now() / 1000
+    )))();
   }
 
   private startTimer(): void {
@@ -100,6 +116,7 @@ export class MixEngine {
     );
     this.lastClockSeconds = now;
     this.syncSources();
+    this.lastEmittedPositionSeconds = this.positionSeconds;
     this.options.onPositionChange(this.positionSeconds);
     if (this.positionSeconds >= this.plan.durationSeconds) {
       this.playing = false;

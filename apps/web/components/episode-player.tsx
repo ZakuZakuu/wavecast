@@ -9,6 +9,7 @@ import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, recon
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
 import { buildMixPlan, linearPositionToMixPosition, mixPositionToLinearPosition } from "../lib/mix-timeline";
+import { createLatestSegmentCommitQueue, type LatestSegmentCommitQueue } from "../lib/mix-commit-queue";
 import { MixAudioPlayer } from "./mix-audio-player";
 
 export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeId?: string }) {
@@ -22,8 +23,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const playbackAnchorRef = useRef<ReturnType<typeof playbackAnchor>>(null);
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
   const mixPlanRef = useRef<ReturnType<typeof buildMixPlan> | null>(null);
-  const mixSegmentRef = useRef<string | undefined>(undefined);
-  const mixCommitInFlightRef = useRef<string | null>(null);
+  const mixCommitQueueRef = useRef<LatestSegmentCommitQueue | null>(null);
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
     ? episode
@@ -36,8 +36,8 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     `${item.id}:${item.order}:${item.kind}:${item.audio_source_url ? "ready" : "not-ready"}:${item.audio_source_url}:${item.duration_seconds}`
   )).join("|") ?? "";
   if (localEpisodeRef.current?.id !== localEpisode?.id) {
-    mixSegmentRef.current = undefined;
-    mixCommitInFlightRef.current = null;
+    mixCommitQueueRef.current?.reset();
+    mixCommitQueueRef.current = null;
   }
   localEpisodeRef.current = localEpisode;
   if (localEpisode && mixPlanKey) {
@@ -48,6 +48,22 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     }
   } else {
     mixPlanRef.current = null;
+  }
+
+  if (!mixCommitQueueRef.current && localEpisode) {
+    mixCommitQueueRef.current = createLatestSegmentCommitQueue({
+      commit: (segmentId) => api.commit(localEpisode.id, segmentId),
+      isCurrent: (segmentId) => localEpisodeRef.current?.current_segment_id === segmentId,
+      onResponse: (response) => {
+        playbackAnchorRef.current = playbackAnchor(response);
+        setEpisode(response);
+        setBrowserPosition(browserPositionRef.current);
+        setError(null);
+      },
+      onError: (reason) => {
+        setError(reason instanceof Error ? reason.message : "Playback synchronization failed");
+      },
+    });
   }
 
   useEffect(() => {
@@ -141,29 +157,8 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     setBrowserPosition(positionSeconds);
     browserPositionRef.current = positionSeconds;
 
-    if (
-      transport.segmentId
-      && transport.segmentId !== localEpisode.current_segment_id
-      && mixCommitInFlightRef.current !== transport.segmentId
-    ) {
-      mixSegmentRef.current = transport.segmentId;
-      mixCommitInFlightRef.current = transport.segmentId;
-      void api.commit(localEpisode.id, transport.segmentId)
-        .then((response) => {
-          playbackAnchorRef.current = playbackAnchor(response);
-          setEpisode(response);
-          setBrowserPosition(browserPositionRef.current);
-          setError(null);
-        })
-        .catch((reason: unknown) => {
-          if (mixSegmentRef.current === transport.segmentId) mixSegmentRef.current = undefined;
-          setError(reason instanceof Error ? reason.message : "Playback synchronization failed");
-        })
-        .finally(() => {
-          if (mixCommitInFlightRef.current === transport.segmentId) {
-            mixCommitInFlightRef.current = null;
-          }
-        });
+    if (transport.segmentId && transport.segmentId !== localEpisode.current_segment_id) {
+      mixCommitQueueRef.current?.request(transport.segmentId);
     }
 
     if (
