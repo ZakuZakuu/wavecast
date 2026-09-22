@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { activeMixClipsAt, buildMixPlan, clampMixPosition, evaluateGain, scheduleAt } from "../lib/mix-timeline";
+import { activeMixClipsAt, buildMixPlan, clampMixPosition, evaluateGain, linearPositionToMixPosition, mixPositionToLinearPosition, scheduleAt } from "../lib/mix-timeline";
 import type { LiveEpisode } from "../lib/types";
 
 const episode: LiveEpisode = {
@@ -28,6 +28,28 @@ describe("deterministic mix timeline", () => {
     expect(musicA.timelineStartSeconds + musicA.playableDurationSeconds).toBeGreaterThan(musicB.timelineStartSeconds);
     expect(evaluateGain(musicA, voice.timelineStartSeconds + 0.5)).toBeLessThan(1);
     expect(activeMixClipsAt(plan, voice.timelineStartSeconds + 0.5).map((clip) => clip.lane)).toEqual(["MUSIC", "VOICE", "MUSIC"] );
+  });
+
+  it("holds ducking through narration and restores after release", () => {
+    const plan = buildMixPlan(episode);
+    const musicA = plan.clips.find((clip) => clip.segmentId === "music-a")!;
+    const musicB = plan.clips.find((clip) => clip.segmentId === "music-b")!;
+
+    expect(evaluateGain(musicA, 10)).toBe(1);
+    expect(evaluateGain(musicB, 41)).toBeCloseTo(0.35);
+    expect(evaluateGain(musicB, 47.5)).toBe(1);
+  });
+
+  it("round-trips overlap positions through the linear runtime seam", () => {
+    const plan = buildMixPlan(episode);
+    const mixPosition = 39.5;
+    const linear = mixPositionToLinearPosition(episode, plan, mixPosition);
+    const roundTrip = linearPositionToMixPosition(episode, plan, linear.linearPositionSeconds);
+
+    expect(linear.segmentId).toBe("voice-a");
+    expect(linear.linearPositionSeconds).toBe(40.5);
+    expect(roundTrip.mixPositionSeconds).toBe(mixPosition);
+    expect(roundTrip.segmentId).toBe("voice-a");
   });
 
   it("is deterministic and produces bounded seek schedules", () => {

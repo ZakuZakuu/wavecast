@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { AudioPlayer } from "./audio-player";
 import { MixEngine } from "../lib/mix-engine";
@@ -28,14 +28,23 @@ export function MixAudioPlayer({
   onEnded: () => void;
   onError?: () => void;
 }) {
-  const planKey = episode.segments.map((item) => `${item.id}:${item.state}:${item.audio_source_url}:${item.duration_seconds}`).join("|");
-  const plan = useMemo(() => {
+  const planKey = episode.segments.map((item) => (
+    `${item.id}:${item.order}:${item.kind}:${item.audio_source_url ? "ready" : "not-ready"}:${item.audio_source_url}:${item.duration_seconds}`
+  )).join("|");
+  const planCacheRef = useRef<{ key: string; plan: ReturnType<typeof buildMixPlan> | null }>({
+    key: "",
+    plan: null,
+  });
+  if (planCacheRef.current.key !== planKey) {
+    let nextPlan: ReturnType<typeof buildMixPlan> | null = null;
     try {
-      return buildMixPlan(episode);
+      nextPlan = buildMixPlan(episode);
     } catch {
-      return null;
+      nextPlan = null;
     }
-  }, [episode, planKey]);
+    planCacheRef.current = { key: planKey, plan: nextPlan };
+  }
+  const plan = planCacheRef.current.plan;
   const engineRef = useRef<MixEngine | null>(null);
   const onPositionChangeRef = useRef(onPositionChange);
   const onEndedRef = useRef(onEnded);

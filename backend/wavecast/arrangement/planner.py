@@ -17,6 +17,8 @@ class ArrangementDefaults:
     music_fade_out_seconds: float = 3.0
     voice_fade_seconds: float = 0.08
     duck_gain: float = 0.35
+    duck_attack_seconds: float = 0.5
+    duck_release_seconds: float = 0.5
 
 
 def _active_segments(episode: PlayableEpisode) -> list[Segment]:
@@ -72,6 +74,8 @@ def _music_automation(
     fade_out: float,
     narration_intervals: list[tuple[float, float]],
     duck_gain: float,
+    duck_attack: float,
+    duck_release: float,
 ) -> tuple[GainPoint, ...]:
     offsets = {0.0, duration}
     if fade_in:
@@ -80,18 +84,36 @@ def _music_automation(
         offsets.add(max(0.0, duration - fade_out))
     for narration_start, narration_end in narration_intervals:
         if narration_end > start and narration_start < start + duration:
-            offsets.add(max(0.0, narration_start - start))
-            offsets.add(min(duration, narration_end - start))
+            offsets.update(
+                {
+                    max(0.0, narration_start - duck_attack - start),
+                    max(0.0, narration_start - start),
+                    min(duration, narration_end - start),
+                    min(duration, narration_end + duck_release - start),
+                }
+            )
+
+    def duck_factor(absolute: float) -> float:
+        factor = 1.0
+        for narration_start, narration_end in narration_intervals:
+            if narration_start - duck_attack < absolute < narration_start:
+                progress = (absolute - (narration_start - duck_attack)) / duck_attack
+                factor = min(factor, 1.0 + (duck_gain - 1.0) * progress)
+            elif narration_start <= absolute < narration_end:
+                factor = min(factor, duck_gain)
+            elif narration_end <= absolute < narration_end + duck_release:
+                progress = (absolute - narration_end) / duck_release
+                factor = min(factor, duck_gain + (1.0 - duck_gain) * progress)
+        return factor
 
     points: list[GainPoint] = []
     for offset in sorted(offsets):
         absolute = start + offset
-        is_ducked = any(begin <= absolute < end for begin, end in narration_intervals)
         points.append(
             GainPoint(
                 offset_seconds=offset,
                 gain=_fade_factor(offset, duration, fade_in, fade_out)
-                * (duck_gain if is_ducked else 1.0),
+                * duck_factor(absolute),
             )
         )
     return _unique_points(points)
@@ -190,6 +212,8 @@ def plan_episode_mix(
                     fade_out=min(fade_out, duration),
                     narration_intervals=narration_intervals,
                     duck_gain=config.duck_gain,
+                    duck_attack=config.duck_attack_seconds,
+                    duck_release=config.duck_release_seconds,
                 ),
             )
         )
