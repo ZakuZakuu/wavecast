@@ -8,7 +8,7 @@ import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
-import { linearPositionToMixPosition, mixPositionToLinearPosition } from "../lib/mix-timeline";
+import { linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition } from "../lib/mix-timeline";
 import type { MixPlan } from "../lib/mix-timeline";
 import { createLatestSegmentCommitQueue, type LatestSegmentCommitQueue } from "../lib/mix-commit-queue";
 import { MixAudioPlayer } from "./mix-audio-player";
@@ -34,9 +34,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     [localEpisode],
   );
   const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
-  const mixPlanKey = localEpisode?.segments.map((item) => (
-    `${item.id}:${item.order}:${item.kind}:${item.audio_source_url ? "ready" : "not-ready"}:${item.audio_source_url}:${item.duration_seconds}`
-  )).join("|") ?? "";
+  const mixPlanKey = localEpisode ? mixPlanSignature(localEpisode) : "";
   if (localEpisodeRef.current?.id !== localEpisode?.id) {
     mixCommitQueueRef.current?.reset();
     mixCommitQueueRef.current = null;

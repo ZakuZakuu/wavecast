@@ -29,6 +29,24 @@ export type MixPlan = {
   segmentStarts: Record<string, number>;
 };
 
+export function mixPlanSignature(episode: Pick<LiveEpisode, "segments">): string {
+  return episode.segments.map((item) => {
+    const arrangementState = item.state === "SKIPPED"
+      ? "skipped"
+      : ["AUDIO_READY", "COMMITTED", "PLAYED"].includes(item.state)
+        ? "ready"
+        : "pending";
+    return [
+      item.id,
+      item.order,
+      item.kind,
+      arrangementState,
+      item.audio_source_url,
+      item.duration_seconds,
+    ].join(":");
+  }).join("|");
+}
+
 export function parseMixPlan(value: unknown): MixPlan {
   if (!value || typeof value !== "object") throw new Error("Invalid MixPlan");
   const candidate = value as Partial<MixPlan>;
