@@ -72,6 +72,26 @@ def test_deepseek_parses_typed_json_and_records_token_usage() -> None:
     asyncio.run(run())
 
 
+def test_deepseek_allows_one_transient_schema_retry_when_attempts_are_one() -> None:
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    async def run() -> None:
+        client, completions = fake_deepseek_client(
+            ["not-json", '{"answer": "recovered"}']
+        )
+        provider = DeepSeekLLMProvider(
+            live_settings(), client=client, sleep=no_sleep, max_attempts=1
+        )
+
+        result = await provider.structured("tiny test", StructuredAnswer)
+
+        assert result == StructuredAnswer(answer="recovered")
+        assert completions.calls == 2
+
+    asyncio.run(run())
+
+
 def test_deepseek_rejects_malformed_json_after_bounded_retry() -> None:
     async def no_sleep(_seconds: float) -> None:
         return None
