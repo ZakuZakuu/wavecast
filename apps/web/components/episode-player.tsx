@@ -190,7 +190,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       : value;
     if (!isSeekAllowed(localEpisode, linearValue)) return;
     setSeekPreview(null);
-    void api.seek(localEpisode.id, Math.floor(linearValue)).then((response) => {
+    const runSeek = async () => {
+      const response = await api.seek(localEpisode.id, Math.floor(linearValue));
+      mixCommitQueueRef.current?.acknowledge(response.current_segment_id);
       const mixValue = mixPlanRef.current
         ? linearPositionToMixPosition(localEpisode, mixPlanRef.current, linearValue).mixPositionSeconds
         : value;
@@ -199,9 +201,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       playbackAnchorRef.current = playbackAnchor(response);
       setEpisode(response);
       setError(null);
-    }).catch((reason: unknown) => {
-      setError(reason instanceof Error ? reason.message : "Player action failed");
-    });
+    };
+    void (mixCommitQueueRef.current ? mixCommitQueueRef.current.runExclusive(runSeek) : runSeek())
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : "Player action failed");
+      });
   }, [localEpisode, setEpisode]);
 
   const commitSeekPreview = useCallback(() => {
@@ -210,18 +214,27 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   const pausePlayback = useCallback(async () => {
     if (!localEpisode) return;
-    try {
+    const runPause = async () => {
+      const currentEpisode = localEpisodeRef.current ?? localEpisode;
       const transport = mixPlanRef.current
-        ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, browserPositionRef.current)
-        : { linearPositionSeconds: browserPositionRef.current, segmentId: localEpisode.current_segment_id };
-      let checkpointEpisode = localEpisode;
-      if (transport.segmentId && transport.segmentId !== localEpisode.current_segment_id) {
-        checkpointEpisode = await api.commit(localEpisode.id, transport.segmentId);
+        ? mixPositionToLinearPosition(currentEpisode, mixPlanRef.current, browserPositionRef.current)
+        : { linearPositionSeconds: browserPositionRef.current, segmentId: currentEpisode.current_segment_id };
+      let checkpointEpisode = currentEpisode;
+      if (transport.segmentId && transport.segmentId !== currentEpisode.current_segment_id) {
+        checkpointEpisode = await api.commit(currentEpisode.id, transport.segmentId);
+        mixCommitQueueRef.current?.acknowledge(checkpointEpisode.current_segment_id);
         playbackAnchorRef.current = playbackAnchor(checkpointEpisode);
         setEpisode(checkpointEpisode);
       }
-      await update(api.checkpoint(checkpointEpisode.id, Math.floor(transport.linearPositionSeconds)));
-      await update(api.pause(checkpointEpisode.id));
+      const checkpointed = await api.checkpoint(checkpointEpisode.id, Math.floor(transport.linearPositionSeconds));
+      setEpisode(checkpointed);
+      const paused = await api.pause(checkpointEpisode.id);
+      mixCommitQueueRef.current?.acknowledge(paused.current_segment_id);
+      setEpisode(paused);
+      setError(null);
+    };
+    try {
+      await (mixCommitQueueRef.current ? mixCommitQueueRef.current.runExclusive(runPause) : runPause());
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "Player action failed");
     }
@@ -246,6 +259,19 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
   const upcoming = current ? nextVisibleSegment(localEpisode) : undefined;
+  const nextPlayback = async () => {
+    const runNext = async () => {
+      const response = await api.next(localEpisode.id);
+      mixCommitQueueRef.current?.acknowledge(response.current_segment_id);
+      setEpisode(response);
+      setError(null);
+    };
+    try {
+      await (mixCommitQueueRef.current ? mixCommitQueueRef.current.runExclusive(runNext) : runNext());
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Player action failed");
+    }
+  };
   return (
     <main className="shell player-shell">
       <MixAudioPlayer
@@ -270,7 +296,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           {localEpisode.is_playing
             ? <button onClick={() => void pausePlayback()}>暂停</button>
             : <button onClick={() => void update(api.resume(localEpisode.id))}>继续</button>}
-          <button onClick={() => void update(api.next(localEpisode.id))}>下一章节</button>
+          <button onClick={() => void nextPlayback()}>下一章节</button>
           <button className="quiet" onClick={() => void update(api.materialize(localEpisode.id))}>生成完整节目</button>
         </div>
       </section>

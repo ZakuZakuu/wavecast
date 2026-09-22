@@ -35,4 +35,38 @@ describe("latest desired segment commit queue", () => {
     expect(responses).toEqual(["B"]);
     expect(current).toBe("B");
   });
+  it("blocks explicit transport actions until automatic commits settle", async () => {
+    const resolvers: Array<() => void> = [];
+    const events: string[] = [];
+    const commit = vi.fn((segmentId: string) => new Promise<string>((resolve) => {
+      events.push("commit:start:" + segmentId);
+      resolvers.push(() => {
+        events.push("commit:end:" + segmentId);
+        resolve(segmentId);
+      });
+    }));
+    let current = "A";
+    const queue = createLatestSegmentCommitQueue({
+      commit,
+      isCurrent: (segmentId) => current === segmentId,
+      onResponse: (_response, segmentId) => { current = segmentId; },
+      onError: vi.fn(),
+    });
+
+    queue.request("VOICE");
+    const explicit = queue.runExclusive(async () => {
+      events.push("seek:start");
+      queue.acknowledge("B");
+      events.push("seek:end");
+    });
+    queue.request("B");
+    expect(events).toEqual(["commit:start:VOICE"]);
+
+    resolvers[0]();
+    await explicit;
+    expect(events).toEqual(["commit:start:VOICE", "commit:end:VOICE", "seek:start", "seek:end"]);
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(current).toBe("A");
+  });
+
 });

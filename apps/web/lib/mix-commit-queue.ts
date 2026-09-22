@@ -1,5 +1,7 @@
 export type LatestSegmentCommitQueue = {
   request: (segmentId: string) => void;
+  acknowledge: (segmentId: string | null) => void;
+  runExclusive: <T>(operation: () => Promise<T>) => Promise<T>;
   reset: () => void;
 };
 
@@ -11,17 +13,20 @@ export function createLatestSegmentCommitQueue<T>(options: {
 }): LatestSegmentCommitQueue {
   let desiredSegmentId: string | null = null;
   let inFlightSegmentId: string | null = null;
+  let acknowledgedSegmentId: string | null = null;
+  let exclusiveActive = false;
+  let inFlightPromise: Promise<void> | null = null;
 
   const drain = () => {
-    if (inFlightSegmentId || !desiredSegmentId) return;
+    if (exclusiveActive || inFlightSegmentId || !desiredSegmentId) return;
     const segmentId = desiredSegmentId;
-    if (options.isCurrent(segmentId)) {
+    if (options.isCurrent(segmentId) || acknowledgedSegmentId === segmentId) {
       desiredSegmentId = null;
       return;
     }
 
     inFlightSegmentId = segmentId;
-    void options.commit(segmentId)
+    inFlightPromise = options.commit(segmentId)
       .then((response) => {
         if (desiredSegmentId === segmentId) options.onResponse(response, segmentId);
       })
@@ -31,6 +36,7 @@ export function createLatestSegmentCommitQueue<T>(options: {
       .finally(() => {
         if (inFlightSegmentId !== segmentId) return;
         inFlightSegmentId = null;
+        inFlightPromise = null;
         if (desiredSegmentId === segmentId) desiredSegmentId = null;
         drain();
       });
@@ -41,9 +47,27 @@ export function createLatestSegmentCommitQueue<T>(options: {
       desiredSegmentId = segmentId;
       drain();
     },
+    acknowledge: (segmentId) => {
+      acknowledgedSegmentId = segmentId;
+      desiredSegmentId = null;
+    },
+    runExclusive: async <T>(operation: () => Promise<T>) => {
+      exclusiveActive = true;
+      const pendingCommit = inFlightPromise;
+      if (pendingCommit) await pendingCommit;
+      try {
+        return await operation();
+      } finally {
+        exclusiveActive = false;
+        drain();
+      }
+    },
     reset: () => {
       desiredSegmentId = null;
+      acknowledgedSegmentId = null;
       inFlightSegmentId = null;
+      inFlightPromise = null;
+      exclusiveActive = false;
     },
   };
 }
