@@ -15,12 +15,14 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from wavecast.arrangement import MixPlan, plan_episode_mix
 from wavecast.materialization import NarrationMaterializer
 from wavecast.models.episode import (
     CoverParams,
     EpisodeSeed,
     EpisodeState,
     LiveEpisode,
+    MusicSegment,
     NarrationSegment,
     PlayableEpisode,
 )
@@ -374,6 +376,27 @@ def import_materialized_episode(
 def episode(episode_id: str, request: Request) -> LiveEpisode:
     owned(episode_id, listener(request))
     return orchestrator.get(episode_id)
+
+
+@app.get("/api/episodes/{episode_id}/mix-plan", response_model=MixPlan)
+def episode_mix_plan(episode_id: str, request: Request) -> MixPlan:
+    """Return the deterministic server-owned arrangement for the ready prefix."""
+    listener_id = listener(request)
+    owned(episode_id, listener_id)
+    current = orchestrator.get(episode_id, listener_id)
+    ready_segments: list[MusicSegment | NarrationSegment] = []
+    for segment in current.timeline_segments:
+        if not segment.is_audio_ready:
+            break
+        ready_segments.append(cast(MusicSegment | NarrationSegment, segment))
+    if not ready_segments:
+        raise HTTPException(status_code=409, detail="Mix plan is not ready")
+    try:
+        return plan_episode_mix(
+            PlayableEpisode(id=current.id, segments=ready_segments)
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail="Mix plan is not ready") from error
 
 
 @app.post("/api/episodes/{episode_id}/ensure-buffer", response_model=LiveEpisode)
