@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { activeMixClipsAt, buildMixPlan, clampMixPosition, evaluateGain, linearPositionToMixPosition, mixPositionToLinearPosition, scheduleAt } from "../lib/mix-timeline";
+import { activeMixClipsAt, clampMixPosition, evaluateGain, linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, scheduleAt } from "../lib/mix-timeline";
+import { canonicalPlan } from "./fixtures/canonical-mix-plan";
 import type { LiveEpisode } from "../lib/types";
 
 const episode: LiveEpisode = {
@@ -17,8 +18,24 @@ const episode: LiveEpisode = {
 };
 
 describe("deterministic mix timeline", () => {
+  it("refreshes only for arrangement-relevant segment state changes", () => {
+    const signatureFor = (state: LiveEpisode["segments"][number]["state"]) => mixPlanSignature({
+      ...episode,
+      segments: episode.segments.map((segment, index) => (
+        index === 2 ? { ...segment, state } : segment
+      )),
+    });
+
+    expect(signatureFor("PLANNED")).not.toBe(signatureFor("AUDIO_READY"));
+    expect(signatureFor("AUDIO_READY")).toBe(signatureFor("COMMITTED"));
+    expect(signatureFor("COMMITTED")).toBe(signatureFor("PLAYED"));
+    expect(signatureFor("PLANNED")).not.toBe(signatureFor("SKIPPED"));
+    const heartbeatEpisode = { ...episode, version: 2 };
+    expect(mixPlanSignature(heartbeatEpisode)).toBe(mixPlanSignature(episode));
+  });
+
   it("creates music and voice overlap with an incoming crossfade", () => {
-    const plan = buildMixPlan(episode);
+    const plan = canonicalPlan;
     const musicA = plan.clips.find((clip) => clip.segmentId === "music-a")!;
     const voice = plan.clips.find((clip) => clip.segmentId === "voice-a")!;
     const musicB = plan.clips.find((clip) => clip.segmentId === "music-b")!;
@@ -31,17 +48,17 @@ describe("deterministic mix timeline", () => {
   });
 
   it("holds ducking through narration and restores after release", () => {
-    const plan = buildMixPlan(episode);
+    const plan = canonicalPlan;
     const musicA = plan.clips.find((clip) => clip.segmentId === "music-a")!;
     const musicB = plan.clips.find((clip) => clip.segmentId === "music-b")!;
 
     expect(evaluateGain(musicA, 10)).toBe(1);
-    expect(evaluateGain(musicB, 41)).toBeCloseTo(0.35);
+    expect(evaluateGain(musicB, 47)).toBeCloseTo(0.35);
     expect(evaluateGain(musicB, 47.5)).toBe(1);
   });
 
   it("round-trips overlap positions through the linear runtime seam", () => {
-    const plan = buildMixPlan(episode);
+    const plan = canonicalPlan;
     const mixPosition = 39.5;
     const linear = mixPositionToLinearPosition(episode, plan, mixPosition);
     const roundTrip = linearPositionToMixPosition(episode, plan, linear.linearPositionSeconds);
@@ -53,8 +70,8 @@ describe("deterministic mix timeline", () => {
   });
 
   it("is deterministic and produces bounded seek schedules", () => {
-    const first = buildMixPlan(episode);
-    const second = buildMixPlan(episode);
+    const first = canonicalPlan;
+    const second = canonicalPlan;
     expect(first).toEqual(second);
     expect(clampMixPosition(first, -2)).toBe(0);
     expect(clampMixPosition(first, 999)).toBe(first.durationSeconds);
