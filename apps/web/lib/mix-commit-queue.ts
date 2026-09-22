@@ -15,6 +15,8 @@ export function createLatestSegmentCommitQueue<T>(options: {
   let inFlightSegmentId: string | null = null;
   let acknowledgedSegmentId: string | null = null;
   let exclusiveActive = false;
+  let exclusivePendingCount = 0;
+  let exclusiveTail: Promise<unknown> = Promise.resolve();
   let inFlightPromise: Promise<void> | null = null;
 
   const drain = () => {
@@ -51,16 +53,24 @@ export function createLatestSegmentCommitQueue<T>(options: {
       acknowledgedSegmentId = segmentId;
       desiredSegmentId = null;
     },
-    runExclusive: async <T>(operation: () => Promise<T>) => {
+    runExclusive: <T>(operation: () => Promise<T>) => {
+      exclusivePendingCount += 1;
       exclusiveActive = true;
-      const pendingCommit = inFlightPromise;
-      if (pendingCommit) await pendingCommit;
-      try {
-        return await operation();
-      } finally {
-        exclusiveActive = false;
-        drain();
-      }
+      const run = exclusiveTail.then(async () => {
+        const pendingCommit = inFlightPromise;
+        if (pendingCommit) await pendingCommit;
+        try {
+          return await operation();
+        } finally {
+          exclusivePendingCount -= 1;
+          if (exclusivePendingCount === 0) {
+            exclusiveActive = false;
+            drain();
+          }
+        }
+      });
+      exclusiveTail = run.then(() => undefined, () => undefined);
+      return run;
     },
     reset: () => {
       desiredSegmentId = null;

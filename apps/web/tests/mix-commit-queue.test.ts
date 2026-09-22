@@ -68,5 +68,36 @@ describe("latest desired segment commit queue", () => {
     expect(commit).toHaveBeenCalledTimes(1);
     expect(current).toBe("A");
   });
+  it("serializes explicit transport actions", async () => {
+    const resolvers: Array<() => void> = [];
+    const events: string[] = [];
+    const queue = createLatestSegmentCommitQueue({
+      commit: vi.fn(),
+      isCurrent: () => false,
+      onResponse: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    const first = queue.runExclusive(async () => {
+      events.push("seek:start");
+      await new Promise<void>((resolve) => resolvers.push(resolve));
+      events.push("seek:end");
+    });
+    const second = queue.runExclusive(async () => {
+      events.push("pause:start");
+      events.push("pause:end");
+    });
+
+    await Promise.resolve();
+    expect(events).toEqual(["seek:start"]);
+    resolvers[0]();
+    await Promise.all([first, second]);
+    expect(events).toEqual([
+      "seek:start",
+      "seek:end",
+      "pause:start",
+      "pause:end",
+    ]);
+  });
 
 });
