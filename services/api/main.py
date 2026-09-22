@@ -16,9 +16,16 @@ from anyio import to_thread
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from wavecast.arrangement import MixPlan, plan_episode_mix
-from wavecast.materialization import NarrationMaterializer
+from wavecast.materialization import (
+    MusicSnapshotError,
+    MusicSnapshotStore,
+    MusicSourceKind,
+    NarrationMaterializer,
+    UnavailablePlaybackSnapshotFetcher,
+    classify_music_source,
+)
 from wavecast.models.episode import (
     CoverParams,
     EpisodeSeed,
@@ -75,6 +82,9 @@ def _build_tts_provider(
 
 _tts_provider = _build_tts_provider(_provider_settings, audio_storage)
 narration_materializer = NarrationMaterializer(_tts_provider, audio_storage)
+music_snapshot_store = MusicSnapshotStore(
+    audio_storage, UnavailablePlaybackSnapshotFetcher()
+)
 
 
 def configure_runtime(episode_repository: EpisodeRepository) -> None:
@@ -85,11 +95,20 @@ def configure_runtime(episode_repository: EpisodeRepository) -> None:
     scheduler = InlineGenerationScheduler(orchestrator)
 
 
+def configure_music_snapshot_store(store: MusicSnapshotStore) -> None:
+    """Injection seam for credential-free snapshot tests and deployments."""
+    global music_snapshot_store
+    music_snapshot_store = store
+
+
 def configure_narration_materializer(materializer: NarrationMaterializer) -> None:
     """Injection seam for tests and deployments with alternate TTS/storage adapters."""
-    global audio_storage, narration_materializer
+    global audio_storage, narration_materializer, music_snapshot_store
     narration_materializer = materializer
     audio_storage = materializer.storage
+    music_snapshot_store = MusicSnapshotStore(
+        audio_storage, UnavailablePlaybackSnapshotFetcher()
+    )
 
 app = FastAPI(title="Wavecast API", version="0.2.0")
 app.add_middleware(
@@ -162,6 +181,25 @@ class MaterializedEpisodeRequest(BaseModel):
 
 class PlaybackCheckpointRequest(BaseModel):
     position_seconds: int = Field(ge=0)
+
+
+class BlockedMusicSource(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    segment_id: str = Field(alias="segmentId")
+    source_kind: MusicSourceKind = Field(alias="sourceKind")
+    reason_code: str = Field(alias="reasonCode")
+
+
+class MixdownPreparationResult(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    episode_id: str = Field(alias="episodeId")
+    ready: bool
+    owned_music_count: int = Field(alias="ownedMusicCount")
+    snapshotted_music_count: int = Field(alias="snapshottedMusicCount")
+    reused_music_count: int = Field(alias="reusedMusicCount")
+    blocked_sources: list[BlockedMusicSource] = Field(alias="blockedSources")
 
 
 def listener(request: Request) -> str:
@@ -411,6 +449,90 @@ def episode_mix_plan(episode_id: str, request: Request) -> MixPlan:
         return canonical_mix_plan_for_episode(episode_id, listener_id)
     except ValueError as error:
         raise HTTPException(status_code=409, detail="Mix plan is not ready") from error
+
+
+@app.post(
+    "/api/episodes/{episode_id}/prepare-mixdown",
+    response_model=MixdownPreparationResult,
+)
+async def prepare_mixdown(episode_id: str, request: Request) -> MixdownPreparationResult:
+    """Snapshot provider-backed music into owned assets without rendering."""
+    listener_id = listener(request)
+    owned(episode_id, listener_id)
+    current = orchestrator.get(episode_id, listener_id)
+    working = current.model_copy(deep=True)
+    updates: list[tuple[MusicSegment, str, str, int]] = []
+    blocked: list[BlockedMusicSource] = []
+    owned_count = 0
+    snapshotted_count = 0
+    reused_count = 0
+
+    for segment in working.timeline_segments:
+        if not isinstance(segment, MusicSegment):
+            continue
+        classification = classify_music_source(segment.audio_source_url or "")
+        if classification.kind is MusicSourceKind.OWNED_ASSET:
+            owned_count += 1
+            continue
+        if classification.kind is MusicSourceKind.UNSUPPORTED:
+            blocked.append(
+                BlockedMusicSource(
+                    segmentId=segment.id,
+                    sourceKind=classification.kind,
+                    reasonCode=classification.reason_code or "unsupported_music_source",
+                )
+            )
+            continue
+        try:
+            snapshot = await music_snapshot_store.snapshot(
+                classification, track_ref=segment.track_ref
+            )
+        except MusicSnapshotError as error:
+            blocked.append(
+                BlockedMusicSource(
+                    segmentId=segment.id,
+                    sourceKind=classification.kind,
+                    reasonCode=error.reason_code,
+                )
+            )
+            continue
+        updates.append(
+            (segment, snapshot.playback_url, snapshot.asset_ref, snapshot.duration_seconds)
+        )
+        owned_count += 1
+        if snapshot.reused:
+            reused_count += 1
+        else:
+            snapshotted_count += 1
+
+    if blocked:
+        return MixdownPreparationResult(
+            episodeId=episode_id,
+            ready=False,
+            ownedMusicCount=owned_count,
+            snapshottedMusicCount=snapshotted_count,
+            reusedMusicCount=reused_count,
+            blockedSources=blocked,
+        )
+
+    for segment, playback_url, asset_ref, duration_seconds in updates:
+        segment.audio_source_url = playback_url
+        segment.asset_ref = asset_ref
+        segment.actual_duration_seconds = duration_seconds
+    if updates:
+        try:
+            repository.save(working)
+        except EpisodeConcurrencyError as error:
+            raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
+
+    return MixdownPreparationResult(
+        episodeId=episode_id,
+        ready=True,
+        ownedMusicCount=owned_count,
+        snapshottedMusicCount=snapshotted_count,
+        reusedMusicCount=reused_count,
+        blockedSources=[],
+    )
 
 
 @app.post("/api/episodes/{episode_id}/mixdown", response_model=MixdownArtifact)

@@ -11,19 +11,19 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 6B.2 - offline mixdown vertical slice.
-- **Current stage:** credential-free implementation is complete locally and is
-  pending PR creation, CI, and exact-head GPT review. No live or paid provider
-  call is part of this slice.
-- **Canonical main:** 8b8cc99b6d0feee11a0a1ed67712d3a1838f013c (PR #53 merge
+- **Current milestone:** Phase 6B.3 - owned music snapshot/materialization seam.
+- **Current stage:** credential-free implementation and targeted E2E checks are
+  complete locally; PR/review/CI are next. No live or paid provider call is
+  part of this slice.
+- **Canonical main:** 405b83254b3ce14efb114b7dc8e6554a8dc6b439 (PR #54 merge
   commit).
-- **Last completed code milestone:** PR #53, Phase 6B.1 canonical MixPlan
-  contract and Web consumer, merged after exact-head GPT review with backend
-  and web CI green.
-- **Immediate work:** review the offline renderer PR against the exact remote
-  HEAD, then merge only after GPT DONE and green CI. The renderer must consume
-  only the canonical MixPlan and already-owned WaveCast audio assets; it must
-  never recompute episode timing or call providers.
+- **Last completed code milestone:** PR #54, Phase 6B.2 offline mixdown
+  renderer and CI ffmpeg checks, merged after exact-head GPT review with
+  backend and web CI green.
+- **Immediate work:** create the Phase 6B.3 PR from the canonical main, obtain
+  exact-head GPT review, and merge only after DONE and green CI. The snapshot
+  seam must persist provider-backed music as owned /api/assets/audio/... paths
+  without relaxing the renderer boundary or calling live providers.
 
 ## Phase 6B.1 canonical mix-plan contract
 
@@ -32,6 +32,27 @@ Web runtime. GET /api/episodes/{episode_id}/mix-plan exposes only the
 listener-owned ready prefix, and the Web player derives readiness from an
 arrangement signature that refreshes when a segment moves between pending,
 ready, or skipped states. This milestone added no live/provider behavior.
+
+## Phase 6B.2 offline mixdown
+
+PR #54 added a deterministic ffmpeg renderer that consumes the canonical
+MixPlan and only already-owned WaveCast audio assets. POST
+/api/episodes/{episode_id}/mixdown stores a stable MP3 artifact keyed by the
+plan fingerprint; it does not call providers, change episode timing, or
+mutate the timeline. Backend CI now installs and verifies ffmpeg/ffprobe before
+running the renderer tests. The merged main is
+405b83254b3ce14efb114b7dc8e6554a8dc6b439.
+
+## Phase 6B.3 owned music snapshot
+
+The current implementation adds an explicit prepare-mixdown stage: strict
+same-origin classification identifies owned assets, sidecar proxies, Audius
+proxies, and unsupported sources; injected snapshot fetchers persist supported
+audio into deterministic local-storage keys with safe metadata; and the
+listener-owned episode is updated atomically only after every required music
+source succeeds. Cache hits avoid a second fetch. The existing canonical
+MixPlan and mixdown endpoint remain unchanged. This is credential-free work;
+real provider snapshots and live episodes are intentionally excluded.
 
 ## Phase 5.3A radio-writing rubric
 
