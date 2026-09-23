@@ -180,7 +180,6 @@ def test_leave_discards_in_flight_generated_chapter_and_resume_can_continue() ->
             await task
 
     asyncio.run(run())
-    generator._next_chapter_by_episode[episode.id] = 2
     assert [segment.id for segment in runtime.get(episode.id).segments] == [
         "segment-opening"
     ]
@@ -192,6 +191,23 @@ def test_leave_discards_in_flight_generated_chapter_and_resume_can_continue() ->
         )
     )
     assert resumed.segment("segment-bridge").is_audio_ready
+
+
+def test_generator_reconstruction_derives_next_chapter_from_persisted_timeline() -> None:
+    generator = DeterministicMockProgressiveGenerator()
+    runtime, scheduler = make_runtime(generator)
+    episode = runtime.start(make_seed())
+
+    asyncio.run(
+        scheduler.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
+    )
+    reconstructed = DeterministicMockProgressiveGenerator()
+    persisted = runtime.get(episode.id)
+    next_chapter = asyncio.run(reconstructed.generate_next(persisted))
+
+    assert next_chapter is not None
+    assert next_chapter.chapter_id == "chapter-3"
+    assert reconstructed.calls == 1
 
 
 def test_full_materialization_drains_generator_and_freezes_episode() -> None:

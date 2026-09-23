@@ -25,11 +25,13 @@ class DeterministicMockProgressiveGenerator:
     def __init__(self, audio_provider: AudioProvider | None = None) -> None:
         self.audio_provider = audio_provider or MockAudioProvider()
         self.calls = 0
-        self._next_chapter_by_episode: dict[str, int] = {}
 
     async def generate_next(self, episode: LiveEpisode) -> GeneratedChapter | None:
-        next_number = self._next_chapter_by_episode.get(episode.id, 2)
-        self._next_chapter_by_episode[episode.id] = next_number + 1
+        existing_chapters = {segment.chapter_id for segment in episode.segments}
+        next_number = next(
+            (number for number in range(2, 5) if f"chapter-{number}" not in existing_chapters),
+            5,
+        )
         self.calls += 1
         if next_number > 4:
             return None
