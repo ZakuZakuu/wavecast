@@ -45,7 +45,9 @@ class NarrationMaterializer:
             raise ProviderInvalidResponseError("narration segment has no script text")
 
         rendered = render_narration(synthesis_text, segment.tts_cues)
-        profile = SpeechDirector.profile_for(segment.narration_role, rendered.text)
+        # Profile selection must inspect authored synthesis text, not rendered cue markers.
+        # Cue markers are transport instructions rather than spoken language.
+        profile = SpeechDirector.profile_for(segment.narration_role, synthesis_text)
         cache_key = _provider_cache_key(
             self.tts_provider, rendered.text, rendered.recognized_cues, profile
         )

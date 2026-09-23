@@ -84,6 +84,7 @@ def test_materializer_passes_profile_and_keeps_visible_text(tmp_path) -> None:
         planned_duration_seconds=30,
         title="Track intro",
         narration_text="\u542c\u542c\u8fd9\u4e00\u6bb5\u3002",
+        tts_cues=["breath"],
         narration_role=NarrationRole.TRACK_INTRO,
     )
 
