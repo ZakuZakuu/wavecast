@@ -848,6 +848,27 @@ def _normalize_opening_resolved_route(
     return [opening, *remainder]
 
 
+def _bound_progressive_resolved_route(
+    chapters: list[_ResolvedChapter],
+    *,
+    max_tracks: int,
+    max_chapters: int,
+) -> list[_ResolvedChapter]:
+    """Reapply request bounds after inserting the application-owned opening."""
+
+    bounded: list[_ResolvedChapter] = []
+    track_count = 0
+    for item in chapters:
+        if len(bounded) >= max_chapters:
+            break
+        if item.track is not None and track_count >= max_tracks:
+            continue
+        bounded.append(item)
+        if item.track is not None:
+            track_count += 1
+    return bounded
+
+
 def _reindex_resolved_chapters(
     chapters: list[_ResolvedChapter],
 ) -> list[_ResolvedChapter]:
@@ -887,7 +908,11 @@ def _build_progressive_session(
     """Build the pre-Writer session from route identities and slot contexts."""
 
     normalized = _reindex_resolved_chapters(
-        _normalize_opening_resolved_route(prepared.resolved_chapters, opening_track)
+        _bound_progressive_resolved_route(
+            _normalize_opening_resolved_route(prepared.resolved_chapters, opening_track),
+            max_tracks=request.max_tracks,
+            max_chapters=request.max_chapters,
+        )
     )
     try:
         all_slot_contexts = _build_narration_slot_contexts(normalized)

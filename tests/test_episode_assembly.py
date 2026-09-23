@@ -14,6 +14,7 @@ from wavecast.assembly import (
     NarrationPlacementError,
     _assemble_radio_script,
     _assemble_writer_scripts,
+    _bound_progressive_resolved_route,
     _build_narration_slot_contexts,
     _mock_writer_chapter_index,
     _mock_writer_slot_contexts,
@@ -270,6 +271,57 @@ def test_progressive_opening_dedupes_exact_identity_and_keeps_other_tracks() -> 
     ]
     assert [item.chapter.index for item in normalized] == [0, 1]
     assert normalized[1].track == different
+
+def test_progressive_opening_insertion_reapplies_track_and_chapter_bounds() -> None:
+    def chapter(index: int, track: ResolvedTrack) -> _ResolvedChapter:
+        plan = ChapterPlan(
+            index=index,
+            track=TrackProposal(
+                artist=track.canonical_artist,
+                title=track.canonical_title,
+                reasons=["fixture"],
+                confidence=0.9,
+            ),
+            narrative_role=NarrativeRole.BRIDGE,
+            reason="fixture",
+            narration_goal="fixture",
+        )
+        return _ResolvedChapter(
+            chapter=plan,
+            writer_chapter=plan,
+            track=track,
+            music_index=None,
+        )
+
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    route = [
+        chapter(
+            index,
+            ResolvedTrack(
+                track_ref=f"mock:track-{index}",
+                canonical_artist=f"Artist {index}",
+                canonical_title=f"Track {index}",
+            ),
+        )
+        for index in range(3)
+    ]
+
+    bounded = _bound_progressive_resolved_route(
+        _normalize_opening_resolved_route(route, opening),
+        max_tracks=2,
+        max_chapters=2,
+    )
+
+    assert [item.track.track_ref for item in bounded if item.track is not None] == [
+        "mock:opening",
+        "mock:track-0",
+    ]
+    assert len(bounded) == 2
+
 
 def test_writer_skips_chapters_without_owned_slots(tmp_path) -> None:
     class TrailingNarrativeLLM(RecordingAssemblyLLM):
