@@ -11,6 +11,8 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS builder
 COPY apps/web apps/web
 ENV NEXT_TELEMETRY_DISABLED=1
+ARG WAVECAST_INTERNAL_API_URL=http://api:8000
+ENV WAVECAST_INTERNAL_API_URL=$WAVECAST_INTERNAL_API_URL
 RUN pnpm --filter @wavecast/web build
 
 FROM node:24-bookworm-slim AS runner
@@ -27,4 +29,4 @@ COPY --from=builder /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
 
 WORKDIR /app/apps/web
 EXPOSE 3000
-CMD ["pnpm", "start"]
+CMD ["./node_modules/.bin/next", "start"]

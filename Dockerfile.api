@@ -32,3 +32,4 @@ USER wavecast
 ENV WAVECAST_AUDIO_ROOT=/var/lib/wavecast/audio
 
 EXPOSE 8000
+ENTRYPOINT ["/app/docker-entrypoint.api.sh"]
