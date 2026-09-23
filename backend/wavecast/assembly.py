@@ -55,7 +55,8 @@ from wavecast.intelligence.resolution import resolve_track_proposal_across_provi
 from wavecast.intelligence.trace import GenerationTrace
 from wavecast.intelligence.writer import WriterService
 from wavecast.materialization import NarrationMaterializer
-from wavecast.models.episode import NarrationSegment, PlayableEpisode, SegmentKind
+from wavecast.models.episode import LiveEpisode, NarrationSegment, PlayableEpisode, SegmentKind
+from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
     ProgressiveAssemblySession,
@@ -261,6 +262,18 @@ class LiveEpisodeAssemblyService:
             prepared=prepared,
             opening_track=opening_track,
             narration_ratio=self.narration_ratio,
+        )
+
+    def create_progressive_chapter_generator(
+        self, session: ProgressiveAssemblySession
+    ) -> StagedProgressiveChapterGenerator:
+        """Create a one-chunk adapter without changing the default runtime."""
+
+        return StagedProgressiveChapterGenerator(
+            session=session,
+            writer=self.background_pipeline.writer,
+            composer=self.composer,
+            materializer=self.materializer,
         )
 
     async def _prepare_intelligence(
@@ -924,8 +937,13 @@ def _build_progressive_session(
             diagnostics={"narration_failure_boundary": "slot_derivation"},
         ) from error
 
-    future = normalized[1:]
-    future_slots = all_slot_contexts[1:]
+    runtime_future_pairs = [
+        (item, contexts)
+        for item, contexts in zip(normalized[1:], all_slot_contexts[1:], strict=True)
+        if item.track is not None or contexts
+    ]
+    future = [item for item, _ in runtime_future_pairs]
+    future_slots = [contexts for _, contexts in runtime_future_pairs]
     if not future:
         raise EpisodeAssemblyError(
             "progressive route has no future chapter after the opening",
@@ -961,7 +979,7 @@ def _build_progressive_session(
         fast_plan=prepared.fast_result.plan,
         research=prepared.bundle,
         skeleton=prepared.skeleton.model_copy(
-            update={"chapters": [item.chapter for item in normalized]}
+            update={"chapters": [normalized[0].chapter, *[item.chapter for item in future]]}
         ),
         chapters=session_chapters,
         timing_plan=timing_plan,
@@ -1311,6 +1329,8 @@ def _assemble_writer_scripts(
     chapter_music_indices: list[int | None],
     slot_contexts: list[list[NarrationSlotContext]],
     chapter_connections: list[EditorialConnection | None] | None = None,
+    previous_music_indices: list[int | None] | None = None,
+    require_final_slot: bool = True,
 ) -> tuple[RadioScript, list[WriterChapterDiagnostic]]:
     """Place parsed Writer blocks into deterministic resolved narration slots."""
 
@@ -1323,6 +1343,10 @@ def _assemble_writer_scripts(
             "chapter connection metadata count does not match writer chapter count"
         )
     chapter_connections = chapter_connections or [None] * len(scripts)
+    if previous_music_indices is not None and len(previous_music_indices) != len(scripts):
+        raise NarrationPlacementError(
+            "previous music metadata count does not match writer chapter count"
+        )
 
     blocks: list[RadioScriptBlock] = []
     diagnostics: list[WriterChapterDiagnostic] = []
@@ -1340,13 +1364,17 @@ def _assemble_writer_scripts(
         parsed_blocks = _script_blocks(script)
         normalized: list[RadioScriptBlock] = []
         current_music_index = chapter_music_indices[chapter_index]
-        previous_music_index = next(
-            (
-                chapter_music_indices[prior]
-                for prior in range(chapter_index - 1, -1, -1)
-                if chapter_music_indices[prior] is not None
-            ),
-            None,
+        previous_music_index = (
+            previous_music_indices[chapter_index]
+            if previous_music_indices is not None
+            else next(
+                (
+                    chapter_music_indices[prior]
+                    for prior in range(chapter_index - 1, -1, -1)
+                    if chapter_music_indices[prior] is not None
+                ),
+                None,
+            )
         )
         normalized_slots: list[NarrationSlotContext] = []
         if not contexts and parsed_blocks:
@@ -1387,11 +1415,16 @@ def _assemble_writer_scripts(
         )
         blocks.extend(normalized)
 
-    if len(final_slot_ids) != 1:
-        raise NarrationPlacementError("expected exactly one final narration slot")
-    if final_slot_outro_count != 1:
+    if require_final_slot:
+        if len(final_slot_ids) != 1:
+            raise NarrationPlacementError("expected exactly one final narration slot")
+        if final_slot_outro_count != 1:
+            raise NarrationPlacementError(
+                "final narration slot must return exactly one OUTRO block"
+            )
+    elif final_slot_ids:
         raise NarrationPlacementError(
-            "final narration slot must return exactly one OUTRO block"
+            "non-final progressive chunk cannot own the final narration slot"
         )
 
     return (
@@ -1496,6 +1529,112 @@ def _assert_narration_blocks_materialized(
             f"(normalized={sum(expected.values())}, timeline={sum(actual.values())})",
             stage="composition",
         )
+
+
+class StagedProgressiveChapterGenerator:
+    """Materialize exactly one normalized session chapter at a time."""
+
+    def __init__(
+        self,
+        *,
+        session: ProgressiveAssemblySession,
+        writer: WriterService,
+        composer: EpisodeComposer,
+        materializer: NarrationMaterializer,
+    ) -> None:
+        self.session = session
+        self.writer = writer
+        self.composer = composer
+        self.materializer = materializer
+
+    async def generate_next(self, episode: LiveEpisode) -> GeneratedChapter | None:
+        chapter = self.session.next_chapter(episode)
+        if chapter is None:
+            return None
+        if not chapter.slot_contexts:
+            raise EpisodeAssemblyError(
+                "progressive session chapter has no owned narration slot",
+                stage="writer_normalization",
+                reason_code="slotless_progressive_chapter",
+            )
+
+        previous_context = " ".join(
+            segment.narration_text
+            for segment in episode.ordered_segments
+            if isinstance(segment, NarrationSegment) and segment.narration_text
+        )[-1000:]
+        upcoming = next(
+            (
+                slot.upcoming_track
+                for slot in chapter.slot_contexts
+                if slot.upcoming_track is not None
+            ),
+            None,
+        )
+        next_track_metadata = (
+            f"{upcoming.canonical_artist} - {upcoming.canonical_title}"
+            if upcoming is not None
+            else ""
+        )
+        try:
+            script = await self.writer.write(
+                chapter.chapter,
+                self.session.research.evidence,
+                previous_committed_context=previous_context,
+                next_track_metadata=next_track_metadata,
+                target_duration_seconds=chapter.target_narration_seconds,
+                output_language=self.session.output_language,
+                topic=self.session.topic,
+                slot_contexts=chapter.slot_contexts,
+            )
+        except ProviderError as error:
+            raise EpisodeAssemblyError(str(error), stage="writer") from error
+
+        has_persisted_music = any(
+            segment.kind is SegmentKind.MUSIC for segment in episode.segments
+        )
+        try:
+            radio_script, _ = _assemble_writer_scripts(
+                [script],
+                1 if chapter.resolved_track is not None else 0,
+                chapter_music_indices=[0 if chapter.resolved_track is not None else None],
+                slot_contexts=[chapter.slot_contexts],
+                chapter_connections=[chapter.chapter.connection_from_previous_track],
+                previous_music_indices=[0 if has_persisted_music else None],
+                require_final_slot=(
+                    bool(self.session.chapters)
+                    and chapter.chapter_id == self.session.chapters[-1].chapter_id
+                ),
+            )
+            prepared_tracks = await self.composer.prepare_tracks(
+                [chapter.resolved_track] if chapter.resolved_track is not None else []
+            )
+            playable = self.composer.compose_prepared(prepared_tracks, radio_script)
+            _assert_narration_blocks_materialized(radio_script, playable)
+            for segment in playable.segments:
+                if isinstance(segment, NarrationSegment):
+                    await self.materializer.materialize(segment)
+        except EpisodeAssemblyError:
+            raise
+        except ProviderError as error:
+            raise EpisodeAssemblyError(str(error), stage="progressive_chunk") from error
+        except NarrationPlacementError as error:
+            raise EpisodeAssemblyError(
+                str(error),
+                stage="writer_normalization",
+                reason_code="narration_slot_normalization_failed",
+            ) from error
+        except (UnresolvedTrackError, ValueError) as error:
+            raise EpisodeAssemblyError(str(error), stage="progressive_chunk") from error
+
+        base_order = episode.ordered_segments[-1].order + 1 if episode.ordered_segments else 0
+        segments = [
+            segment.model_copy(
+                update={"chapter_id": chapter.chapter_id, "order": base_order + offset}
+            )
+            for offset, segment in enumerate(playable.segments)
+        ]
+        return GeneratedChapter(chapter_id=chapter.chapter_id, segments=segments)
 
 
 def _script_text(script: RadioScript | NarrationScript) -> str:
