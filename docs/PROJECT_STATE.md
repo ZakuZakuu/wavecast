@@ -11,20 +11,19 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 6C - adaptive TTS director.
-- **Current stage:** Phase 6B.5 thin export UX is merged and verified as PR #57.
-  Phase 6C is the active credential-free implementation slice; no live or paid
-  provider call is authorized or required.
-- **Canonical main:** c7b0b3a68b3c30d878aa76218c32361b92e8aeaa (PR #57 merge
+- **Current milestone:** Phase 6D.1 - role-aware deterministic arrangement.
+- **Current stage:** PR #58, Phase 6C adaptive TTS director, is merged and
+  verified. Phase 6D.1 is the active credential-free implementation slice;
+  live and paid provider calls are not authorized or required.
+- **Canonical main:** 78703a34a06d7c58126143882445b9c05f09504f (PR #58 merge
   commit).
-- **Last completed code milestone:** PR #57, Phase 6B.5 thin export UX, merged
-  after exact-head GPT review with backend/web CI green.
-- **Immediate work:** complete the Phase 6C deterministic NarrationRole and
-  SpeechDirector slice, including typed narration roles, profile-aware TTS
-  cache identity, and MiniMax mapping through the same exact-head PR Loop.
-  Live listening is deferred to a later bounded human-validation slice; this
-  change does not alter Writer, MixPlan, ducking, crossfade, export, or
-  playback behavior.
+- **Last completed code milestone:** PR #58, Phase 6C adaptive TTS director,
+  merged after exact-head GPT review with backend/web CI green.
+- **Immediate work:** make the server-owned MixPlan role-aware without changing
+  its schema or its Web/ffmpeg consumers. NarrationRole remains semantic
+  ownership; the deterministic arrangement planner owns bounded physical timing,
+  overlap, and ducking. Validate ready-prefix stability and direct music
+  crossfade behavior through the exact-head PR Loop.
 
 ## Phase 6B.1 canonical mix-plan contract
 
@@ -580,3 +579,31 @@ responses. Targeted regression coverage verifies role mapping, deterministic
 bounded profiles, cache sensitivity, materializer propagation, and MiniMax
 payload mapping. Actual pacing and pronunciation still require a later
 bounded human listening pass.
+
+
+## Phase 6D.1 role-aware deterministic arrangement
+
+Phase 6D.1 keeps MixPlan schema version 1 and makes the deterministic
+arrangement planner use the existing typed NarrationRole for physical
+narration/music timing. Writer owns narration semantics and text; the planner
+owns only bounded timeline placement and gain automation; Web mix playback and
+the ffmpeg renderer remain execution consumers of the canonical plan.
+
+The provisional policy is intentionally small:
+
+- TRACK_INTRO anchors incoming music at the narration start, so a generic
+  preceding crossfade cannot start the track too early.
+- TRANSITION and INTRO keep the outgoing music overlap and admit incoming
+  music one bounded second into the narration (or half the narration when
+  shorter).
+- OUTRO has no synthetic incoming music and remains over the final music tail.
+- GENERAL preserves the existing direct-crossfade compatibility baseline.
+- Voice clips remain sequential; music ducking continues to use the existing
+  bounded gain automation primitives.
+- Planning is pure and ready-prefix based: adding future ready segments may add
+  future placements but cannot move existing segment starts.
+
+This slice changes no Writer, TTS, MixPlan schema, Web mix engine, ffmpeg,
+provider, or live behavior. Validation uses deterministic fixtures for role
+semantics, prefix stability, voice ordering, gain bounds, and direct
+music/music crossfade.
