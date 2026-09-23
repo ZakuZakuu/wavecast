@@ -11,24 +11,22 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 7A - progressive generation contract.
-- **Current stage:** Phase 6D.1 role-aware deterministic arrangement is merged
-  as PR #59 at 3eefe7316a0c636dd91428ca5b18ecddf08f18f0. Phase 7A is the
-  active credential-free implementation slice; live and paid provider calls are
-  not authorized or required.
-- **Canonical main:** 3eefe7316a0c636dd91428ca5b18ecddf08f18f (PR #59 merge
+- **Current milestone:** Phase 7B.1 - staged intelligence session contract.
+- **Current stage:** Phase 7A progressive generation contract is merged as PR
+  #60 at 462a2ffd292cc7596641bb9710caf88927025f6d after exact-head GPT review
+  and backend/web CI green. Phase 7B is the next credential-free slice; live
+  and paid provider calls are not authorized or required for the current
+  runtime-contract work.
+- **Canonical main:** 462a2ffd292cc7596641bb9710caf88927025f6d (PR #60 merge
   commit).
-- **Last completed code milestone:** PR #59, Phase 6D.1 role-aware
-  deterministic arrangement, merged after exact-head GPT review with backend/web
-  CI green.
-- **Immediate work:** replace the old preloaded future timeline with an
-  opening-only episode plus a provider-neutral async
-  ProgressiveChapterGenerator. GenerationScheduler owns per-episode
-  coalescing locks; the orchestrator validates a structural generation anchor
-  and atomically appends complete AUDIO_READY chapters. Full materialization
-  drains the deterministic fake generator. Web response shapes and MixPlan v1
-  remain unchanged; real Research/Curator/Writer/TTS integration is deferred
-  to Phase 7B.
+- **Last completed code milestone:** PR #60, Phase 7A progressive generation
+  contract, merged after exact-head GPT review with the deterministic generator
+  resume/reconstruction blocker fixed.
+- **Immediate work:** split the existing full LiveEpisodeAssemblyService into
+  a staged intelligence adapter that can generate the next chapter through the
+  progressive runtime while preserving the Phase 7A opening-only, bounded
+  buffer, atomic append, and prefix-immutability contracts. Web response shapes
+  and MixPlan v1 remain unchanged.
 
 ## Phase 7A progressive generation contract
 
@@ -43,10 +41,24 @@ appends it. Append validation is atomic and preserves the ready/committed
 prefix. Heartbeats are allowed during provider work because the append check
 uses a structural last-segment anchor rather than a raw version; if the
 listener leaves, the generated result is discarded and resume can request the
-next missing chapter. Full materialization drains the same deterministic,
-credential-free fake generator and freezes the episode. No live provider,
-external queue, Redis/Celery worker, or Web contract change is part of this
-slice.
+next missing chapter. The deterministic generator derives its next chapter from
+the persisted timeline rather than process-local cursor state, so leave/resume
+and generator reconstruction cannot skip a chapter. Full materialization drains
+the same deterministic, credential-free fake generator and freezes the episode.
+No live provider, external queue, Redis/Celery worker, or Web contract change
+is part of this slice.
+
+
+## Phase 7B.1 staged intelligence session contract
+
+The first 7B slice adds a serializable `ProgressiveAssemblySession` to the
+sanitized assembly result. It captures normalized fast-start, research,
+curation, resolved-route, narration-slot, and timing data without provider
+clients, raw responses, credentials, or ephemeral playback URLs. Its
+`next_chapter(LiveEpisode)` method derives the first missing route chapter
+from persisted timeline chapter IDs; the session has no authoritative mutable
+cursor. This contract is credential-free and does not replace the Phase 7A
+default generator or connect live providers.
 
 ## Phase 6B.1 canonical mix-plan contract
 

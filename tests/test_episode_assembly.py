@@ -1,6 +1,7 @@
 import asyncio
 import json
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 import wavecast.assembly as assembly_module
@@ -13,9 +14,12 @@ from wavecast.assembly import (
     NarrationPlacementError,
     _assemble_radio_script,
     _assemble_writer_scripts,
+    _bound_progressive_resolved_route,
     _build_narration_slot_contexts,
     _mock_writer_chapter_index,
     _mock_writer_slot_contexts,
+    _normalize_opening_resolved_route,
+    _reindex_resolved_chapters,
     _ResolvedChapter,
     create_episode_assembly_service,
 )
@@ -35,6 +39,7 @@ from wavecast.intelligence.models import (
     RadioScriptBlock,
     RadioScriptBlockKind,
     ResolvedTrack,
+    TrackProposal,
 )
 from wavecast.intelligence.research import BackgroundResearchService, FastResearchService
 from wavecast.intelligence.writer import WriterService
@@ -185,6 +190,137 @@ def test_writer_runs_only_after_resolution_and_receives_next_track_context(tmp_p
         )
         for block in result.radio_script.blocks
     )
+
+
+def test_progressive_preparation_stops_before_writer_tts_and_playback_assets(tmp_path) -> None:
+    llm = RecordingAssemblyLLM()
+    assembly = service(tmp_path, llm)
+    music_assets = assembly.composer.music_provider.get_playback_asset
+    assembly.composer.music_provider.get_playback_asset = AsyncMock(wraps=music_assets)
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                anchor_tracks=["Neon First Light"],
+                max_tracks=4,
+            ),
+            opening_track=opening,
+        )
+    )
+
+    assert session.opening_track_ref == "mock:opening"
+    assert [chapter.chapter_id for chapter in session.chapters] == [
+        "chapter-2",
+        "chapter-3",
+        "chapter-4",
+    ]
+    assert all(chapter.resolved_track is not None for chapter in session.chapters)
+    assert [call["output_type"] for call in llm.calls if call["output_type"] is RadioScript] == []
+    assert assembly.materializer.tts_provider.calls == 0
+    assert assembly.composer.music_provider.get_playback_asset.await_count == 0
+
+
+def test_progressive_opening_dedupes_exact_identity_and_keeps_other_tracks() -> None:
+    def chapter(index: int, track: ResolvedTrack) -> _ResolvedChapter:
+        plan = ChapterPlan(
+            index=index,
+            track=TrackProposal(
+                artist=track.canonical_artist,
+                title=track.canonical_title,
+                reasons=["fixture"],
+                similarity_dimensions=["groove"],
+                confidence=0.9,
+            ),
+            narrative_role=NarrativeRole.BRIDGE,
+            reason="fixture",
+            narration_goal="fixture",
+        )
+        return _ResolvedChapter(
+            chapter=plan,
+            writer_chapter=plan,
+            track=track,
+            music_index=None,
+        )
+
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    different = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Signal Garden",
+        canonical_title="Midnight Transfer",
+    )
+    normalized = _reindex_resolved_chapters(
+        _normalize_opening_resolved_route(
+            [chapter(0, opening), chapter(1, opening), chapter(2, different)],
+            opening,
+        )
+    )
+
+    assert [item.track.track_ref for item in normalized if item.track is not None] == [
+        "mock:opening",
+        "mock:bridge",
+    ]
+    assert [item.chapter.index for item in normalized] == [0, 1]
+    assert normalized[1].track == different
+
+def test_progressive_opening_insertion_reapplies_track_and_chapter_bounds() -> None:
+    def chapter(index: int, track: ResolvedTrack) -> _ResolvedChapter:
+        plan = ChapterPlan(
+            index=index,
+            track=TrackProposal(
+                artist=track.canonical_artist,
+                title=track.canonical_title,
+                reasons=["fixture"],
+                confidence=0.9,
+            ),
+            narrative_role=NarrativeRole.BRIDGE,
+            reason="fixture",
+            narration_goal="fixture",
+        )
+        return _ResolvedChapter(
+            chapter=plan,
+            writer_chapter=plan,
+            track=track,
+            music_index=None,
+        )
+
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    route = [
+        chapter(
+            index,
+            ResolvedTrack(
+                track_ref=f"mock:track-{index}",
+                canonical_artist=f"Artist {index}",
+                canonical_title=f"Track {index}",
+            ),
+        )
+        for index in range(3)
+    ]
+
+    bounded = _bound_progressive_resolved_route(
+        _normalize_opening_resolved_route(route, opening),
+        max_tracks=2,
+        max_chapters=2,
+    )
+
+    assert [item.track.track_ref for item in bounded if item.track is not None] == [
+        "mock:opening",
+        "mock:track-0",
+    ]
+    assert len(bounded) == 2
 
 
 def test_writer_skips_chapters_without_owned_slots(tmp_path) -> None:
