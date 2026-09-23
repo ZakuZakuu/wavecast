@@ -56,6 +56,11 @@ from wavecast.intelligence.trace import GenerationTrace
 from wavecast.intelligence.writer import WriterService
 from wavecast.materialization import NarrationMaterializer
 from wavecast.models.episode import NarrationSegment, PlayableEpisode, SegmentKind
+from wavecast.orchestration.staged import (
+    ProgressiveAssemblyChapter,
+    ProgressiveAssemblySession,
+    ProgressiveSessionDiagnostic,
+)
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import (
     MusicProvider,
@@ -181,6 +186,7 @@ class EpisodeAssemblyResult(BaseModel):
     research_evidence: list[Evidence] = Field(default_factory=list)
     usage_by_stage: dict[str, UsageTotals] = Field(default_factory=dict)
     provider_events: list[dict[str, object]] = Field(default_factory=list)
+    progressive_session: ProgressiveAssemblySession | None = None
 
 
 @dataclass(frozen=True)
@@ -189,6 +195,23 @@ class _ResolvedChapter:
     writer_chapter: ChapterPlan
     track: ResolvedTrack | None
     music_index: int | None
+
+
+@dataclass(frozen=True)
+class _PreparedIntelligence:
+    fast_result: FastPathResult
+    bundle: ResearchBundle
+    skeleton: ProgramSkeleton
+    resolved_chapters: list[_ResolvedChapter]
+    unresolved: list[UnresolvedAssemblyProposal]
+    slot_contexts: list[list[NarrationSlotContext]]
+    fast_path_ms: int
+    background_research_ms: int
+    curator_ms: int
+    resolution_ms: int
+
+
+_ESTIMATED_TRACK_DURATION_SECONDS = 180
 
 
 class LiveEpisodeAssemblyService:
@@ -219,13 +242,35 @@ class LiveEpisodeAssemblyService:
             raise ValueError("narration_ratio must be between 0.1 and 0.2")
         self.narration_ratio = narration_ratio
 
-    async def assemble(
+    async def prepare_progressive_session(
+        self,
+        request: LiveEpisodeAssemblyRequest,
+        *,
+        opening_track: ResolvedTrack,
+        request_id: str | None = None,
+    ) -> ProgressiveAssemblySession:
+        """Prepare serializable intelligence without producing future audio.
+
+        The opening identity is application-owned and explicit. This seam ends
+        before Writer, composition, TTS, and playback-asset preparation.
+        """
+
+        prepared = await self._prepare_intelligence(request, request_id=request_id)
+        return _build_progressive_session(
+            request=request,
+            prepared=prepared,
+            opening_track=opening_track,
+            narration_ratio=self.narration_ratio,
+        )
+
+    async def _prepare_intelligence(
         self,
         request: LiveEpisodeAssemblyRequest,
         *,
         request_id: str | None = None,
-    ) -> EpisodeAssemblyResult:
-        started = perf_counter()
+    ) -> _PreparedIntelligence:
+        """Run the bounded intelligence and catalog-identity stages only."""
+
         request_id = request_id or uuid4().hex
         intelligence_input = FastResearchInput(
             topic=request.topic,
@@ -310,9 +355,6 @@ class LiveEpisodeAssemblyService:
         chapters = _select_chapters_for_music_limit(
             skeleton.chapters, request.max_tracks, request.max_chapters
         )
-        # Curator indices are provider output, not stable application identity.
-        # Normalize the selected narrative sequence before exposing it to the
-        # rest of assembly or to Writer.
         chapters = _normalize_chapters(chapters)
         skeleton = skeleton.model_copy(update={"chapters": chapters})
         trace.mark("program_skeleton_ready", chapter_count=len(chapters))
@@ -353,25 +395,7 @@ class LiveEpisodeAssemblyService:
                     music_index=None,
                 )
             )
-        music_index = 0
-        diagnostic_connections = _resolved_route_connections(resolved_chapters)
-        indexed_chapters: list[_ResolvedChapter] = []
-        for index, item in enumerate(resolved_chapters):
-            indexed_chapters.append(
-                _ResolvedChapter(
-                    chapter=item.chapter,
-                    writer_chapter=item.writer_chapter.model_copy(
-                        update={
-                            "connection_from_previous_track": diagnostic_connections[index],
-                        }
-                    ),
-                    track=item.track,
-                    music_index=music_index if item.track is not None else None,
-                )
-            )
-            if item.track is not None:
-                music_index += 1
-        resolved_chapters = indexed_chapters
+        resolved_chapters = _reindex_resolved_chapters(resolved_chapters)
         resolution_ms = _elapsed_ms(resolution_started)
         trace.mark(
             "tracks_resolved",
@@ -391,6 +415,68 @@ class LiveEpisodeAssemblyService:
                 },
             )
 
+        try:
+            slot_contexts = _build_narration_slot_contexts(resolved_chapters)
+        except NarrationPlacementError as error:
+            raise EpisodeAssemblyError(
+                str(error),
+                stage="writer_normalization",
+                reason_code="narration_slot_derivation_failed",
+                diagnostics={"narration_failure_boundary": "slot_derivation"},
+            ) from error
+
+        return _PreparedIntelligence(
+            fast_result=fast_result,
+            bundle=bundle,
+            skeleton=skeleton,
+            resolved_chapters=resolved_chapters,
+            unresolved=unresolved,
+            slot_contexts=slot_contexts,
+            fast_path_ms=fast_path_ms,
+            background_research_ms=background_research_ms,
+            curator_ms=curator_ms,
+            resolution_ms=resolution_ms,
+        )
+
+    async def assemble(
+        self,
+        request: LiveEpisodeAssemblyRequest,
+        *,
+        request_id: str | None = None,
+    ) -> EpisodeAssemblyResult:
+        started = perf_counter()
+        request_id = request_id or uuid4().hex
+        prepared = await self._prepare_intelligence(request, request_id=request_id)
+        fast_result = prepared.fast_result
+        bundle = prepared.bundle
+        skeleton = prepared.skeleton
+        resolved_chapters = prepared.resolved_chapters
+        unresolved = prepared.unresolved
+        slot_contexts = prepared.slot_contexts
+        fast_path_ms = prepared.fast_path_ms
+        background_research_ms = prepared.background_research_ms
+        curator_ms = prepared.curator_ms
+        resolution_ms = prepared.resolution_ms
+        resolved_track_count = sum(item.track is not None for item in resolved_chapters)
+        trace = fast_result.trace
+
+        opening_track = next(
+            (item.track for item in resolved_chapters if item.track is not None),
+            None,
+        )
+        if opening_track is None:
+            raise EpisodeAssemblyError(
+                "assembly did not produce an application-owned opening track",
+                stage="resolution",
+                reason_code="missing_opening_track",
+            )
+        progressive_session = _build_progressive_session(
+            request=request,
+            prepared=prepared,
+            opening_track=opening_track,
+            narration_ratio=self.narration_ratio,
+        )
+
         track_inputs = [item.track for item in resolved_chapters if item.track is not None]
 
         try:
@@ -401,15 +487,6 @@ class LiveEpisodeAssemblyService:
             raise EpisodeAssemblyError(str(error), stage="music_preparation") from error
 
         resolved_music_seconds = sum(item.asset.duration for item in prepared_tracks)
-        try:
-            slot_contexts = _build_narration_slot_contexts(resolved_chapters)
-        except NarrationPlacementError as error:
-            raise EpisodeAssemblyError(
-                str(error),
-                stage="writer_normalization",
-                reason_code="narration_slot_derivation_failed",
-                diagnostics={"narration_failure_boundary": "slot_derivation"},
-            ) from error
         timing_plan = build_program_timing_plan(
             desired_total_seconds=request.desired_duration_seconds,
             target_narration_ratio=self.narration_ratio,
@@ -531,6 +608,7 @@ class LiveEpisodeAssemblyService:
                 for stage, totals in usage_report["usage_by_stage"].items()
             },
             provider_events=list(usage_report["provider_events"]),
+            progressive_session=progressive_session,
         )
 
     async def run(
@@ -710,6 +788,192 @@ def _research_failure_snapshot(
     }
 
 
+
+
+def _same_resolved_track(left: ResolvedTrack | None, right: ResolvedTrack) -> bool:
+    """Compare catalog identity exactly; never fuzzy-dedupe an opening."""
+
+    return (
+        left is not None
+        and left.track_ref == right.track_ref
+        and left.canonical_artist == right.canonical_artist
+        and left.canonical_title == right.canonical_title
+    )
+
+
+def _opening_chapter_plan(opening_track: ResolvedTrack) -> ChapterPlan:
+    return ChapterPlan(
+        index=0,
+        track=TrackProposal(
+            artist=opening_track.canonical_artist,
+            title=opening_track.canonical_title,
+            confidence=1.0,
+            reasons=["Application-owned opening track."],
+        ),
+        narrative_role=NarrativeRole.ANCHOR,
+        reason="Application-owned opening track for the progressive route.",
+        narration_goal="Establish the listening route from the opening track.",
+    )
+
+
+def _normalize_opening_resolved_route(
+    chapters: list[_ResolvedChapter],
+    opening_track: ResolvedTrack,
+) -> list[_ResolvedChapter]:
+    """Put the application-owned opening first and remove exact duplicates."""
+
+    opening_index = next(
+        (
+            index
+            for index, item in enumerate(chapters)
+            if _same_resolved_track(item.track, opening_track)
+        ),
+        None,
+    )
+    if opening_index is None:
+        opening = _ResolvedChapter(
+            chapter=_opening_chapter_plan(opening_track),
+            writer_chapter=_opening_chapter_plan(opening_track),
+            track=opening_track,
+            music_index=None,
+        )
+    else:
+        opening = chapters[opening_index]
+
+    remainder = [
+        item
+        for index, item in enumerate(chapters)
+        if index != opening_index and not _same_resolved_track(item.track, opening_track)
+    ]
+    return [opening, *remainder]
+
+
+def _bound_progressive_resolved_route(
+    chapters: list[_ResolvedChapter],
+    *,
+    max_tracks: int,
+    max_chapters: int,
+) -> list[_ResolvedChapter]:
+    """Reapply request bounds after inserting the application-owned opening."""
+
+    bounded: list[_ResolvedChapter] = []
+    track_count = 0
+    for item in chapters:
+        if len(bounded) >= max_chapters:
+            break
+        if item.track is not None and track_count >= max_tracks:
+            continue
+        bounded.append(item)
+        if item.track is not None:
+            track_count += 1
+    return bounded
+
+
+def _reindex_resolved_chapters(
+    chapters: list[_ResolvedChapter],
+) -> list[_ResolvedChapter]:
+    """Recompute route connections and music indices after normalization."""
+
+    connections = _resolved_route_connections(chapters)
+    indexed: list[_ResolvedChapter] = []
+    music_index = 0
+    for index, item in enumerate(chapters):
+        chapter = item.chapter.model_copy(update={"index": index})
+        writer_chapter = item.writer_chapter.model_copy(
+            update={
+                "index": index,
+                "connection_from_previous_track": connections[index],
+            }
+        )
+        indexed.append(
+            _ResolvedChapter(
+                chapter=chapter,
+                writer_chapter=writer_chapter,
+                track=item.track,
+                music_index=music_index if item.track is not None else None,
+            )
+        )
+        if item.track is not None:
+            music_index += 1
+    return indexed
+
+
+def _build_progressive_session(
+    *,
+    request: LiveEpisodeAssemblyRequest,
+    prepared: _PreparedIntelligence,
+    opening_track: ResolvedTrack,
+    narration_ratio: float,
+) -> ProgressiveAssemblySession:
+    """Build the pre-Writer session from route identities and slot contexts."""
+
+    normalized = _reindex_resolved_chapters(
+        _bound_progressive_resolved_route(
+            _normalize_opening_resolved_route(prepared.resolved_chapters, opening_track),
+            max_tracks=request.max_tracks,
+            max_chapters=request.max_chapters,
+        )
+    )
+    try:
+        all_slot_contexts = _build_narration_slot_contexts(normalized)
+    except NarrationPlacementError as error:
+        raise EpisodeAssemblyError(
+            str(error),
+            stage="writer_normalization",
+            reason_code="narration_slot_derivation_failed",
+            diagnostics={"narration_failure_boundary": "slot_derivation"},
+        ) from error
+
+    future = normalized[1:]
+    future_slots = all_slot_contexts[1:]
+    if not future:
+        raise EpisodeAssemblyError(
+            "progressive route has no future chapter after the opening",
+            stage="resolution",
+            reason_code="no_progressive_future_route",
+        )
+
+    future_music_count = sum(item.track is not None for item in future)
+    timing_plan = build_program_timing_plan(
+        desired_total_seconds=request.desired_duration_seconds,
+        target_narration_ratio=narration_ratio,
+        resolved_music_seconds=future_music_count * _ESTIMATED_TRACK_DURATION_SECONDS,
+        chapter_slot_counts=[len(contexts) for contexts in future_slots],
+    )
+    session_chapters = [
+        ProgressiveAssemblyChapter(
+            chapter_id=f"chapter-{index + 2}",
+            chapter=item.writer_chapter,
+            resolved_track=item.track,
+            slot_contexts=future_slots[index],
+            target_narration_seconds=timing_plan.chapter_budgets[index].target_narration_seconds,
+        )
+        for index, item in enumerate(future)
+    ]
+    return ProgressiveAssemblySession(
+        topic=request.topic,
+        listener_taste_context=request.listener_taste_context,
+        desired_duration_seconds=request.desired_duration_seconds,
+        max_tracks=request.max_tracks,
+        max_chapters=request.max_chapters,
+        output_language=resolve_output_language(request.output_language, request.topic),
+        opening_track_ref=opening_track.track_ref,
+        fast_plan=prepared.fast_result.plan,
+        research=prepared.bundle,
+        skeleton=prepared.skeleton.model_copy(
+            update={"chapters": [item.chapter for item in normalized]}
+        ),
+        chapters=session_chapters,
+        timing_plan=timing_plan,
+        diagnostics=[
+            ProgressiveSessionDiagnostic(
+                code="unresolved_track",
+                chapter_index=item.chapter_index,
+                detail=item.reason,
+            )
+            for item in prepared.unresolved
+        ],
+    )
 
 
 def _resolved_route_connections(
