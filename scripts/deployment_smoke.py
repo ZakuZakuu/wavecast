@@ -111,15 +111,31 @@ def main() -> None:
 
     if args.restart_api:
         subprocess.run(
-            ["docker", "compose", "-f", args.compose_file, "restart", "api"],
+            [
+                "docker",
+                "compose",
+                "-f",
+                args.compose_file,
+                "up",
+                "-d",
+                "--force-recreate",
+                "--no-deps",
+                "api",
+            ],
             check=True,
         )
         wait_for_health(base_url)
         resumed, _, _ = call(base_url, f"/api/episodes/{episode_id}")
         if not isinstance(resumed, dict) or resumed.get("id") != episode_id:
-            raise RuntimeError("deployment smoke episode did not survive API restart")
+            raise RuntimeError("deployment smoke episode did not survive API replacement")
         if not isinstance(resumed.get("segments"), list) or not resumed["segments"]:
             raise RuntimeError("deployment smoke lost persisted episode timeline")
+        for asset_url in asset_urls:
+            content, headers, status = call(base_url, asset_url)
+            if status != 200 or not isinstance(content, bytes) or not content:
+                raise RuntimeError("deployment smoke audio asset did not survive API replacement")
+            if not headers.get("content-type", "").startswith("audio/"):
+                raise RuntimeError("deployment smoke recovered audio had a non-audio content type")
 
     print(
         json.dumps(

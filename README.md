@@ -47,7 +47,7 @@ uv run python scripts/deployment_smoke.py --restart-api --compose-file docker-co
 ```
 
 The smoke checks opening-only progressive startup, staged generation, browser-playable owned audio,
-public response sanitization, and episode persistence across an API restart. CI runs this check in a
+public response sanitization, and episode/audio persistence across API container replacement. CI runs this check in a
 fresh disposable Compose project; it never calls live or paid providers.
 
 ### Phase 2 provider probes (explicitly opt-in)
