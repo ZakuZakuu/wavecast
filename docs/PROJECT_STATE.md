@@ -11,19 +11,42 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 6D.1 - role-aware deterministic arrangement.
-- **Current stage:** PR #58, Phase 6C adaptive TTS director, is merged and
-  verified. Phase 6D.1 is the active credential-free implementation slice;
-  live and paid provider calls are not authorized or required.
-- **Canonical main:** 78703a34a06d7c58126143882445b9c05f09504f (PR #58 merge
+- **Current milestone:** Phase 7A - progressive generation contract.
+- **Current stage:** Phase 6D.1 role-aware deterministic arrangement is merged
+  as PR #59 at 3eefe7316a0c636dd91428ca5b18ecddf08f18f0. Phase 7A is the
+  active credential-free implementation slice; live and paid provider calls are
+  not authorized or required.
+- **Canonical main:** 3eefe7316a0c636dd91428ca5b18ecddf08f18f (PR #59 merge
   commit).
-- **Last completed code milestone:** PR #58, Phase 6C adaptive TTS director,
-  merged after exact-head GPT review with backend/web CI green.
-- **Immediate work:** make the server-owned MixPlan role-aware without changing
-  its schema or its Web/ffmpeg consumers. NarrationRole remains semantic
-  ownership; the deterministic arrangement planner owns bounded physical timing,
-  overlap, and ducking. Validate ready-prefix stability and direct music
-  crossfade behavior through the exact-head PR Loop.
+- **Last completed code milestone:** PR #59, Phase 6D.1 role-aware
+  deterministic arrangement, merged after exact-head GPT review with backend/web
+  CI green.
+- **Immediate work:** replace the old preloaded future timeline with an
+  opening-only episode plus a provider-neutral async
+  ProgressiveChapterGenerator. GenerationScheduler owns per-episode
+  coalescing locks; the orchestrator validates a structural generation anchor
+  and atomically appends complete AUDIO_READY chapters. Full materialization
+  drains the deterministic fake generator. Web response shapes and MixPlan v1
+  remain unchanged; real Research/Curator/Writer/TTS integration is deferred
+  to Phase 7B.
+
+## Phase 7A progressive generation contract
+
+Phase 7A changes the runtime from a static preloaded future to bounded
+on-demand chapter generation. A new episode persists only its committed opening
+track and remains immediately playable; starting the episode performs zero
+generator calls. The async scheduler serializes generation per episode and
+coalesces concurrent buffer requests.
+
+Each generated chapter must be complete and AUDIO_READY before the orchestrator
+appends it. Append validation is atomic and preserves the ready/committed
+prefix. Heartbeats are allowed during provider work because the append check
+uses a structural last-segment anchor rather than a raw version; if the
+listener leaves, the generated result is discarded and resume can request the
+next missing chapter. Full materialization drains the same deterministic,
+credential-free fake generator and freezes the episode. No live provider,
+external queue, Redis/Celery worker, or Web contract change is part of this
+slice.
 
 ## Phase 6B.1 canonical mix-plan contract
 

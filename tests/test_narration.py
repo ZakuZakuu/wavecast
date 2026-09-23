@@ -215,10 +215,14 @@ def test_mock_vertical_slice_moves_music_to_narration_to_next_music(tmp_path) ->
             cover=CoverParams(family="test", seed=1, palette=("#000", "#fff")),
         )
     )
+    episode = runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
     storage = LocalObjectStorageProvider(tmp_path / "audio")
     materializer = NarrationMaterializer(MockTTSProvider(storage), storage)
     narration = episode.segment("segment-narration-1")
     narration.narration_text = "Welcome to the next track."
+    narration.asset_ref = None
+    narration.audio_source_url = None
+    narration.actual_duration_seconds = None
     narration.state = SegmentState.SCRIPT_READY
 
     asyncio.run(materializer.materialize(narration))
@@ -228,8 +232,7 @@ def test_mock_vertical_slice_moves_music_to_narration_to_next_music(tmp_path) ->
     assert after_opening.segment(narration.id).state is SegmentState.COMMITTED
 
     after_narration = runtime.complete_current_segment(episode.id)
-    assert after_narration.is_playing is False
-    next_music = runtime.next_playable(episode.id)
-    assert next_music.current_segment_id == "segment-bridge"
-    assert next_music.segment("segment-bridge").is_committed
+    assert after_narration.is_playing is True
+    assert after_narration.current_segment_id == "segment-bridge"
+    assert after_narration.segment("segment-bridge").is_committed
     assert narration.audio_source_url.startswith("/api/assets/audio/")

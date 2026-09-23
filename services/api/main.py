@@ -252,6 +252,20 @@ def operate(episode_id: str, listener_id: str, operation: Callable[[], LiveEpiso
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
+async def operate_async(
+    episode_id: str,
+    listener_id: str,
+    operation: Callable[[], Awaitable[LiveEpisode]],
+) -> LiveEpisode:
+    await to_thread.run_sync(owned, episode_id, listener_id)
+    try:
+        return await operation()
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
+    except EpisodeRuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "mode": "postgres" if DATABASE_URL else "mock"}
@@ -633,8 +647,8 @@ async def episode_mixdown(episode_id: str, request: Request) -> MixdownArtifact:
 
 
 @app.post("/api/episodes/{episode_id}/ensure-buffer", response_model=LiveEpisode)
-def ensure_buffer(episode_id: str, request: Request, body: BufferRequest) -> LiveEpisode:
-    return operate(
+async def ensure_buffer(episode_id: str, request: Request, body: BufferRequest) -> LiveEpisode:
+    return await operate_async(
         episode_id,
         listener(request),
         lambda: scheduler.ensure_buffer(episode_id, target_chapters=body.target_chapters),
@@ -642,8 +656,10 @@ def ensure_buffer(episode_id: str, request: Request, body: BufferRequest) -> Liv
 
 
 @app.post("/api/episodes/{episode_id}/advance", response_model=LiveEpisode)
-def advance_compatibility(episode_id: str, request: Request) -> LiveEpisode:
-    return operate(episode_id, listener(request), lambda: scheduler.ensure_buffer(episode_id))
+async def advance_compatibility(episode_id: str, request: Request) -> LiveEpisode:
+    return await operate_async(
+        episode_id, listener(request), lambda: scheduler.ensure_buffer(episode_id)
+    )
 
 
 @app.post("/api/episodes/{episode_id}/heartbeat", response_model=LiveEpisode)
@@ -704,8 +720,8 @@ async def materialize_narration(
     episode_id: str, segment_id: str, request: Request
 ) -> LiveEpisode:
     listener_id = listener(request)
-    owned(episode_id, listener_id)
-    episode = orchestrator.get(episode_id, listener_id)
+    await to_thread.run_sync(owned, episode_id, listener_id)
+    episode = await to_thread.run_sync(orchestrator.get, episode_id, listener_id)
     try:
         segment = episode.segment(segment_id)
     except KeyError as error:
@@ -714,12 +730,12 @@ async def materialize_narration(
         raise HTTPException(status_code=409, detail="Only narration segments can be materialized")
     try:
         await narration_materializer.materialize(segment)
-        return repository.save(episode)
+        return await to_thread.run_sync(repository.save, episode)
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
     except ProviderConfigurationError as error:
         try:
-            repository.save(episode)
+            await to_thread.run_sync(repository.save, episode)
         except EpisodeConcurrencyError as save_error:
             raise HTTPException(
                 status_code=409, detail="Episode changed; reload and retry"
@@ -728,7 +744,7 @@ async def materialize_narration(
     except ProviderError as error:
         # Materializer leaves the segment SCRIPT_READY for a later retry.
         try:
-            repository.save(episode)
+            await to_thread.run_sync(repository.save, episode)
         except EpisodeConcurrencyError as save_error:
             raise HTTPException(
                 status_code=409, detail="Episode changed; reload and retry"
@@ -739,23 +755,24 @@ async def materialize_narration(
 @app.post("/api/episodes/{episode_id}/materialize", response_model=LiveEpisode)
 async def materialize(episode_id: str, request: Request) -> LiveEpisode:
     listener_id = listener(request)
-    owned(episode_id, listener_id)
+    await to_thread.run_sync(owned, episode_id, listener_id)
     episode: LiveEpisode | None = None
     try:
-        episode = orchestrator.prepare_materialization(episode_id)
+        await scheduler.materialize_all(episode_id)
+        episode = await to_thread.run_sync(orchestrator.prepare_materialization, episode_id)
         for segment in episode.timeline_segments:
             if isinstance(segment, NarrationSegment) and not segment.is_audio_ready:
                 await narration_materializer.materialize(segment)
         episode.state = EpisodeState.MATERIALIZED
         episode.last_activity_at = orchestrator.now()
-        return repository.save(episode)
+        return await to_thread.run_sync(repository.save, episode)
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
     except ProviderConfigurationError as error:
         if episode is not None:
             episode.state = EpisodeState.STREAMING
             try:
-                repository.save(episode)
+                await to_thread.run_sync(repository.save, episode)
             except EpisodeConcurrencyError as save_error:
                 raise HTTPException(
                     status_code=409, detail="Episode changed; reload and retry"
@@ -765,7 +782,7 @@ async def materialize(episode_id: str, request: Request) -> LiveEpisode:
         if episode is not None:
             episode.state = EpisodeState.STREAMING
             try:
-                repository.save(episode)
+                await to_thread.run_sync(repository.save, episode)
             except EpisodeConcurrencyError as save_error:
                 raise HTTPException(
                     status_code=409, detail="Episode changed; reload and retry"
