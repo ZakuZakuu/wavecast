@@ -87,6 +87,8 @@ class PostgresEpisodeRepository:
 
     async def _save(self, episode: LiveEpisode, next_version: int) -> None:
         payload = episode.model_copy(update={"version": next_version}).model_dump(mode="json")
+        if episode.progressive_session is not None:
+            payload["progressive_session"] = episode.progressive_session.model_dump(mode="json")
         values = dict(
             id=episode.id,
             listener_id=episode.listener_id,

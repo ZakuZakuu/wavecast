@@ -65,6 +65,7 @@ from wavecast.orchestration.staged import (
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import (
     MusicProvider,
+    ObjectStorageProvider,
     ProgressiveLLMProvider,
     SearchProvider,
     TTSProvider,
@@ -2066,12 +2067,14 @@ def _build_music_registry(settings: ProviderSettings) -> MusicProviderRegistry:
 
 def create_episode_assembly_service(
     settings: ProviderSettings | None = None,
+    *,
+    storage: ObjectStorageProvider | None = None,
 ) -> LiveEpisodeAssemblyService:
     """Create the same assembly path in mock or explicitly configured live mode."""
     settings = settings or ProviderSettings.from_env()
     ledger = UsageLedger()
     music_registry = _build_music_registry(settings)
-    storage = LocalObjectStorageProvider()
+    storage = storage or LocalObjectStorageProvider()
     if settings.mode == "mock":
         llm: ProgressiveLLMProvider = MockEpisodeAssemblyLLM()
         discovery: SearchProvider = FakeSearchProvider()

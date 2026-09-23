@@ -71,7 +71,8 @@ def test_mock_vertical_slice_from_seed_to_materialized_resumeable_episode() -> N
 
     next_response = client.post(f"/api/episodes/{episode_id}/next")
     assert next_response.status_code == 200
-    assert next_response.json()["current_segment_id"] == "segment-narration-1"
+    assert next_response.json()["current_segment_id"].startswith("chapter-2:")
+    assert "progressive_session" not in buffered.json()
 
     assert client.post(f"/api/episodes/{episode_id}/leave").json()["is_listener_active"] is False
     assert client.post(f"/api/episodes/{episode_id}/advance").status_code == 409
