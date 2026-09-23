@@ -52,7 +52,8 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test:web
-      - run: pnpm build
+      - run: WAVECAST_INTERNAL_API_URL=https://api.example.test pnpm build
+      - run: python3 scripts/vercel_rewrite_smoke.py --expected https://api.example.test/api/:path*
 
   deployment-smoke:
     runs-on: ubuntu-latest
