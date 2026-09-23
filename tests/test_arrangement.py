@@ -1,3 +1,4 @@
+import pytest
 from wavecast.arrangement import plan_episode_mix
 from wavecast.models.episode import (
     MusicSegment,
@@ -181,3 +182,39 @@ def test_prefix_segment_starts_are_stable_when_future_music_is_ready() -> None:
 def test_direct_music_crossfade_remains_bounded() -> None:
     plan = plan_episode_mix(_episode(_music("a", 0, 40), _music("b", 1, 35)))
     assert plan.segment_starts["b"] == 37
+
+
+@pytest.mark.parametrize("bridge_role", [NarrationRole.TRANSITION, NarrationRole.INTRO])
+def test_semantic_bridge_survives_trailing_general(
+    bridge_role: NarrationRole,
+) -> None:
+    plan = plan_episode_mix(
+        _episode(
+            _music("a", 0, 40),
+            _voice("bridge", 1, 6, bridge_role),
+            _voice("general", 2, 4, NarrationRole.GENERAL),
+            _music("b", 3, 35),
+        )
+    )
+    voices = [clip for clip in plan.clips if clip.lane == "VOICE"]
+    bridge = next(clip for clip in voices if clip.segment_id == "bridge")
+    general = next(clip for clip in voices if clip.segment_id == "general")
+    incoming = next(clip for clip in plan.clips if clip.segment_id == "b")
+
+    assert bridge.timeline_end_seconds <= general.timeline_start_seconds
+    assert incoming.timeline_start_seconds >= general.timeline_start_seconds
+    assert incoming.timeline_start_seconds <= general.timeline_end_seconds
+    assert incoming.timeline_start_seconds > bridge.timeline_start_seconds
+
+
+def test_music_gain_automation_stays_bounded_for_role_aware_gap() -> None:
+    plan = plan_episode_mix(
+        _episode(
+            _music("a", 0, 40),
+            _voice("bridge", 1, 6, NarrationRole.TRANSITION),
+            _voice("general", 2, 4, NarrationRole.GENERAL),
+            _music("b", 3, 35),
+        )
+    )
+    for clip in plan.clips:
+        assert all(0 <= point.gain <= 1 for point in clip.gain_automation)

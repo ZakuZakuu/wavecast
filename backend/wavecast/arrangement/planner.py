@@ -57,6 +57,59 @@ def _narration_role(segment: Segment) -> NarrationRole:
     return getattr(segment, "narration_role", NarrationRole.GENERAL)
 
 
+def _narration_run_before(segments: list[Segment], index: int) -> list[int]:
+    run: list[int] = []
+    candidate = index - 1
+    while candidate >= 0 and segments[candidate].kind is SegmentKind.NARRATION:
+        run.append(candidate)
+        candidate -= 1
+    run.reverse()
+    return run
+
+
+def _semantic_incoming_music_start(
+    *,
+    segments: list[Segment],
+    index: int,
+    starts_by_index: dict[int, float],
+    config: ArrangementDefaults,
+    fallback: float,
+) -> float:
+    run = _narration_run_before(segments, index)
+    if not run:
+        return fallback
+
+    track_intro_index = next(
+        (candidate for candidate in reversed(run)
+         if _narration_role(segments[candidate]) is NarrationRole.TRACK_INTRO),
+        None,
+    )
+    if track_intro_index is not None:
+        track_intro = segments[track_intro_index]
+        return _incoming_music_start(
+            narration_start=starts_by_index[track_intro_index],
+            narration_duration=_duration(track_intro),
+            role=NarrationRole.TRACK_INTRO,
+            config=config,
+            fallback=fallback,
+        )
+
+    if any(
+        _narration_role(segments[candidate]) in {NarrationRole.TRANSITION, NarrationRole.INTRO}
+        for candidate in run
+    ):
+        last = run[-1]
+        return _incoming_music_start(
+            narration_start=starts_by_index[last],
+            narration_duration=_duration(segments[last]),
+            role=NarrationRole.TRANSITION,
+            config=config,
+            fallback=fallback,
+        )
+
+    return fallback
+
+
 def _incoming_music_start(
     *,
     narration_start: float,
@@ -161,29 +214,22 @@ def plan_episode_mix(
         if index == 0:
             start = 0.0
         elif segment.kind is SegmentKind.MUSIC:
+            prior_music_index = _music_before(segments, index)
+            fallback = cursor
+            if prior_music_index is not None:
+                prior_start = starts_by_index[prior_music_index]
+                prior_end = prior_start + _duration(segments[prior_music_index])
+                fallback = max(0.0, prior_end - config.crossfade_seconds)
             if previous and previous.kind is SegmentKind.NARRATION:
-                previous_start = starts_by_index[index - 1]
-                prior_music_index = _music_before(segments, index)
-                fallback = cursor
-                if prior_music_index is not None:
-                    prior_start = starts_by_index[prior_music_index]
-                    prior_end = prior_start + _duration(segments[prior_music_index])
-                    fallback = max(0.0, prior_end - config.crossfade_seconds)
-                start = _incoming_music_start(
-                    narration_start=previous_start,
-                    narration_duration=_duration(previous),
-                    role=_narration_role(previous),
+                start = _semantic_incoming_music_start(
+                    segments=segments,
+                    index=index,
+                    starts_by_index=starts_by_index,
                     config=config,
                     fallback=fallback,
                 )
             else:
-                prior_music_index = _music_before(segments, index)
-                if prior_music_index is not None:
-                    prior_start = starts_by_index[prior_music_index]
-                    prior_end = prior_start + _duration(segments[prior_music_index])
-                    start = max(0.0, prior_end - config.crossfade_seconds)
-                else:
-                    start = cursor
+                start = fallback
         elif previous and previous.kind is SegmentKind.MUSIC:
             previous_end = starts_by_index[index - 1] + _duration(previous)
             start = max(
