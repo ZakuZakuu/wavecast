@@ -1,10 +1,11 @@
+
+from __future__ import annotations
+
 import pytest
 from wavecast.models.episode import (
     CoverParams,
     EpisodeSeed,
     EpisodeState,
-    MusicSegment,
-    NarrationSegment,
     SegmentState,
 )
 from wavecast.orchestration.episode import (
@@ -34,42 +35,42 @@ def runtime() -> EpisodeOrchestrator:
     return EpisodeOrchestrator(InMemoryEpisodeRepository())
 
 
-def test_opening_track_is_ready_immediately_and_future_advances_one_segment(
+def test_opening_track_is_ready_immediately_and_future_is_generated_on_demand(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
     episode = runtime.start(seed)
     assert episode.state is EpisodeState.STREAMING
     assert episode.generated_frontier_seconds == 22
-    assert episode.buffer_ahead_seconds == 22
+    assert len(episode.ordered_segments) == 1
     assert episode.ordered_segments[0].is_audio_ready
-    assert episode.ordered_segments[1].state is SegmentState.PLANNED
 
-    updated = runtime.ensure_buffer(episode.id)
+    updated = runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
     assert updated.generated_frontier_seconds > 32
-    assert updated.ordered_segments[1].state is SegmentState.AUDIO_READY
-    assert updated.ordered_segments[5].state is SegmentState.PLANNED
+    assert updated.segment("segment-narration-1").is_audio_ready
+    assert updated.segment("segment-bridge").is_audio_ready
 
 
 def test_timeline_serializes_explicit_playable_audio_segment_fields(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
     episode = runtime.start(seed)
-    opening = episode.segment("segment-opening")
-    narration = episode.segment("segment-narration-1")
+    runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
+    opening = runtime.get(episode.id).segment("segment-opening")
+    narration = runtime.get(episode.id).segment("segment-narration-1")
 
-    assert isinstance(opening, MusicSegment)
-    assert isinstance(narration, NarrationSegment)
     opening_payload = opening.model_dump(mode="json")
     assert opening_payload["audio_source_url"].startswith("/api/audio/mock/music/")
     assert opening_payload["duration_seconds"] == 22
-    assert narration.model_dump(mode="json")["audio_source_url"] is None
+    assert narration.model_dump(mode="json")["audio_source_url"].startswith(
+        "/api/audio/mock/narration/"
+    )
 
 
 def test_browser_completion_transitions_segments_without_server_clock(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
     episode = runtime.start(seed)
-    runtime.ensure_buffer(episode.id, target_chapters=1)
+    runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
     runtime.checkpoint_playback(episode.id, 7)
 
     completed = runtime.complete_current_segment(episode.id)
@@ -95,7 +96,7 @@ def test_buffer_ahead_tracks_generated_frontier_minus_browser_position(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
     episode = runtime.start(seed)
-    runtime.ensure_buffer(episode.id, target_chapters=1)
+    runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
 
     checkpointed = runtime.checkpoint_playback(episode.id, 9)
 
@@ -104,7 +105,7 @@ def test_buffer_ahead_tracks_generated_frontier_minus_browser_position(
     )
 
 
-def test_seconds_target_stops_after_one_long_chapter_without_partial_materialization(
+def test_seconds_target_stops_after_one_generated_chapter(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
     episode = runtime.start(seed)
@@ -116,67 +117,45 @@ def test_seconds_target_stops_after_one_long_chapter_without_partial_materializa
     assert buffered.buffer_ahead_seconds >= 30
     assert buffered.segment("segment-narration-1").is_audio_ready
     assert buffered.segment("segment-bridge").is_audio_ready
-    assert buffered.segment("segment-narration-2").state is SegmentState.PLANNED
-    assert buffered.segment("segment-resolution").state is SegmentState.PLANNED
+    with pytest.raises(KeyError):
+        buffered.segment("segment-narration-2")
 
 
-def test_short_chapters_still_reach_the_two_chapter_target(
+def test_two_chapter_target_generates_only_two_chapters(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
     episode = runtime.start(seed)
 
-    buffered = runtime.ensure_buffer(episode.id)
+    buffered = runtime.ensure_buffer(episode.id, target_chapters=2, target_ahead_seconds=300)
 
     assert buffered.segment("segment-resolution").is_audio_ready
-    assert buffered.segment("segment-narration-3").state is SegmentState.PLANNED
-
-
-def test_partial_future_chapter_is_completed_before_seconds_cutoff(
-    runtime: EpisodeOrchestrator, seed: EpisodeSeed
-) -> None:
-    episode = runtime.start(seed)
-    runtime._make_ready(episode.segment("segment-narration-1"))
-
-    buffered = runtime.ensure_buffer(
-        episode.id, target_chapters=2, target_ahead_seconds=30
-    )
-
-    assert buffered.segment("segment-bridge").is_audio_ready
-    assert buffered.segment("segment-narration-2").state is SegmentState.PLANNED
-
-
-def test_partial_current_chapter_is_completed_before_seconds_cutoff(
-    runtime: EpisodeOrchestrator, seed: EpisodeSeed
-) -> None:
-    episode = runtime.start(seed)
-    runtime._make_ready(episode.segment("segment-narration-1"))
-    runtime.commit_segment(episode.id, "segment-narration-1")
-
-    buffered = runtime.ensure_buffer(
-        episode.id, target_chapters=2, target_ahead_seconds=5
-    )
-
-    assert buffered.segment("segment-bridge").is_audio_ready
-    assert buffered.segment("segment-narration-2").state is SegmentState.PLANNED
+    with pytest.raises(KeyError):
+        buffered.segment("segment-narration-3")
 
 
 def test_replan_preserves_committed_content(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
     episode = runtime.start(seed)
+    runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
     runtime.commit_segment(episode.id, "segment-opening")
     runtime.replace_speculative_music(episode.id, "A new future route")
 
     updated = runtime.get(episode.id)
     assert updated.segment("segment-opening").title == "Immediate opening"
-    assert updated.segment("segment-bridge").title == "A new future route"
     assert updated.segment("segment-opening").is_committed
+    assert updated.segment("segment-bridge").title == "Midnight Transfer"
 
 
 def test_next_uses_known_music_when_narration_is_not_ready(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
     episode = runtime.start(seed)
+    runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
+    current = runtime.get(episode.id)
+    current.segment("segment-narration-1").state = SegmentState.SCRIPT_READY
+    runtime.repository.save(current)
+
     updated = runtime.next_playable(episode.id)
     assert updated.current_segment_id == "segment-bridge"
     assert updated.segment("segment-bridge").is_committed
@@ -193,7 +172,7 @@ def test_exit_cancels_future_progress_and_resume_restarts_it(
     assert runtime.get(episode.id).generated_frontier_seconds == 22
 
     runtime.resume(episode.id)
-    advanced = runtime.ensure_buffer(episode.id)
+    advanced = runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
     assert advanced.generated_frontier_seconds > 22
 
 
@@ -203,7 +182,8 @@ def test_full_materialization_makes_a_fixed_complete_timeline(
     episode = runtime.start(seed)
     materialized = runtime.materialize_all(episode.id)
     assert materialized.state is EpisodeState.MATERIALIZED
-    assert materialized.generated_frontier_seconds == materialized.estimated_total_seconds
+    assert materialized.generated_frontier_seconds == materialized.timeline_duration_seconds
+    assert len(materialized.ordered_segments) == 7
 
     after_advance = runtime.ensure_buffer(episode.id)
     assert after_advance.model_dump() == materialized.model_dump()

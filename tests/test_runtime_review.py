@@ -1,3 +1,4 @@
+
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -30,7 +31,7 @@ def make_runtime() -> EpisodeOrchestrator:
 def test_playback_clock_automatically_advances_and_marks_completed_segments_played() -> None:
     runtime = make_runtime()
     episode = runtime.start(make_seed())
-    runtime.ensure_buffer(episode.id)
+    runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
 
     advanced = runtime.tick(episode.id, elapsed_seconds=22)
 
@@ -42,6 +43,10 @@ def test_playback_clock_automatically_advances_and_marks_completed_segments_play
 def test_skip_removes_unready_narration_and_keeps_generated_frontier_continuous() -> None:
     runtime = make_runtime()
     episode = runtime.start(make_seed())
+    runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
+    current = runtime.get(episode.id)
+    current.segment("segment-narration-1").state = SegmentState.SCRIPT_READY
+    runtime.repository.save(current)
 
     skipped = runtime.next_playable(episode.id)
     active_before_current = [
@@ -70,12 +75,13 @@ def test_ensure_buffer_stops_after_two_ready_future_chapters() -> None:
     runtime = make_runtime()
     episode = runtime.start(make_seed())
 
-    buffered = runtime.ensure_buffer(episode.id, target_chapters=2)
-    later_segment = buffered.segment("segment-narration-3")
+    buffered = runtime.ensure_buffer(episode.id, target_chapters=2, target_ahead_seconds=300)
     snapshot = [segment.model_dump() for segment in buffered.segments]
-    unchanged = runtime.ensure_buffer(episode.id, target_chapters=2)
+    unchanged = runtime.ensure_buffer(episode.id, target_chapters=2, target_ahead_seconds=300)
 
-    assert later_segment.state is SegmentState.PLANNED
+    assert buffered.segment("segment-resolution").is_audio_ready
+    with pytest.raises(KeyError):
+        buffered.segment("segment-narration-3")
     assert [segment.model_dump() for segment in unchanged.segments] == snapshot
 
 

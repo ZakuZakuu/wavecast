@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from urllib.parse import urlsplit
 
@@ -24,6 +26,12 @@ from wavecast.storage.episodes import (
     EpisodeRepository,
 )
 
+from .generation import (
+    DeterministicMockProgressiveGenerator,
+    GeneratedChapter,
+    ProgressiveChapterGenerator,
+)
+
 SESSION_TTL = timedelta(seconds=30)
 DEFAULT_BUFFER_CHAPTERS = 2
 DEFAULT_BUFFER_AHEAD_SECONDS = 5 * 60
@@ -42,6 +50,14 @@ def _is_wavecast_owned_audio_url(value: str) -> bool:
 
 class EpisodeRuntimeError(ValueError):
     """Raised when a caller requests a transition outside runtime guarantees."""
+
+
+@dataclass(frozen=True)
+class GenerationSnapshot:
+    episode: LiveEpisode
+    last_segment_id: str
+    last_order: int
+    structural_signature: tuple[tuple[str, int, str], ...]
 
 
 class InMemoryEpisodeRepository:
@@ -80,10 +96,14 @@ class EpisodeOrchestrator:
         repository: EpisodeRepository,
         now: Callable[[], datetime] = utc_now,
         audio_provider: AudioProvider | None = None,
+        progressive_generator: ProgressiveChapterGenerator | None = None,
     ) -> None:
         self.repository = repository
         self.now = now
         self.audio_provider = audio_provider or MockAudioProvider()
+        self.progressive_generator = progressive_generator or DeterministicMockProgressiveGenerator(
+            self.audio_provider
+        )
 
     def start(self, seed: EpisodeSeed, listener_id: str = "test-listener") -> LiveEpisode:
         now = self.now()
@@ -106,7 +126,7 @@ class EpisodeOrchestrator:
             listener_id=listener_id,
             state=EpisodeState.STREAMING,
             program_estimated_duration_seconds=seed.estimated_duration_seconds,
-            segments=[opening, *self._future_segments()],
+            segments=[opening],
             current_segment_id=opening.id,
             last_activity_at=now,
             last_heartbeat_at=now,
@@ -197,6 +217,65 @@ class EpisodeOrchestrator:
                 episode.last_activity_at = now
                 self.repository.save(episode)
 
+    def capture_generation_snapshot(self, episode_id: str) -> GenerationSnapshot:
+        episode = self._active_episode(episode_id)
+        segments = episode.ordered_segments
+        if not segments:
+            raise EpisodeRuntimeError("episode has no timeline segments")
+        last = segments[-1]
+        return GenerationSnapshot(
+            episode=episode.model_copy(deep=True),
+            last_segment_id=last.id,
+            last_order=last.order,
+            structural_signature=tuple(
+                (segment.id, segment.order, segment.chapter_id)
+                for segment in segments
+            ),
+        )
+
+    def append_generated_chapter(
+        self,
+        episode_id: str,
+        chapter: GeneratedChapter,
+        snapshot: GenerationSnapshot,
+    ) -> LiveEpisode:
+        latest = self.get(episode_id)
+        if not latest.is_listener_active:
+            raise EpisodeRuntimeError("listener session is inactive; discard generated chapter")
+        if latest.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+            raise EpisodeRuntimeError("episode is no longer progressively writable")
+        current = latest.ordered_segments
+        if not current or current[-1].id != snapshot.last_segment_id:
+            raise EpisodeRuntimeError("generation anchor is stale")
+        if current[-1].order != snapshot.last_order:
+            raise EpisodeRuntimeError("generation anchor order is stale")
+        current_signature = tuple(
+            (segment.id, segment.order, segment.chapter_id) for segment in current
+        )
+        if current_signature != snapshot.structural_signature:
+            raise EpisodeRuntimeError("generation anchor structure is stale")
+        existing_ids = {segment.id for segment in latest.segments}
+        existing_chapters = {segment.chapter_id for segment in latest.segments}
+        if chapter.chapter_id in existing_chapters:
+            raise EpisodeRuntimeError("generated chapter already exists")
+        if any(segment.id in existing_ids for segment in chapter.segments):
+            raise EpisodeRuntimeError("generated segment id already exists")
+        if any(not segment.is_audio_ready for segment in chapter.segments):
+            raise EpisodeRuntimeError("generated chapter is not fully audio-ready")
+        if any(segment.is_committed for segment in chapter.segments):
+            raise EpisodeRuntimeError("generated chapter contains committed content")
+        if any(segment.chapter_id != chapter.chapter_id for segment in chapter.segments):
+            raise EpisodeRuntimeError("generated chapter has mixed chapter identities")
+
+        first_order = current[-1].order + 1
+        normalized = [
+            segment.model_copy(update={"chapter_id": chapter.chapter_id, "order": first_order + index})
+            for index, segment in enumerate(chapter.segments)
+        ]
+        latest.segments.extend(normalized)
+        latest.last_activity_at = self.now()
+        return self.repository.save(latest)
+
     def ensure_buffer(
         self,
         episode_id: str,
@@ -204,30 +283,57 @@ class EpisodeOrchestrator:
         target_chapters: int = DEFAULT_BUFFER_CHAPTERS,
         target_ahead_seconds: int = DEFAULT_BUFFER_AHEAD_SECONDS,
     ) -> LiveEpisode:
-        """Materialize complete future chapters until either buffer target is met."""
+        return asyncio.run(
+            self.ensure_buffer_async(
+                episode_id,
+                target_chapters=target_chapters,
+                target_ahead_seconds=target_ahead_seconds,
+            )
+        )
+
+    async def ensure_buffer_async(
+        self,
+        episode_id: str,
+        *,
+        target_chapters: int = DEFAULT_BUFFER_CHAPTERS,
+        target_ahead_seconds: int = DEFAULT_BUFFER_AHEAD_SECONDS,
+    ) -> LiveEpisode:
+        """Bounded async generation behind the already-playable opening."""
         if target_chapters not in {1, 2}:
             raise EpisodeRuntimeError("target buffer must be one or two chapters")
         if target_ahead_seconds <= 0:
             raise EpisodeRuntimeError("target buffer seconds must be positive")
-        episode = self._active_episode(episode_id)
+        episode = await asyncio.to_thread(self._active_episode, episode_id)
         if episode.state is EpisodeState.MATERIALIZED:
             return episode
         while True:
             partial_chapter_id = self._next_partial_chapter_id(episode)
             if partial_chapter_id is not None:
                 self._materialize_chapter(episode, partial_chapter_id)
+                episode = await asyncio.to_thread(self.repository.save, episode)
                 continue
             if self._ready_future_chapter_count(episode) >= target_chapters:
                 break
             if episode.buffer_ahead_seconds >= target_ahead_seconds:
                 break
             next_chapter_id = self._next_future_chapter_id(episode)
-            if next_chapter_id is None:
+            if next_chapter_id is not None:
+                self._materialize_chapter(episode, next_chapter_id)
+                episode = await asyncio.to_thread(self.repository.save, episode)
+                continue
+            snapshot = await asyncio.to_thread(
+                self.capture_generation_snapshot, episode_id
+            )
+            chapter = await self.progressive_generator.generate_next(snapshot.episode)
+            if chapter is None:
                 break
-            self._materialize_chapter(episode, next_chapter_id)
+            episode = await asyncio.to_thread(
+                self.append_generated_chapter, episode_id, chapter, snapshot
+            )
+        episode = await asyncio.to_thread(self.repository.get, episode_id)
         self._start_ready_successor(episode)
         episode.last_activity_at = self.now()
-        return self.repository.save(episode)
+        return await asyncio.to_thread(self.repository.save, episode)
 
     def tick(self, episode_id: str, *, elapsed_seconds: int) -> LiveEpisode:
         """Advance the logical player and start each contiguous ready segment automatically."""
@@ -377,15 +483,42 @@ class EpisodeOrchestrator:
         return self.repository.save(episode)
 
     def materialize_all(self, episode_id: str) -> LiveEpisode:
-        episode = self._active_episode(episode_id)
+        return asyncio.run(self.materialize_all_async(episode_id))
+
+    async def materialize_all_async(self, episode_id: str) -> LiveEpisode:
+        """Drain the bounded generator before freezing a complete local episode."""
+        episode = await asyncio.to_thread(self._active_episode, episode_id)
         episode.generation_mode = GenerationMode.FULL
         episode.state = EpisodeState.MATERIALIZING
+        episode = await asyncio.to_thread(self.repository.save, episode)
+        while True:
+            partial_chapter_id = self._next_partial_chapter_id(episode)
+            if partial_chapter_id is not None:
+                self._materialize_chapter(episode, partial_chapter_id)
+                episode = await asyncio.to_thread(self.repository.save, episode)
+                continue
+            next_chapter_id = self._next_future_chapter_id(episode)
+            if next_chapter_id is not None:
+                self._materialize_chapter(episode, next_chapter_id)
+                episode = await asyncio.to_thread(self.repository.save, episode)
+                continue
+            snapshot = await asyncio.to_thread(
+                self.capture_generation_snapshot, episode_id
+            )
+            chapter = await self.progressive_generator.generate_next(snapshot.episode)
+            if chapter is None:
+                break
+            episode = await asyncio.to_thread(
+                self.append_generated_chapter, episode_id, chapter, snapshot
+            )
+        episode = await asyncio.to_thread(self.repository.get, episode_id)
         for segment in episode.timeline_segments:
             if not segment.is_audio_ready:
                 self._make_ready(segment)
         episode.state = EpisodeState.MATERIALIZED
+        episode.generation_mode = GenerationMode.FULL
         episode.last_activity_at = self.now()
-        return self.repository.save(episode)
+        return await asyncio.to_thread(self.repository.save, episode)
 
     def prepare_materialization(self, episode_id: str) -> LiveEpisode:
         """Prepare a full timeline while leaving narration network I/O external.
@@ -568,71 +701,3 @@ class EpisodeOrchestrator:
         for segment in episode.timeline_segments:
             if segment.chapter_id == chapter_id and not segment.is_audio_ready:
                 self._make_ready(segment)
-
-    def _future_segments(self) -> list[MusicSegment | NarrationSegment]:
-        def music(
-            *, id: str, chapter_id: str, order: int, track_ref: str, title: str, artist: str
-        ) -> MusicSegment:
-            source = self.audio_provider.music_source(track_ref)
-            return MusicSegment(
-                id=id,
-                chapter_id=chapter_id,
-                order=order,
-                state=SegmentState.PLANNED,
-                planned_duration_seconds=source.duration_seconds,
-                track_ref=track_ref,
-                audio_source_url=source.source_url,
-                title=title,
-                artist=artist,
-            )
-
-        return [
-            NarrationSegment(
-                id="segment-narration-1",
-                chapter_id="chapter-2",
-                order=1,
-                planned_duration_seconds=10,
-                title="Host introduction",
-                narration_text="Welcome to this guided listening journey.",
-            ),
-            music(
-                id="segment-bridge",
-                chapter_id="chapter-2",
-                order=2,
-                track_ref="mock:bridge",
-                title="Midnight Transfer",
-                artist="Signal Garden",
-            ),
-            NarrationSegment(
-                id="segment-narration-2",
-                chapter_id="chapter-3",
-                order=3,
-                planned_duration_seconds=11,
-                title="Host connection",
-                narration_text="Now we connect the next chapter.",
-            ),
-            music(
-                id="segment-resolution",
-                chapter_id="chapter-3",
-                order=4,
-                track_ref="mock:resolution",
-                title="Daybreak in Stereo",
-                artist="Southbound FM",
-            ),
-            NarrationSegment(
-                id="segment-narration-3",
-                chapter_id="chapter-4",
-                order=5,
-                planned_duration_seconds=9,
-                title="Host resolution",
-                narration_text="We close with a final reflection.",
-            ),
-            music(
-                id="segment-finale",
-                chapter_id="chapter-4",
-                order=6,
-                track_ref="mock:finale",
-                title="Afterimage Avenue",
-                artist="Southbound FM",
-            ),
-        ]
