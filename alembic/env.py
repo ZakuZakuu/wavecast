@@ -5,6 +5,7 @@ from logging.config import fileConfig
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+from wavecast.deployment import normalize_database_url
 from wavecast.storage.episodes import metadata
 
 from alembic import context
@@ -13,7 +14,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 if database_url := os.getenv("WAVECAST_DATABASE_URL"):
-    config.set_main_option("sqlalchemy.url", database_url)
+    config.set_main_option("sqlalchemy.url", normalize_database_url(database_url))
 target_metadata = metadata
 
 

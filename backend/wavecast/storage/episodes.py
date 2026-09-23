@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from wavecast.deployment import normalize_database_url
 from wavecast.models.episode import LiveEpisode
 
 
@@ -56,7 +57,9 @@ class PostgresEpisodeRepository:
     """
 
     def __init__(self, database_url: str) -> None:
-        self.engine: AsyncEngine = create_async_engine(database_url, poolclass=NullPool)
+        self.engine: AsyncEngine = create_async_engine(
+            normalize_database_url(database_url), poolclass=NullPool
+        )
 
     def save(self, episode: LiveEpisode) -> LiveEpisode:
         next_version = episode.version + 1

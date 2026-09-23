@@ -50,6 +50,13 @@ The smoke checks opening-only progressive startup, staged generation, browser-pl
 public response sanitization, and episode/audio persistence across API container replacement. CI runs this check in a
 fresh disposable Compose project; it never calls live or paid providers.
 
+### Hosted target compatibility
+
+Deployment Baseline B prepares the same contracts for Vercel Web and Railway
+API/Postgres/Persistent Volume without creating hosted resources. See
+docs/deployment/railway-vercel.md. Initial hosted mode remains mock; platform
+binding, public URLs, secrets, and live providers are separate steps.
+
 ### Phase 2 provider probes (explicitly opt-in)
 
 Provider mode defaults to `mock`; neither development nor CI calls paid services. To run a real probe, copy `.env.example` to the gitignored local `.env`, set `WAVECAST_PROVIDER_MODE=live`, and fill only the local `DEEPSEEK_API_KEY`, `EXA_API_KEY`, and `TAVILY_API_KEY`. Never commit `.env` and do not put provider keys into shell history.

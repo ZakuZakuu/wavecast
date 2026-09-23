@@ -11,22 +11,24 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Deployment Baseline A.
-- **Current stage:** PR #63 is merged at
-  bda0108ad59b98e1a31c1b610e14e34a6a55a771. Its merge commit is
-  4865cdb1fc8b2ec027c137b8f708f0a3f26e2d70. The Phase 7 true progressive
-  generation contract is complete; live and paid provider calls remain
-  disabled. The immediate work is production-like container packaging,
-  durable local audio storage, and a credential-free CI deployment smoke.
-- **Canonical main:** 4865cdb1fc8b2ec027c137b8f708f0a3f26e2d70 (PR #63 merge
+- **Current milestone:** Deployment Baseline B — hosted target compatibility.
+- **Current stage:** Deployment Baseline A / PR #64 is merged at
+  15e5c4ba44f795fc40995e6cf1e7632e105dd156. The Phase 7 progressive
+  generation contract and production-like Compose baseline are complete;
+  live and paid provider calls remain disabled. This slice prepares the same
+  contracts for Vercel Web and Railway API/Postgres/persistent audio without
+  creating hosted resources.
+- **Canonical main:** 15e5c4ba44f795fc40995e6cf1e7632e105dd156 (PR #64 merge
   commit).
-- **Last completed code milestone:** Phase 7 True Progressive Generation,
-  including PR #63 durable staged runtime deployment wiring, merged after
-  exact-head GPT review and backend/web CI green.
-- **Immediate work:** complete Deployment Baseline A with API/Web production
-  images, Postgres and durable local audio Compose volumes, a one-command local
-  production-like stack, and an independent CI container smoke. No public
-  deployment, provider credentials, or paid calls are part of this slice.
+- **Last completed code milestone:** Deployment Baseline A / PR #64,
+  including production-like images, named Postgres/audio volumes, and an
+  independent CI container smoke, merged after exact-head GPT review and all
+  required CI jobs passing.
+- **Immediate work:** complete Deployment Baseline B with Railway dynamic-port
+  compatibility, hosted Postgres URL normalization, Railway volume-aware audio
+  root resolution, Vercel build-time API rewrite coverage, and a credential-free
+  hosted deployment runbook. No public deployment, platform credentials, or
+  paid calls are part of this slice.
 
 ## Phase 7A progressive generation contract
 
