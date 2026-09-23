@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from wavecast.arrangement import MixPlan, plan_episode_mix
+from wavecast.assembly import create_episode_assembly_service
 from wavecast.materialization import (
     MusicSnapshotError,
     MusicSnapshotStore,
@@ -37,6 +38,7 @@ from wavecast.models.episode import (
 )
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
+from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
 from wavecast.providers.audius import AudiusMusicProvider
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import ObjectStorageProvider
@@ -65,13 +67,11 @@ from wavecast.storage.episodes import EpisodeRepository
 
 LISTENER_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 DATABASE_URL = os.getenv("WAVECAST_DATABASE_URL")
+audio_storage: ObjectStorageProvider = LocalObjectStorageProvider()
+_provider_settings = ProviderSettings.from_env()
 repository: EpisodeRepository = (
     PostgresEpisodeRepository(DATABASE_URL) if DATABASE_URL else InMemoryEpisodeRepository()
 )
-orchestrator = EpisodeOrchestrator(repository)
-scheduler = InlineGenerationScheduler(orchestrator)
-audio_storage: ObjectStorageProvider = LocalObjectStorageProvider()
-_provider_settings = ProviderSettings.from_env()
 
 
 def _build_tts_provider(
@@ -84,6 +84,24 @@ def _build_tts_provider(
 
 _tts_provider = _build_tts_provider(_provider_settings, audio_storage)
 narration_materializer = NarrationMaterializer(_tts_provider, audio_storage)
+
+
+def _build_progressive_runtime(
+    settings: ProviderSettings, storage: ObjectStorageProvider
+) -> StagedProgressiveRuntimeAdapter | None:
+    try:
+        return StagedProgressiveRuntimeAdapter(
+            create_episode_assembly_service(settings, storage=storage)
+        )
+    except ProviderConfigurationError:
+        if settings.mode == "live":
+            raise
+        return None
+
+
+progressive_runtime = _build_progressive_runtime(_provider_settings, audio_storage)
+orchestrator = EpisodeOrchestrator(repository, progressive_runtime=progressive_runtime)
+scheduler = InlineGenerationScheduler(orchestrator)
 
 
 async def _resolve_provider_playback_request(
@@ -112,11 +130,19 @@ music_snapshot_store = MusicSnapshotStore(
 )
 
 
-def configure_runtime(episode_repository: EpisodeRepository) -> None:
+def configure_runtime(
+    episode_repository: EpisodeRepository,
+    progressive_runtime_adapter: StagedProgressiveRuntimeAdapter | None = None,
+) -> None:
     """Explicit injection seam for Postgres API integration tests and application setup."""
-    global repository, orchestrator, scheduler
+    global repository, orchestrator, scheduler, progressive_runtime
     repository = episode_repository
-    orchestrator = EpisodeOrchestrator(repository)
+    if progressive_runtime_adapter is not None:
+        progressive_runtime = progressive_runtime_adapter
+    orchestrator = EpisodeOrchestrator(
+        repository,
+        progressive_runtime=progressive_runtime,
+    )
     scheduler = InlineGenerationScheduler(orchestrator)
 
 
@@ -130,12 +156,24 @@ def configure_music_snapshot_store(store: MusicSnapshotStore) -> None:
 
 def configure_narration_materializer(materializer: NarrationMaterializer) -> None:
     """Injection seam for tests and deployments with alternate TTS/storage adapters."""
-    global audio_storage, narration_materializer, music_snapshot_store
+    global \
+        audio_storage, \
+        narration_materializer, \
+        music_snapshot_store, \
+        progressive_runtime, \
+        orchestrator, \
+        scheduler
     narration_materializer = materializer
     audio_storage = materializer.storage
+    progressive_runtime = _build_progressive_runtime(_provider_settings, audio_storage)
     music_snapshot_store = MusicSnapshotStore(
         audio_storage, ProviderPlaybackSnapshotFetcher(_resolve_provider_playback_request)
     )
+    orchestrator = EpisodeOrchestrator(
+        repository,
+        progressive_runtime=progressive_runtime,
+    )
+    scheduler = InlineGenerationScheduler(orchestrator)
 
 app = FastAPI(title="Wavecast API", version="0.2.0")
 app.add_middleware(
