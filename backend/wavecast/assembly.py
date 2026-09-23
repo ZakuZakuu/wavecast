@@ -1551,7 +1551,7 @@ class StagedProgressiveChapterGenerator:
         chapter = self.session.next_chapter(episode)
         if chapter is None:
             return None
-        if not chapter.slot_contexts:
+        if not chapter.slot_contexts and chapter.resolved_track is None:
             raise EpisodeAssemblyError(
                 "progressive session chapter has no owned narration slot",
                 stage="writer_normalization",
@@ -1576,19 +1576,22 @@ class StagedProgressiveChapterGenerator:
             if upcoming is not None
             else ""
         )
-        try:
-            script = await self.writer.write(
-                chapter.chapter,
-                self.session.research.evidence,
-                previous_committed_context=previous_context,
-                next_track_metadata=next_track_metadata,
-                target_duration_seconds=chapter.target_narration_seconds,
-                output_language=self.session.output_language,
-                topic=self.session.topic,
-                slot_contexts=chapter.slot_contexts,
-            )
-        except ProviderError as error:
-            raise EpisodeAssemblyError(str(error), stage="writer") from error
+        if chapter.slot_contexts:
+            try:
+                script = await self.writer.write(
+                    chapter.chapter,
+                    self.session.research.evidence,
+                    previous_committed_context=previous_context,
+                    next_track_metadata=next_track_metadata,
+                    target_duration_seconds=chapter.target_narration_seconds,
+                    output_language=self.session.output_language,
+                    topic=self.session.topic,
+                    slot_contexts=chapter.slot_contexts,
+                )
+            except ProviderError as error:
+                raise EpisodeAssemblyError(str(error), stage="writer") from error
+        else:
+            script = RadioScript(blocks=[], intended_duration_seconds=1)
 
         has_persisted_music = any(
             segment.kind is SegmentKind.MUSIC for segment in episode.segments
@@ -1603,6 +1606,7 @@ class StagedProgressiveChapterGenerator:
                 previous_music_indices=[0 if has_persisted_music else None],
                 require_final_slot=(
                     bool(self.session.chapters)
+                    and bool(chapter.slot_contexts)
                     and chapter.chapter_id == self.session.chapters[-1].chapter_id
                 ),
             )

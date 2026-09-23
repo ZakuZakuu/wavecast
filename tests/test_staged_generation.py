@@ -228,3 +228,34 @@ def test_staged_generator_uses_unique_ids_through_append_seam(tmp_path) -> None:
         "chapter-2",
         "chapter-3",
     }
+
+
+def test_music_only_chunk_skips_writer_and_tts(tmp_path) -> None:
+    track = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Bridge Artist",
+        canonical_title="Bridge Track",
+    )
+    base_session = _session(track)
+    chapter = base_session.chapters[0].model_copy(update={"slot_contexts": []})
+    session = base_session.model_copy(update={"chapters": [chapter]})
+
+    class _RejectWriter:
+        async def write(self, *args: object, **kwargs: object) -> RadioScript:
+            raise AssertionError("music-only chunks must not call Writer")
+
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    generator = StagedProgressiveChapterGenerator(
+        session=session,
+        writer=_RejectWriter(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+    )
+
+    generated = asyncio.run(generator.generate_next(_episode()))
+
+    assert generated is not None
+    assert [segment.id for segment in generated.segments] == ["chapter-2:music:0"]
+    assert len(generated.segments) == 1
+    assert isinstance(generated.segments[0], MusicSegment)
+    assert generated.segments[0].is_audio_ready
