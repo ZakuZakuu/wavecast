@@ -1,3 +1,4 @@
+import pytest
 from wavecast.intelligence.models import (
     ChapterPlan,
     FastStartPlan,
@@ -12,6 +13,7 @@ from wavecast.models.episode import EpisodeState, LiveEpisode, MusicSegment, Seg
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
     ProgressiveAssemblySession,
+    ProgressiveSessionReconstructionError,
 )
 from wavecast.timing import build_program_timing_plan
 
@@ -154,3 +156,50 @@ def test_next_chapter_starts_after_persisted_opening_identity() -> None:
     assert next_chapter is not None
     assert next_chapter.chapter_id == "chapter-2"
     assert next_chapter.resolved_track == bridge
+
+
+def test_next_chapter_fails_closed_for_mismatched_persisted_track() -> None:
+    bridge = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Bridge Artist",
+        canonical_title="Bridge Track",
+    )
+    base = _session()
+    session = base.model_copy(
+        update={
+            "chapters": [
+                base.chapters[0].model_copy(update={"resolved_track": bridge}),
+                base.chapters[1],
+            ]
+        }
+    )
+
+    with pytest.raises(ProgressiveSessionReconstructionError, match="identity"):
+        session.next_chapter(_episode("chapter-1", "chapter-2"))
+
+
+def test_next_chapter_fails_closed_for_skipped_persisted_route_step() -> None:
+    with pytest.raises(ProgressiveSessionReconstructionError, match="contiguous"):
+        _session().next_chapter(_episode("chapter-1", "chapter-3"))
+
+
+def test_next_chapter_accepts_matching_persisted_track() -> None:
+    bridge = ResolvedTrack(
+        track_ref="mock:track-1",
+        canonical_artist="Artist",
+        canonical_title="Track 1",
+    )
+    base = _session()
+    session = base.model_copy(
+        update={
+            "chapters": [
+                base.chapters[0].model_copy(update={"resolved_track": bridge}),
+                base.chapters[1],
+            ]
+        }
+    )
+
+    next_chapter = session.next_chapter(_episode("chapter-1", "chapter-2"))
+
+    assert next_chapter is not None
+    assert next_chapter.chapter_id == "chapter-3"
