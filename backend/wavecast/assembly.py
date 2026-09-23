@@ -56,6 +56,11 @@ from wavecast.intelligence.trace import GenerationTrace
 from wavecast.intelligence.writer import WriterService
 from wavecast.materialization import NarrationMaterializer
 from wavecast.models.episode import NarrationSegment, PlayableEpisode, SegmentKind
+from wavecast.orchestration.staged import (
+    ProgressiveAssemblyChapter,
+    ProgressiveAssemblySession,
+    ProgressiveSessionDiagnostic,
+)
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import (
     MusicProvider,
@@ -181,6 +186,7 @@ class EpisodeAssemblyResult(BaseModel):
     research_evidence: list[Evidence] = Field(default_factory=list)
     usage_by_stage: dict[str, UsageTotals] = Field(default_factory=dict)
     provider_events: list[dict[str, object]] = Field(default_factory=list)
+    progressive_session: ProgressiveAssemblySession | None = None
 
 
 @dataclass(frozen=True)
@@ -416,6 +422,16 @@ class LiveEpisodeAssemblyService:
             resolved_music_seconds=resolved_music_seconds,
             chapter_slot_counts=[len(contexts) for contexts in slot_contexts],
         )
+        staged_chapters = [
+            ProgressiveAssemblyChapter(
+                chapter_id=f"chapter-{index + 2}",
+                chapter=item.writer_chapter,
+                resolved_track=item.track,
+                slot_contexts=slot_contexts[index],
+                target_narration_seconds=timing_plan.chapter_budgets[index].target_narration_seconds,
+            )
+            for index, item in enumerate(resolved_chapters)
+        ]
         writer_started = perf_counter()
         writer_scripts: list[RadioScript | NarrationScript] = []
         previous_context = ""
@@ -501,6 +517,36 @@ class LiveEpisodeAssemblyService:
             music_seconds=duration_summary.music_seconds,
         )
         usage_report = usage_diagnostics(self.ledger)
+        opening_track_ref = next(
+            (
+                segment.track_ref
+                for segment in playable_episode.segments
+                if segment.kind is SegmentKind.MUSIC
+            ),
+            None,
+        )
+        progressive_session = ProgressiveAssemblySession(
+            topic=request.topic,
+            listener_taste_context=request.listener_taste_context,
+            desired_duration_seconds=request.desired_duration_seconds,
+            max_tracks=request.max_tracks,
+            max_chapters=request.max_chapters,
+            output_language=resolve_output_language(request.output_language, request.topic),
+            opening_track_ref=opening_track_ref,
+            fast_plan=fast_result.plan,
+            research=bundle,
+            skeleton=skeleton,
+            chapters=staged_chapters,
+            timing_plan=timing_plan,
+            diagnostics=[
+                ProgressiveSessionDiagnostic(
+                    code="unresolved_track",
+                    chapter_index=unresolved_item.chapter_index,
+                    detail=unresolved_item.reason,
+                )
+                for unresolved_item in unresolved
+            ],
+        )
         return EpisodeAssemblyResult(
             playable_episode=playable_episode,
             fast_plan=fast_result.plan,
@@ -531,6 +577,7 @@ class LiveEpisodeAssemblyService:
                 for stage, totals in usage_report["usage_by_stage"].items()
             },
             provider_events=list(usage_report["provider_events"]),
+            progressive_session=progressive_session,
         )
 
     async def run(

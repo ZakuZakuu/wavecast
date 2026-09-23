@@ -5,6 +5,11 @@ from .generation import (
     ProgressiveChapterGenerator,
 )
 from .scheduler import GenerationScheduler, InlineGenerationScheduler
+from .staged import (
+    ProgressiveAssemblyChapter,
+    ProgressiveAssemblySession,
+    ProgressiveSessionDiagnostic,
+)
 
 __all__ = [
     "EpisodeOrchestrator",
@@ -14,4 +19,7 @@ __all__ = [
     "GenerationScheduler",
     "InMemoryEpisodeRepository",
     "InlineGenerationScheduler",
+    "ProgressiveAssemblyChapter",
+    "ProgressiveAssemblySession",
+    "ProgressiveSessionDiagnostic",
 ]
