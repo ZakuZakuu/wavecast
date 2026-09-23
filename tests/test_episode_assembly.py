@@ -390,6 +390,7 @@ def test_writer_skips_chapters_without_owned_slots(tmp_path) -> None:
     assert any(block.kind is RadioScriptBlockKind.OUTRO for block in result.radio_script.blocks)
     previous_context = writer_calls[-1]["prompt"].split("Previous context:", 1)[1]
     assert previous_context.split("\nNext track metadata:", 1)[0].strip()
+    assert all(chapter.slot_contexts for chapter in result.progressive_session.chapters)
 
 
 def test_assembly_passes_request_limits_to_curator_prompt(tmp_path) -> None:
