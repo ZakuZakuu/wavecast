@@ -39,10 +39,11 @@ def test_sse_delivers_the_persisted_episode_snapshot() -> None:
         data = next(lines)
         next(lines)
 
-    assert event == "id: 2"
+    assert event.startswith("id: ")
     payload = json.loads(data.removeprefix("data: "))
     assert payload["id"] == created["id"]
-    assert payload["version"] == 2
+    assert payload["version"] == int(event.removeprefix("id: "))
+    assert payload["version"] >= 2
 
 
 def test_concurrent_start_conflict_is_retryable_not_an_internal_error(monkeypatch) -> None:

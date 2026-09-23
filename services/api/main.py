@@ -252,6 +252,20 @@ def operate(episode_id: str, listener_id: str, operation: Callable[[], LiveEpiso
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
+async def operate_async(
+    episode_id: str,
+    listener_id: str,
+    operation: Callable[[], Awaitable[LiveEpisode]],
+) -> LiveEpisode:
+    owned(episode_id, listener_id)
+    try:
+        return await operation()
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
+    except EpisodeRuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "mode": "postgres" if DATABASE_URL else "mock"}
@@ -633,8 +647,8 @@ async def episode_mixdown(episode_id: str, request: Request) -> MixdownArtifact:
 
 
 @app.post("/api/episodes/{episode_id}/ensure-buffer", response_model=LiveEpisode)
-def ensure_buffer(episode_id: str, request: Request, body: BufferRequest) -> LiveEpisode:
-    return operate(
+async def ensure_buffer(episode_id: str, request: Request, body: BufferRequest) -> LiveEpisode:
+    return await operate_async(
         episode_id,
         listener(request),
         lambda: scheduler.ensure_buffer(episode_id, target_chapters=body.target_chapters),
@@ -642,8 +656,10 @@ def ensure_buffer(episode_id: str, request: Request, body: BufferRequest) -> Liv
 
 
 @app.post("/api/episodes/{episode_id}/advance", response_model=LiveEpisode)
-def advance_compatibility(episode_id: str, request: Request) -> LiveEpisode:
-    return operate(episode_id, listener(request), lambda: scheduler.ensure_buffer(episode_id))
+async def advance_compatibility(episode_id: str, request: Request) -> LiveEpisode:
+    return await operate_async(
+        episode_id, listener(request), lambda: scheduler.ensure_buffer(episode_id)
+    )
 
 
 @app.post("/api/episodes/{episode_id}/heartbeat", response_model=LiveEpisode)
@@ -742,6 +758,7 @@ async def materialize(episode_id: str, request: Request) -> LiveEpisode:
     owned(episode_id, listener_id)
     episode: LiveEpisode | None = None
     try:
+        await scheduler.materialize_all(episode_id)
         episode = orchestrator.prepare_materialization(episode_id)
         for segment in episode.timeline_segments:
             if isinstance(segment, NarrationSegment) and not segment.is_audio_ready:
