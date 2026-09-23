@@ -11,6 +11,7 @@ from wave import open as open_wave
 from pydantic import BaseModel
 
 from wavecast.narration import CUE_RENDERING_VERSION
+from wavecast.speech import SpeechProfile
 
 from .contracts import (
     AudioAsset,
@@ -51,8 +52,12 @@ class FakeLLMProvider:
 
 
 class FakeTTSProvider:
-    async def synthesize(self, text: str, *, cues: list[str]) -> AudioAsset:
-        digest = sha1(f"{text}|{cues}".encode()).hexdigest()[:12]
+    async def synthesize(
+        self, text: str, *, cues: list[str], profile: SpeechProfile | None = None
+    ) -> AudioAsset:
+        digest = sha1(
+            f"{text}|{cues}|{profile.model_dump_json() if profile else ''}".encode()
+        ).hexdigest()[:12]
         playback_url = f"fake-tts://{digest}"
         return AudioAsset(
             asset_id=playback_url,
@@ -83,13 +88,25 @@ class MockTTSProvider:
         self._locks: dict[str, asyncio.Lock] = {}
         self.calls = 0
 
-    def cache_key(self, rendered_text: str, cues: list[str] | tuple[str, ...]) -> str:
+    def cache_key(
+        self,
+        rendered_text: str,
+        cues: list[str] | tuple[str, ...],
+        *,
+        profile: SpeechProfile | None = None,
+    ) -> str:
+        speed = profile.speed if profile is not None else self.speed
+        language_boost = (
+            profile.language_boost
+            if profile is not None and profile.language_boost is not None
+            else self.language_boost
+        )
         return build_tts_cache_key(
             provider=self.provider_name,
             model=self.model,
             voice_id=self.voice_id,
-            speed=self.speed,
-            language_boost=self.language_boost,
+            speed=speed,
+            language_boost=language_boost,
             audio_settings=self.audio_settings,
             rendered_text=rendered_text,
             recognized_cues=cues,
@@ -97,15 +114,18 @@ class MockTTSProvider:
             extension="wav",
         )
 
-    async def synthesize(self, text: str, *, cues: list[str]) -> AudioAsset:
-        cache_key = self.cache_key(text, cues)
+    async def synthesize(
+        self, text: str, *, cues: list[str], profile: SpeechProfile | None = None
+    ) -> AudioAsset:
+        cache_key = self.cache_key(text, cues, profile=profile)
         lock = self._locks.setdefault(cache_key, asyncio.Lock())
         async with lock:
             cached = await self.storage.get(cache_key)
             if cached is not None:
                 return self._asset(cache_key, cached.metadata.get("duration_seconds", 1), True)
             self.calls += 1
-            duration = max(1, min(300, math.ceil(len(text) / 12)))
+            speed = profile.speed if profile is not None else self.speed
+            duration = max(1, min(300, math.ceil(len(text) / (12 * speed))))
             content = _mock_narration_wav(duration)
             url = await self.storage.put(
                 cache_key,

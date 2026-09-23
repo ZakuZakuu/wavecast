@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from wavecast.narration import CUE_RENDERING_VERSION
+from wavecast.speech import SpeechProfile
 
 from .config import ProviderSettings
 from .contracts import AudioAsset, AudioAssetType, ObjectStorageProvider
@@ -50,22 +51,36 @@ class MiniMaxTTSProvider:
         self._owns_client = client is None
         self._locks: dict[str, asyncio.Lock] = {}
 
-    def cache_key(self, rendered_text: str, cues: list[str] | tuple[str, ...]) -> str:
+    def cache_key(
+        self,
+        rendered_text: str,
+        cues: list[str] | tuple[str, ...],
+        *,
+        profile: SpeechProfile | None = None,
+    ) -> str:
+        speed = profile.speed if profile is not None else self.settings.minimax_tts_speed
+        language_boost = (
+            profile.language_boost
+            if profile is not None and profile.language_boost is not None
+            else self.settings.minimax_tts_language_boost
+        )
         return build_tts_cache_key(
             provider=self.provider_name,
             model=self.settings.minimax_tts_model,
             voice_id=self.settings.minimax_tts_voice_id or "",
-            speed=self.settings.minimax_tts_speed,
-            language_boost=self.settings.minimax_tts_language_boost,
+            speed=speed,
+            language_boost=language_boost,
             audio_settings=self.audio_settings,
             rendered_text=rendered_text,
             recognized_cues=cues,
             rendering_version=CUE_RENDERING_VERSION,
         )
 
-    async def synthesize(self, text: str, *, cues: list[str]) -> AudioAsset:
+    async def synthesize(
+        self, text: str, *, cues: list[str], profile: SpeechProfile | None = None
+    ) -> AudioAsset:
         started_at = perf_counter()
-        cache_key = self.cache_key(text, cues)
+        cache_key = self.cache_key(text, cues, profile=profile)
         lock = self._locks.setdefault(cache_key, asyncio.Lock())
         async with lock:
             try:
@@ -93,7 +108,7 @@ class MiniMaxTTSProvider:
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
-                    json=self._request_payload(text, voice_id),
+                    json=self._request_payload(text, voice_id, profile),
                 )
                 audio_bytes, extra_info = _decode_response(payload)
                 duration = _duration_seconds(audio_bytes, extra_info)
@@ -150,7 +165,9 @@ class MiniMaxTTSProvider:
                     cache_hit=False,
                     metadata={"cache_key": cache_key},
                 )
-                raise ProviderInvalidResponseError("minimax returned an invalid TTS response") from error
+                raise ProviderInvalidResponseError(
+                    "minimax returned an invalid TTS response"
+                ) from error
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -165,16 +182,24 @@ class MiniMaxTTSProvider:
             raise ProviderConfigurationError("minimax TTS requires MINIMAX_TTS_VOICE_ID")
         return self.settings.minimax_api_key, self.settings.minimax_tts_voice_id
 
-    def _request_payload(self, text: str, voice_id: str) -> dict[str, Any]:
+    def _request_payload(
+        self, text: str, voice_id: str, profile: SpeechProfile | None = None
+    ) -> dict[str, Any]:
+        speed = profile.speed if profile is not None else self.settings.minimax_tts_speed
+        language_boost = (
+            profile.language_boost
+            if profile is not None and profile.language_boost is not None
+            else self.settings.minimax_tts_language_boost
+        )
         return {
             "model": self.settings.minimax_tts_model,
             "text": text,
             "stream": False,
-            "language_boost": self.settings.minimax_tts_language_boost,
+            "language_boost": language_boost,
             "output_format": "hex",
             "voice_setting": {
                 "voice_id": voice_id,
-                "speed": self.settings.minimax_tts_speed,
+                "speed": speed,
                 "vol": 1,
                 "pitch": 0,
             },
@@ -243,7 +268,9 @@ def _decode_response(payload: dict[str, Any]) -> tuple[bytes, dict[str, Any]]:
     try:
         audio_bytes = bytes.fromhex(audio_hex)
     except ValueError as error:
-        raise ProviderInvalidResponseError("minimax response contained invalid audio hex") from error
+        raise ProviderInvalidResponseError(
+            "minimax response contained invalid audio hex"
+        ) from error
     if not audio_bytes:
         raise ProviderInvalidResponseError("minimax response contained empty audio bytes")
 
@@ -306,7 +333,9 @@ def _mp3_duration_seconds(audio_bytes: bytes) -> float | None:
         if bitrate is None:
             offset += 1
             continue
-        frame_length = ((144 if mpeg_version == 3 else 72) * bitrate * 1000 // sample_rate) + padding
+        frame_length = (
+            (144 if mpeg_version == 3 else 72) * bitrate * 1000 // sample_rate
+        ) + padding
         if frame_length <= 4 or offset + frame_length > len(audio_bytes):
             offset += 1
             continue

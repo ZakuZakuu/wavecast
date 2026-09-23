@@ -17,6 +17,7 @@ from wavecast.intelligence.models import (
 )
 from wavecast.models.episode import (
     MusicSegment,
+    NarrationRole,
     NarrationSegment,
     PlayableEpisode,
     SegmentState,
@@ -74,11 +75,7 @@ class EpisodeComposer:
         """Compose from already prepared assets without another provider fetch."""
 
         blocks = _script_blocks(script)
-        resolved_assets = [
-            (item.track, item.asset)
-            for item in prepared_tracks
-            if item is not None
-        ]
+        resolved_assets = [(item.track, item.asset) for item in prepared_tracks if item is not None]
         segments: list[MusicSegment | NarrationSegment] = []
         order = 0
         used_blocks: set[int] = set()
@@ -103,8 +100,7 @@ class EpisodeComposer:
         explicit_intro_targets = {
             block.track_index
             for block in blocks
-            if block.kind is RadioScriptBlockKind.TRACK_INTRO
-            and block.track_index is not None
+            if block.kind is RadioScriptBlockKind.TRACK_INTRO and block.track_index is not None
         }
         unindexed_intro_targets = iter(
             index for index in range(len(resolved_assets)) if index not in explicit_intro_targets
@@ -235,7 +231,9 @@ def _script_blocks(
     return list(script)
 
 
-def _narration_segment(block: RadioScriptBlock, order: int, chapter_number: int) -> NarrationSegment:
+def _narration_segment(
+    block: RadioScriptBlock, order: int, chapter_number: int
+) -> NarrationSegment:
     return NarrationSegment(
         id=f"segment-narration-{order}",
         chapter_id=f"chapter-{chapter_number}",
@@ -246,4 +244,14 @@ def _narration_segment(block: RadioScriptBlock, order: int, chapter_number: int)
         narration_text=block.text,
         tts_text=block.tts_text,
         tts_cues=list(block.tts_cues),
+        narration_role=_narration_role(block.kind),
     )
+
+
+def _narration_role(kind: RadioScriptBlockKind) -> NarrationRole:
+    return {
+        RadioScriptBlockKind.INTRO: NarrationRole.INTRO,
+        RadioScriptBlockKind.TRACK_INTRO: NarrationRole.TRACK_INTRO,
+        RadioScriptBlockKind.TRANSITION: NarrationRole.TRANSITION,
+        RadioScriptBlockKind.OUTRO: NarrationRole.OUTRO,
+    }[kind]

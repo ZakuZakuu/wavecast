@@ -9,6 +9,7 @@ from .profiles import InferenceProfile, StructuredTransport
 
 if TYPE_CHECKING:
     from wavecast.intelligence.models import ResolvedTrack
+    from wavecast.speech import SpeechProfile
 
 
 class SearchResult(BaseModel):
@@ -99,7 +100,9 @@ class SearchProvider(Protocol):
 
 
 class TTSProvider(Protocol):
-    async def synthesize(self, text: str, *, cues: list[str]) -> AudioAsset: ...
+    async def synthesize(
+        self, text: str, *, cues: list[str], profile: SpeechProfile | None = None
+    ) -> AudioAsset: ...
 
 
 class MusicProvider(Protocol):
