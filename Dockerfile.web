@@ -1,0 +1,32 @@
+FROM node:24-bookworm-slim AS deps
+
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && corepack prepare pnpm@10.12.1 --activate
+
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/web/package.json apps/web/package.json
+RUN pnpm install --frozen-lockfile
+
+FROM deps AS builder
+COPY apps/web apps/web
+ENV NEXT_TELEMETRY_DISABLED=1
+ARG WAVECAST_INTERNAL_API_URL=http://api:8000
+ENV WAVECAST_INTERNAL_API_URL=$WAVECAST_INTERNAL_API_URL
+RUN pnpm --filter @wavecast/web build
+
+FROM node:24-bookworm-slim AS runner
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1
+
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
+COPY --from=builder /app/apps/web/.next ./apps/web/.next
+COPY --from=builder /app/apps/web/package.json ./apps/web/package.json
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
+
+WORKDIR /app/apps/web
+EXPOSE 3000
+CMD ["./node_modules/.bin/next", "start"]

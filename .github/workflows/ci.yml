@@ -53,3 +53,19 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test:web
       - run: pnpm build
+
+  deployment-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: docker compose -f docker-compose.prod.yml build
+      - run: docker compose -f docker-compose.prod.yml up -d
+      - run: uv run python scripts/deployment_smoke.py --restart-api --compose-file docker-compose.prod.yml
+      - if: always()
+        run: docker compose -f docker-compose.prod.yml logs --no-color
+      - if: always()
+        run: docker compose -f docker-compose.prod.yml down -v

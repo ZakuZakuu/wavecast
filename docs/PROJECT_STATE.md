@@ -11,22 +11,22 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 7B.3 - durable staged runtime adapter
-  (implementation branch based on merged PR #62).
-- **Current stage:** PR #62 is merged at
-  c2c1f6c4c1642a5feabb14f89342f76a7fde5812. The current credential-free slice
-  attaches the Phase 7B.1 session to durable episode JSONB state, reconstructs
-  staged generators after restart, and wires the API mock runtime through the
-  existing shared audio storage. Live and paid provider calls remain disabled.
-- **Canonical main:** c2c1f6c4c1642a5feabb14f89342f76a7fde5812 (PR #62 merge
+- **Current milestone:** Deployment Baseline A.
+- **Current stage:** PR #63 is merged at
+  bda0108ad59b98e1a31c1b610e14e34a6a55a771. Its merge commit is
+  4865cdb1fc8b2ec027c137b8f708f0a3f26e2d70. The Phase 7 true progressive
+  generation contract is complete; live and paid provider calls remain
+  disabled. The immediate work is production-like container packaging,
+  durable local audio storage, and a credential-free CI deployment smoke.
+- **Canonical main:** 4865cdb1fc8b2ec027c137b8f708f0a3f26e2d70 (PR #63 merge
   commit).
-- **Last completed code milestone:** PR #62, Phase 7B.2 staged runtime chunk
-  adapter, merged after exact-head GPT review and backend/web CI green.
-- **Immediate work:** complete the Phase 7B.3 PR: durable session attach with
-  structural-anchor validation, fresh-process reconstruction, staged
-  materialize_all, Postgres round-trip coverage, and unchanged public API/SSE
-  shapes. After this slice, move to deployment baseline and CI/CD before live
-  validation.
+- **Last completed code milestone:** Phase 7 True Progressive Generation,
+  including PR #63 durable staged runtime deployment wiring, merged after
+  exact-head GPT review and backend/web CI green.
+- **Immediate work:** complete Deployment Baseline A with API/Web production
+  images, Postgres and durable local audio Compose volumes, a one-command local
+  production-like stack, and an independent CI container smoke. No public
+  deployment, provider credentials, or paid calls are part of this slice.
 
 ## Phase 7A progressive generation contract
 
