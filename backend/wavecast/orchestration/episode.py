@@ -31,6 +31,7 @@ from .generation import (
     GeneratedChapter,
     ProgressiveChapterGenerator,
 )
+from .runtime import StagedProgressiveRuntime
 
 SESSION_TTL = timedelta(seconds=30)
 DEFAULT_BUFFER_CHAPTERS = 2
@@ -97,6 +98,7 @@ class EpisodeOrchestrator:
         now: Callable[[], datetime] = utc_now,
         audio_provider: AudioProvider | None = None,
         progressive_generator: ProgressiveChapterGenerator | None = None,
+        progressive_runtime: StagedProgressiveRuntime | None = None,
     ) -> None:
         self.repository = repository
         self.now = now
@@ -104,6 +106,7 @@ class EpisodeOrchestrator:
         self.progressive_generator = progressive_generator or DeterministicMockProgressiveGenerator(
             self.audio_provider
         )
+        self.progressive_runtime = progressive_runtime
 
     def start(self, seed: EpisodeSeed, listener_id: str = "test-listener") -> LiveEpisode:
         now = self.now()
@@ -125,6 +128,8 @@ class EpisodeOrchestrator:
             seed_id=seed.id,
             listener_id=listener_id,
             state=EpisodeState.STREAMING,
+            title=seed.title,
+            topic=seed.topic,
             program_estimated_duration_seconds=seed.estimated_duration_seconds,
             segments=[opening],
             current_segment_id=opening.id,
@@ -306,6 +311,7 @@ class EpisodeOrchestrator:
         episode = await asyncio.to_thread(self._active_episode, episode_id)
         if episode.state is EpisodeState.MATERIALIZED:
             return episode
+        episode = await self._ensure_progressive_session(episode_id, episode)
         while True:
             partial_chapter_id = self._next_partial_chapter_id(episode)
             if partial_chapter_id is not None:
@@ -324,7 +330,8 @@ class EpisodeOrchestrator:
             snapshot = await asyncio.to_thread(
                 self.capture_generation_snapshot, episode_id
             )
-            chapter = await self.progressive_generator.generate_next(snapshot.episode)
+            episode, generator = await self._runtime_for_generation(episode_id, episode)
+            chapter = await generator.generate_next(snapshot.episode)
             if chapter is None:
                 break
             episode = await asyncio.to_thread(
@@ -491,6 +498,7 @@ class EpisodeOrchestrator:
         episode.generation_mode = GenerationMode.FULL
         episode.state = EpisodeState.MATERIALIZING
         episode = await asyncio.to_thread(self.repository.save, episode)
+        episode = await self._ensure_progressive_session(episode_id, episode)
         while True:
             partial_chapter_id = self._next_partial_chapter_id(episode)
             if partial_chapter_id is not None:
@@ -505,7 +513,8 @@ class EpisodeOrchestrator:
             snapshot = await asyncio.to_thread(
                 self.capture_generation_snapshot, episode_id
             )
-            chapter = await self.progressive_generator.generate_next(snapshot.episode)
+            episode, generator = await self._runtime_for_generation(episode_id, episode)
+            chapter = await generator.generate_next(snapshot.episode)
             if chapter is None:
                 break
             episode = await asyncio.to_thread(
@@ -563,6 +572,45 @@ class EpisodeOrchestrator:
             candidate.audio_source_url = source.source_url
             candidate.actual_duration_seconds = None
         return self.repository.save(episode)
+
+    async def _ensure_progressive_session(
+        self, episode_id: str, episode: LiveEpisode
+    ) -> LiveEpisode:
+        if self.progressive_runtime is None or episode.progressive_session is not None:
+            return episode
+        snapshot = await asyncio.to_thread(self.capture_generation_snapshot, episode_id)
+        prepared = await self.progressive_runtime.prepare_session(snapshot.episode)
+        latest = await asyncio.to_thread(self.repository.get, episode_id)
+        if not latest.is_listener_active:
+            raise EpisodeRuntimeError("listener session is inactive; discard prepared session")
+        if latest.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+            raise EpisodeRuntimeError("episode is no longer progressively writable")
+        current_signature = tuple(
+            (segment.id, segment.order, segment.chapter_id)
+            for segment in latest.ordered_segments
+        )
+        if current_signature != snapshot.structural_signature:
+            raise EpisodeRuntimeError("progressive session preparation anchor is stale")
+        if latest.progressive_session is not None:
+            return latest
+        latest.progressive_session = prepared
+        try:
+            return await asyncio.to_thread(self.repository.save, latest)
+        except EpisodeConcurrencyError:
+            reloaded = await asyncio.to_thread(self.repository.get, episode_id)
+            if reloaded.progressive_session is not None:
+                return reloaded
+            raise
+
+    async def _runtime_for_generation(
+        self, episode_id: str, episode: LiveEpisode
+    ) -> tuple[LiveEpisode, ProgressiveChapterGenerator]:
+        episode = await self._ensure_progressive_session(episode_id, episode)
+        if self.progressive_runtime is None:
+            return episode, self.progressive_generator
+        if episode.progressive_session is None:
+            raise EpisodeRuntimeError("staged runtime session was not persisted")
+        return episode, self.progressive_runtime.create_generator(episode.progressive_session)
 
     def _active_episode(self, episode_id: str) -> LiveEpisode:
         self.expire_stale_sessions()

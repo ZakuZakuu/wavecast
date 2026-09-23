@@ -9,11 +9,14 @@ from wavecast.models.episode import (
     EpisodeSeed,
     EpisodeState,
     GenerationMode,
+    LiveEpisode,
     SegmentState,
 )
 from wavecast.orchestration.episode import EpisodeOrchestrator
 from wavecast.storage import EpisodeConcurrencyError
 from wavecast.storage.episodes import PostgresEpisodeRepository, metadata
+
+from tests.test_staged_intelligence import _session
 
 DATABASE_URL = os.getenv("WAVECAST_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(
@@ -112,3 +115,21 @@ def test_postgres_backed_sse_endpoint_reads_in_a_worker_thread() -> None:
     finally:
         api_module.configure_runtime(previous)
         repository.close()
+
+
+def test_postgres_round_trips_typed_progressive_session_and_legacy_payload() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresEpisodeRepository(DATABASE_URL)
+    first = EpisodeOrchestrator(repository)
+    episode = first.start_or_resume(postgres_seed(), "progressive-session-listener")
+    episode.progressive_session = _session()
+    repository.save(episode)
+
+    restored = repository.get(episode.id)
+    assert restored.progressive_session is not None
+    assert restored.progressive_session.schema_version == 1
+
+    legacy = restored.model_dump(mode="json")
+    assert "progressive_session" not in legacy
+    assert LiveEpisode.model_validate(legacy).progressive_session is None
+    repository.close()

@@ -168,6 +168,9 @@ class LiveEpisode(BaseModel):
     state: EpisodeState = EpisodeState.STARTED
     generation_mode: GenerationMode = GenerationMode.PROGRESSIVE
     program_estimated_duration_seconds: int = Field(gt=0)
+    progressive_session: ProgressiveAssemblySession | None = Field(
+        default=None, exclude=True, repr=False
+    )
     segments: list[MusicSegment | NarrationSegment]
     current_segment_id: str | None = None
     playback_position_seconds: int = Field(default=0, ge=0)
@@ -227,3 +230,10 @@ class LiveEpisode(BaseModel):
             if segment.id == segment_id:
                 return segment
         raise KeyError(f"unknown segment: {segment_id}")
+
+
+# Deferred to the end of this module so the low-level durable contract can import
+# intelligence models without observing a partially initialized Episode model.
+from wavecast.models.progressive import ProgressiveAssemblySession  # noqa: E402
+
+LiveEpisode.model_rebuild()

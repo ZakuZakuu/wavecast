@@ -1,6 +1,6 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-23
+**Last updated:** 2026-09-24
 
 ## Product reminder
 
@@ -11,22 +11,22 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 7B.1 - staged intelligence session contract.
-- **Current stage:** Phase 7A progressive generation contract is merged as PR
-  #60 at 462a2ffd292cc7596641bb9710caf88927025f6d after exact-head GPT review
-  and backend/web CI green. Phase 7B is the next credential-free slice; live
-  and paid provider calls are not authorized or required for the current
-  runtime-contract work.
-- **Canonical main:** 462a2ffd292cc7596641bb9710caf88927025f6d (PR #60 merge
+- **Current milestone:** Phase 7B.3 - durable staged runtime adapter
+  (implementation branch based on merged PR #62).
+- **Current stage:** PR #62 is merged at
+  c2c1f6c4c1642a5feabb14f89342f76a7fde5812. The current credential-free slice
+  attaches the Phase 7B.1 session to durable episode JSONB state, reconstructs
+  staged generators after restart, and wires the API mock runtime through the
+  existing shared audio storage. Live and paid provider calls remain disabled.
+- **Canonical main:** c2c1f6c4c1642a5feabb14f89342f76a7fde5812 (PR #62 merge
   commit).
-- **Last completed code milestone:** PR #60, Phase 7A progressive generation
-  contract, merged after exact-head GPT review with the deterministic generator
-  resume/reconstruction blocker fixed.
-- **Immediate work:** split the existing full LiveEpisodeAssemblyService into
-  a staged intelligence adapter that can generate the next chapter through the
-  progressive runtime while preserving the Phase 7A opening-only, bounded
-  buffer, atomic append, and prefix-immutability contracts. Web response shapes
-  and MixPlan v1 remain unchanged.
+- **Last completed code milestone:** PR #62, Phase 7B.2 staged runtime chunk
+  adapter, merged after exact-head GPT review and backend/web CI green.
+- **Immediate work:** complete the Phase 7B.3 PR: durable session attach with
+  structural-anchor validation, fresh-process reconstruction, staged
+  materialize_all, Postgres round-trip coverage, and unchanged public API/SSE
+  shapes. After this slice, move to deployment baseline and CI/CD before live
+  validation.
 
 ## Phase 7A progressive generation contract
 
