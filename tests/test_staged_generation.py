@@ -24,6 +24,7 @@ from wavecast.models.episode import (
     MusicSegment,
     SegmentState,
 )
+from wavecast.orchestration.episode import EpisodeOrchestrator, InMemoryEpisodeRepository
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
     ProgressiveAssemblySession,
@@ -173,3 +174,57 @@ def test_staged_generator_materializes_one_complete_runtime_chunk(tmp_path) -> N
     assert all(segment.chapter_id == "chapter-2" for segment in generated.segments)
     assert all(segment.is_audio_ready for segment in generated.segments)
     assert any(isinstance(segment, MusicSegment) for segment in generated.segments)
+    assert {segment.id for segment in generated.segments} == {
+        "chapter-2:music:0",
+        "chapter-2:narration:0",
+        "chapter-2:narration:1",
+    }
+
+
+def test_staged_generator_uses_unique_ids_through_append_seam(tmp_path) -> None:
+    track = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Bridge Artist",
+        canonical_title="Bridge Track",
+    )
+    base_session = _session(track)
+    first_chapter = base_session.chapters[0].model_copy(
+        update={"slot_contexts": base_session.chapters[0].slot_contexts[:1]}
+    )
+    second_chapter = base_session.chapters[0].model_copy(update={"chapter_id": "chapter-3"})
+    session = base_session.model_copy(update={"chapters": [first_chapter, second_chapter]})
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    repository = InMemoryEpisodeRepository()
+    episode = _episode()
+    repository.save(episode)
+    orchestrator = EpisodeOrchestrator(repository)
+
+    first_generator = StagedProgressiveChapterGenerator(
+        session=session,
+        writer=_Writer(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+    )
+    first_snapshot = orchestrator.capture_generation_snapshot(episode.id)
+    first_generated = asyncio.run(first_generator.generate_next(repository.get(episode.id)))
+    assert first_generated is not None
+    orchestrator.append_generated_chapter(episode.id, first_generated, first_snapshot)
+
+    second_generator = StagedProgressiveChapterGenerator(
+        session=session,
+        writer=_Writer(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+    )
+    second_snapshot = orchestrator.capture_generation_snapshot(episode.id)
+    second_generated = asyncio.run(second_generator.generate_next(repository.get(episode.id)))
+    assert second_generated is not None
+    orchestrator.append_generated_chapter(episode.id, second_generated, second_snapshot)
+
+    ids = [segment.id for segment in repository.get(episode.id).segments]
+    assert len(ids) == len(set(ids))
+    assert {segment.chapter_id for segment in repository.get(episode.id).segments} == {
+        "chapter-1",
+        "chapter-2",
+        "chapter-3",
+    }

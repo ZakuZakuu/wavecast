@@ -1628,12 +1628,23 @@ class StagedProgressiveChapterGenerator:
             raise EpisodeAssemblyError(str(error), stage="progressive_chunk") from error
 
         base_order = episode.ordered_segments[-1].order + 1 if episode.ordered_segments else 0
-        segments = [
-            segment.model_copy(
-                update={"chapter_id": chapter.chapter_id, "order": base_order + offset}
+        kind_counts: dict[SegmentKind, int] = {
+            SegmentKind.MUSIC: 0,
+            SegmentKind.NARRATION: 0,
+        }
+        segments = []
+        for offset, segment in enumerate(playable.segments):
+            kind_index = kind_counts[segment.kind]
+            kind_counts[segment.kind] += 1
+            segments.append(
+                segment.model_copy(
+                    update={
+                        "id": f"{chapter.chapter_id}:{segment.kind.value.lower()}:{kind_index}",
+                        "chapter_id": chapter.chapter_id,
+                        "order": base_order + offset,
+                    }
+                )
             )
-            for offset, segment in enumerate(playable.segments)
-        ]
         return GeneratedChapter(chapter_id=chapter.chapter_id, segments=segments)
 
 
