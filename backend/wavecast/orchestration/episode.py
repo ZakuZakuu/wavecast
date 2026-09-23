@@ -303,14 +303,14 @@ class EpisodeOrchestrator:
             raise EpisodeRuntimeError("target buffer must be one or two chapters")
         if target_ahead_seconds <= 0:
             raise EpisodeRuntimeError("target buffer seconds must be positive")
-        episode = self._active_episode(episode_id)
+        episode = await asyncio.to_thread(self._active_episode, episode_id)
         if episode.state is EpisodeState.MATERIALIZED:
             return episode
         while True:
             partial_chapter_id = self._next_partial_chapter_id(episode)
             if partial_chapter_id is not None:
                 self._materialize_chapter(episode, partial_chapter_id)
-                episode = self.repository.save(episode)
+                episode = await asyncio.to_thread(self.repository.save, episode)
                 continue
             if self._ready_future_chapter_count(episode) >= target_chapters:
                 break
@@ -319,17 +319,21 @@ class EpisodeOrchestrator:
             next_chapter_id = self._next_future_chapter_id(episode)
             if next_chapter_id is not None:
                 self._materialize_chapter(episode, next_chapter_id)
-                episode = self.repository.save(episode)
+                episode = await asyncio.to_thread(self.repository.save, episode)
                 continue
-            snapshot = self.capture_generation_snapshot(episode_id)
+            snapshot = await asyncio.to_thread(
+                self.capture_generation_snapshot, episode_id
+            )
             chapter = await self.progressive_generator.generate_next(snapshot.episode)
             if chapter is None:
                 break
-            episode = self.append_generated_chapter(episode_id, chapter, snapshot)
-        episode = self.repository.get(episode_id)
+            episode = await asyncio.to_thread(
+                self.append_generated_chapter, episode_id, chapter, snapshot
+            )
+        episode = await asyncio.to_thread(self.repository.get, episode_id)
         self._start_ready_successor(episode)
         episode.last_activity_at = self.now()
-        return self.repository.save(episode)
+        return await asyncio.to_thread(self.repository.save, episode)
 
     def tick(self, episode_id: str, *, elapsed_seconds: int) -> LiveEpisode:
         """Advance the logical player and start each contiguous ready segment automatically."""
@@ -483,34 +487,38 @@ class EpisodeOrchestrator:
 
     async def materialize_all_async(self, episode_id: str) -> LiveEpisode:
         """Drain the bounded generator before freezing a complete local episode."""
-        episode = self._active_episode(episode_id)
+        episode = await asyncio.to_thread(self._active_episode, episode_id)
         episode.generation_mode = GenerationMode.FULL
         episode.state = EpisodeState.MATERIALIZING
-        episode = self.repository.save(episode)
+        episode = await asyncio.to_thread(self.repository.save, episode)
         while True:
             partial_chapter_id = self._next_partial_chapter_id(episode)
             if partial_chapter_id is not None:
                 self._materialize_chapter(episode, partial_chapter_id)
-                episode = self.repository.save(episode)
+                episode = await asyncio.to_thread(self.repository.save, episode)
                 continue
             next_chapter_id = self._next_future_chapter_id(episode)
             if next_chapter_id is not None:
                 self._materialize_chapter(episode, next_chapter_id)
-                episode = self.repository.save(episode)
+                episode = await asyncio.to_thread(self.repository.save, episode)
                 continue
-            snapshot = self.capture_generation_snapshot(episode_id)
+            snapshot = await asyncio.to_thread(
+                self.capture_generation_snapshot, episode_id
+            )
             chapter = await self.progressive_generator.generate_next(snapshot.episode)
             if chapter is None:
                 break
-            episode = self.append_generated_chapter(episode_id, chapter, snapshot)
-        episode = self.repository.get(episode_id)
+            episode = await asyncio.to_thread(
+                self.append_generated_chapter, episode_id, chapter, snapshot
+            )
+        episode = await asyncio.to_thread(self.repository.get, episode_id)
         for segment in episode.timeline_segments:
             if not segment.is_audio_ready:
                 self._make_ready(segment)
         episode.state = EpisodeState.MATERIALIZED
         episode.generation_mode = GenerationMode.FULL
         episode.last_activity_at = self.now()
-        return self.repository.save(episode)
+        return await asyncio.to_thread(self.repository.save, episode)
 
     def prepare_materialization(self, episode_id: str) -> LiveEpisode:
         """Prepare a full timeline while leaving narration network I/O external.
