@@ -4,15 +4,16 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from wavecast.arrangement.models import AudioClip, GainPoint, MixPlan
-from wavecast.models.episode import PlayableEpisode, Segment, SegmentKind
+from wavecast.models.episode import NarrationRole, PlayableEpisode, Segment, SegmentKind
 
 
 @dataclass(frozen=True)
 class ArrangementDefaults:
     """Small bounded defaults for a radio-like baseline, not a DAW."""
 
-    outgoing_voice_overlap_seconds: float = 1.0
+    outgoing_voice_overlap_seconds: float = 2.0
     crossfade_seconds: float = 3.0
+    incoming_narration_offset_seconds: float = 1.0
     music_fade_in_seconds: float = 3.0
     music_fade_out_seconds: float = 3.0
     voice_fade_seconds: float = 0.08
@@ -49,6 +50,29 @@ def _music_after(segments: list[Segment], index: int) -> int | None:
         if segments[candidate].kind is SegmentKind.MUSIC:
             return candidate
     return None
+
+
+def _narration_role(segment: Segment) -> NarrationRole:
+    # Keep old generic narration compatible with the typed role contract.
+    return getattr(segment, "narration_role", NarrationRole.GENERAL)
+
+
+def _incoming_music_start(
+    *,
+    narration_start: float,
+    narration_duration: float,
+    role: NarrationRole,
+    config: ArrangementDefaults,
+    fallback: float,
+) -> float:
+    # Role owns semantic placement; the planner owns bounded physical offsets.
+    if role is NarrationRole.TRACK_INTRO:
+        return narration_start
+    if role in {NarrationRole.TRANSITION, NarrationRole.INTRO}:
+        offset = min(config.incoming_narration_offset_seconds, narration_duration / 2)
+        return narration_start + offset
+    # Generic narration keeps the Phase 6B crossfade compatibility baseline.
+    return fallback
 
 
 def _unique_points(points: Iterable[GainPoint]) -> tuple[GainPoint, ...]:
@@ -137,13 +161,29 @@ def plan_episode_mix(
         if index == 0:
             start = 0.0
         elif segment.kind is SegmentKind.MUSIC:
-            prior_music_index = _music_before(segments, index)
-            if prior_music_index is not None:
-                prior_start = starts_by_index[prior_music_index]
-                prior_end = prior_start + _duration(segments[prior_music_index])
-                start = max(0.0, prior_end - config.crossfade_seconds)
+            if previous and previous.kind is SegmentKind.NARRATION:
+                previous_start = starts_by_index[index - 1]
+                prior_music_index = _music_before(segments, index)
+                fallback = cursor
+                if prior_music_index is not None:
+                    prior_start = starts_by_index[prior_music_index]
+                    prior_end = prior_start + _duration(segments[prior_music_index])
+                    fallback = max(0.0, prior_end - config.crossfade_seconds)
+                start = _incoming_music_start(
+                    narration_start=previous_start,
+                    narration_duration=_duration(previous),
+                    role=_narration_role(previous),
+                    config=config,
+                    fallback=fallback,
+                )
             else:
-                start = cursor
+                prior_music_index = _music_before(segments, index)
+                if prior_music_index is not None:
+                    prior_start = starts_by_index[prior_music_index]
+                    prior_end = prior_start + _duration(segments[prior_music_index])
+                    start = max(0.0, prior_end - config.crossfade_seconds)
+                else:
+                    start = cursor
         elif previous and previous.kind is SegmentKind.MUSIC:
             previous_end = starts_by_index[index - 1] + _duration(previous)
             start = max(
