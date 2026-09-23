@@ -6,6 +6,7 @@ from wavecast.intelligence.models import (
     OutputLanguage,
     ProgramSkeleton,
     ResearchBundle,
+    ResolvedTrack,
 )
 from wavecast.models.episode import EpisodeState, LiveEpisode, MusicSegment, SegmentState
 from wavecast.orchestration.staged import (
@@ -122,3 +123,34 @@ def test_next_chapter_is_derived_from_persisted_episode_timeline() -> None:
     assert next_chapter is not None
     assert next_chapter.chapter_id == "chapter-3"
     assert session.next_chapter(_episode("chapter-1", "chapter-2", "chapter-3")) is None
+
+
+def test_next_chapter_starts_after_persisted_opening_identity() -> None:
+    bridge = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Bridge Artist",
+        canonical_title="Bridge Track",
+    )
+    resolution = ResolvedTrack(
+        track_ref="mock:resolution",
+        canonical_artist="Resolution Artist",
+        canonical_title="Resolution Track",
+    )
+    base = _session()
+    session = base.model_copy(
+        update={
+            "opening_track_ref": "mock:opening",
+            "chapters": [
+                base.chapters[0].model_copy(update={"resolved_track": bridge}),
+                base.chapters[1].model_copy(update={"resolved_track": resolution}),
+            ],
+        }
+    )
+    episode = _episode("chapter-1")
+    episode.segments[0].track_ref = "mock:opening"
+
+    next_chapter = session.next_chapter(episode)
+
+    assert next_chapter is not None
+    assert next_chapter.chapter_id == "chapter-2"
+    assert next_chapter.resolved_track == bridge
