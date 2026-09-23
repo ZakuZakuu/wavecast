@@ -1,8 +1,10 @@
 import type { NextConfig } from "next";
 
+const internalApiUrl = process.env.WAVECAST_INTERNAL_API_URL ?? "http://127.0.0.1:8000";
+
 const nextConfig: NextConfig = {
   async rewrites() {
-    return [{ source: "/api/:path*", destination: "http://127.0.0.1:8000/api/:path*" }];
+    return [{ source: "/api/:path*", destination: `${internalApiUrl}/api/:path*` }];
   },
 };
 
