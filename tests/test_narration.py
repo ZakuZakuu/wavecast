@@ -7,6 +7,7 @@ from wavecast.narration import render_narration
 from wavecast.orchestration.episode import EpisodeOrchestrator, InMemoryEpisodeRepository
 from wavecast.providers.errors import ProviderInvalidResponseError, ProviderUnavailableError
 from wavecast.providers.fakes import MockTTSProvider
+from wavecast.speech import SpeechProfile
 from wavecast.storage import LocalObjectStorageProvider
 
 
@@ -74,9 +75,11 @@ def test_materializer_synthesizes_tts_text_but_keeps_visible_text(tmp_path) -> N
             self.storage = storage
             self.texts: list[str] = []
 
-        async def synthesize(self, text: str, *, cues: list[str]):
+        async def synthesize(
+            self, text: str, *, cues: list[str], profile: SpeechProfile | None = None
+        ):
             self.texts.append(text)
-            return await MockTTSProvider(self.storage).synthesize(text, cues=cues)
+            return await MockTTSProvider(self.storage).synthesize(text, cues=cues, profile=profile)
 
     storage = LocalObjectStorageProvider(tmp_path / "audio")
     provider = RecordingTTS(storage)
@@ -105,8 +108,10 @@ def test_tts_cache_identity_changes_when_tts_text_changes(tmp_path) -> None:
 
 def test_materializer_returns_failed_segment_to_script_ready(tmp_path) -> None:
     class FailingProvider:
-        async def synthesize(self, text: str, *, cues: list[str]):
-            del text, cues
+        async def synthesize(
+            self, text: str, *, cues: list[str], profile: SpeechProfile | None = None
+        ):
+            del text, cues, profile
             raise ProviderUnavailableError("temporary TTS outage")
 
     storage = LocalObjectStorageProvider(tmp_path / "audio")
@@ -140,8 +145,10 @@ def test_materializer_rejects_non_script_ready_states_without_tts_call(
     class CountingProvider:
         calls = 0
 
-        async def synthesize(self, text: str, *, cues: list[str]):
-            del text, cues
+        async def synthesize(
+            self, text: str, *, cues: list[str], profile: SpeechProfile | None = None
+        ):
+            del text, cues, profile
             self.calls += 1
             raise AssertionError("TTS must not be called for an invalid materialization state")
 
@@ -157,8 +164,10 @@ def test_missing_script_cannot_trigger_tts(tmp_path) -> None:
     class CountingProvider:
         calls = 0
 
-        async def synthesize(self, text: str, *, cues: list[str]):
-            del text, cues
+        async def synthesize(
+            self, text: str, *, cues: list[str], profile: SpeechProfile | None = None
+        ):
+            del text, cues, profile
             self.calls += 1
             raise AssertionError("TTS must not be called without a script")
 
