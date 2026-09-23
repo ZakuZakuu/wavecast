@@ -30,6 +30,26 @@ uv run uvicorn services.api.main:app --reload --port 8000
 
 To run the real Postgres integration test, set `WAVECAST_TEST_DATABASE_URL` to the same URL. All other tests remain credential-free and use the in-memory repository.
 
+### Production-like local stack
+
+Build and start the credential-free Postgres, API, and Web stack with durable named volumes:
+
+```bash
+docker compose -f docker-compose.prod.yml up --build
+```
+
+Open `http://localhost:3000`. The stack runs with mock providers, applies migrations before serving,
+keeps generated audio in the `wavecast-audio` volume, and exposes the Web same-origin API route.
+The disposable deployment smoke can be run against an already-started stack:
+
+```bash
+uv run python scripts/deployment_smoke.py --restart-api --compose-file docker-compose.prod.yml
+```
+
+The smoke checks opening-only progressive startup, staged generation, browser-playable owned audio,
+public response sanitization, and episode/audio persistence across API container replacement. CI runs this check in a
+fresh disposable Compose project; it never calls live or paid providers.
+
 ### Phase 2 provider probes (explicitly opt-in)
 
 Provider mode defaults to `mock`; neither development nor CI calls paid services. To run a real probe, copy `.env.example` to the gitignored local `.env`, set `WAVECAST_PROVIDER_MODE=live`, and fill only the local `DEEPSEEK_API_KEY`, `EXA_API_KEY`, and `TAVILY_API_KEY`. Never commit `.env` and do not put provider keys into shell history.

@@ -67,7 +67,8 @@ from wavecast.storage.episodes import EpisodeRepository
 
 LISTENER_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 DATABASE_URL = os.getenv("WAVECAST_DATABASE_URL")
-audio_storage: ObjectStorageProvider = LocalObjectStorageProvider()
+AUDIO_ROOT = os.getenv("WAVECAST_AUDIO_ROOT", ".wavecast-data/audio")
+audio_storage: ObjectStorageProvider = LocalObjectStorageProvider(AUDIO_ROOT)
 _provider_settings = ProviderSettings.from_env()
 repository: EpisodeRepository = (
     PostgresEpisodeRepository(DATABASE_URL) if DATABASE_URL else InMemoryEpisodeRepository()

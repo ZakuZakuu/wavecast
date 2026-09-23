@@ -1,0 +1,15 @@
+.git
+.github
+.codex
+**/.next
+**/node_modules
+**/.pytest_cache
+**/__pycache__
+.wavecast-data
+.env
+*.pyc
+_docs_context_repair_worktree
+_phase483_buffer_worktree
+_phase483_timing_worktree
+_phase483_tmp_link
+curator-bounds-worktree
