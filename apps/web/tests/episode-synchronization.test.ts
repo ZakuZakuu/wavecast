@@ -1,6 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import { createSynchronizationGuard } from "../lib/episode-synchronization";
+import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
+
+describe("episode start effect lifecycle", () => {
+  it("invalidates a deferred leave when Strict Mode immediately mounts the effect again", () => {
+    const guard = createEffectGenerationGuard();
+    const firstMount = guard.start();
+    const strictModeRemount = guard.start();
+
+    expect(guard.isCurrent(firstMount)).toBe(false);
+    expect(guard.isCurrent(strictModeRemount)).toBe(true);
+  });
+
+  it("keeps the current generation eligible to leave on a real unmount", () => {
+    const guard = createEffectGenerationGuard();
+    const activeMount = guard.start();
+
+    expect(guard.isCurrent(activeMount)).toBe(true);
+  });
+});
 
 describe("episode synchronization guard", () => {
   it("does not publish an inactive-session rejection from an invalidated run", () => {

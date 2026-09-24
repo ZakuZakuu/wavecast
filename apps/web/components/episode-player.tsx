@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
-import { createSynchronizationGuard } from "../lib/episode-synchronization";
+import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
 import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
 import { createLatestSegmentCommitQueue, type LatestSegmentCommitQueue } from "../lib/mix-commit-queue";
 import { linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition } from "../lib/mix-timeline";
@@ -36,6 +36,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
   const mixPlanRef = useRef<MixPlan | null>(null);
   const mixCommitQueueRef = useRef<LatestSegmentCommitQueue | null>(null);
+  const startEffectGuardRef = useRef(createEffectGenerationGuard());
   const synchronizationGuardRef = useRef(createSynchronizationGuard());
 
   const localEpisode = episode
@@ -74,6 +75,16 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   useEffect(() => {
     let mounted = true;
+    const startGeneration = startEffectGuardRef.current.start();
+    const deferLeave = (id: string) => {
+      queueMicrotask(() => {
+        if (startEffectGuardRef.current.isCurrent(startGeneration)) {
+          void api.leave(id).then((left) => {
+            if (startEffectGuardRef.current.isCurrent(startGeneration)) setEpisode(left);
+          });
+        }
+      });
+    };
     const leaveOnPageExit = () => {
       const currentEpisode = localEpisodeRef.current;
       const plan = mixPlanRef.current;
@@ -90,12 +101,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     load.then((started) => {
       episodeIdRef.current = started.id;
       if (mounted) setEpisode(started);
-      else void api.leave(started.id);
+      else deferLeave(started.id);
     }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "节目暂时无法开始"));
     return () => {
       mounted = false;
       window.removeEventListener("pagehide", leaveOnPageExit);
-      if (episodeIdRef.current) void api.leave(episodeIdRef.current);
+      if (episodeIdRef.current) deferLeave(episodeIdRef.current);
     };
   }, [episodeId, seedId, setEpisode]);
 
