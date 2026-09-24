@@ -5,24 +5,33 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
-import { createSynchronizationGuard } from "../lib/episode-synchronization";
+import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
+import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
+import { createLatestSegmentCommitQueue, type LatestSegmentCommitQueue } from "../lib/mix-commit-queue";
+import { linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition } from "../lib/mix-timeline";
+import type { MixPlan } from "../lib/mix-timeline";
 import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
-import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
-import { linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition } from "../lib/mix-timeline";
-import type { MixPlan } from "../lib/mix-timeline";
-import { createLatestSegmentCommitQueue, type LatestSegmentCommitQueue } from "../lib/mix-commit-queue";
+import { isEpisodeSaved, recordRecentEpisode, saveMaterializedEpisode } from "../lib/user-library";
+import { ChaptersSheet } from "./chapters-sheet";
 import { MixAudioPlayer } from "./mix-audio-player";
+import { ProgramArtwork } from "./program-artwork";
+import { WaveIcon } from "./wave-icon";
+
+const CHAPTER_TITLES = ["开场", "夜色开始变暖", "从旋律走进城市", "另一面的节奏", "慢慢收回来"];
 
 export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeId?: string }) {
   const { episode, setEpisode } = usePlayerStore();
   const [error, setError] = useState<string | null>(null);
   const [browserPosition, setBrowserPosition] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
+  const [chaptersOpen, setChaptersOpen] = useState(false);
   const [exportState, setExportState] = useState<"idle" | "preparing" | "ready" | "error">("idle");
   const [exportArtifact, setExportArtifact] = useState<MixdownArtifact | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "preparing">("idle");
   const episodeIdRef = useRef<string | null>(null);
   const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
@@ -30,7 +39,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
   const mixPlanRef = useRef<MixPlan | null>(null);
   const mixCommitQueueRef = useRef<LatestSegmentCommitQueue | null>(null);
+  const startEffectGuardRef = useRef(createEffectGenerationGuard());
   const synchronizationGuardRef = useRef(createSynchronizationGuard());
+
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
     ? episode
@@ -41,6 +52,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   );
   const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
   const mixPlanKey = localEpisode ? mixPlanSignature(localEpisode) : "";
+
   if (localEpisodeRef.current?.id !== localEpisode?.id) {
     mixCommitQueueRef.current?.reset();
     mixCommitQueueRef.current = null;
@@ -59,13 +71,23 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         setError(null);
       },
       onError: (reason) => {
-        setError(reason instanceof Error ? reason.message : "Playback synchronization failed");
+        setError(reason instanceof Error ? reason.message : "播放同步失败");
       },
     });
   }
 
   useEffect(() => {
     let mounted = true;
+    const startGeneration = startEffectGuardRef.current.start();
+    const deferLeave = (id: string) => {
+      queueMicrotask(() => {
+        if (startEffectGuardRef.current.isCurrent(startGeneration)) {
+          void api.leave(id).then((left) => {
+            if (startEffectGuardRef.current.isCurrent(startGeneration)) setEpisode(left);
+          });
+        }
+      });
+    };
     const leaveOnPageExit = () => {
       const currentEpisode = localEpisodeRef.current;
       const plan = mixPlanRef.current;
@@ -82,12 +104,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     load.then((started) => {
       episodeIdRef.current = started.id;
       if (mounted) setEpisode(started);
-      else void api.leave(started.id);
-    }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Unable to start episode"));
+      else deferLeave(started.id);
+    }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "节目暂时无法开始"));
     return () => {
       mounted = false;
       window.removeEventListener("pagehide", leaveOnPageExit);
-      if (episodeIdRef.current) void api.leave(episodeIdRef.current);
+      if (episodeIdRef.current) deferLeave(episodeIdRef.current);
     };
   }, [episodeId, seedId, setEpisode]);
 
@@ -103,6 +125,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     setExportArtifact(null);
     setExportError(null);
   }, [localEpisode?.id]);
+
+  useEffect(() => {
+    if (!localEpisode) return;
+    recordRecentEpisode(localEpisode, current?.title ?? null);
+    setSaved(isEpisodeSaved(localEpisode.id));
+  }, [localEpisode?.id, localEpisode?.version, current?.title]);
 
   useEffect(() => {
     if (!localEpisode || !mixPlanKey) {
@@ -154,7 +182,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         if (isCurrent()) setEpisode(updated);
       } catch (reason) {
         if (isCurrent()) {
-          setError(reason instanceof Error ? reason.message : "Playback synchronization failed");
+          setError(reason instanceof Error ? reason.message : "播放同步失败");
         }
       } finally {
         syncing = false;
@@ -174,7 +202,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       setError(null);
       return true;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Player action failed");
+      setError(reason instanceof Error ? reason.message : "操作暂时没有完成");
       return false;
     }
   }
@@ -210,6 +238,26 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     }
   }, [exportArtifact, exportState, localEpisode]);
 
+  const prepareAndSaveEpisode = useCallback(async () => {
+    if (!localEpisode || saveState === "preparing" || saved) return;
+    setSaveState("preparing");
+    try {
+      const ready = localEpisode.state === "MATERIALIZED"
+        ? localEpisode
+        : await api.materialize(localEpisode.id);
+      if (ready !== localEpisode) setEpisode(ready);
+      recordRecentEpisode(ready, current?.title ?? null);
+      if (!saveMaterializedEpisode(ready, current?.title ?? null)) {
+        throw new Error("完整节目还没有准备好");
+      }
+      setSaved(true);
+      setError(null);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "保存节目失败，请稍后重试");
+    } finally {
+      setSaveState("idle");
+    }
+  }, [current?.title, localEpisode, saveState, saved, setEpisode]);
 
   const handleMixPosition = useCallback((positionSeconds: number) => {
     if (!localEpisode || !mixPlanRef.current) return;
@@ -231,7 +279,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       checkpointRef.current = linearPosition;
       void api.checkpoint(localEpisode.id, linearPosition);
     }
-  }, [localEpisode, setEpisode]);
+  }, [localEpisode]);
 
   const handleAudioPosition = useCallback((segmentPosition: number) => {
     if (!localEpisode || !current) return;
@@ -265,7 +313,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     };
     void (mixCommitQueueRef.current ? mixCommitQueueRef.current.runExclusive(runSeek) : runSeek())
       .catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : "Player action failed");
+        setError(reason instanceof Error ? reason.message : "跳转暂时没有完成");
       });
   }, [localEpisode, setEpisode]);
 
@@ -297,21 +345,33 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     try {
       await (mixCommitQueueRef.current ? mixCommitQueueRef.current.runExclusive(runPause) : runPause());
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "Player action failed");
+      setError(reason instanceof Error ? reason.message : "暂停暂时没有完成");
     }
   }, [localEpisode, setEpisode]);
 
   if (error && !localEpisode) {
-    return <main className="shell"><Link href="/">← Home</Link><p className="error">{error} — 请先启动 API 服务。</p></main>;
+    return (
+      <main className="player-state">
+        <Link href="/" className="round-back"><WaveIcon name="back" /></Link>
+        <p>{error}</p>
+      </main>
+    );
   }
   if (!localEpisode) {
-    return <main className="shell"><p className="eyebrow">STARTING THE OPENING TRACK</p><h1>正在接入节目…</h1></main>;
+    return (
+      <main className="player-state">
+        <div className="tuning-orb"><i /><i /><i /></div>
+        <h1>正在接入节目…</h1>
+        <p>音乐会先开始，接下来的内容在路上。</p>
+      </main>
+    );
   }
 
   const maxSeekPosition = mixPlanRef.current
     ? linearPositionToMixPosition(localEpisode, mixPlanRef.current, localEpisode.generated_frontier_seconds).mixPositionSeconds
     : localEpisode.generated_frontier_seconds;
-  const generatedPercent = Math.round((maxSeekPosition / (mixPlanRef.current?.durationSeconds ?? localEpisode.timeline_duration_seconds)) * 100);
+  const fullDuration = mixPlanRef.current?.durationSeconds ?? localEpisode.timeline_duration_seconds;
+  const generatedPercent = Math.min(100, Math.round((maxSeekPosition / Math.max(1, fullDuration)) * 100));
   const displayedPosition = seekPreview ?? browserPosition;
   const displayedLinearPosition = mixPlanRef.current
     ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, browserPosition).linearPositionSeconds
@@ -320,6 +380,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
   const upcoming = current ? nextVisibleSegment(localEpisode) : undefined;
+  const chapterIds = Array.from(new Set(localEpisode.segments.map((segment) => segment.chapter_id)));
+  const currentChapterIndex = Math.max(0, chapterIds.indexOf(current?.chapter_id ?? chapterIds[0]));
+  const chapterTitle = CHAPTER_TITLES[currentChapterIndex] ?? "Chapter " + (currentChapterIndex + 1);
+  const remaining = Math.max(0, fullDuration - displayedPosition);
+  const preparingAhead = localEpisode.state !== "MATERIALIZED" && localEpisode.buffer_ahead_seconds < 45;
+
   const nextPlayback = async () => {
     const runNext = async () => {
       const response = await api.next(localEpisode.id);
@@ -330,11 +396,16 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     try {
       await (mixCommitQueueRef.current ? mixCommitQueueRef.current.runExclusive(runNext) : runNext());
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "Player action failed");
+      setError(reason instanceof Error ? reason.message : "下一章节还没有准备好");
     }
   };
+
+  const nudgeSeek = (seconds: number) => {
+    commitSeek(Math.max(0, browserPositionRef.current + seconds));
+  };
+
   return (
-    <main className="shell player-shell">
+    <main className="now-playing-page page-enter">
       <MixAudioPlayer
         segment={current}
         plan={mixPlan}
@@ -344,55 +415,119 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         onPositionChange={handleMixPosition}
         onLegacyPositionChange={handleAudioPosition}
         onEnded={completeBrowserSegment}
-        onError={() => setError("Audio source failed")}
+        onError={() => setError("音频暂时无法播放")}
       />
-      <nav className="nav"><Link href="/">← 返回节目</Link><span className="status-dot">{localEpisode.state === "MATERIALIZED" ? "fixed episode" : "building ahead"}</span></nav>
-      <section className="now-playing">
-        <p className="eyebrow">{localEpisode.title ?? "GUIDED LISTENING"}</p>
-        <p className="eyebrow">{current?.kind === "MUSIC" ? "NOW PLAYING" : "HOST ON MIC"}</p>
-        <h1>{current?.title}</h1>
-        <p>{current?.artist ?? current?.narration_text ?? "正在准备下一段"}</p>
-        <p className="eyebrow">接下来：{upcoming?.title ?? "正在准备"}{upcoming?.artist ? ` · ${upcoming.artist}` : ""}</p>
-        <div className="controls">
-          {localEpisode.is_playing
-            ? <button onClick={() => void pausePlayback()}>暂停</button>
-            : <button onClick={() => void update(api.resume(localEpisode.id))}>继续</button>}
-          <button onClick={() => void nextPlayback()}>下一章节</button>
-          <button className="quiet" onClick={() => void update(api.materialize(localEpisode.id))}>生成完整节目</button>
-          <button
-            className="quiet"
-            disabled={localEpisode.state !== "MATERIALIZED" || exportState === "preparing"}
-            onClick={() => void exportEpisode()}
-            aria-busy={exportState === "preparing"}
-          >
-            {exportState === "preparing"
-              ? "正在准备导出…"
-              : localEpisode.state === "MATERIALIZED" ? "导出 MP3" : "导出 MP3（先生成完整节目）"}
-          </button>
-          {exportArtifact ? <a className="export-download" href={exportArtifact.audioUrl} download={downloadFilename(exportArtifact.episodeId)}>下载 MP3</a> : null}
-        </div>
-      </section>
-      <section className="timeline" aria-label="episode timeline">
-        <div className="timeline-label"><span>当前 {formatSeconds(displayedPosition)} / {formatSeconds(mixPlanRef.current?.durationSeconds ?? localEpisode.timeline_duration_seconds)}</span><span>可回听 {formatSeconds(maxSeekPosition)}</span></div>
-        <input aria-label="Seek within generated audio" type="range" min="0" max={maxSeekPosition} value={displayedPosition} onChange={(event) => {
-          const value = Number(event.target.value);
-          const linearValue = mixPlanRef.current
-            ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, value).linearPositionSeconds
-            : value;
-          if (isSeekAllowed(localEpisode, linearValue)) setSeekPreview(value);
-        }} onPointerUp={commitSeekPreview} onKeyUp={commitSeekPreview} onBlur={commitSeekPreview} style={{ "--generated": `${generatedPercent}%` } as React.CSSProperties} />
-        <p>亮色区域可以回听；当前时间轴 {formatSeconds(localEpisode.timeline_duration_seconds)}，节目承诺不会随 mock 片段缩短。</p>
-      </section>
-      <section className="segment-list">
-        {localEpisode.segments.map((segment) => <article className={`segment ${segment.state === "PLANNED" || segment.state === "SKIPPED" ? "planned" : "ready"}`} key={segment.id}>
-          <span>{segment.kind === "MUSIC" ? "♫" : "◌"}</span><div><strong>{segment.title}</strong><p>{segment.artist ?? "旁白"} · {formatSeconds(segment.duration_seconds)}</p></div><small>{segment.state.replace("_", " ")}</small>
-        </article>)}
-      </section>
-      <div className="session-actions">
-        {localEpisode.is_listener_active ? <button className="quiet" onClick={leaveEpisode}>离开并停止后续生成</button> : <button onClick={() => void update(api.resume(localEpisode.id))}>返回并继续生成</button>}
-        {error ? <p className="error">{error}</p> : null}
-        {exportError ? <p className="error">{exportError}</p> : null}
+
+      <div className="player-topbar">
+        <Link href="/" className="icon-button glass-button" aria-label="返回节目"><WaveIcon name="back" /></Link>
+        <div className="player-grabber" />
+        <details className="player-more-menu">
+          <summary className="icon-button glass-button" aria-label="更多"><WaveIcon name="more" /></summary>
+          <div className="player-more-popover">
+            <button
+              type="button"
+              onClick={() => void prepareAndSaveEpisode()}
+              disabled={saveState === "preparing" || saved}
+            >
+              {saveState === "preparing"
+                ? "正在准备并保存…"
+                : saved
+                  ? "已保存到节目库"
+                  : localEpisode.state === "MATERIALIZED"
+                    ? "保存到节目库"
+                    : "准备并保存完整节目"}
+            </button>
+            <button type="button" onClick={() => void exportEpisode()} disabled={localEpisode.state !== "MATERIALIZED" || exportState === "preparing"}>
+              {exportState === "preparing" ? "正在准备导出…" : "导出 MP3"}
+            </button>
+            {localEpisode.is_listener_active
+              ? <button type="button" onClick={leaveEpisode}>停止后台准备</button>
+              : <button type="button" onClick={() => void update(api.resume(localEpisode.id))}>恢复节目</button>}
+          </div>
+        </details>
       </div>
+
+      <section className="player-artwork-section">
+        <ProgramArtwork
+          title={localEpisode.title ?? "WaveCast"}
+          subtitle={chapterTitle}
+          seed={(localEpisode.seed_id.length * 97) + currentChapterIndex}
+          className="player-artwork"
+        />
+      </section>
+
+      <section className="player-copy">
+        <p className="program-kicker">WAVECAST PROGRAM</p>
+        <h1>{localEpisode.title ?? "正在播放"}</h1>
+        <p className="chapter-line">Chapter {currentChapterIndex + 1} · {chapterTitle}</p>
+        <p className="track-line">
+          {current?.kind === "MUSIC"
+            ? [current.artist, current.title].filter(Boolean).join(" — ")
+            : current?.title ?? "主持人正在串联"}
+        </p>
+      </section>
+
+      <section className="player-progress">
+        <input
+          aria-label="节目进度"
+          type="range"
+          min="0"
+          max={Math.max(1, maxSeekPosition)}
+          value={Math.min(displayedPosition, Math.max(1, maxSeekPosition))}
+          onChange={(event) => {
+            const value = Number(event.target.value);
+            const linearValue = mixPlanRef.current
+              ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, value).linearPositionSeconds
+              : value;
+            if (isSeekAllowed(localEpisode, linearValue)) setSeekPreview(value);
+          }}
+          onPointerUp={commitSeekPreview}
+          onKeyUp={commitSeekPreview}
+          onBlur={commitSeekPreview}
+          style={{ "--generated": generatedPercent + "%" } as React.CSSProperties}
+        />
+        <div><span>{formatSeconds(displayedPosition)}</span><span>-{formatSeconds(remaining)}</span></div>
+      </section>
+
+      <section className="transport-controls" aria-label="播放控制">
+        <button type="button" className="transport-secondary" aria-label="后退 15 秒" onClick={() => nudgeSeek(-15)}>
+          <WaveIcon name="skipBack" size={27} />
+        </button>
+        <button
+          type="button"
+          className="transport-primary"
+          aria-label={localEpisode.is_playing ? "暂停" : "继续播放"}
+          onClick={() => localEpisode.is_playing ? void pausePlayback() : void update(api.resume(localEpisode.id))}
+        >
+          <WaveIcon name={localEpisode.is_playing ? "pause" : "play"} size={30} />
+        </button>
+        <button type="button" className="transport-secondary" aria-label="前进 30 秒" onClick={() => nudgeSeek(30)}>
+          <WaveIcon name="skipForward" size={27} />
+        </button>
+      </section>
+
+      <section className="player-utilities">
+        <button type="button" className="utility-button" onClick={() => setChaptersOpen(true)}>
+          <WaveIcon name="list" size={21} />
+          <span>节目时间轴</span>
+        </button>
+        <button type="button" className="utility-button" onClick={() => void nextPlayback()}>
+          <WaveIcon name="chevron" size={21} />
+          <span>下一章节</span>
+        </button>
+      </section>
+
+      {preparingAhead ? (
+        <div className="preparing-hint"><i />正在准备接下来的章节</div>
+      ) : upcoming ? (
+        <div className="up-next">接下来：<strong>{upcoming.title}</strong>{upcoming.artist ? " · " + upcoming.artist : ""}</div>
+      ) : null}
+
+      {error ? <p className="player-error">{error}</p> : null}
+      {exportError ? <p className="player-error">{exportError}</p> : null}
+      {exportArtifact ? <a className="export-download" href={exportArtifact.audioUrl} download={downloadFilename(exportArtifact.episodeId)}>再次下载 MP3</a> : null}
+
+      <ChaptersSheet episode={localEpisode} open={chaptersOpen} onClose={() => setChaptersOpen(false)} />
     </main>
   );
 }
