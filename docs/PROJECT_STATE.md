@@ -11,24 +11,25 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Deployment Baseline B — hosted target compatibility.
-- **Current stage:** Deployment Baseline A / PR #64 is merged at
-  15e5c4ba44f795fc40995e6cf1e7632e105dd156. The Phase 7 progressive
-  generation contract and production-like Compose baseline are complete;
-  live and paid provider calls remain disabled. This slice prepares the same
-  contracts for Vercel Web and Railway API/Postgres/persistent audio without
-  creating hosted resources.
-- **Canonical main:** 15e5c4ba44f795fc40995e6cf1e7632e105dd156 (PR #64 merge
+- **Current milestone:** Phase 8A-live — trustworthy live Program Proposal generation.
+- **Current stage:** UI v1 / PR #68 is merged at
+  26908b98013a1515fd8197ee92de18ad1894acf4. Phase 8A mock proposal lifecycle
+  is implemented on Draft PR #69 at exact HEAD
+  8c3becad1746fcff3d6003773400797edbcaa806 and has passed local browser
+  validation plus backend, Web, deployment-smoke, and Vercel checks.
+- **Canonical main:** 26908b98013a1515fd8197ee92de18ad1894acf4 (PR #68 merge
   commit).
-- **Last completed code milestone:** Deployment Baseline A / PR #64,
-  including production-like images, named Postgres/audio volumes, and an
-  independent CI container smoke, merged after exact-head GPT review and all
-  required CI jobs passing.
-- **Immediate work:** complete Deployment Baseline B with Railway dynamic-port
-  compatibility, hosted Postgres URL normalization, Railway volume-aware audio
-  root resolution, Vercel build-time API rewrite coverage, and a credential-free
-  hosted deployment runbook. No public deployment, platform credentials, or
-  paid calls are part of this slice.
+- **Active development stack:** `gpt/phase8a-live-proposal-generator` is based
+  on PR #69 exact HEAD. PR #69 remains Draft and must not be merged or deployed
+  as part of this implementation slice.
+- **Immediate work:** wire a structured DeepSeek-backed
+  `ProgramProposalGenerator` that produces editorial proposal drafts and
+  untrusted artist/title opening candidates, then resolve the opening track
+  through the existing exact `MusicProvider` catalog boundary before a
+  `ProgramProposal` can be returned.
+- **Release/cost gate:** no live or paid provider invocation is authorized by
+  this implementation work. Exa/Tavily research, Writer, TTS, durable proposal
+  persistence, and Home recommendation generation remain outside this slice.
 
 ## Phase 7A progressive generation contract
 

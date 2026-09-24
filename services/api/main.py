@@ -43,21 +43,27 @@ from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
 from wavecast.proposals import (
     DeterministicMockProgramProposalGenerator,
     InMemoryProgramProposalRepository,
+    LLMProgramProposalGenerator,
     ProgramProposal,
     ProgramProposalBatch,
+    ProgramProposalGenerationError,
     ProgramProposalGenerator,
     ProposalGenerationRequest,
 )
 from wavecast.providers.audius import AudiusMusicProvider
 from wavecast.providers.config import ProviderSettings
+from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.contracts import ObjectStorageProvider
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
+from wavecast.providers.factory import build_music_registry
 from wavecast.providers.fakes import MockTTSProvider
 from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.music_http import SidecarMusicProvider
 from wavecast.providers.netease import NeteaseMusicProvider
 from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
+from wavecast.providers.retrieval import MusicRetrievalService
+from wavecast.providers.usage import UsageLedger
 from wavecast.rendering import (
     MixdownArtifact,
     MixRenderError,
@@ -82,10 +88,20 @@ AUDIO_ROOT = audio_root_from_env()
 audio_storage: ObjectStorageProvider = LocalObjectStorageProvider(AUDIO_ROOT)
 _provider_settings = ProviderSettings.from_env()
 proposal_repository = InMemoryProgramProposalRepository()
-proposal_generator: ProgramProposalGenerator | None = (
-    DeterministicMockProgramProposalGenerator()
-    if _provider_settings.mode == "mock"
-    else None
+
+
+def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGenerator:
+    if settings.mode == "mock":
+        return DeterministicMockProgramProposalGenerator()
+    ledger = UsageLedger()
+    return LLMProgramProposalGenerator(
+        DeepSeekLLMProvider(settings, ledger=ledger),
+        MusicRetrievalService(build_music_registry(settings)),
+    )
+
+
+proposal_generator: ProgramProposalGenerator | None = _build_proposal_generator(
+    _provider_settings
 )
 repository: EpisodeRepository = (
     PostgresEpisodeRepository(DATABASE_URL) if DATABASE_URL else InMemoryEpisodeRepository()
@@ -549,7 +565,15 @@ async def create_program_proposals(
 ) -> ProgramProposalBatch:
     if proposal_generator is None:
         raise HTTPException(status_code=503, detail="Program proposal generation is not configured")
-    proposals = await proposal_generator.generate(body)
+    try:
+        proposals = await proposal_generator.generate(body)
+    except ProgramProposalGenerationError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Program proposal generation failed ({error.reason})",
+        ) from error
+    except ProviderError as error:
+        raise HTTPException(status_code=502, detail="Program proposal provider failed") from error
     proposal_repository.save_many(proposals)
     return ProgramProposalBatch(proposals=proposals)
 
