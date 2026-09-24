@@ -49,7 +49,7 @@ def test_static_seed_is_available_through_program_detail_contract() -> None:
     program = response.json()
     assert program["id"] == "city-pop-misunderstood"
     assert program["editorial_route"]
-    assert program["anchor_artists"]
+    assert program["title"] == "你可能一直误解了 City Pop"
 
 
 def test_proposal_generation_fails_closed_when_generator_is_unconfigured(monkeypatch) -> None:
