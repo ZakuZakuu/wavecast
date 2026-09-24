@@ -9,7 +9,7 @@ function durationLabel(seconds: number) {
 
 export function ProgramCard({ seed, compact = false }: { seed: Seed; compact?: boolean }) {
   return (
-    <Link href={`/program/\${seed.id}`} className={compact ? "program-card compact" : "program-card"}>
+    <Link href={`/program/${seed.id}`} className={compact ? "program-card compact" : "program-card"}>
       <ProgramArtwork
         title={seed.title}
         subtitle={seed.topic}
