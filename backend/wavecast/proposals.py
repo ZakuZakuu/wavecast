@@ -58,6 +58,7 @@ class ProgramProposal(BaseModel):
             opening_track_artist=self.opening_track_artist,
             cover=self.cover,
             generation_profile=self.generation_profile,
+            created_at=self.created_at,
         )
 
     @classmethod
@@ -73,9 +74,9 @@ class ProgramProposal(BaseModel):
             opening_track_artist=seed.opening_track_artist,
             cover=seed.cover,
             editorial_route=["开场", "展开", "转折", "收尾"],
-            genre_tags=[seed.topic],
+            genre_tags=[],
             mood_tags=[],
-            anchor_artists=[seed.opening_track_artist],
+            anchor_artists=[],
             generation_profile=seed.generation_profile,
             created_at=seed.created_at,
         )
