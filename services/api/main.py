@@ -40,6 +40,14 @@ from wavecast.models.episode import (
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
 from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
+from wavecast.proposals import (
+    DeterministicMockProgramProposalGenerator,
+    InMemoryProgramProposalRepository,
+    ProgramProposal,
+    ProgramProposalBatch,
+    ProgramProposalGenerator,
+    ProposalGenerationRequest,
+)
 from wavecast.providers.audius import AudiusMusicProvider
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import ObjectStorageProvider
@@ -50,14 +58,6 @@ from wavecast.providers.music_http import SidecarMusicProvider
 from wavecast.providers.netease import NeteaseMusicProvider
 from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
-from wavecast.proposals import (
-    DeterministicMockProgramProposalGenerator,
-    InMemoryProgramProposalRepository,
-    ProgramProposal,
-    ProgramProposalBatch,
-    ProgramProposalGenerator,
-    ProposalGenerationRequest,
-)
 from wavecast.rendering import (
     MixdownArtifact,
     MixRenderError,
