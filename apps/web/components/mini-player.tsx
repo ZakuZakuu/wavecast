@@ -15,7 +15,7 @@ export function MiniPlayer() {
 
   const current = episode.segments.find((segment) => segment.id === episode.current_segment_id);
   const title = episode.title ?? "正在收听";
-  const href = \`/episode/materialized/\${episode.id}\`;
+  const href = `/episode/materialized/\${episode.id}`;
 
   const togglePlayback = async () => {
     if (busy) return;

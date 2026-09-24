@@ -82,7 +82,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           ? mixPositionToLinearPosition(currentEpisode, plan, browserPositionRef.current)
           : { linearPositionSeconds: browserPositionRef.current };
         void api.checkpoint(episodeIdRef.current, Math.floor(transport.linearPositionSeconds));
-        navigator.sendBeacon(\`/api/episodes/\${episodeIdRef.current}/leave\`);
+        navigator.sendBeacon(`/api/episodes/\${episodeIdRef.current}/leave`);
       }
     };
     window.addEventListener("pagehide", leaveOnPageExit);

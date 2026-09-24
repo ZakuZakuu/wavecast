@@ -100,7 +100,7 @@ export function TunePage() {
 
       {result ? (
         <section className="tune-result page-enter">
-          <div className="section-title-row"><h2>先从这档开始</h2><Link href={\`/program/\${result.id}\`}>查看节目</Link></div>
+          <div className="section-title-row"><h2>先从这档开始</h2><Link href={`/program/\${result.id}`}>查看节目</Link></div>
           <ProgramCard seed={result} compact />
         </section>
       ) : null}

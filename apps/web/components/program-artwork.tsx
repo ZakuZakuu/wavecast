@@ -41,7 +41,7 @@ export function ProgramArtwork({
 
   return (
     <div
-      className={\`program-artwork artwork-\${family} artwork-variant-\${resolvedSeed % 3} \${className}\`}
+      className={`program-artwork artwork-\${family} artwork-variant-\${resolvedSeed % 3} \${className}`}
       style={style}
       aria-label={title + " 节目封面"}
       role="img"
