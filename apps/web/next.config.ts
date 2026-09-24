@@ -4,7 +4,11 @@ const internalApiUrl = process.env.WAVECAST_INTERNAL_API_URL ?? "http://127.0.0.
 
 const nextConfig: NextConfig = {
   async rewrites() {
-    return [{ source: "/api/:path*", destination: `${internalApiUrl}/api/:path*` }];
+    return {
+      beforeFiles: [],
+      afterFiles: [],
+      fallback: [{ source: "/api/:path*", destination: `${internalApiUrl}/api/:path*` }],
+    };
   },
 };
 

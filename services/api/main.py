@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from wavecast.arrangement import MixPlan, plan_episode_mix
 from wavecast.assembly import create_episode_assembly_service
+from wavecast.auth import AuthPrincipal, AuthTokenError, JwksJWTVerifier
 from wavecast.deployment import audio_root_from_env, normalize_database_url
 from wavecast.materialization import (
     MusicSnapshotError,
@@ -48,6 +49,7 @@ from wavecast.proposals import (
     ProgramProposalBatch,
     ProgramProposalGenerationError,
     ProgramProposalGenerator,
+    ProgramProposalRepository,
     ProposalGenerationRequest,
 )
 from wavecast.providers.audius import AudiusMusicProvider
@@ -87,7 +89,20 @@ if DATABASE_URL:
 AUDIO_ROOT = audio_root_from_env()
 audio_storage: ObjectStorageProvider = LocalObjectStorageProvider(AUDIO_ROOT)
 _provider_settings = ProviderSettings.from_env()
-proposal_repository = InMemoryProgramProposalRepository()
+proposal_repository: ProgramProposalRepository = InMemoryProgramProposalRepository()
+if DATABASE_URL:
+    from wavecast.storage import PostgresProgramProposalRepository
+
+    proposal_repository = PostgresProgramProposalRepository(DATABASE_URL)
+
+_auth_jwks_url = os.getenv("WAVECAST_AUTH_JWKS_URL")
+_auth_issuer = os.getenv("WAVECAST_AUTH_ISSUER")
+_auth_audience = os.getenv("WAVECAST_AUTH_AUDIENCE")
+_auth_verifier = (
+    JwksJWTVerifier(_auth_jwks_url, _auth_issuer, _auth_audience)
+    if _auth_jwks_url and _auth_issuer and _auth_audience
+    else None
+)
 
 
 def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGenerator:
@@ -227,6 +242,19 @@ async def anonymous_listener(
     )
     listener_id = proposed if proposed and LISTENER_PATTERN.fullmatch(proposed) else uuid4().hex
     request.state.listener_id = listener_id
+    request.state.principal = AuthPrincipal(listener_id=listener_id)
+    authorization = request.headers.get("authorization")
+    if authorization is not None:
+        scheme, separator, token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not separator or not token.strip():
+            return Response(status_code=401, content="Invalid bearer token")
+        if _auth_verifier is None:
+            return Response(status_code=503, content="Authentication is not configured")
+        try:
+            user_id = await _auth_verifier.verify(token.strip())
+        except AuthTokenError:
+            return Response(status_code=401, content="Invalid bearer token")
+        request.state.principal = AuthPrincipal(listener_id=listener_id, user_id=user_id)
     response = await call_next(request)
     response.set_cookie("wavecast_listener", listener_id, httponly=True, samesite="lax")
     return response
@@ -303,6 +331,10 @@ class MixdownPreparationResult(BaseModel):
 
 def listener(request: Request) -> str:
     return cast(str, request.state.listener_id)
+
+
+def principal(request: Request) -> AuthPrincipal:
+    return cast(AuthPrincipal, request.state.principal)
 
 
 def owned(episode_id: str, listener_id: str) -> None:
@@ -561,7 +593,7 @@ def program(program_id: str) -> ProgramProposal:
 
 @app.post("/api/program-proposals", response_model=ProgramProposalBatch)
 async def create_program_proposals(
-    body: ProposalGenerationRequest,
+    body: ProposalGenerationRequest, request: Request,
 ) -> ProgramProposalBatch:
     if proposal_generator is None:
         raise HTTPException(status_code=503, detail="Program proposal generation is not configured")
@@ -574,7 +606,15 @@ async def create_program_proposals(
         ) from error
     except ProviderError as error:
         raise HTTPException(status_code=502, detail="Program proposal provider failed") from error
-    proposal_repository.save_many(proposals)
+    owner = principal(request)
+    await to_thread.run_sync(
+        lambda: proposal_repository.save_many(
+            proposals,
+            owner_listener_id=owner.listener_id,
+            owner_user_id=owner.user_id,
+            source="tune",
+        )
+    )
     return ProgramProposalBatch(proposals=proposals)
 
 

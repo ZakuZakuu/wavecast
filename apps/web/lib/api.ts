@@ -7,6 +7,7 @@ import type {
   Seed,
 } from "./types";
 import type { MixdownArtifact, MixdownPreparationResult } from "./episode-export";
+import { getApiAuthToken } from "./auth-client";
 
 const listenerStorageKey = "wavecast-anonymous-listener";
 
@@ -21,9 +22,15 @@ function listenerId(): string | undefined {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const anonymousListener = listenerId();
+  const bearerToken = await getApiAuthToken();
   const response = await fetch(`/api${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(anonymousListener ? { "X-Wavecast-Listener": anonymousListener } : {}), ...init?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...(anonymousListener ? { "X-Wavecast-Listener": anonymousListener } : {}),
+      ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
+      ...init?.headers,
+    },
   });
   if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail ?? "Request failed");
   return response.json() as Promise<T>;

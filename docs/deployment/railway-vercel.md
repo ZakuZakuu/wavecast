@@ -31,6 +31,39 @@ RAILWAY_VOLUME_MOUNT_PATH, then .wavecast-data/audio. Railway's PORT is used
 by the entrypoint, while local Compose still falls back to 8000. Do not add
 railway.toml or railway.json; use Railway dashboard/Git integration.
 
+### Optional Better Auth identity
+
+WaveCast business migrations remain Alembic-managed. Better Auth owns its
+separate PostgreSQL `auth` schema. Configure these server-only values on both
+the Vercel Web and Railway API services:
+
+~~~text
+WAVECAST_DATABASE_URL=<same private Railway Postgres reference>
+BETTER_AUTH_URL=https://<Vercel production domain>
+BETTER_AUTH_SECRET=<generated secret>
+GOOGLE_CLIENT_ID=<optional>
+GOOGLE_CLIENT_SECRET=<optional>
+GITHUB_CLIENT_ID=<optional>
+GITHUB_CLIENT_SECRET=<optional>
+WAVECAST_AUTH_JWKS_URL=https://<Vercel production domain>/api/auth/jwks
+WAVECAST_AUTH_ISSUER=https://<Vercel production domain>
+WAVECAST_AUTH_AUDIENCE=https://<Vercel production domain>
+~~~
+
+OAuth buttons are enabled only for providers with both credentials configured.
+Guest browsing, Tune, favorites, library, and listening remain available when
+auth is not configured. Before enabling account login against a database, apply
+the Better Auth schema separately from Alembic:
+
+~~~sh
+pnpm --filter @wavecast/web auth:migrate
+~~~
+
+Run that command with `WAVECAST_DATABASE_URL`, `BETTER_AUTH_SECRET`, and
+`BETTER_AUTH_URL` available to the Web package. It uses Better Auth's Kysely
+PostgreSQL adapter and its dedicated `auth` schema; do not point it at a public
+or unrelated database.
+
 ## Vercel Web
 
 Import the same repository as a separate Vercel project:
