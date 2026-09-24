@@ -27,8 +27,12 @@ A proposal contains only enough information to promise a listening experience:
 - a short editorial route preview.
 
 `ProgramProposalGenerator` is asynchronous and provider-neutral. Mock mode uses a
-credential-free deterministic implementation. Live mode fails closed until an
-LLM-backed implementation is explicitly wired.
+credential-free deterministic implementation. Live mode uses a bounded structured
+LLM call only to draft editorial metadata and ranked artist/title hypotheses. The
+LLM never supplies an authoritative catalog ID or playback reference. Application
+code resolves each opening-track hypothesis through the existing
+`MusicProviderRegistry` / exact catalog-resolution boundary before constructing a
+`ProgramProposal`; if no candidate resolves, generation fails closed.
 
 The API stores generated proposals in a proposal repository and exposes a generic
 program-detail read. A listener does not create an episode by viewing a proposal.
@@ -38,7 +42,9 @@ Only the existing start-listening boundary converts the proposal into an
 ## Consequences
 
 - Tune and future Home recommendation can share one proposal generator contract.
-- Program cards stay cheap; research/TTS do not run before listening starts.
+- Program cards stay cheap; live proposal creation may use one structured LLM call
+  plus bounded catalog metadata lookups, but Exa/Tavily research, Writer, and TTS do
+  not run before listening starts.
 - The Phase 7 runtime remains unchanged.
 - The first repository is intentionally in-memory. Durable proposal storage is a
   later production requirement before generated proposal links are expected to

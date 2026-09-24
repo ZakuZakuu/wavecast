@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from services.api import main as api_module
+from wavecast.proposals import ProgramProposalGenerationError
 
 
 def test_program_proposal_can_be_created_viewed_and_started() -> None:
@@ -62,3 +63,24 @@ def test_proposal_generation_fails_closed_when_generator_is_unconfigured(monkeyp
     )
 
     assert response.status_code == 503
+
+
+
+def test_proposal_generation_returns_safe_gateway_error(monkeypatch) -> None:
+    class FailingGenerator:
+        async def generate(self, body):
+            del body
+            raise ProgramProposalGenerationError("opening_track_unresolved")
+
+    client = TestClient(api_module.app)
+    monkeypatch.setattr(api_module, "proposal_generator", FailingGenerator())
+
+    response = client.post(
+        "/api/program-proposals",
+        json={"prompt": "unresolvable request", "duration_intent": "AUTO", "count": 1},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == (
+        "Program proposal generation failed (opening_track_unresolved)"
+    )
