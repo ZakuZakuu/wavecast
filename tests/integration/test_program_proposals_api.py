@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
+from wavecast.proposals import ProgramProposalGenerationError
 
 from services.api import main as api_module
-from wavecast.proposals import ProgramProposalGenerationError
 
 
 def test_program_proposal_can_be_created_viewed_and_started() -> None:

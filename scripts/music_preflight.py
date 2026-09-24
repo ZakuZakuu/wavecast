@@ -12,11 +12,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import httpx
-from wavecast.providers.factory import build_music_registry
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.errors import ProviderError
+from wavecast.providers.factory import build_music_registry
 from wavecast.providers.registry import MusicProviderRegistry
 from wavecast.providers.retrieval import MusicRetrievalService
 
