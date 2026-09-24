@@ -5,36 +5,54 @@ import { useEffect, useState } from "react";
 
 import { api } from "../lib/api";
 import type { Seed } from "../lib/types";
-import { formatSeconds } from "../lib/playback";
+import { AppShell } from "./app-shell";
+import { ProgramCard } from "./program-card";
+import { WaveIcon } from "./wave-icon";
 
 export function HomeFeed() {
   const [seeds, setSeeds] = useState<Seed[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.seeds().then(setSeeds).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Unable to load programs"));
+    api.seeds()
+      .then(setSeeds)
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "节目暂时无法载入"));
   }, []);
 
   return (
-    <main className="shell">
-      <nav className="nav"><span className="brand">wavecast</span><span className="status-dot">mock runtime</span></nav>
-      <section className="hero">
-        <p className="eyebrow">GUIDED LISTENING</p>
-        <h1>先听见一首歌，<br />故事在路上长出来。</h1>
-        <p>每一个节目从可立即播放的开场开始；研究、串联与旁白只生成在你前方一点。</p>
-      </section>
-      <section aria-labelledby="programs-title">
-        <div className="section-heading"><h2 id="programs-title">为现在准备的节目</h2><span>{seeds.length || "…"} 个提案</span></div>
-        {error ? <p className="error">{error} — 请先启动 API 服务。</p> : null}
-        <div className="card-grid">
-          {seeds.map((seed) => (
-            <Link href={`/episode/${seed.id}`} className="program-card" key={seed.id} style={{ "--base": seed.cover.palette[0], "--accent": seed.cover.palette[1], "--seed": `${seed.cover.seed % 70}%` } as React.CSSProperties}>
-              <div className="cover"><span>{seed.topic}</span><i /></div>
-              <div className="card-copy"><p>{formatSeconds(seed.estimated_duration_seconds)} · {seed.cover.family}</p><h3>{seed.title}</h3><span>从 {seed.opening_track_title} 开始</span></div>
-            </Link>
-          ))}
+    <AppShell>
+      <div className="page-header home-header">
+        <div>
+          <p className="program-kicker">WAVECAST</p>
+          <h1>为你推荐 <WaveIcon name="chevron" size={24} /></h1>
+        </div>
+        <button type="button" className="icon-button soft-button" aria-label="搜索"><WaveIcon name="search" /></button>
+      </div>
+
+      {error ? <p className="inline-error">{error}</p> : null}
+
+      <section className="feed-section">
+        <div className="program-shelf" aria-label="为你推荐的节目">
+          {seeds.map((seed) => <ProgramCard seed={seed} key={seed.id} />)}
+          {!seeds.length && !error ? Array.from({ length: 4 }).map((_, index) => <div className="program-skeleton" key={index} />) : null}
         </div>
       </section>
-    </main>
+
+      <section className="feed-section">
+        <div className="section-title-row"><h2>值得一听</h2><span>本周精选</span></div>
+        <div className="compact-program-list">
+          {seeds.map((seed) => <ProgramCard seed={seed} compact key={"compact-" + seed.id} />)}
+        </div>
+      </section>
+
+      <section className="editorial-banner">
+        <div>
+          <p className="program-kicker">GUIDED LISTENING</p>
+          <h2>不是歌单，是一档为你排好的节目。</h2>
+          <p>音乐先开始，故事只在你前方一点点长出来。</p>
+        </div>
+        <Link href="/tune" className="banner-action"><WaveIcon name="sparkle" />去调一档</Link>
+      </section>
+    </AppShell>
   );
 }
