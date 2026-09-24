@@ -50,6 +50,14 @@ from wavecast.providers.music_http import SidecarMusicProvider
 from wavecast.providers.netease import NeteaseMusicProvider
 from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
+from wavecast.proposals import (
+    DeterministicMockProgramProposalGenerator,
+    InMemoryProgramProposalRepository,
+    ProgramProposal,
+    ProgramProposalBatch,
+    ProgramProposalGenerator,
+    ProposalGenerationRequest,
+)
 from wavecast.rendering import (
     MixdownArtifact,
     MixRenderError,
@@ -73,6 +81,12 @@ if DATABASE_URL:
 AUDIO_ROOT = audio_root_from_env()
 audio_storage: ObjectStorageProvider = LocalObjectStorageProvider(AUDIO_ROOT)
 _provider_settings = ProviderSettings.from_env()
+proposal_repository = InMemoryProgramProposalRepository()
+proposal_generator: ProgramProposalGenerator | None = (
+    DeterministicMockProgramProposalGenerator()
+    if _provider_settings.mode == "mock"
+    else None
+)
 repository: EpisodeRepository = (
     PostgresEpisodeRepository(DATABASE_URL) if DATABASE_URL else InMemoryEpisodeRepository()
 )
@@ -496,14 +510,53 @@ async def audius_audio(track_id: str, request: Request) -> StreamingResponse:
     )
 
 
+def _static_seed(program_id: str) -> EpisodeSeed | None:
+    return next((candidate for candidate in SEEDS if candidate.id == program_id), None)
+
+
+def _proposal_for_program(program_id: str) -> ProgramProposal | None:
+    proposal = proposal_repository.get(program_id)
+    if proposal is not None:
+        return proposal
+    seed = _static_seed(program_id)
+    return ProgramProposal.from_episode_seed(seed) if seed is not None else None
+
+
+def _seed_for_program(program_id: str) -> EpisodeSeed | None:
+    seed = _static_seed(program_id)
+    if seed is not None:
+        return seed
+    proposal = proposal_repository.get(program_id)
+    return proposal.to_episode_seed() if proposal is not None else None
+
+
 @app.get("/api/seeds", response_model=list[EpisodeSeed])
 def list_seeds() -> list[EpisodeSeed]:
     return SEEDS
 
 
+@app.get("/api/programs/{program_id}", response_model=ProgramProposal)
+def program(program_id: str) -> ProgramProposal:
+    proposal = _proposal_for_program(program_id)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return proposal
+
+
+@app.post("/api/program-proposals", response_model=ProgramProposalBatch)
+async def create_program_proposals(
+    body: ProposalGenerationRequest,
+) -> ProgramProposalBatch:
+    if proposal_generator is None:
+        raise HTTPException(status_code=503, detail="Program proposal generation is not configured")
+    proposals = await proposal_generator.generate(body)
+    proposal_repository.save_many(proposals)
+    return ProgramProposalBatch(proposals=proposals)
+
+
 @app.post("/api/episodes/from-seed/{seed_id}", response_model=LiveEpisode)
 def create_episode(seed_id: str, request: Request) -> LiveEpisode:
-    seed = next((candidate for candidate in SEEDS if candidate.id == seed_id), None)
+    seed = _seed_for_program(seed_id)
     if seed is None:
         raise HTTPException(status_code=404, detail="Episode seed not found")
     try:

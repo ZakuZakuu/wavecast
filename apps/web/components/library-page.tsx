@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api";
-import type { Seed } from "../lib/types";
+import type { ProgramProposal, Seed } from "../lib/types";
 import {
   emptyUserLibrary,
   readUserLibrary,
@@ -84,6 +84,7 @@ export function LibraryPage() {
   const [tab, setTab] = useState<Tab>("最近收听");
   const [seeds, setSeeds] = useState<Seed[]>([]);
   const [library, setLibrary] = useState<UserLibraryState>(emptyUserLibrary);
+  const [createdPrograms, setCreatedPrograms] = useState<ProgramProposal[]>([]);
 
   useEffect(() => {
     api.seeds().then(setSeeds).catch(() => setSeeds([]));
@@ -99,6 +100,20 @@ export function LibraryPage() {
       .filter((seed): seed is Seed => Boolean(seed));
   }, [library.favoriteSeedIds, seeds]);
 
+  useEffect(() => {
+    let active = true;
+    void Promise.all(
+      library.createdProgramIds.map((id) => api.program(id).catch(() => null)),
+    ).then((items) => {
+      if (active) {
+        setCreatedPrograms(items.filter((item): item is ProgramProposal => Boolean(item)));
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [library.createdProgramIds]);
+
   const removeSaved = (episodeId: string) => {
     removeSavedEpisode(episodeId);
     setLibrary(readUserLibrary());
@@ -110,7 +125,9 @@ export function LibraryPage() {
       ? library.recentPrograms.length > 0
       : tab === "已保存"
         ? library.savedEpisodes.length > 0
-        : false;
+        : tab === "我创建的"
+          ? createdPrograms.length > 0
+          : false;
 
   return (
     <AppShell>
@@ -161,6 +178,14 @@ export function LibraryPage() {
         </section>
       ) : null}
 
+      {tab === "我创建的" && createdPrograms.length ? (
+        <section className="library-list">
+          {createdPrograms.map((program) => (
+            <ProgramCard seed={program} compact key={program.id} />
+          ))}
+        </section>
+      ) : null}
+
       {!hasContent ? (
         <section className="library-empty">
           <div className="empty-disc"><i /></div>
@@ -180,7 +205,7 @@ export function LibraryPage() {
                 ? "开始收听后，进度会自动留在这里。"
                 : tab === "已保存"
                   ? "完整生成节目后，可以把这个固定版本保存下来。"
-                  : "真实调频生成会在下一阶段接入这里。"}
+                  : "去调频页说出你想听什么，生成的节目提案会留在这里。"}
           </p>
         </section>
       ) : null}

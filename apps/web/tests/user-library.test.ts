@@ -67,6 +67,7 @@ describe("user library state", () => {
         favoriteSeedIds: ["seed-1"],
         recentPrograms: [],
         savedEpisodes: [],
+        createdProgramIds: [],
       });
   });
 });

@@ -1,5 +1,11 @@
 import { parseMixPlan, type MixPlan } from "./mix-timeline";
-import type { LiveEpisode, Seed } from "./types";
+import type {
+  LiveEpisode,
+  ProgramProposal,
+  ProgramProposalBatch,
+  ProposalGenerationRequest,
+  Seed,
+} from "./types";
 import type { MixdownArtifact, MixdownPreparationResult } from "./episode-export";
 
 const listenerStorageKey = "wavecast-anonymous-listener";
@@ -25,6 +31,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   seeds: () => request<Seed[]>("/seeds"),
+  program: (id: string) => request<ProgramProposal>(`/programs/${id}`),
+  createProgramProposals: (input: ProposalGenerationRequest) =>
+    request<ProgramProposalBatch>("/program-proposals", {
+      method: "POST",
+      body: JSON.stringify({ ...input, count: input.count ?? 1 }),
+    }),
   start: (seedId: string) => request<LiveEpisode>(`/episodes/from-seed/${seedId}`, { method: "POST" }),
   get: (id: string) => request<LiveEpisode>(`/episodes/${id}`),
   mixPlan: async (id: string): Promise<MixPlan> => parseMixPlan(await request<unknown>(`/episodes/${id}/mix-plan`)),
