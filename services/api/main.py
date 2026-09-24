@@ -52,8 +52,8 @@ from wavecast.proposals import (
 )
 from wavecast.providers.audius import AudiusMusicProvider
 from wavecast.providers.config import ProviderSettings
-from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.contracts import ObjectStorageProvider
+from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
 from wavecast.providers.factory import build_music_registry
 from wavecast.providers.fakes import MockTTSProvider

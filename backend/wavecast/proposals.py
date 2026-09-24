@@ -92,7 +92,6 @@ class ProgramProposalBatch(BaseModel):
     proposals: list[ProgramProposal]
 
 
-
 class OpeningTrackCandidate(BaseModel):
     """Untrusted artist/title hypothesis proposed by the LLM."""
 
@@ -271,7 +270,7 @@ class LLMProgramProposalGenerator:
             self._prompt(request),
             ProgramProposalDraftBatch,
             transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
-            profile=InferenceProfile.BALANCED,
+            profile=InferenceProfile.FAST,
             stage="program_proposal",
         )
         if not isinstance(raw, ProgramProposalDraftBatch):
@@ -336,7 +335,6 @@ class LLMProgramProposalGenerator:
             f"Taste context: {taste_context}\n"
             f"Listener request: {request.prompt.strip()}"
         )
-
 
 class DeterministicMockProgramProposalGenerator:
     """Credential-free proposal generator used to validate product lifecycle and contracts."""

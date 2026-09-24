@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from pydantic import BaseModel
 
 from wavecast.proposals import (
     DeterministicMockProgramProposalGenerator,
@@ -14,6 +15,7 @@ from wavecast.proposals import (
     ProposalGenerationRequest,
 )
 from wavecast.providers.fakes import MockMusicProvider
+from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.registry import MusicProviderRegistry
 from wavecast.providers.retrieval import MusicRetrievalService
 
@@ -72,25 +74,34 @@ def test_in_memory_proposal_repository_keeps_generated_programs() -> None:
     assert repository.get(proposal.id) == proposal
 
 
-
 class _ProposalLLM:
     def __init__(self, batch: ProgramProposalDraftBatch) -> None:
         self.batch = batch
         self.prompt = ""
 
-    async def structured(self, prompt, output_type, **kwargs):
-        del kwargs
+    async def structured(
+        self,
+        prompt: str,
+        output_type: type[BaseModel],
+        *,
+        transport: StructuredTransport,
+        profile: InferenceProfile,
+        stage: str | None = None,
+    ) -> BaseModel:
+        del transport, profile, stage
         assert output_type is ProgramProposalDraftBatch
         self.prompt = prompt
         return self.batch
 
 
-def _live_generator(batch: ProgramProposalDraftBatch) -> tuple[LLMProgramProposalGenerator, _ProposalLLM]:
+def _live_generator(
+    batch: ProgramProposalDraftBatch,
+) -> tuple[LLMProgramProposalGenerator, _ProposalLLM]:
     llm = _ProposalLLM(batch)
     retrieval = MusicRetrievalService(
         MusicProviderRegistry({"mock": MockMusicProvider()}, preference=("mock",))
     )
-    return LLMProgramProposalGenerator(llm, retrieval), llm  # type: ignore[arg-type]
+    return LLMProgramProposalGenerator(llm, retrieval), llm
 
 
 def test_llm_generator_resolves_opening_track_before_creating_proposal() -> None:
@@ -104,8 +115,12 @@ def test_llm_generator_resolves_opening_track_before_creating_proposal() -> None
                     genre_tags=["Electronic"],
                     mood_tags=["夜晚", "流动"],
                     opening_track_candidates=[
-                        OpeningTrackCandidate(artist="Imaginary Artist", title="Imaginary Song"),
-                        OpeningTrackCandidate(artist="Signal Garden", title="Midnight Transfer"),
+                        OpeningTrackCandidate(
+                            artist="Imaginary Artist", title="Imaginary Song"
+                        ),
+                        OpeningTrackCandidate(
+                            artist="Signal Garden", title="Midnight Transfer"
+                        ),
                     ],
                 )
             ]
@@ -128,7 +143,10 @@ def test_llm_generator_resolves_opening_track_before_creating_proposal() -> None
     assert proposal.anchor_artists == ["Signal Garden"]
     assert proposal.estimated_duration_seconds == 72 * 60
     assert "Taste context:" in llm.prompt
-    assert "track_ref" not in ProgramProposalDraftBatch.model_json_schema()["$defs"]["OpeningTrackCandidate"]["properties"]
+    opening_schema = ProgramProposalDraftBatch.model_json_schema()["$defs"][
+        "OpeningTrackCandidate"
+    ]["properties"]
+    assert "track_ref" not in opening_schema
 
 
 def test_llm_generator_fails_closed_when_no_opening_candidate_resolves() -> None:
@@ -140,7 +158,9 @@ def test_llm_generator_fails_closed_when_no_opening_candidate_resolves() -> None
                     short_description="这个草稿没有任何可验证的开场曲。",
                     editorial_route=["开始", "继续"],
                     opening_track_candidates=[
-                        OpeningTrackCandidate(artist="Imaginary Artist", title="Imaginary Song")
+                        OpeningTrackCandidate(
+                            artist="Imaginary Artist", title="Imaginary Song"
+                        )
                     ],
                 )
             ]
@@ -164,7 +184,9 @@ def test_llm_generator_requires_exact_requested_proposal_count() -> None:
                     short_description="模型少返回了一个 proposal。",
                     editorial_route=["开始", "结束"],
                     opening_track_candidates=[
-                        OpeningTrackCandidate(artist="Mira Fields", title="Neon First Light")
+                        OpeningTrackCandidate(
+                            artist="Mira Fields", title="Neon First Light"
+                        )
                     ],
                 )
             ]
