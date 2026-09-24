@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from wavecast.proposals import (
     DeterministicMockProgramProposalGenerator,
     DurationIntent,
@@ -71,6 +71,37 @@ def test_in_memory_proposal_repository_keeps_generated_programs() -> None:
     repository.save_many([proposal])
 
     assert repository.get(proposal.id) == proposal
+
+
+def test_proposal_request_normalizes_outer_whitespace_and_rejects_blank_prompt() -> None:
+    request = ProposalGenerationRequest(prompt="  night drive  ")
+
+    assert request.prompt == "night drive"
+    with pytest.raises(ValidationError):
+        ProposalGenerationRequest(prompt="   ")
+
+
+def test_llm_draft_rejects_blank_identity_and_editorial_copy() -> None:
+    with pytest.raises(ValidationError):
+        OpeningTrackCandidate(artist="   ", title="Neon First Light")
+    with pytest.raises(ValidationError):
+        ProgramProposalDraft(
+            title="   ",
+            short_description="valid description",
+            editorial_route=["start", "finish"],
+            opening_track_candidates=[
+                OpeningTrackCandidate(artist="Mira Fields", title="Neon First Light")
+            ],
+        )
+    with pytest.raises(ValidationError):
+        ProgramProposalDraft(
+            title="valid title",
+            short_description="valid description",
+            editorial_route=["start", "   "],
+            opening_track_candidates=[
+                OpeningTrackCandidate(artist="Mira Fields", title="Neon First Light")
+            ],
+        )
 
 
 class _ProposalLLM:

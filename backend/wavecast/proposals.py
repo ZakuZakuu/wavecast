@@ -7,7 +7,7 @@ from hashlib import sha1
 from typing import Protocol
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from wavecast.intelligence.models import TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
@@ -29,6 +29,14 @@ class ProposalGenerationRequest(BaseModel):
     duration_intent: DurationIntent = DurationIntent.AUTO
     count: int = Field(default=1, ge=1, le=12)
     taste_context: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("prompt")
+    @classmethod
+    def normalize_prompt(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 2:
+            raise ValueError("prompt must contain at least two non-whitespace characters")
+        return normalized
 
 
 class ProgramProposal(BaseModel):
@@ -100,6 +108,14 @@ class OpeningTrackCandidate(BaseModel):
     artist: str = Field(min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=160)
 
+    @field_validator("artist", "title")
+    @classmethod
+    def normalize_identity(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("track identity fields cannot be blank")
+        return normalized
+
     def to_track_proposal(self) -> TrackProposal:
         return TrackProposal(
             artist=self.artist.strip(),
@@ -120,6 +136,22 @@ class ProgramProposalDraft(BaseModel):
     genre_tags: list[str] = Field(default_factory=list, max_length=8)
     mood_tags: list[str] = Field(default_factory=list, max_length=8)
     opening_track_candidates: list[OpeningTrackCandidate] = Field(min_length=1, max_length=4)
+
+    @field_validator("title", "short_description")
+    @classmethod
+    def normalize_copy(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("proposal copy cannot be blank")
+        return normalized
+
+    @field_validator("editorial_route")
+    @classmethod
+    def normalize_route(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value]
+        if any(not item for item in normalized):
+            raise ValueError("editorial route items cannot be blank")
+        return normalized
 
 
 class ProgramProposalDraftBatch(BaseModel):
