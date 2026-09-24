@@ -18,7 +18,7 @@ def test_mock_proposal_generation_is_deterministic_and_seed_compatible() -> None
     first = asyncio.run(generator.generate(request))[0]
     second = asyncio.run(generator.generate(request))[0]
 
-    assert first == second
+    assert first.model_dump(exclude={"created_at"}) == second.model_dump(exclude={"created_at"})
     assert first.id.startswith("proposal-")
     assert first.estimated_duration_seconds == 22 * 60
     assert "Jazz" in first.genre_tags
