@@ -5,6 +5,8 @@ from .episodes import (
     EpisodeRepository,
     PostgresEpisodeRepository,
 )
+from .proposals import PostgresProgramProposalRepository
+from .schema import metadata
 
 __all__ = [
     "EpisodeConcurrencyError",
@@ -13,4 +15,6 @@ __all__ = [
     "PostgresEpisodeRepository",
     "LocalObjectStorageProvider",
     "StoredObject",
+    "metadata",
+    "PostgresProgramProposalRepository",
 ]
