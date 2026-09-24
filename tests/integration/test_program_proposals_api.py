@@ -53,6 +53,17 @@ def test_static_seed_is_available_through_program_detail_contract() -> None:
     assert program["title"] == "你可能一直误解了 City Pop"
 
 
+def test_proposal_generation_rejects_whitespace_only_prompt() -> None:
+    client = TestClient(api_module.app)
+
+    response = client.post(
+        "/api/program-proposals",
+        json={"prompt": "   ", "duration_intent": "AUTO", "count": 1},
+    )
+
+    assert response.status_code == 422
+
+
 def test_proposal_generation_fails_closed_when_generator_is_unconfigured(monkeypatch) -> None:
     client = TestClient(api_module.app)
     monkeypatch.setattr(api_module, "proposal_generator", None)
