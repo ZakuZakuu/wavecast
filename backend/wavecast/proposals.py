@@ -192,7 +192,7 @@ class DeterministicMockProgramProposalGenerator:
         proposals: list[ProgramProposal] = []
         for index in range(request.count):
             digest = sha1(
-                f"{request.prompt}|{request.duration_intent}|{index}".encode("utf-8")
+                f"{request.prompt}|{request.duration_intent}|{index}".encode()
             ).hexdigest()
             seed = int(digest[:8], 16)
             palette = _PALETTES[seed % len(_PALETTES)]
