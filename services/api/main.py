@@ -709,6 +709,15 @@ def heartbeat(episode_id: str, request: Request) -> LiveEpisode:
     return operate(episode_id, listener(request), lambda: orchestrator.heartbeat(episode_id))
 
 
+@app.post("/api/episodes/{episode_id}/commit/{segment_id}", response_model=LiveEpisode)
+def commit_segment(episode_id: str, segment_id: str, request: Request) -> LiveEpisode:
+    return operate(
+        episode_id,
+        listener(request),
+        lambda: orchestrator.commit_segment(episode_id, segment_id),
+    )
+
+
 @app.post("/api/episodes/{episode_id}/completed", response_model=LiveEpisode)
 def completed(episode_id: str, request: Request) -> LiveEpisode:
     return operate(

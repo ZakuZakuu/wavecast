@@ -136,3 +136,22 @@ def test_mix_plan_rejects_other_listener(canonical_episode: LiveEpisode) -> None
         headers={"X-Wavecast-Listener": "listener-b"},
     )
     assert response.status_code == 404
+
+
+def test_commit_route_commits_owned_segment_and_preserves_ownership_mapping(
+    canonical_episode: LiveEpisode,
+) -> None:
+    client = TestClient(api_module.app)
+    endpoint = f"/api/episodes/{canonical_episode.id}/commit/music-a"
+
+    committed = client.post(endpoint, headers={"X-Wavecast-Listener": "listener-a"})
+
+    assert committed.status_code == 200
+    assert committed.json()["current_segment_id"] == "music-a"
+    assert committed.json()["segments"][0]["state"] == "COMMITTED"
+
+    other_listener = client.post(
+        endpoint,
+        headers={"X-Wavecast-Listener": "listener-b"},
+    )
+    assert other_listener.status_code == 404
