@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { api } from "../lib/api";
 import type { DurationIntent, ProgramProposal } from "../lib/types";
