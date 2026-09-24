@@ -35,7 +35,7 @@ export function ProgramArtwork({
   const style = {
     "--art-a": colors[0],
     "--art-b": colors[1],
-    "--art-shift": resolvedSeed % 46,
+    "--art-shift": (resolvedSeed % 46) + "%",
     "--art-tilt": ((resolvedSeed % 11) - 5) + "deg",
   } as CSSProperties;
 
