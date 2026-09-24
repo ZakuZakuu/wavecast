@@ -1371,3 +1371,180 @@ h1, h2, h3, strong { text-wrap: balance; }
   .player-artwork-section { width: min(76vw, 340px); margin-top: 24px; }
   .transport-controls { margin-top: 16px; }
 }
+
+
+/* Functionality pass: search + persistent library */
+.soft-button.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.home-search-panel {
+  margin: 2px 0 24px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, .06);
+}
+
+.home-search-field {
+  min-height: 46px;
+  padding: 0 12px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+}
+
+.home-search-field input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.home-search-field input::placeholder { color: var(--subtle); }
+
+.home-search-field button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface-3);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.home-search-summary {
+  padding: 14px 3px 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.home-search-summary small { color: var(--subtle); }
+
+.home-search-results {
+  display: grid;
+  gap: 2px;
+}
+
+.home-search-empty {
+  padding: 30px 10px 18px;
+  text-align: center;
+}
+
+.home-search-empty p {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.home-search-empty a {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.detail-topbar-spacer {
+  width: 42px;
+  height: 42px;
+}
+
+.library-record-list {
+  display: grid;
+}
+
+.library-record {
+  min-width: 0;
+  min-height: 82px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.library-record-main {
+  min-width: 0;
+  flex: 1;
+  padding: 9px 0;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.library-record-artwork {
+  width: 64px;
+  border-radius: 8px;
+}
+
+.library-record-artwork .artwork-copy strong {
+  font-size: 12px;
+}
+
+.library-record-artwork .artwork-copy > span,
+.library-record-artwork .artwork-copy small {
+  display: none;
+}
+
+.library-record-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.library-record-copy strong,
+.library-record-copy small,
+.library-record-copy em {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.library-record-copy strong {
+  font-size: 13px;
+  letter-spacing: -.01em;
+}
+
+.library-record-copy small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.library-record-copy em {
+  color: var(--subtle);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.library-remove {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+@media (min-width: 700px) {
+  .home-search-panel {
+    max-width: 720px;
+  }
+
+  .library-record-list {
+    grid-template-columns: 1fr 1fr;
+    column-gap: 28px;
+  }
+}

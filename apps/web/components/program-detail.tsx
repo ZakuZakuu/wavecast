@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { durationLabel, programPresentation } from "../lib/program-presentation";
 import type { Seed } from "../lib/types";
+import { isFavoriteSeed, toggleFavoriteSeed } from "../lib/user-library";
 import { ProgramArtwork } from "./program-artwork";
 import { WaveIcon } from "./wave-icon";
 
@@ -19,6 +20,7 @@ export function ProgramDetail({ seedId }: { seedId: string }) {
     api.seeds()
       .then((items) => setSeed(items.find((item) => item.id === seedId) ?? null))
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "节目暂时无法载入"));
+    setFavorite(isFavoriteSeed(seedId));
   }, [seedId]);
 
   const presentation = useMemo(() => seed ? programPresentation(seed) : null, [seed]);
@@ -47,7 +49,7 @@ export function ProgramDetail({ seedId }: { seedId: string }) {
     <main className="detail-page page-enter">
       <div className="detail-topbar">
         <Link href="/" className="round-back" aria-label="返回为你"><WaveIcon name="back" /></Link>
-        <button className="icon-button glass-button" type="button" aria-label="更多"><WaveIcon name="more" /></button>
+        <span className="detail-topbar-spacer" aria-hidden="true" />
       </div>
 
       <section className="detail-hero">
@@ -77,7 +79,7 @@ export function ProgramDetail({ seedId }: { seedId: string }) {
               type="button"
               className={favorite ? "round-action selected" : "round-action"}
               aria-label={favorite ? "取消收藏" : "收藏"}
-              onClick={() => setFavorite((value) => !value)}
+              onClick={() => setFavorite(toggleFavoriteSeed(seed.id))}
             >
               <WaveIcon name="heart" size={20} />
               <span>{favorite ? "已收藏" : "收藏"}</span>
