@@ -20,6 +20,7 @@ export type UserLibraryState = {
   favoriteSeedIds: string[];
   recentPrograms: RecentProgramRecord[];
   savedEpisodes: SavedEpisodeRecord[];
+  createdProgramIds: string[];
 };
 
 const STORAGE_KEY = "wavecast-user-library-v1";
@@ -31,6 +32,7 @@ export const emptyUserLibrary = (): UserLibraryState => ({
   favoriteSeedIds: [],
   recentPrograms: [],
   savedEpisodes: [],
+  createdProgramIds: [],
 });
 
 function uniqueStrings(values: unknown): string[] {
@@ -68,6 +70,7 @@ export function normalizeUserLibrary(value: unknown): UserLibraryState {
     savedEpisodes: Array.isArray(candidate.savedEpisodes)
       ? candidate.savedEpisodes.filter(isSavedRecord)
       : [],
+    createdProgramIds: uniqueStrings(candidate.createdProgramIds),
   };
 }
 
@@ -215,4 +218,16 @@ export function removeSavedEpisode(episodeId: string): void {
 
 export function isEpisodeSaved(episodeId: string): boolean {
   return readUserLibrary().savedEpisodes.some((item) => item.episodeId === episodeId);
+}
+
+
+export function recordCreatedProgram(programId: string): UserLibraryState {
+  const current = readUserLibrary();
+  return persistUserLibrary({
+    ...current,
+    createdProgramIds: [
+      programId,
+      ...current.createdProgramIds.filter((id) => id !== programId),
+    ],
+  });
 }

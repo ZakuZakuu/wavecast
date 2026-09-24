@@ -5,25 +5,35 @@ import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api";
 import { durationLabel, programPresentation } from "../lib/program-presentation";
-import type { Seed } from "../lib/types";
+import type { ProgramProposal } from "../lib/types";
 import { isFavoriteSeed, toggleFavoriteSeed } from "../lib/user-library";
 import { ProgramArtwork } from "./program-artwork";
 import { WaveIcon } from "./wave-icon";
 
 export function ProgramDetail({ seedId }: { seedId: string }) {
-  const [seed, setSeed] = useState<Seed | null>(null);
+  const [seed, setSeed] = useState<ProgramProposal | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [favorite, setFavorite] = useState(false);
   const [shared, setShared] = useState(false);
 
   useEffect(() => {
-    api.seeds()
-      .then((items) => setSeed(items.find((item) => item.id === seedId) ?? null))
+    api.program(seedId)
+      .then(setSeed)
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "节目暂时无法载入"));
     setFavorite(isFavoriteSeed(seedId));
   }, [seedId]);
 
-  const presentation = useMemo(() => seed ? programPresentation(seed) : null, [seed]);
+  const presentation = useMemo(() => {
+    if (!seed) return null;
+    const fallback = programPresentation(seed);
+    return {
+      ...fallback,
+      genres: seed.genre_tags.length ? seed.genre_tags.join(" · ") : fallback.genres,
+      artists: seed.anchor_artists.length ? seed.anchor_artists : fallback.artists,
+      route: seed.editorial_route.length ? seed.editorial_route : fallback.route,
+      mood: seed.mood_tags.length ? seed.mood_tags.join(" / ") : fallback.mood,
+    };
+  }, [seed]);
 
   const share = async () => {
     if (!seed) return;

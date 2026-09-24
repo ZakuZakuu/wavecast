@@ -1,6 +1,8 @@
 export type SegmentKind = "MUSIC" | "NARRATION";
 export type SegmentState = "PLANNED" | "SCRIPT_READY" | "AUDIO_GENERATING" | "AUDIO_READY" | "COMMITTED" | "PLAYED" | "SKIPPED";
 
+export type DurationIntent = "AUTO" | "SHORT" | "STANDARD" | "DEEP";
+
 export type Seed = {
   id: string;
   title: string;
@@ -11,6 +13,25 @@ export type Seed = {
   opening_track_title: string;
   opening_track_artist: string;
   cover: { family: string; seed: number; palette: [string, string] };
+};
+
+export type ProgramProposal = Seed & {
+  editorial_route: string[];
+  genre_tags: string[];
+  mood_tags: string[];
+  anchor_artists: string[];
+  generation_profile: string;
+  created_at: string;
+};
+
+export type ProgramProposalBatch = {
+  proposals: ProgramProposal[];
+};
+
+export type ProposalGenerationRequest = {
+  prompt: string;
+  duration_intent: DurationIntent;
+  count?: number;
 };
 
 type SegmentBase = {
