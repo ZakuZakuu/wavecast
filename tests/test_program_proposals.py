@@ -2,7 +2,6 @@ import asyncio
 
 import pytest
 from pydantic import BaseModel
-
 from wavecast.proposals import (
     DeterministicMockProgramProposalGenerator,
     DurationIntent,

@@ -74,11 +74,11 @@ from wavecast.providers.errors import (
     ProviderError,
     ProviderSchemaValidationError,
 )
+from wavecast.providers.factory import build_music_registry
 from wavecast.providers.fakes import (
     FakeSearchProvider,
     MockTTSProvider,
 )
-from wavecast.providers.factory import build_music_registry
 from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
