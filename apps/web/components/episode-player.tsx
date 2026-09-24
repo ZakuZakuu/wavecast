@@ -13,6 +13,7 @@ import type { MixPlan } from "../lib/mix-timeline";
 import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
+import { isEpisodeSaved, recordRecentEpisode, saveMaterializedEpisode } from "../lib/user-library";
 import { ChaptersSheet } from "./chapters-sheet";
 import { MixAudioPlayer } from "./mix-audio-player";
 import { ProgramArtwork } from "./program-artwork";
@@ -29,6 +30,8 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const [exportState, setExportState] = useState<"idle" | "preparing" | "ready" | "error">("idle");
   const [exportArtifact, setExportArtifact] = useState<MixdownArtifact | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "preparing">("idle");
   const episodeIdRef = useRef<string | null>(null);
   const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
@@ -122,6 +125,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     setExportArtifact(null);
     setExportError(null);
   }, [localEpisode?.id]);
+
+  useEffect(() => {
+    if (!localEpisode) return;
+    recordRecentEpisode(localEpisode, current?.title ?? null);
+    setSaved(isEpisodeSaved(localEpisode.id));
+  }, [localEpisode?.id, localEpisode?.version, current?.title]);
 
   useEffect(() => {
     if (!localEpisode || !mixPlanKey) {
@@ -228,6 +237,27 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         : reason instanceof Error ? reason.message : "导出失败，请稍后重试。");
     }
   }, [exportArtifact, exportState, localEpisode]);
+
+  const prepareAndSaveEpisode = useCallback(async () => {
+    if (!localEpisode || saveState === "preparing" || saved) return;
+    setSaveState("preparing");
+    try {
+      const ready = localEpisode.state === "MATERIALIZED"
+        ? localEpisode
+        : await api.materialize(localEpisode.id);
+      if (ready !== localEpisode) setEpisode(ready);
+      recordRecentEpisode(ready, current?.title ?? null);
+      if (!saveMaterializedEpisode(ready, current?.title ?? null)) {
+        throw new Error("完整节目还没有准备好");
+      }
+      setSaved(true);
+      setError(null);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "保存节目失败，请稍后重试");
+    } finally {
+      setSaveState("idle");
+    }
+  }, [current?.title, localEpisode, saveState, saved, setEpisode]);
 
   const handleMixPosition = useCallback((positionSeconds: number) => {
     if (!localEpisode || !mixPlanRef.current) return;
@@ -394,8 +424,18 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         <details className="player-more-menu">
           <summary className="icon-button glass-button" aria-label="更多"><WaveIcon name="more" /></summary>
           <div className="player-more-popover">
-            <button type="button" onClick={() => void update(api.materialize(localEpisode.id))} disabled={localEpisode.state === "MATERIALIZED"}>
-              {localEpisode.state === "MATERIALIZED" ? "节目已完整准备" : "准备完整节目"}
+            <button
+              type="button"
+              onClick={() => void prepareAndSaveEpisode()}
+              disabled={saveState === "preparing" || saved}
+            >
+              {saveState === "preparing"
+                ? "正在准备并保存…"
+                : saved
+                  ? "已保存到节目库"
+                  : localEpisode.state === "MATERIALIZED"
+                    ? "保存到节目库"
+                    : "准备并保存完整节目"}
             </button>
             <button type="button" onClick={() => void exportEpisode()} disabled={localEpisode.state !== "MATERIALIZED" || exportState === "preparing"}>
               {exportState === "preparing" ? "正在准备导出…" : "导出 MP3"}
