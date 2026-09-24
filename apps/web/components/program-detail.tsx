@@ -69,7 +69,7 @@ export function ProgramDetail({ seedId }: { seedId: string }) {
           <p className="program-meta">{durationLabel(seed.estimated_duration_seconds)}</p>
 
           <div className="detail-actions">
-            <Link href={`/episode/\${seed.id}`} className="primary-pill">
+            <Link href={`/episode/${seed.id}`} className="primary-pill">
               <WaveIcon name="play" size={18} />
               开始收听
             </Link>
