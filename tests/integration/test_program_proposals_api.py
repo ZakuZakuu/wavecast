@@ -65,7 +65,6 @@ def test_proposal_generation_fails_closed_when_generator_is_unconfigured(monkeyp
     assert response.status_code == 503
 
 
-
 def test_proposal_generation_returns_safe_gateway_error(monkeypatch) -> None:
     class FailingGenerator:
         async def generate(self, body):
