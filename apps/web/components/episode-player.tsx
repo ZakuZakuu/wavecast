@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
+import { createSynchronizationGuard } from "../lib/episode-synchronization";
 import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
@@ -29,6 +30,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
   const mixPlanRef = useRef<MixPlan | null>(null);
   const mixCommitQueueRef = useRef<LatestSegmentCommitQueue | null>(null);
+  const synchronizationGuardRef = useRef(createSynchronizationGuard());
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
     ? episode
@@ -136,23 +138,34 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   useEffect(() => {
     if (!localEpisode?.is_listener_active) return;
+    const synchronizationGuard = synchronizationGuardRef.current;
+    const generation = synchronizationGuard.start();
     let syncing = false;
+    const isCurrent = () => synchronizationGuard.isCurrent(
+      generation,
+      localEpisodeRef.current?.is_listener_active ?? false,
+    );
     const synchronize = async () => {
-      if (syncing) return;
+      if (syncing || !isCurrent()) return;
       syncing = true;
       try {
         let updated = await api.heartbeat(localEpisode.id);
         if (updated.state !== "MATERIALIZED") updated = await api.ensureBuffer(updated.id);
-        setEpisode(updated);
+        if (isCurrent()) setEpisode(updated);
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : "Playback synchronization failed");
+        if (isCurrent()) {
+          setError(reason instanceof Error ? reason.message : "Playback synchronization failed");
+        }
       } finally {
         syncing = false;
       }
     };
     void synchronize();
     const interval = window.setInterval(() => void synchronize(), 10_000);
-    return () => window.clearInterval(interval);
+    return () => {
+      synchronizationGuard.invalidate();
+      window.clearInterval(interval);
+    };
   }, [localEpisode?.id, localEpisode?.is_listener_active, setEpisode]);
 
   async function update(operation: Promise<LiveEpisode>): Promise<boolean> {
@@ -165,6 +178,13 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       return false;
     }
   }
+
+  const leaveEpisode = useCallback(() => {
+    const currentEpisode = localEpisodeRef.current;
+    if (!currentEpisode) return;
+    synchronizationGuardRef.current.invalidate();
+    void update(api.leave(currentEpisode.id));
+  }, []);
 
   const completeBrowserSegment = useCallback(() => {
     if (localEpisode?.is_playing) void update(api.completed(localEpisode.id));
@@ -369,7 +389,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         </article>)}
       </section>
       <div className="session-actions">
-        {localEpisode.is_listener_active ? <button className="quiet" onClick={() => void update(api.leave(localEpisode.id))}>离开并停止后续生成</button> : <button onClick={() => void update(api.resume(localEpisode.id))}>返回并继续生成</button>}
+        {localEpisode.is_listener_active ? <button className="quiet" onClick={leaveEpisode}>离开并停止后续生成</button> : <button onClick={() => void update(api.resume(localEpisode.id))}>返回并继续生成</button>}
         {error ? <p className="error">{error}</p> : null}
         {exportError ? <p className="error">{exportError}</p> : null}
       </div>
