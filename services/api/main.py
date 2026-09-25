@@ -66,6 +66,14 @@ from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.usage import UsageLedger
+from wavecast.recommendations import (
+    DeterministicRecommendationPlanner,
+    InMemoryProgramIdeaRepository,
+    ProgramIdeaRepository,
+    ProgramIdeaResponse,
+    RecommendationService,
+    UserContextAggregator,
+)
 from wavecast.rendering import (
     MixdownArtifact,
     MixRenderError,
@@ -81,6 +89,7 @@ from wavecast.storage import (
     PostgresEpisodeRepository,
 )
 from wavecast.storage.episodes import EpisodeRepository
+from wavecast.storage.recommendations import PostgresProgramIdeaRepository
 from wavecast.storage.user_context import (
     PostgresUserEventRepository,
     PostgresUserPreferencesRepository,
@@ -119,6 +128,12 @@ _user_event_repository: UserEventRepository = (
     PostgresUserEventRepository(DATABASE_URL) if DATABASE_URL else InMemoryUserEventRepository()
 )
 user_event_service = UserEventService(_user_event_repository)
+recommendation_repository: ProgramIdeaRepository = (
+    PostgresProgramIdeaRepository(DATABASE_URL)
+    if DATABASE_URL
+    else InMemoryProgramIdeaRepository()
+)
+recommendation_planner = DeterministicRecommendationPlanner()
 
 _auth_jwks_url = os.getenv("WAVECAST_AUTH_JWKS_URL")
 _auth_issuer = os.getenv("WAVECAST_AUTH_ISSUER")
@@ -434,6 +449,37 @@ def delete_user_preferences(request: Request) -> UserPreferences:
 @app.post("/api/user-events", response_model=UserEvent, status_code=201)
 def create_user_event(request: Request, body: UserEventInput) -> UserEvent:
     return user_event_service.record(user_id=authenticated_user(request), event=body)
+
+
+def _public_program_for_context(program_id: str) -> ProgramProposal | None:
+    seed = _static_seed(program_id)
+    return ProgramProposal.from_episode_seed(seed) if seed is not None else None
+
+
+def _recommendation_service() -> RecommendationService:
+    aggregator = UserContextAggregator(
+        user_preferences_repository,
+        _user_event_repository,
+        proposal_repository,
+        public_program_lookup=_public_program_for_context,
+    )
+    return RecommendationService(
+        aggregator,
+        recommendation_planner,
+        recommendation_repository,
+    )
+
+
+@app.get("/api/recommendations/me", response_model=list[ProgramIdeaResponse])
+def list_recommendations(request: Request) -> list[ProgramIdeaResponse]:
+    ideas = _recommendation_service().list_for_user(authenticated_user(request))
+    return [ProgramIdeaResponse.from_idea(idea) for idea in ideas]
+
+
+@app.post("/api/recommendations/me/refresh", response_model=list[ProgramIdeaResponse])
+def refresh_recommendations(request: Request) -> list[ProgramIdeaResponse]:
+    ideas = _recommendation_service().refresh_for_user(authenticated_user(request))
+    return [ProgramIdeaResponse.from_idea(idea) for idea in ideas]
 
 
 def _mock_wav(duration_seconds: int) -> bytes:

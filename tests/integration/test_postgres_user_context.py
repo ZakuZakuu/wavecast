@@ -66,6 +66,8 @@ def test_preferences_and_product_events_are_durable() -> None:
             episode_id="episode-test",
         ),
     )
+    assert event_repo.list_for_user(user_id, limit=1) == [event]
+    assert event_repo.list_for_user(f"{user_id}-other") == []
     event_repo.close()
 
     async def read_event() -> dict[str, object] | None:

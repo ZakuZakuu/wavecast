@@ -89,3 +89,17 @@ user modeling after the heuristic product loop is evaluated.
   separate reviewed decision.
 - Program inventory generation, recommendation ranking, background jobs, and
   trend/research inputs remain later milestones.
+
+## Phase 8C.2 MVP implementation notes
+
+The first planner is deterministic and explainable. It consumes a private,
+authenticated user's bounded preference and behavior context and persists
+owner-scoped `ProgramIdea` records; it does not invoke an LLM or populate the
+Home feed. A refresh endpoint is authenticated and cooldown-bounded. The
+recommendation API returns only public idea fields and never exposes the
+aggregated context or its owner id.
+
+Event identifiers are treated as optional opaque references in this MVP. Only
+signals that can be resolved through an owner-scoped proposal lookup or a
+public static program lookup contribute program metadata to context; unknown
+references are ignored rather than granting access or creating records.
