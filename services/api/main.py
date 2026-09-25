@@ -81,6 +81,21 @@ from wavecast.storage import (
     PostgresEpisodeRepository,
 )
 from wavecast.storage.episodes import EpisodeRepository
+from wavecast.storage.user_context import (
+    PostgresUserEventRepository,
+    PostgresUserPreferencesRepository,
+)
+from wavecast.user_context import (
+    InMemoryUserEventRepository,
+    InMemoryUserPreferencesRepository,
+    UserEvent,
+    UserEventInput,
+    UserEventRepository,
+    UserEventService,
+    UserPreferences,
+    UserPreferencesRepository,
+    UserPreferencesUpdate,
+)
 
 LISTENER_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 DATABASE_URL = os.getenv("WAVECAST_DATABASE_URL")
@@ -94,6 +109,16 @@ if DATABASE_URL:
     from wavecast.storage import PostgresProgramProposalRepository
 
     proposal_repository = PostgresProgramProposalRepository(DATABASE_URL)
+
+user_preferences_repository: UserPreferencesRepository = (
+    PostgresUserPreferencesRepository(DATABASE_URL)
+    if DATABASE_URL
+    else InMemoryUserPreferencesRepository()
+)
+_user_event_repository: UserEventRepository = (
+    PostgresUserEventRepository(DATABASE_URL) if DATABASE_URL else InMemoryUserEventRepository()
+)
+user_event_service = UserEventService(_user_event_repository)
 
 _auth_jwks_url = os.getenv("WAVECAST_AUTH_JWKS_URL")
 _auth_issuer = os.getenv("WAVECAST_AUTH_ISSUER")
@@ -373,6 +398,42 @@ async def operate_async(
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "mode": "postgres" if DATABASE_URL else "mock"}
+
+
+def authenticated_user(request: Request) -> str:
+    user_id = principal(request).user_id
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user_id
+
+
+@app.get("/api/user-preferences/me", response_model=UserPreferences)
+def get_user_preferences(request: Request) -> UserPreferences:
+    user_id = authenticated_user(request)
+    return user_preferences_repository.get(user_id) or UserPreferences(user_id=user_id)
+
+
+@app.put("/api/user-preferences/me", response_model=UserPreferences)
+def put_user_preferences(
+    request: Request, body: UserPreferencesUpdate
+) -> UserPreferences:
+    preferences = UserPreferences(
+        user_id=authenticated_user(request),
+        **body.model_dump(),
+    )
+    return user_preferences_repository.save(preferences)
+
+
+@app.delete("/api/user-preferences/me", response_model=UserPreferences)
+def delete_user_preferences(request: Request) -> UserPreferences:
+    user_id = authenticated_user(request)
+    user_preferences_repository.delete(user_id)
+    return UserPreferences(user_id=user_id)
+
+
+@app.post("/api/user-events", response_model=UserEvent, status_code=201)
+def create_user_event(request: Request, body: UserEventInput) -> UserEvent:
+    return user_event_service.record(user_id=authenticated_user(request), event=body)
 
 
 def _mock_wav(duration_seconds: int) -> bytes:
