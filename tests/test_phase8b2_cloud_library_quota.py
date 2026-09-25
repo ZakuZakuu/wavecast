@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 from wavecast.orchestration.episode import EpisodeOrchestrator, InMemoryEpisodeRepository
@@ -313,6 +315,19 @@ def test_quota_charge_identity_is_idempotent() -> None:
     quota.charge(third, ["different-program-id"])
     with pytest.raises(QuotaExceededError, match="guest_limit"):
         quota.reserve("idempotent-listener", None, 1, **limits)
+
+
+def test_expired_pending_guest_reservation_is_reclaimed() -> None:
+    quota = InMemoryGenerationQuotaRepository()
+    limits = {"guest_limit": 1, "auth_daily_limit": 10, "global_daily_limit": 10}
+    abandoned = quota.reserve("expired-listener", None, 1, **limits)
+    quota._rows[abandoned[0]]["expires_at"] = datetime.now(UTC) - timedelta(seconds=1)
+
+    replacement = quota.reserve("expired-listener", None, 1, **limits)
+
+    assert replacement != abandoned
+    assert quota._rows[abandoned[0]]["status"] == "RELEASED"
+
 
 def test_authenticated_daily_limit_is_user_scoped_and_configurable(monkeypatch) -> None:
     generator = CountingGenerator()

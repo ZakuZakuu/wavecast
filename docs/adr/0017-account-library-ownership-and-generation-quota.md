@@ -55,6 +55,9 @@ episode, Library, and quota domain data.
   identity. Provider/contract failures and unsuccessful persistence release
   the reservation; retrying or resuming an existing program does not charge
   that program again.
+- Pending reservations expire after 15 minutes. Each reservation attempt
+  releases expired pending rows before counting capacity, recovering quota
+  after a process crash without an unbounded background cleanup job.
 - Default limits are three guest programs per listener lifetime, twenty per
   account per UTC day, and one hundred globally per UTC day. The account/global
   limits are operationally configurable. Static/demo playback and browsing do
