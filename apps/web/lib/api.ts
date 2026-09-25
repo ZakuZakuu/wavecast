@@ -7,7 +7,7 @@ import type {
   Seed,
 } from "./types";
 import type { MixdownArtifact, MixdownPreparationResult } from "./episode-export";
-import { getApiAuthToken } from "./auth-client";
+import { getApiAuthToken, getApiAuthTokenForUser } from "./auth-client";
 
 const listenerStorageKey = "wavecast-anonymous-listener";
 
@@ -20,9 +20,15 @@ function listenerId(): string | undefined {
   return created;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(
+  path: string,
+  init?: RequestInit,
+  expectedUserId?: string,
+): Promise<T> {
   const anonymousListener = listenerId();
-  const bearerToken = await getApiAuthToken();
+  const bearerToken = expectedUserId
+    ? await getApiAuthTokenForUser(expectedUserId)
+    : await getApiAuthToken();
   const response = await fetch(`/api${path}`, {
     ...init,
     headers: {
@@ -60,31 +66,33 @@ export const api = {
   materialize: (id: string) => request<LiveEpisode>(`/episodes/${id}/materialize`, { method: "POST" }),
   prepareMixdown: (id: string) => request<MixdownPreparationResult>(`/episodes/${id}/prepare-mixdown`, { method: "POST" }),
   mixdown: (id: string) => request<MixdownArtifact>(`/episodes/${id}/mixdown`, { method: "POST" }),
-  myLibrary: () => request<unknown>("/me/library"),
-  mergeMyLibrary: (library: unknown) => request<unknown>("/me/library/merge", {
+  myLibrary: (expectedUserId: string) => request<unknown>("/me/library", undefined, expectedUserId),
+  mergeMyLibrary: (library: unknown, expectedUserId: string) => request<unknown>("/me/library/merge", {
     method: "POST",
     body: JSON.stringify({ library }),
-  }),
-  favoriteProgram: (id: string, favorite: boolean) => request<unknown>(
+  }, expectedUserId),
+  favoriteProgram: (id: string, favorite: boolean, expectedUserId: string) => request<unknown>(
     `/me/library/favorites/${encodeURIComponent(id)}`,
     { method: favorite ? "PUT" : "DELETE" },
+    expectedUserId,
   ),
-  recordLibraryRecent: (record: unknown) => {
+  recordLibraryRecent: (record: unknown, expectedUserId: string) => {
     const value = record as { episodeId: string };
     return request<unknown>(`/me/library/recents/${encodeURIComponent(value.episodeId)}`, {
       method: "PUT",
       body: JSON.stringify(record),
-    });
+    }, expectedUserId);
   },
-  saveLibraryEpisode: (record: unknown) => {
+  saveLibraryEpisode: (record: unknown, expectedUserId: string) => {
     const value = record as { episodeId: string };
     return request<unknown>(`/me/library/saved/${encodeURIComponent(value.episodeId)}`, {
       method: "PUT",
       body: JSON.stringify(record),
-    });
+    }, expectedUserId);
   },
-  removeLibraryEpisode: (id: string) => request<unknown>(
+  removeLibraryEpisode: (id: string, expectedUserId: string) => request<unknown>(
     `/me/library/saved/${encodeURIComponent(id)}`,
     { method: "DELETE" },
+    expectedUserId,
   ),
 };

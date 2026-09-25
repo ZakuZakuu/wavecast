@@ -41,7 +41,7 @@ describe("authenticated library cache isolation", () => {
     await syncAuthenticatedLibrary("account-one");
 
     expect(mocks.merge).toHaveBeenCalledTimes(1);
-    expect(mocks.merge).toHaveBeenCalledWith(guest);
+    expect(mocks.merge).toHaveBeenCalledWith(guest, "account-one");
     expect(readUserLibrary().favoriteSeedIds).toEqual(["canonical-favorite"]);
     expect(JSON.parse(localStorage.getItem("wavecast-user-library-v1") ?? "{}"))
       .toEqual(guest);

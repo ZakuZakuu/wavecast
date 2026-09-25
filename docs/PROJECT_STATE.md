@@ -57,8 +57,11 @@ Account caches use user-scoped keys and are not shared between signed-in users.
 The root Library identity bridge gates all route children during account changes;
 it requires the API JWT subject to match the Better Auth session user before
 activating an account cache. A generation guard prevents stale asynchronous
-syncs or cloud responses from changing the current identity. Authenticated sync
-failure keeps routes gated and offers retry rather than falling back to Guest.
+syncs or cloud responses from changing the current identity. Every authenticated
+Library request also binds its bearer JWT subject to the expected account before
+sending the request body, preventing an old account's pending merge from being
+sent with a newly switched account token. Authenticated sync failure keeps routes
+gated and offers retry rather than falling back to Guest.
 The 0004 quota TTL migration has a matching downgrade for its index and column.
 
 Cloud Library resources are stored in WaveCast-owned PostgreSQL tables rather

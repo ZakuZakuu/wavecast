@@ -109,7 +109,10 @@ describe("global library identity bridge", () => {
     expect(accountCache.recentPrograms?.map((item) => item.episodeId))
       .toContain("direct-player-episode");
     expect(accountCache.createdProgramIds).toContain("direct-tune-proposal");
-    expect(mocks.recordRecent).toHaveBeenCalledWith(expect.objectContaining({ episodeId: "direct-player-episode" }));
+    expect(mocks.recordRecent).toHaveBeenCalledWith(
+      expect.objectContaining({ episodeId: "direct-player-episode" }),
+      "account-one",
+    );
     expect(localStorage.getItem("wavecast-user-library-v1")).toBeNull();
 
     mocks.session = { data: null, isPending: false };
