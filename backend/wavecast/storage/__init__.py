@@ -5,7 +5,18 @@ from .episodes import (
     EpisodeRepository,
     PostgresEpisodeRepository,
 )
+from .library import (
+    InMemoryUserLibraryRepository,
+    PostgresUserLibraryRepository,
+    UserLibraryRepository,
+)
 from .proposals import PostgresProgramProposalRepository
+from .quota import (
+    GenerationQuotaRepository,
+    InMemoryGenerationQuotaRepository,
+    PostgresGenerationQuotaRepository,
+    QuotaExceededError,
+)
 from .schema import metadata
 
 __all__ = [
@@ -17,4 +28,11 @@ __all__ = [
     "StoredObject",
     "metadata",
     "PostgresProgramProposalRepository",
+    "InMemoryUserLibraryRepository",
+    "PostgresUserLibraryRepository",
+    "UserLibraryRepository",
+    "GenerationQuotaRepository",
+    "InMemoryGenerationQuotaRepository",
+    "PostgresGenerationQuotaRepository",
+    "QuotaExceededError",
 ]
