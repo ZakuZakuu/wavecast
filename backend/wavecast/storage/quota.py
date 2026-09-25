@@ -116,6 +116,7 @@ class InMemoryGenerationQuotaRepository:
 class PostgresGenerationQuotaRepository:
     def __init__(self, database_url: str) -> None:
         self.engine: AsyncEngine = create_async_engine(normalize_database_url(database_url), poolclass=NullPool)
+        self._run_lock = RLock()
 
     def reserve(self, listener_id: str, user_id: str | None, count: int, *, guest_limit: int, auth_daily_limit: int, global_daily_limit: int) -> list[str]:
         return cast(list[str], self._run(self._reserve(listener_id, user_id, count, guest_limit, auth_daily_limit, global_daily_limit)))
@@ -129,9 +130,11 @@ class PostgresGenerationQuotaRepository:
     def close(self) -> None:
         self._run(self.engine.dispose())
 
-    @staticmethod
-    def _run(coroutine: Any) -> Any:
-        return asyncio.run(coroutine)
+    def _run(self, coroutine: Any) -> Any:
+        # Each sync call creates a fresh event loop. Keep one AsyncEngine from
+        # being entered concurrently by loops running on different threads.
+        with self._run_lock:
+            return asyncio.run(coroutine)
 
     async def _reserve(self, listener_id: str, user_id: str | None, count: int, guest_limit: int, auth_daily_limit: int, global_daily_limit: int) -> list[str]:
         start = _period_start()

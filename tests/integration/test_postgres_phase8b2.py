@@ -124,6 +124,31 @@ def test_quota_is_durable_across_repositories_and_same_program_is_not_double_cha
 def test_parallel_guest_reservations_cannot_exceed_the_durable_limit() -> None:
     assert DATABASE_URL is not None
     listener_id = f"quota-race-{uuid4().hex}"
+    repositories = [PostgresGenerationQuotaRepository(DATABASE_URL) for _ in range(2)]
+    limits = {"guest_limit": 3, "auth_daily_limit": 10, "global_daily_limit": 100}
+
+    def reserve_two(repository: PostgresGenerationQuotaRepository) -> list[str]:
+        return repository.reserve(listener_id, None, 2, **limits)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(
+                lambda repository: _reserve_outcome(lambda: reserve_two(repository)), repositories,
+            ))
+        assert sum(isinstance(item, list) for item in outcomes) == 1
+        assert sum(isinstance(item, QuotaExceededError) for item in outcomes) == 1
+        for item in outcomes:
+            if isinstance(item, list):
+                repositories[0].release(item)
+    finally:
+        for repository in repositories:
+            repository.close()
+        _cleanup(listener_id=listener_id)
+
+
+def test_shared_quota_repository_handles_parallel_worker_threads() -> None:
+    assert DATABASE_URL is not None
+    listener_id = f"quota-shared-repository-{uuid4().hex}"
     repository = PostgresGenerationQuotaRepository(DATABASE_URL)
     limits = {"guest_limit": 3, "auth_daily_limit": 10, "global_daily_limit": 100}
 
