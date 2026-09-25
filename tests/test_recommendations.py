@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from threading import Lock
+from time import sleep
 
 from wavecast.models.episode import CoverParams
 from wavecast.proposals import InMemoryProgramProposalRepository, ProgramProposal
 from wavecast.recommendations import (
     DeterministicRecommendationPlanner,
     InMemoryProgramIdeaRepository,
+    ProgramIdea,
     RecommendationService,
     UserContextAggregator,
 )
@@ -148,3 +152,56 @@ def test_refresh_is_bounded_per_user_and_proposal_seed_retains_reason() -> None:
     assert adapted.reason == first[0].reason
     assert adapted.request.prompt.startswith(first[0].title)
     assert adapted.request.taste_context and first[0].reason in adapted.request.taste_context
+
+
+def test_concurrent_refreshes_share_one_cooldown_window() -> None:
+    preferences = InMemoryUserPreferencesRepository()
+    events = InMemoryUserEventRepository()
+    proposals = InMemoryProgramProposalRepository()
+    ideas = InMemoryProgramIdeaRepository()
+    now = datetime(2026, 9, 25, tzinfo=UTC)
+    planner = DeterministicRecommendationPlanner()
+    call_count = 0
+    count_lock = Lock()
+
+    class CountingPlanner:
+        def generate_program_ideas(self, context):
+            nonlocal call_count
+            with count_lock:
+                call_count += 1
+            sleep(0.02)
+            return planner.generate_program_ideas(context)
+
+    service = RecommendationService(
+        UserContextAggregator(preferences, events, proposals),
+        CountingPlanner(),
+        ideas,
+        clock=lambda: now,
+    )
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(lambda _: service.refresh_for_user("user-a"), range(4)))
+
+    assert call_count == 1
+    assert all([idea.id for idea in result] == [idea.id for idea in results[0]] for result in results)
+
+
+def test_program_idea_repository_retains_only_latest_thirty_per_user() -> None:
+    ideas = InMemoryProgramIdeaRepository()
+    created = [
+        ProgramIdea(
+            id=f"idea-{index:02}",
+            user_id="user-a",
+            title=f"Idea {index}",
+            description="Description",
+            reason="Reason",
+            created_at=datetime(2026, 9, 1, tzinfo=UTC) + timedelta(minutes=index),
+        )
+        for index in range(35)
+    ]
+
+    ideas.save_many(created)
+    retained = ideas.list_for_user("user-a", limit=100)
+
+    assert len(retained) == 30
+    assert retained[0].id == "idea-34"
+    assert retained[-1].id == "idea-05"
