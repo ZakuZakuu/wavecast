@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
+from threading import Lock
+from time import sleep
 from uuid import uuid4
 
 import pytest
@@ -52,3 +55,56 @@ def test_program_ideas_are_durable_and_scoped_to_the_owner() -> None:
     finally:
         asyncio.run(cleanup())
         reopened.close()
+
+
+def test_concurrent_refreshes_use_database_cooldown_lock() -> None:
+    assert DATABASE_URL is not None
+    user_id = f"recommendation-lock-test-{uuid4().hex}"
+    now = datetime.now(UTC)
+    repositories = [PostgresProgramIdeaRepository(DATABASE_URL) for _ in range(2)]
+    calls = 0
+    calls_lock = Lock()
+
+    def generate() -> list[ProgramIdea]:
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+        sleep(0.05)
+        return [
+            ProgramIdea(
+                id=uuid4().hex,
+                user_id=user_id,
+                title="并发刷新测试",
+                description="测试同一冷却窗口只生成一次。",
+                reason="Postgres advisory lock regression",
+                created_at=now,
+            )
+        ]
+
+    async def cleanup() -> None:
+        engine = create_async_engine(DATABASE_URL)
+        async with engine.begin() as connection:
+            await connection.execute(
+                delete(program_ideas_table).where(program_ideas_table.c.user_id == user_id)
+            )
+        await engine.dispose()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(
+                    lambda repository: repository.refresh_if_due(
+                        user_id,
+                        now=now,
+                        refresh_interval=timedelta(hours=24),
+                        generate=generate,
+                    ),
+                    repositories,
+                )
+            )
+        assert calls == 1
+        assert results[0] == results[1]
+    finally:
+        asyncio.run(cleanup())
+        for repository in repositories:
+            repository.close()

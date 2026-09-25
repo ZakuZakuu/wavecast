@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from threading import Lock
 from typing import Protocol
 from uuid import uuid4
 
@@ -125,21 +126,71 @@ class ProgramIdeaRepository(Protocol):
 
     def list_for_user(self, user_id: str, *, limit: int = 12) -> list[ProgramIdea]: ...
 
+    def refresh_if_due(
+        self,
+        user_id: str,
+        *,
+        now: datetime,
+        refresh_interval: timedelta,
+        generate: Callable[[], list[ProgramIdea]],
+    ) -> list[ProgramIdea]: ...
+
+
+MAX_STORED_IDEAS_PER_USER = 30
+MAX_LISTED_IDEAS_PER_USER = 12
+
 
 class InMemoryProgramIdeaRepository:
     def __init__(self) -> None:
         self._ideas: list[ProgramIdea] = []
+        self._lock = Lock()
 
     def save_many(self, ideas: Iterable[ProgramIdea]) -> None:
-        self._ideas.extend(ideas)
+        with self._lock:
+            self._ideas.extend(ideas)
+            self._trim_to_user_limit()
 
     def list_for_user(self, user_id: str, *, limit: int = 12) -> list[ProgramIdea]:
+        with self._lock:
+            return self._list_for_user(user_id, limit)
+
+    def refresh_if_due(
+        self,
+        user_id: str,
+        *,
+        now: datetime,
+        refresh_interval: timedelta,
+        generate: Callable[[], list[ProgramIdea]],
+    ) -> list[ProgramIdea]:
+        with self._lock:
+            existing = self._list_for_user(user_id, MAX_LISTED_IDEAS_PER_USER)
+            if existing and now - existing[0].created_at < refresh_interval:
+                return existing
+            generated = generate()
+            self._ideas.extend(generated)
+            self._trim_to_user_limit()
+            return generated
+
+    def _list_for_user(self, user_id: str, limit: int) -> list[ProgramIdea]:
         matches = sorted(
             (idea for idea in self._ideas if idea.user_id == user_id),
-            key=lambda idea: idea.created_at,
+            key=lambda idea: (idea.created_at, idea.id),
             reverse=True,
         )
         return matches[:limit]
+
+    def _trim_to_user_limit(self) -> None:
+        by_user: dict[str, list[ProgramIdea]] = {}
+        for idea in self._ideas:
+            by_user.setdefault(idea.user_id, []).append(idea)
+        keep_ids = {
+            idea.id
+            for user_ideas in by_user.values()
+            for idea in sorted(
+                user_ideas, key=lambda item: (item.created_at, item.id), reverse=True
+            )[:MAX_STORED_IDEAS_PER_USER]
+        }
+        self._ideas = [idea for idea in self._ideas if idea.id in keep_ids]
 
 
 class UserContextAggregator:
@@ -312,29 +363,33 @@ class RecommendationService:
         self._clock = clock
 
     def list_for_user(self, user_id: str) -> list[ProgramIdea]:
-        return self._repository.list_for_user(user_id, limit=12)
+        return self._repository.list_for_user(user_id, limit=MAX_LISTED_IDEAS_PER_USER)
 
     def refresh_for_user(self, user_id: str) -> list[ProgramIdea]:
-        existing = self.list_for_user(user_id)
         now = self._clock()
-        if existing and now - existing[0].created_at < self._refresh_interval:
-            return existing
-        context = self._aggregator.build(user_id)
-        ideas = [
-            ProgramIdea(
-                id=uuid4().hex,
-                user_id=user_id,
-                title=draft.title,
-                description=draft.description,
-                reason=draft.reason,
-                tags=draft.tags,
-                source="heuristic",
-                created_at=now,
-            )
-            for draft in self._planner.generate_program_ideas(context)
-        ]
-        self._repository.save_many(ideas)
-        return ideas
+
+        def generate() -> list[ProgramIdea]:
+            context = self._aggregator.build(user_id)
+            return [
+                ProgramIdea(
+                    id=uuid4().hex,
+                    user_id=user_id,
+                    title=draft.title,
+                    description=draft.description,
+                    reason=draft.reason,
+                    tags=draft.tags,
+                    source="heuristic",
+                    created_at=now - timedelta(microseconds=index),
+                )
+                for index, draft in enumerate(self._planner.generate_program_ideas(context))
+            ]
+
+        return self._repository.refresh_if_due(
+            user_id,
+            now=now,
+            refresh_interval=self._refresh_interval,
+            generate=generate,
+        )
 
 
 def _unique(values: Iterable[str], *, limit: int) -> list[str]:

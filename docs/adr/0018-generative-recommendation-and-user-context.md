@@ -95,9 +95,13 @@ user modeling after the heuristic product loop is evaluated.
 The first planner is deterministic and explainable. It consumes a private,
 authenticated user's bounded preference and behavior context and persists
 owner-scoped `ProgramIdea` records; it does not invoke an LLM or populate the
-Home feed. A refresh endpoint is authenticated and cooldown-bounded. The
-recommendation API returns only public idea fields and never exposes the
-aggregated context or its owner id.
+Home feed. A refresh endpoint is authenticated and cooldown-bounded with a
+per-user transaction lock so concurrent refreshes share one cooldown window.
+Only the latest 30 ideas per user are retained; the existing AVAILABLE,
+DISMISSED, and USED status vocabulary remains the lifecycle seam without adding
+inventory or status-transition APIs in this milestone. The recommendation API
+returns only public idea fields and never exposes the aggregated context or its
+owner id.
 
 Event identifiers are treated as optional opaque references in this MVP. Only
 signals that can be resolved through an owner-scoped proposal lookup or a
