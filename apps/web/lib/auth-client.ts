@@ -52,9 +52,7 @@ export async function getApiAuthToken(): Promise<string | undefined> {
   }
 }
 
-export async function getApiAuthUserId(): Promise<string | undefined> {
-  const token = await getApiAuthToken();
-  if (!token) return undefined;
+function userIdFromToken(token: string): string | undefined {
   const payload = token.split(".")[1];
   if (!payload) return undefined;
   try {
@@ -66,6 +64,19 @@ export async function getApiAuthUserId(): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+export async function getApiAuthUserId(): Promise<string | undefined> {
+  const token = await getApiAuthToken();
+  return token ? userIdFromToken(token) : undefined;
+}
+
+export async function getApiAuthTokenForUser(expectedUserId: string): Promise<string> {
+  const token = await getApiAuthToken();
+  if (!token || userIdFromToken(token) !== expectedUserId) {
+    throw new Error("Could not verify the signed-in library identity");
+  }
+  return token;
 }
 
 export function clearApiAuthToken(): void {

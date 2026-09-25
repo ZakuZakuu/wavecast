@@ -256,11 +256,11 @@ export async function syncAuthenticatedLibrary(
   try {
     if (shouldMergeGuest) {
       requireCurrentIdentity(generation);
-      await api.mergeMyLibrary(pendingMerge);
+      await api.mergeMyLibrary(pendingMerge, userId);
       requireCurrentIdentity(generation);
       storage?.setItem(markerKey, "1");
     }
-    const canonical = normalizeUserLibrary(await api.myLibrary());
+    const canonical = normalizeUserLibrary(await api.myLibrary(userId));
     requireCurrentIdentity(generation);
     activeAccountId = userId;
     return persistUserLibrary(canonical);
@@ -302,7 +302,7 @@ export function toggleFavoriteSeed(seedId: string): boolean {
     const accountId = activeAccountId;
     const generation = identityGeneration;
     const enabled = next.favoriteSeedIds.includes(seedId);
-    void api.favoriteProgram(seedId, enabled)
+    void api.favoriteProgram(seedId, enabled, accountId)
       .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
       .catch(() => undefined);
   }
@@ -347,7 +347,7 @@ export function recordRecentEpisode(
     const accountId = activeAccountId;
     const generation = identityGeneration;
     const record = recentRecordFromEpisode(episode, currentTitle);
-    void api.recordLibraryRecent(record)
+    void api.recordLibraryRecent(record, accountId)
       .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
       .catch(() => undefined);
   }
@@ -370,7 +370,7 @@ export function saveMaterializedEpisode(
   if (activeAccountId) {
     const accountId = activeAccountId;
     const generation = identityGeneration;
-    void api.saveLibraryEpisode(saved)
+    void api.saveLibraryEpisode(saved, accountId)
       .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
       .catch(() => undefined);
   }
@@ -382,7 +382,7 @@ export function removeSavedEpisode(episodeId: string): void {
   if (activeAccountId) {
     const accountId = activeAccountId;
     const generation = identityGeneration;
-    void api.removeLibraryEpisode(episodeId)
+    void api.removeLibraryEpisode(episodeId, accountId)
       .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
       .catch(() => undefined);
   }
