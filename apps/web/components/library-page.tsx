@@ -139,7 +139,9 @@ export function LibraryPage() {
     <AppShell>
       <div className="page-header library-header">
         <div><p className="program-kicker">YOUR PROGRAMS</p><h1>节目库</h1></div>
-        <span className="profile-dot">R</span>
+        <Link href="/account" className="profile-link" aria-label="账户">
+          <span className="profile-dot" aria-hidden="true">访</span>
+        </Link>
       </div>
 
       <div className="library-tabs" role="tablist" aria-label="节目库分类">

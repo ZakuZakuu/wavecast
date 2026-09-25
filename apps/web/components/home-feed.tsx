@@ -54,6 +54,9 @@ export function HomeFeed() {
         >
           <WaveIcon name={searchOpen ? "close" : "search"} />
         </button>
+        <Link href="/account" className="profile-link" aria-label="账户">
+          <span className="profile-dot" aria-hidden="true">访</span>
+        </Link>
       </div>
 
       {searchOpen ? (
