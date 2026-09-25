@@ -1,3 +1,4 @@
+from . import user_context
 from .assets import LocalObjectStorageProvider, StoredObject
 from .episodes import (
     EpisodeConcurrencyError,
@@ -17,4 +18,5 @@ __all__ = [
     "StoredObject",
     "metadata",
     "PostgresProgramProposalRepository",
+    "user_context",
 ]
