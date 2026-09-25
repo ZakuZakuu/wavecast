@@ -1,5 +1,9 @@
 import { parseMixPlan, type MixPlan } from "./mix-timeline";
 import type {
+  UserEventInput,
+  UserEventType,
+  UserPreferences,
+  UserPreferencesUpdate,
   LiveEpisode,
   ProgramProposal,
   ProgramProposalBatch,
@@ -39,6 +43,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   seeds: () => request<Seed[]>("/seeds"),
   program: (id: string) => request<ProgramProposal>(`/programs/${id}`),
+  userPreferences: () => request<UserPreferences>("/user-preferences/me"),
+  saveUserPreferences: (input: UserPreferencesUpdate) =>
+    request<UserPreferences>("/user-preferences/me", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
+  deleteUserPreferences: () => request<UserPreferences>("/user-preferences/me", { method: "DELETE" }),
+  createUserEvent: (input: UserEventInput) =>
+    request<{ id: string; event_type: UserEventType }>("/user-events", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
   createProgramProposals: (input: ProposalGenerationRequest) =>
     request<ProgramProposalBatch>("/program-proposals", {
       method: "POST",
