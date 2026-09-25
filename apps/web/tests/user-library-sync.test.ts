@@ -38,7 +38,7 @@ describe("authenticated library cache isolation", () => {
     mocks.merge.mockResolvedValue(canonical);
     mocks.getLibrary.mockResolvedValue(canonical);
 
-    await syncAuthenticatedLibrary();
+    await syncAuthenticatedLibrary("account-one");
 
     expect(mocks.merge).toHaveBeenCalledTimes(1);
     expect(mocks.merge).toHaveBeenCalledWith(guest);
@@ -55,14 +55,14 @@ describe("authenticated library cache isolation", () => {
     mocks.getUserId.mockResolvedValue("account-one");
     mocks.merge.mockResolvedValue(emptyUserLibrary());
     mocks.getLibrary.mockResolvedValue(emptyUserLibrary());
-    await syncAuthenticatedLibrary();
+    await syncAuthenticatedLibrary("account-one");
 
     localStorage.setItem(
       "wavecast-user-library-v1:account:account-one",
       JSON.stringify(emptyUserLibrary()),
     );
     mocks.merge.mockClear();
-    await syncAuthenticatedLibrary();
+    await syncAuthenticatedLibrary("account-one");
 
     expect(mocks.merge).not.toHaveBeenCalled();
     expect(readUserLibrary().favoriteSeedIds).toEqual([]);
@@ -75,14 +75,14 @@ describe("authenticated library cache isolation", () => {
       ...emptyUserLibrary(),
       favoriteSeedIds: ["account-one-favorite"],
     });
-    await syncAuthenticatedLibrary();
+    await syncAuthenticatedLibrary("account-one");
 
     mocks.getUserId.mockResolvedValue("account-two");
     mocks.getLibrary.mockResolvedValue({
       ...emptyUserLibrary(),
       favoriteSeedIds: ["account-two-favorite"],
     });
-    await syncAuthenticatedLibrary();
+    await syncAuthenticatedLibrary("account-two");
 
     expect(readUserLibrary().favoriteSeedIds).toEqual(["account-two-favorite"]);
     expect(localStorage.getItem("wavecast-user-library-v1:account:account-one"))
@@ -98,7 +98,7 @@ describe("authenticated library cache isolation", () => {
       ...emptyUserLibrary(),
       favoriteSeedIds: ["account-only"],
     });
-    await syncAuthenticatedLibrary();
+    await syncAuthenticatedLibrary("account-one");
 
     useGuestLibraryIdentity();
 
