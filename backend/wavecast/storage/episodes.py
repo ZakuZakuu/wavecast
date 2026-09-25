@@ -6,13 +6,14 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
-from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, UniqueConstraint, select
+from sqlalchemy import Column, DateTime, Integer, String, Table, UniqueConstraint, select
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from wavecast.deployment import normalize_database_url
 from wavecast.models.episode import LiveEpisode
+from wavecast.storage.schema import metadata
 
 
 class EpisodeNotFoundError(KeyError):
@@ -33,7 +34,6 @@ class EpisodeRepository(Protocol):
     def all(self) -> list[LiveEpisode]: ...
 
 
-metadata = MetaData()
 episodes_table = Table(
     "episodes",
     metadata,

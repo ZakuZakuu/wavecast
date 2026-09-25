@@ -173,7 +173,14 @@ class ProgramProposalGenerator(Protocol):
 
 
 class ProgramProposalRepository(Protocol):
-    def save_many(self, proposals: Iterable[ProgramProposal]) -> None: ...
+    def save_many(
+        self,
+        proposals: Iterable[ProgramProposal],
+        *,
+        owner_listener_id: str | None = None,
+        owner_user_id: str | None = None,
+        source: str = "tune",
+    ) -> None: ...
 
     def get(self, proposal_id: str) -> ProgramProposal | None: ...
 
@@ -182,7 +189,14 @@ class InMemoryProgramProposalRepository:
     def __init__(self) -> None:
         self._proposals: dict[str, ProgramProposal] = {}
 
-    def save_many(self, proposals: Iterable[ProgramProposal]) -> None:
+    def save_many(
+        self,
+        proposals: Iterable[ProgramProposal],
+        *,
+        owner_listener_id: str | None = None,
+        owner_user_id: str | None = None,
+        source: str = "tune",
+    ) -> None:
         for proposal in proposals:
             self._proposals[proposal.id] = proposal
 

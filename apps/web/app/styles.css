@@ -846,6 +846,30 @@ h1, h2, h3, strong { text-wrap: balance; }
   font-family: Georgia, serif;
   font-size: 14px;
 }
+.profile-link { display: inline-flex; text-decoration: none; }
+.account-header { align-items: flex-end; }
+.account-card {
+  margin-top: 20px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface);
+}
+.account-card h2 { margin: 8px 0; font-size: 22px; }
+.account-benefit, .account-status { color: var(--muted); font-size: 13px; line-height: 1.7; }
+.account-primary, .account-secondary {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--text);
+  color: var(--bg);
+  font: inherit;
+  cursor: pointer;
+}
+.account-secondary { background: var(--surface-2); color: var(--text); }
+.account-back { display: inline-block; margin-top: 22px; color: var(--muted); font-size: 13px; }
 .library-tabs {
   display: flex;
   gap: 4px;
