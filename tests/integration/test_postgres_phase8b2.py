@@ -210,6 +210,41 @@ def test_episode_account_claim_survives_repository_reconstruction_and_resumes_on
         _cleanup(episode_id=episode_id)
 
 
+def test_stale_guest_episode_save_cannot_clear_account_claim() -> None:
+    assert DATABASE_URL is not None
+    user_id = f"stale-save-owner-{uuid4().hex}"
+    listener_id = f"stale-save-listener-{uuid4().hex}"
+    seed = EpisodeSeed(
+        id=f"stale-save-seed-{uuid4().hex}",
+        title="Ownership race",
+        topic="Stale snapshot",
+        short_description="A guest snapshot must not clear a later claim",
+        estimated_duration_seconds=600,
+        opening_track_ref="mock:stale-save",
+        opening_track_title="Opening",
+        opening_track_artist="Artist",
+        cover=CoverParams(family="editorial", seed=5, palette=("#000", "#fff")),
+    )
+    repository = PostgresEpisodeRepository(DATABASE_URL)
+    episode_id: str | None = None
+    try:
+        guest_episode = EpisodeOrchestrator(repository).start_or_resume(seed, listener_id)
+        episode_id = guest_episode.id
+        stale_guest_snapshot = repository.get(episode_id)
+        assert stale_guest_snapshot.owner_user_id is None
+
+        assert repository.claim_user(episode_id, listener_id, user_id)
+        stale_guest_snapshot.playback_position_seconds = 23
+        repository.save(stale_guest_snapshot)
+
+        reconstructed = repository.get(episode_id)
+        assert reconstructed.owner_user_id == user_id
+        assert reconstructed.playback_position_seconds == 23
+    finally:
+        repository.close()
+        _cleanup(episode_id=episode_id)
+
+
 def test_postgres_proposal_id_conflict_does_not_overwrite_owner() -> None:
     assert DATABASE_URL is not None
     proposal_id = f"conflict-test-{uuid4().hex}"

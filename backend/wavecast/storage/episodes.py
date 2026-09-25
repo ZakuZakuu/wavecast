@@ -144,13 +144,21 @@ class PostgresEpisodeRepository:
                     insert(episodes_table).values(**values).on_conflict_do_nothing()
                 )
             else:
-                result = await connection.execute(
-                    episodes_table.update()
-                    .where(
-                        episodes_table.c.id == episode.id,
-                        episodes_table.c.version == episode.version,
+                update_values = dict(values)
+                statement = episodes_table.update().where(
+                    episodes_table.c.id == episode.id,
+                    episodes_table.c.version == episode.version,
+                )
+                if episode.owner_user_id is None:
+                    # A stale guest snapshot must not clear a claim made after it was loaded.
+                    update_values.pop("owner_user_id")
+                else:
+                    statement = statement.where(
+                        (episodes_table.c.owner_user_id.is_(None))
+                        | (episodes_table.c.owner_user_id == episode.owner_user_id)
                     )
-                    .values(**values)
+                result = await connection.execute(
+                    statement.values(**update_values)
                 )
             if result.rowcount != 1:
                 raise EpisodeConcurrencyError(f"stale episode snapshot: {episode.id}")
