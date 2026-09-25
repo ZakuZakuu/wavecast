@@ -35,6 +35,7 @@ export function AccountPage() {
     setError(null);
     const result = await authClient.signIn.social({ provider, callbackURL: "/account" });
     if (result.error) setError("暂时无法登录，请稍后再试。");
+    else clearApiAuthToken();
   };
 
   const signOut = async () => {

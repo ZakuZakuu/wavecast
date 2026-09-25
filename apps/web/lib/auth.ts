@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import { PostgresDialect } from "kysely";
 import { betterAuth } from "better-auth";
 import { jwt } from "better-auth/plugins";
+import { resolveAuthDatabaseUrl } from "./auth-database-url";
 
 export class AuthNotConfiguredError extends Error {
   constructor() {
@@ -11,7 +12,7 @@ export class AuthNotConfiguredError extends Error {
 
 export function isAuthConfigured(): boolean {
   return Boolean(
-    process.env.WAVECAST_DATABASE_URL &&
+    resolveAuthDatabaseUrl() &&
       process.env.BETTER_AUTH_SECRET &&
       process.env.BETTER_AUTH_URL,
   );
@@ -21,7 +22,7 @@ let authInstance: ReturnType<typeof createAuth> | undefined;
 let databasePool: Pool | undefined;
 
 export function createAuth() {
-  const databaseUrl = process.env.WAVECAST_DATABASE_URL;
+  const databaseUrl = resolveAuthDatabaseUrl();
   const secret = process.env.BETTER_AUTH_SECRET;
   const baseURL = process.env.BETTER_AUTH_URL;
   if (!databaseUrl || !secret || !baseURL) throw new AuthNotConfiguredError();

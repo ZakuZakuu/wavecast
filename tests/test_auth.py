@@ -31,7 +31,9 @@ def _token(private_key: Ed25519PrivateKey, **claims: object) -> str:
     return jwt.encode(payload, private_key, algorithm="EdDSA", headers={"kid": "test-key"})
 
 
-def test_better_auth_jwt_resolves_stable_user_subject(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_better_auth_jwt_resolves_stable_user_subject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     private_key = Ed25519PrivateKey.generate()
     verifier = JwksJWTVerifier(
         "https://wavecast.example/api/auth/jwks",
@@ -39,7 +41,7 @@ def test_better_auth_jwt_resolves_stable_user_subject(monkeypatch: pytest.Monkey
         "https://wavecast.example",
     )
 
-    async def get_key(key_id: str, *, refresh: bool = False):
+    async def get_key(key_id: str, *, refresh: bool = False) -> dict[str, str]:
         assert key_id == "test-key"
         del refresh
         return _key_set(private_key)
@@ -48,6 +50,61 @@ def test_better_auth_jwt_resolves_stable_user_subject(monkeypatch: pytest.Monkey
     subject = asyncio.run(verifier.verify(_token(private_key)))
 
     assert subject == "wavecast-user-123"
+
+
+def test_unknown_kid_forces_at_most_one_jwks_refresh_per_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    verifier = JwksJWTVerifier(
+        "https://wavecast.example/api/auth/jwks",
+        "https://wavecast.example",
+        "https://wavecast.example",
+    )
+    token = jwt.encode(
+        {
+            "sub": "wavecast-user-123",
+            "iss": "https://wavecast.example",
+            "aud": "https://wavecast.example",
+            "exp": int(time.time()) + 60,
+        },
+        private_key,
+        algorithm="EdDSA",
+        headers={"kid": "unknown-key"},
+    )
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, list[dict[str, str]]]:
+            return {"keys": [_key_set(private_key)]}
+
+    class Client:
+        requests = 0
+
+        def __init__(self, **_: object) -> None:
+            pass
+
+        async def __aenter__(self) -> Client:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def get(self, _: str) -> Response:
+            Client.requests += 1
+            return Response()
+
+    monkeypatch.setattr("wavecast.auth.httpx.AsyncClient", Client)
+
+    async def verify_twice() -> None:
+        for _ in range(2):
+            with pytest.raises(AuthTokenError, match="invalid_token"):
+                await verifier.verify(token)
+
+    asyncio.run(verify_twice())
+    assert Client.requests == 1
 
 
 @pytest.mark.parametrize(
@@ -68,7 +125,7 @@ def test_better_auth_jwt_rejects_wrong_issuer_audience_or_expiry(
         "https://wavecast.example",
     )
 
-    async def get_key(key_id: str, *, refresh: bool = False):
+    async def get_key(key_id: str, *, refresh: bool = False) -> dict[str, str]:
         assert key_id == "test-key"
         del refresh
         return _key_set(private_key)

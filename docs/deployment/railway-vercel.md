@@ -39,6 +39,7 @@ the Vercel Web and Railway API services:
 
 ~~~text
 WAVECAST_DATABASE_URL=<same private Railway Postgres reference>
+BETTER_AUTH_DATABASE_URL=<same private Railway Postgres reference; optional when the WaveCast URL is configured>
 BETTER_AUTH_URL=https://<Vercel production domain>
 BETTER_AUTH_SECRET=<generated secret>
 GOOGLE_CLIENT_ID=<optional>
@@ -59,10 +60,13 @@ the Better Auth schema separately from Alembic:
 pnpm --filter @wavecast/web auth:migrate
 ~~~
 
-Run that command with `WAVECAST_DATABASE_URL`, `BETTER_AUTH_SECRET`, and
-`BETTER_AUTH_URL` available to the Web package. It uses Better Auth's Kysely
-PostgreSQL adapter and its dedicated `auth` schema; do not point it at a public
-or unrelated database.
+Run that command with `BETTER_AUTH_DATABASE_URL` (preferred) or
+`WAVECAST_DATABASE_URL`, plus `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`,
+available to the Web package. When falling back to `WAVECAST_DATABASE_URL`, the
+Web app converts the SQLAlchemy-only `postgresql+asyncpg://` scheme to the
+standard PostgreSQL URL expected by `pg`. The auth CLI uses the same resolver.
+It uses Better Auth's Kysely PostgreSQL adapter and its dedicated `auth`
+schema; do not point it at a public or unrelated database.
 
 ## Vercel Web
 
