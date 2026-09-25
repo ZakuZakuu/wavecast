@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { durationLabel, programPresentation } from "../lib/program-presentation";
 import type { ProgramProposal } from "../lib/types";
-import { isFavoriteSeed, syncAuthenticatedLibrary, toggleFavoriteSeed } from "../lib/user-library";
+import { isFavoriteSeed, toggleFavoriteSeed } from "../lib/user-library";
 import { ProgramArtwork } from "./program-artwork";
 import { WaveIcon } from "./wave-icon";
 
@@ -21,9 +21,6 @@ export function ProgramDetail({ seedId }: { seedId: string }) {
       .then(setSeed)
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "节目暂时无法载入"));
     setFavorite(isFavoriteSeed(seedId));
-    void syncAuthenticatedLibrary()
-      .then((library) => setFavorite(library.favoriteSeedIds.includes(seedId)))
-      .catch(() => undefined);
   }, [seedId]);
 
   const presentation = useMemo(() => {

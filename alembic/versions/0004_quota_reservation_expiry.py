@@ -30,3 +30,11 @@ def upgrade() -> None:
         "generation_quota_reservations",
         ["status", "expires_at"],
     )
+
+
+def downgrade() -> None:
+    op.drop_index(
+        "ix_generation_quota_status_expiry",
+        table_name="generation_quota_reservations",
+    )
+    op.drop_column("generation_quota_reservations", "expires_at")

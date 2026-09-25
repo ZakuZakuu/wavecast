@@ -30,6 +30,21 @@ const CHANGE_EVENT = "wavecast-library-change";
 const MAX_RECENT = 20;
 const GUEST_MERGED_SUFFIX = ":guest-merged-v1";
 let activeAccountId: string | null = null;
+let identityGeneration = 0;
+
+export class LibraryIdentityChangedError extends Error {
+  constructor() {
+    super("Library identity changed during synchronization");
+  }
+}
+
+function requireCurrentIdentity(generation: number): void {
+  if (generation !== identityGeneration) throw new LibraryIdentityChangedError();
+}
+
+function dispatchLibraryChange(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(CHANGE_EVENT));
+}
 
 function accountStorageKey(userId: string): string {
   return `${STORAGE_KEY}:account:${encodeURIComponent(userId)}`;
@@ -163,8 +178,38 @@ function persistUserLibrary(state: UserLibraryState): UserLibraryState {
 }
 
 export function useGuestLibraryIdentity(): void {
+  identityGeneration += 1;
   activeAccountId = null;
-  if (typeof window !== "undefined") window.dispatchEvent(new Event(CHANGE_EVENT));
+  dispatchLibraryChange();
+}
+
+export function beginLibraryIdentityTransition(): number {
+  identityGeneration += 1;
+  activeAccountId = null;
+  dispatchLibraryChange();
+  return identityGeneration;
+}
+
+export function cancelLibraryIdentityTransition(generation: number): void {
+  if (generation !== identityGeneration) return;
+  identityGeneration += 1;
+  activeAccountId = null;
+  dispatchLibraryChange();
+}
+
+export function activateGuestLibraryIdentity(generation: number): boolean {
+  if (generation !== identityGeneration) return false;
+  activeAccountId = null;
+  dispatchLibraryChange();
+  return true;
+}
+
+function persistAccountLibrary(userId: string, state: UserLibraryState): UserLibraryState {
+  const storage = browserStorage();
+  if (!storage) return state;
+  storage.setItem(accountStorageKey(userId), JSON.stringify(state));
+  dispatchLibraryChange();
+  return state;
 }
 
 function mergeLocalLibraries(
@@ -190,9 +235,16 @@ function mergeLocalLibraries(
   });
 }
 
-export async function syncAuthenticatedLibrary(): Promise<UserLibraryState> {
+export async function syncAuthenticatedLibrary(
+  expectedUserId: string,
+  generation = identityGeneration,
+): Promise<UserLibraryState> {
+  requireCurrentIdentity(generation);
   const userId = await getApiAuthUserId();
-  if (!userId) return readUserLibrary();
+  requireCurrentIdentity(generation);
+  if (!userId || userId !== expectedUserId) {
+    throw new Error("Could not verify the signed-in library identity");
+  }
   const storage = browserStorage();
   const accountCache = readStorageKey(storage, accountStorageKey(userId));
   const guestCache = readStorageKey(storage, STORAGE_KEY);
@@ -201,19 +253,33 @@ export async function syncAuthenticatedLibrary(): Promise<UserLibraryState> {
   const pendingMerge = shouldMergeGuest
     ? mergeLocalLibraries(accountCache, guestCache)
     : accountCache;
-  activeAccountId = userId;
   try {
     if (shouldMergeGuest) {
+      requireCurrentIdentity(generation);
       await api.mergeMyLibrary(pendingMerge);
+      requireCurrentIdentity(generation);
       storage?.setItem(markerKey, "1");
     }
     const canonical = normalizeUserLibrary(await api.myLibrary());
+    requireCurrentIdentity(generation);
+    activeAccountId = userId;
     return persistUserLibrary(canonical);
   } catch (error) {
-    // Keep both caches intact; the account-scoped cache remains isolated from other users.
-    persistUserLibrary(pendingMerge);
+    if (generation === identityGeneration) {
+      // Keep both caches intact without changing the active identity on a failed sync.
+      persistAccountLibrary(userId, pendingMerge);
+    }
     throw error;
   }
+}
+
+function persistCloudResultForCurrentAccount(
+  accountId: string,
+  generation: number,
+  value: unknown,
+): void {
+  if (generation !== identityGeneration || activeAccountId !== accountId) return;
+  persistUserLibrary(normalizeUserLibrary(value));
 }
 
 export function subscribeUserLibrary(listener: () => void): () => void {
@@ -233,9 +299,11 @@ export function toggleFavoriteSeed(seedId: string): boolean {
   const next = toggleFavoriteInState(readUserLibrary(), seedId);
   persistUserLibrary(next);
   if (activeAccountId) {
+    const accountId = activeAccountId;
+    const generation = identityGeneration;
     const enabled = next.favoriteSeedIds.includes(seedId);
     void api.favoriteProgram(seedId, enabled)
-      .then((value) => persistUserLibrary(normalizeUserLibrary(value)))
+      .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
       .catch(() => undefined);
   }
   return next.favoriteSeedIds.includes(seedId);
@@ -276,9 +344,11 @@ export function recordRecentEpisode(
     ),
   );
   if (activeAccountId) {
+    const accountId = activeAccountId;
+    const generation = identityGeneration;
     const record = recentRecordFromEpisode(episode, currentTitle);
     void api.recordLibraryRecent(record)
-      .then((value) => persistUserLibrary(normalizeUserLibrary(value)))
+      .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
       .catch(() => undefined);
   }
   return next;
@@ -298,8 +368,10 @@ export function saveMaterializedEpisode(
     ),
   );
   if (activeAccountId) {
+    const accountId = activeAccountId;
+    const generation = identityGeneration;
     void api.saveLibraryEpisode(saved)
-      .then((value) => persistUserLibrary(normalizeUserLibrary(value)))
+      .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
       .catch(() => undefined);
   }
   return true;
@@ -308,8 +380,10 @@ export function saveMaterializedEpisode(
 export function removeSavedEpisode(episodeId: string): void {
   persistUserLibrary(removeSavedFromState(readUserLibrary(), episodeId));
   if (activeAccountId) {
+    const accountId = activeAccountId;
+    const generation = identityGeneration;
     void api.removeLibraryEpisode(episodeId)
-      .then((value) => persistUserLibrary(normalizeUserLibrary(value)))
+      .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
       .catch(() => undefined);
   }
 }

@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 
 import { AppShell } from "./app-shell";
 import { authClient, clearApiAuthToken } from "../lib/auth-client";
-import { syncAuthenticatedLibrary, useGuestLibraryIdentity } from "../lib/user-library";
 
 type AuthAvailability = { enabled: boolean; providers: string[] };
 
@@ -16,15 +15,6 @@ export function AccountPage() {
     providers: [],
   });
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (isPending) return;
-    if (session?.user) {
-      void syncAuthenticatedLibrary().catch(() => undefined);
-    } else {
-      useGuestLibraryIdentity();
-    }
-  }, [isPending, session?.user?.id]);
 
   useEffect(() => {
     let active = true;
@@ -51,7 +41,6 @@ export function AccountPage() {
   const signOut = async () => {
     await authClient.signOut();
     clearApiAuthToken();
-    useGuestLibraryIdentity();
   };
 
   return (
