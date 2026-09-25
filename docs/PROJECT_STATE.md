@@ -75,7 +75,9 @@ contract failures release the pending reservation. Defaults are 3 guest
 programs per listener, 20 programs per account per UTC day, and 100 globally
 per UTC day; operators can tune these through the three
 WAVECAST_*_PROGRAM_LIMIT variables. Static/demo playback and browsing remain
-free. This phase makes no live or paid calls and does not deploy.
+free. This phase makes no live or paid calls and does not deploy. Pending
+reservations expire after 15 minutes and are reclaimed on the next reservation
+attempt, so an interrupted process cannot consume quota forever.
 
 ## Phase 7A progressive generation contract
 

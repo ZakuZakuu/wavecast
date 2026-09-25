@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import create_async_engine
 from wavecast.models.episode import CoverParams, EpisodeSeed
 from wavecast.orchestration.episode import EpisodeOrchestrator
@@ -137,6 +138,32 @@ def test_parallel_guest_reservations_cannot_exceed_the_durable_limit() -> None:
         for item in outcomes:
             if isinstance(item, list):
                 repository.release(item)
+    finally:
+        repository.close()
+        _cleanup(listener_id=listener_id)
+
+
+def test_expired_durable_pending_quota_reservation_is_reclaimed() -> None:
+    assert DATABASE_URL is not None
+    listener_id = f"quota-expiry-{uuid4().hex}"
+    repository = PostgresGenerationQuotaRepository(DATABASE_URL)
+    limits = {"guest_limit": 1, "auth_daily_limit": 10, "global_daily_limit": 100}
+    try:
+        abandoned = repository.reserve(listener_id, None, 1, **limits)
+
+        async def expire_reservation() -> None:
+            engine = create_async_engine(DATABASE_URL)
+            async with engine.begin() as connection:
+                await connection.execute(
+                    update(quota_reservations)
+                    .where(quota_reservations.c.id == abandoned[0])
+                    .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+                )
+            await engine.dispose()
+
+        asyncio.run(expire_reservation())
+        replacement = repository.reserve(listener_id, None, 1, **limits)
+        assert replacement != abandoned
     finally:
         repository.close()
         _cleanup(listener_id=listener_id)
