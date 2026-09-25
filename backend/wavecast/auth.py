@@ -23,12 +23,15 @@ class AuthPrincipal:
 class JwksJWTVerifier:
     """Verify Better Auth JWT-plugin tokens against a bounded cached JWKS."""
 
+    UNKNOWN_KID_REFRESH_COOLDOWN_SECONDS = 30.0
+
     def __init__(self, jwks_url: str, issuer: str, audience: str) -> None:
         self.jwks_url = jwks_url
         self.issuer = issuer
         self.audience = audience
         self._keys: dict[str, dict[str, Any]] = {}
         self._expires_at = 0.0
+        self._last_refresh_at = float("-inf")
         self._lock = asyncio.Lock()
 
     async def verify(self, token: str) -> str:
@@ -65,7 +68,15 @@ class JwksJWTVerifier:
 
     async def _key(self, key_id: str, *, refresh: bool = False) -> dict[str, Any] | None:
         async with self._lock:
-            if refresh or self._expires_at <= asyncio.get_running_loop().time():
+            now = asyncio.get_running_loop().time()
+            cache_expired = self._expires_at <= now
+            if (
+                refresh
+                and not cache_expired
+                and now - self._last_refresh_at < self.UNKNOWN_KID_REFRESH_COOLDOWN_SECONDS
+            ):
+                return self._keys.get(key_id)
+            if refresh or cache_expired:
                 try:
                     async with httpx.AsyncClient(timeout=3.0, follow_redirects=False) as client:
                         response = await client.get(self.jwks_url)
@@ -81,4 +92,5 @@ class JwksJWTVerifier:
                     if isinstance(key, dict) and isinstance(key.get("kid"), str)
                 }
                 self._expires_at = asyncio.get_running_loop().time() + 300
+                self._last_refresh_at = now
             return self._keys.get(key_id)
