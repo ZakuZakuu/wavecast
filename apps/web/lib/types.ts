@@ -84,3 +84,29 @@ export type LiveEpisode = {
   committed_frontier_seconds: number;
   timeline_duration_seconds: number;
 };
+
+export type UserGenre =
+  | "City Pop"
+  | "R&B"
+  | "Jazz"
+  | "Electronic"
+  | "Hip-Hop"
+  | "Rock"
+  | "Classical";
+export type UserMood = "Chill" | "Focus" | "Late Night" | "Discovery";
+export type DiscoveryLevel = "SAFE" | "BALANCED" | "ADVENTUROUS";
+
+export type UserPreferences = {
+  user_id: string;
+  genres: UserGenre[];
+  artists: string[];
+  moods: UserMood[];
+  contexts: string[];
+  discovery_level: DiscoveryLevel;
+  onboarding_completed: boolean;
+  updated_at: string;
+};
+
+export type UserPreferencesUpdate = Omit<UserPreferences, "user_id" | "updated_at">;
+export type UserEventType = "PLAY_START" | "PLAY_COMPLETE" | "LIKE" | "FAVORITE" | "SAVE" | "SKIP";
+export type UserEventInput = { event_type: UserEventType; program_id?: string; episode_id?: string };
