@@ -52,6 +52,22 @@ export async function getApiAuthToken(): Promise<string | undefined> {
   }
 }
 
+export async function getApiAuthUserId(): Promise<string | undefined> {
+  const token = await getApiAuthToken();
+  if (!token) return undefined;
+  const payload = token.split(".")[1];
+  if (!payload) return undefined;
+  try {
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const decoded = JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="))) as {
+      sub?: unknown;
+    };
+    return typeof decoded.sub === "string" && decoded.sub ? decoded.sub : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function clearApiAuthToken(): void {
   cachedToken = undefined;
   tokenExpiresAt = 0;

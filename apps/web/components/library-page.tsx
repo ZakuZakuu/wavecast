@@ -10,6 +10,7 @@ import {
   readUserLibrary,
   removeSavedEpisode,
   subscribeUserLibrary,
+  syncAuthenticatedLibrary,
   type RecentProgramRecord,
   type SavedEpisodeRecord,
   type UserLibraryState,
@@ -89,6 +90,7 @@ export function LibraryPage() {
   useEffect(() => {
     const refresh = () => setLibrary(readUserLibrary());
     refresh();
+    void syncAuthenticatedLibrary().then(setLibrary).catch(() => undefined);
     return subscribeUserLibrary(refresh);
   }, []);
 

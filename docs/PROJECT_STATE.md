@@ -11,26 +11,71 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 8B.1 — durable proposals and optional account identity.
-- **Current stage:** UI v1 / PR #68 is merged at
-  26908b98013a1515fd8197ee92de18ad1894acf4. Phase 8A mock/live proposal code
-  remains in Draft PRs #69 and #70. The one authorized Phase 8A-live proposal
-  probe at `bc9953633f53da6b4bc9f52ad4b95b7475ac4737` failed after music
-  readiness with one provider call and no retry; the original success-gated
-  merge of #69/#70 therefore remains closed. Phase 8B.1 is being developed on
-  `codex/phase8b-user-foundation`, stacked from that reviewed #70 HEAD.
-- **Canonical main:** 26908b98013a1515fd8197ee92de18ad1894acf4 (PR #68 merge
-  commit).
-- **Active development stack:** `codex/phase8b-user-foundation` starts from
-  reviewed PR #70 HEAD. PRs #69/#70 remain Draft; do not retry the original
-  bounded probe or merge them under its failed-probe success gate.
-- **Immediate work:** make generated proposals durable across API restarts,
-  add an optional Better Auth/JWT identity seam while preserving `listener_id`,
-  and keep `/api/auth/*` in Next.js ahead of the FastAPI fallback rewrite.
-- **Release/cost gate:** later bounded live validation is authorized when it
-  has a specific purpose and cost guard; the original #70 first probe remains
-  strictly single-call/no-retry. OAuth provider credentials are environment
-  variables only. No credential or live-provider secret is stored in this state.
+- **Current milestone:** Phase 8B.2 — cloud Library, guest merge, account Episode
+  ownership, and server-side generation quotas.
+- **Current branch:** codex/phase8b2-cloud-library-quota, isolated from the
+  user's main working tree.
+- **Stacked base:** reviewed 8B.1 PR #71 commit
+  9dbc7809b1cf86d598ba9e8e4433323cf20290a9 on
+  gpt/phase8a-live-proposal-generator. PR #71 is merged into that stacked
+  branch, not into canonical main.
+- **Canonical main:** 26908b98013a1515fd8197ee92de18ad1894acf4 (PR #68 merge).
+- **Phase 8A restriction:** #69/#70 remain in their existing Draft / failed
+  first-probe state. The one authorized #70 first probe at
+  bc9953633f53da6b4bc9f52ad4b95b7475ac4737 failed after readiness with one
+  provider call and no retry. Do not repeat that probe or rewrite the original
+  #69/#70 success gate.
+- **8B.2 implementation:** durable user Library rows (favorite/recent/saved/
+  created), idempotent one-time guest-to-account merge, verified-account
+  ownership layered separately from immutable listener_id, cross-device
+  resume of account-owned episodes, and transactional generation reservations.
+  Guest quota defaults to three distinct persisted dynamic programs; auth and
+  global daily ceilings are environment-configurable. Quota rejection occurs
+  before proposal generation, and failed/non-persisted generation releases its
+  reservation.
+- **Security invariant:** only verified AuthPrincipal.user_id is account
+  identity. A guest resource may be claimed only when its existing listener_id
+  matches the current principal; IDs supplied by the browser never establish
+  ownership. owner_user_id is kept out of public episode JSON.
+- **Immediate work:** finish full backend/Web/deployment-smoke checks, open a
+  Draft PR stacked on the branch above, obtain G03 exact-head review and green
+  CI, then merge only into the current stacked base. No production deployment
+  or live/paid provider call is part of 8B.2.
+- **Next roadmap:** after 8B.2, Phase 8B.3 is optional first-login onboarding,
+  user events, and deterministic TasteProfile; Phase 8C adds ProposalInventory,
+  /api/for-you, ranking/diversity/exposure, and background refill. Deployment
+  waits until the later core-experience gate and release-stack resolution.
+
+## Phase 8B.2 cloud Library, ownership, and quotas
+
+The browser keeps the existing guest local Library. On a user's first
+authenticated session on a device, it submits a validated, idempotent merge,
+then refreshes from that account's canonical server snapshot. The guest cache
+is preserved, and a per-account marker prevents stale guest favorites from
+being re-merged after the user later removes them from the cloud Library.
+Account caches use user-scoped keys and are not shared between signed-in users.
+
+Cloud Library resources are stored in WaveCast-owned PostgreSQL tables rather
+than Better Auth internals. Favorites and created-program IDs merge by union;
+recent episodes merge by episodeId with the newest updatedAt; saved
+episodes merge by episodeId with the newest savedAt. Recent history is bounded
+to the newest 20 entries. Guest/unauthenticated /api/me/* requests receive 401.
+
+LiveEpisode.listener_id remains the immutable browser/runtime identity.
+Optional owner_user_id is a separate durable account owner. Account ownership
+is written on authenticated episode creation, and a guest episode is claimed
+only from the exact authenticated listener that created it. Account-owned
+episodes can be read and operated from another device without rewriting the
+original runtime identity. Proposal ownership follows the same exact-listener
+claim rule. A proposal ID collision cannot replace an existing owner or payload.
+
+Before dynamic proposal generation, the API reserves quota capacity in a
+durable ledger. Successful distinct program IDs are charged once; provider or
+contract failures release the pending reservation. Defaults are 3 guest
+programs per listener, 20 programs per account per UTC day, and 100 globally
+per UTC day; operators can tune these through the three
+WAVECAST_*_PROGRAM_LIMIT variables. Static/demo playback and browsing remain
+free. This phase makes no live or paid calls and does not deploy.
 
 ## Phase 7A progressive generation contract
 

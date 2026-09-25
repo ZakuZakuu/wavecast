@@ -60,4 +60,31 @@ export const api = {
   materialize: (id: string) => request<LiveEpisode>(`/episodes/${id}/materialize`, { method: "POST" }),
   prepareMixdown: (id: string) => request<MixdownPreparationResult>(`/episodes/${id}/prepare-mixdown`, { method: "POST" }),
   mixdown: (id: string) => request<MixdownArtifact>(`/episodes/${id}/mixdown`, { method: "POST" }),
+  myLibrary: () => request<unknown>("/me/library"),
+  mergeMyLibrary: (library: unknown) => request<unknown>("/me/library/merge", {
+    method: "POST",
+    body: JSON.stringify({ library }),
+  }),
+  favoriteProgram: (id: string, favorite: boolean) => request<unknown>(
+    `/me/library/favorites/${encodeURIComponent(id)}`,
+    { method: favorite ? "PUT" : "DELETE" },
+  ),
+  recordLibraryRecent: (record: unknown) => {
+    const value = record as { episodeId: string };
+    return request<unknown>(`/me/library/recents/${encodeURIComponent(value.episodeId)}`, {
+      method: "PUT",
+      body: JSON.stringify(record),
+    });
+  },
+  saveLibraryEpisode: (record: unknown) => {
+    const value = record as { episodeId: string };
+    return request<unknown>(`/me/library/saved/${encodeURIComponent(value.episodeId)}`, {
+      method: "PUT",
+      body: JSON.stringify(record),
+    });
+  },
+  removeLibraryEpisode: (id: string) => request<unknown>(
+    `/me/library/saved/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  ),
 };
