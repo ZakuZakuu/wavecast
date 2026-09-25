@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Iterable
 from typing import Any, cast
 
-from sqlalchemy import Column, DateTime, Index, String, Table, select
+from sqlalchemy import Column, DateTime, Index, String, Table, desc, select
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -55,6 +55,15 @@ class PostgresProgramProposalRepository:
 
     def get(self, proposal_id: str) -> ProgramProposal | None:
         return cast(ProgramProposal | None, self._run(self._get(proposal_id)))
+
+    def get_for_user(self, user_id: str, proposal_id: str) -> ProgramProposal | None:
+        return cast(
+            ProgramProposal | None,
+            self._run(self._get_for_user(user_id, proposal_id)),
+        )
+
+    def list_for_user(self, user_id: str, *, limit: int = 20) -> list[ProgramProposal]:
+        return cast(list[ProgramProposal], self._run(self._list_for_user(user_id, limit)))
 
     def close(self) -> None:
         self._run(self.engine.dispose())
@@ -108,3 +117,27 @@ class PostgresProgramProposalRepository:
                 )
             ).first()
         return ProgramProposal.model_validate(row.payload) if row else None
+
+    async def _get_for_user(self, user_id: str, proposal_id: str) -> ProgramProposal | None:
+        async with self.engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    select(program_proposals_table.c.payload).where(
+                        program_proposals_table.c.id == proposal_id,
+                        program_proposals_table.c.owner_user_id == user_id,
+                    )
+                )
+            ).first()
+        return ProgramProposal.model_validate(row.payload) if row else None
+
+    async def _list_for_user(self, user_id: str, limit: int) -> list[ProgramProposal]:
+        async with self.engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    select(program_proposals_table.c.payload)
+                    .where(program_proposals_table.c.owner_user_id == user_id)
+                    .order_by(desc(program_proposals_table.c.created_at))
+                    .limit(limit)
+                )
+            ).all()
+        return [ProgramProposal.model_validate(row.payload) for row in rows]

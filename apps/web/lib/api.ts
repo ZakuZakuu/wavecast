@@ -4,6 +4,7 @@ import type {
   UserEventType,
   UserPreferences,
   UserPreferencesUpdate,
+  ProgramIdea,
   LiveEpisode,
   ProgramProposal,
   ProgramProposalBatch,
@@ -55,6 +56,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  recordUserEvent: async (input: UserEventInput) => {
+    if (!(await getApiAuthToken())) return;
+    await request<{ id: string; event_type: UserEventType }>("/user-events", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  recommendations: () => request<ProgramIdea[]>("/recommendations/me"),
+  refreshRecommendations: () =>
+    request<ProgramIdea[]>("/recommendations/me/refresh", { method: "POST" }),
   createProgramProposals: (input: ProposalGenerationRequest) =>
     request<ProgramProposalBatch>("/program-proposals", {
       method: "POST",

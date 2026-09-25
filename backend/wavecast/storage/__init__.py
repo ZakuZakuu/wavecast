@@ -7,6 +7,7 @@ from .episodes import (
     PostgresEpisodeRepository,
 )
 from .proposals import PostgresProgramProposalRepository
+from .recommendations import PostgresProgramIdeaRepository
 from .schema import metadata
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     "StoredObject",
     "metadata",
     "PostgresProgramProposalRepository",
+    "PostgresProgramIdeaRepository",
     "user_context",
 ]

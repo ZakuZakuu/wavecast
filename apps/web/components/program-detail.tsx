@@ -89,7 +89,14 @@ export function ProgramDetail({ seedId }: { seedId: string }) {
               type="button"
               className={favorite ? "round-action selected" : "round-action"}
               aria-label={favorite ? "取消收藏" : "收藏"}
-              onClick={() => setFavorite(toggleFavoriteSeed(seed.id))}
+              onClick={() => {
+                const isFavorite = toggleFavoriteSeed(seed.id);
+                setFavorite(isFavorite);
+                if (isFavorite) {
+                  void api.recordUserEvent({ event_type: "FAVORITE", program_id: seed.id })
+                    .catch(() => undefined);
+                }
+              }}
             >
               <WaveIcon name="heart" size={20} />
               <span>{favorite ? "已收藏" : "收藏"}</span>
