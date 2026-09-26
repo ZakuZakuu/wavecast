@@ -5,15 +5,22 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from time import sleep
 
+from pydantic import BaseModel
 from wavecast.models.episode import CoverParams
 from wavecast.proposals import InMemoryProgramProposalRepository, ProgramProposal
 from wavecast.recommendations import (
     DeterministicRecommendationPlanner,
     InMemoryProgramIdeaRepository,
     ProgramIdea,
+    ProgramIdeaDraft,
+    ProgramIdeaDraftBatch,
+    ProviderBackedRecommendationPlanner,
     RecommendationService,
+    UserContext,
     UserContextAggregator,
 )
+from wavecast.providers.errors import ProviderUnavailableError
+from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.user_context import (
     DiscoveryLevel,
     Genre,
@@ -105,8 +112,6 @@ def test_context_aggregates_preferences_recent_events_favorites_and_created_prog
 
 
 def test_deterministic_planner_uses_preferences_and_recent_context() -> None:
-    from wavecast.recommendations import UserContext
-
     ideas = DeterministicRecommendationPlanner().generate_program_ideas(
         UserContext(
             user_id="user-a",
@@ -123,6 +128,158 @@ def test_deterministic_planner_uses_preferences_and_recent_context() -> None:
     assert any("R&B" in idea.title and "Focus" in idea.title for idea in ideas)
     assert any("Persona Jazz" in idea.title for idea in ideas)
     assert any("Neo Soul" in idea.reason for idea in ideas)
+
+class _RecommendationLLM:
+    def __init__(
+        self,
+        batch: ProgramIdeaDraftBatch | None = None,
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self.batch = batch
+        self.error = error
+        self.prompt = ""
+        self.transport: StructuredTransport | None = None
+        self.profile: InferenceProfile | None = None
+        self.stage: str | None = None
+        self.closed = False
+
+    async def structured(
+        self,
+        prompt: str,
+        output_type: type[BaseModel],
+        *,
+        transport: StructuredTransport,
+        profile: InferenceProfile,
+        stage: str | None = None,
+    ) -> BaseModel:
+        assert output_type is ProgramIdeaDraftBatch
+        self.prompt = prompt
+        self.transport = transport
+        self.profile = profile
+        self.stage = stage
+        if self.error is not None:
+            raise self.error
+        assert self.batch is not None
+        return self.batch
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def test_provider_backed_planner_uses_compact_user_context_without_identity() -> None:
+    llm = _RecommendationLLM(
+        ProgramIdeaDraftBatch(
+            ideas=[
+                ProgramIdeaDraft(
+                    title="从 Neo-Soul 的松弛感拐进 Broken Beat",
+                    description="从熟悉的 R&B 和 Soul 出发，逐渐把节奏切得更碎、更有弹性。",
+                    reason="结合 R&B、Chill 与较高探索偏好。",
+                    tags=["R&B", "Neo Soul", "Broken Beat"],
+                ),
+                ProgramIdeaDraft(
+                    title="方大同之后，往更深的 Soul 和声走",
+                    description="从熟悉的华语 R&B 入口，沿着和声与 groove 的线索向外延伸。",
+                    reason="结合艺人偏好与 R&B 风格信号。",
+                    tags=["R&B", "Soul"],
+                ),
+                ProgramIdeaDraft(
+                    title="夜里不降速：把 Chill R&B 推向更亮的律动",
+                    description="保留松弛氛围，但逐步加入更明确的鼓点与舞曲感。",
+                    reason="来自 Chill 氛围与探索倾向。",
+                    tags=["R&B", "Chill", "Discovery"],
+                ),
+            ]
+        )
+    )
+    planner = ProviderBackedRecommendationPlanner(lambda: llm)
+
+    ideas = planner.generate_program_ideas(
+        UserContext(
+            user_id="user-secret-id",
+            genres=["R&B"],
+            moods=["Chill"],
+            contexts=["夜间散步"],
+            preferred_artists=["方大同"],
+            discovery_level=0.8,
+        )
+    )
+
+    assert len(ideas) == 3
+    assert ideas[0].title.startswith("从 Neo-Soul")
+    assert '"genres": ["R&B"]' in llm.prompt
+    assert '"preferred_artists": ["方大同"]' in llm.prompt
+    assert "user-secret-id" not in llm.prompt
+    assert llm.transport is StructuredTransport.RESPONSES_JSON_SCHEMA
+    assert llm.profile is InferenceProfile.FAST
+    assert llm.stage == "recommendation_planner"
+    assert llm.closed
+
+
+def test_provider_backed_planner_falls_back_without_breaking_inventory() -> None:
+    llm = _RecommendationLLM(error=ProviderUnavailableError("temporary outage"))
+    planner = ProviderBackedRecommendationPlanner(lambda: llm)
+
+    ideas = planner.generate_program_ideas(
+        UserContext(
+            user_id="user-a",
+            genres=["R&B"],
+            moods=["Chill"],
+            discovery_level=0.5,
+        )
+    )
+
+    assert len(ideas) >= 2
+    assert any("R&B" in idea.title for idea in ideas)
+    assert llm.closed
+
+
+def test_planner_source_change_replaces_cached_heuristic_inventory() -> None:
+    ideas = InMemoryProgramIdeaRepository()
+    now = datetime(2026, 9, 26, tzinfo=UTC)
+    old = ProgramIdea(
+        id="old-heuristic",
+        user_id="user-a",
+        title="旧模板推荐",
+        description="旧的 deterministic inventory",
+        reason="旧推荐",
+        source="heuristic",
+        created_at=now,
+    )
+    ideas.save_many([old])
+
+    class NewPlanner:
+        source = "deepseek_planner"
+
+        def generate_program_ideas(self, context: UserContext) -> list[ProgramIdeaDraft]:
+            del context
+            return [
+                ProgramIdeaDraft(
+                    title=f"AI idea {index}",
+                    description="更具体的节目方向",
+                    reason="新的 planner source",
+                    tags=["R&B"],
+                )
+                for index in range(3)
+            ]
+
+    service = RecommendationService(
+        UserContextAggregator(
+            InMemoryUserPreferencesRepository(),
+            InMemoryUserEventRepository(),
+            InMemoryProgramProposalRepository(),
+        ),
+        NewPlanner(),
+        ideas,
+        clock=lambda: now,
+    )
+
+    refreshed = service.inventory_for_user("user-a")
+
+    assert len(refreshed) == 3
+    assert {idea.source for idea in refreshed} == {"deepseek_planner"}
+    assert "old-heuristic" not in {idea.id for idea in refreshed}
+
 
 
 def test_refresh_is_bounded_per_user_and_proposal_seed_retains_reason() -> None:
@@ -164,6 +321,8 @@ def test_concurrent_refreshes_share_one_cooldown_window() -> None:
     count_lock = Lock()
 
     class CountingPlanner:
+        source = planner.source
+
         def generate_program_ideas(self, context):
             nonlocal call_count
             with count_lock:
