@@ -12,7 +12,7 @@ import type {
   Seed,
 } from "./types";
 import type { MixdownArtifact, MixdownPreparationResult } from "./episode-export";
-import { getApiAuthToken, getApiAuthTokenForUser } from "./auth-client";
+import { getApiAuthToken, getApiAuthTokenForUser, getApiAuthUserId } from "./auth-client";
 
 const listenerStorageKey = "wavecast-anonymous-listener";
 
@@ -50,24 +50,27 @@ async function request<T>(
 export const api = {
   seeds: () => request<Seed[]>("/seeds"),
   program: (id: string) => request<ProgramProposal>(`/programs/${id}`),
-  userPreferences: () => request<UserPreferences>("/user-preferences/me"),
-  saveUserPreferences: (input: UserPreferencesUpdate) =>
+  userPreferences: (expectedUserId: string) =>
+    request<UserPreferences>("/user-preferences/me", undefined, expectedUserId),
+  saveUserPreferences: (input: UserPreferencesUpdate, expectedUserId: string) =>
     request<UserPreferences>("/user-preferences/me", {
       method: "PUT",
       body: JSON.stringify(input),
-    }),
-  deleteUserPreferences: () => request<UserPreferences>("/user-preferences/me", { method: "DELETE" }),
-  createUserEvent: (input: UserEventInput) =>
+    }, expectedUserId),
+  deleteUserPreferences: (expectedUserId: string) =>
+    request<UserPreferences>("/user-preferences/me", { method: "DELETE" }, expectedUserId),
+  createUserEvent: (input: UserEventInput, expectedUserId: string) =>
     request<{ id: string; event_type: UserEventType }>("/user-events", {
       method: "POST",
       body: JSON.stringify(input),
-    }),
+    }, expectedUserId),
   recordUserEvent: async (input: UserEventInput) => {
-    if (!(await getApiAuthToken())) return;
+    const expectedUserId = await getApiAuthUserId();
+    if (!expectedUserId) return;
     await request<{ id: string; event_type: UserEventType }>("/user-events", {
       method: "POST",
       body: JSON.stringify(input),
-    });
+    }, expectedUserId);
   },
   recommendations: (expectedUserId: string) =>
     request<ProgramIdea[]>("/recommendations/me", undefined, expectedUserId),
