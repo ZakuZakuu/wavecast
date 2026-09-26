@@ -6,8 +6,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from urllib.parse import quote
 from typing import Any, cast
+from urllib.parse import quote
 from uuid import uuid4
 from wave import open as open_wave
 
