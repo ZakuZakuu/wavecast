@@ -1,3 +1,7 @@
+import os
+from uuid import uuid4
+
+import pytest
 from fastapi.testclient import TestClient
 from wavecast.proposals import (
     DeterministicMockProgramProposalGenerator,
@@ -8,6 +12,7 @@ from wavecast.storage import (
     InMemoryGenerationQuotaRepository,
     InMemoryUserLibraryRepository,
 )
+from wavecast.storage.recommendations import PostgresProgramIdeaRepository
 from wavecast.user_context import (
     Genre,
     InMemoryUserEventRepository,
@@ -141,3 +146,62 @@ def test_recommendation_materialization_is_owned_quota_bound_and_single_use(monk
     assert refreshed_inventory.status_code == 200
     assert idea_id not in {idea["id"] for idea in refreshed_inventory.json()}
     assert len(refreshed_inventory.json()) >= 2
+
+
+def test_postgres_recommendation_materialization_does_not_nest_event_loop(monkeypatch) -> None:
+    database_url = os.getenv("WAVECAST_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("set WAVECAST_TEST_DATABASE_URL to run Postgres integration tests")
+
+    user_id = f"recommendation-api-{uuid4().hex}"
+    token = f"token-{uuid4().hex}"
+
+    class FakeVerifier:
+        async def verify(self, candidate: str) -> str:
+            assert candidate == token
+            return user_id
+
+    ideas = PostgresProgramIdeaRepository(database_url)
+    proposals = InMemoryProgramProposalRepository()
+    monkeypatch.setattr(api_module, "_auth_verifier", FakeVerifier())
+    monkeypatch.setattr(
+        api_module,
+        "user_preferences_repository",
+        InMemoryUserPreferencesRepository(),
+    )
+    monkeypatch.setattr(api_module, "_user_event_repository", InMemoryUserEventRepository())
+    monkeypatch.setattr(api_module, "proposal_repository", proposals)
+    monkeypatch.setattr(api_module, "recommendation_repository", ideas)
+    monkeypatch.setattr(
+        api_module,
+        "proposal_generator",
+        DeterministicMockProgramProposalGenerator(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "generation_quota_repository",
+        InMemoryGenerationQuotaRepository(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "user_library_repository",
+        InMemoryUserLibraryRepository(),
+    )
+    client = TestClient(api_module.app)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    try:
+        inventory = client.get("/api/recommendations/me", headers=headers)
+        assert inventory.status_code == 200
+        idea_id = inventory.json()[0]["id"]
+
+        generated = client.post(
+            f"/api/recommendations/me/{idea_id}/program-proposal",
+            headers=headers,
+        )
+
+        assert generated.status_code == 200
+        proposal_id = generated.json()["proposals"][0]["id"]
+        assert proposals.get_for_user(user_id, proposal_id) is not None
+    finally:
+        ideas.close()
