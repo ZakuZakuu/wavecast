@@ -267,11 +267,20 @@ narration_materializer = NarrationMaterializer(_tts_provider, audio_storage)
 def _build_progressive_runtime(
     settings: ProviderSettings, storage: ObjectStorageProvider
 ) -> StagedProgressiveRuntimeAdapter | None:
-    if settings.mode != "live" and not settings.has_live_progressive_intelligence:
+    if (
+        settings.mode == "mock"
+        and settings.resolved_music_provider != "mock"
+        and not settings.has_live_progressive_intelligence
+    ):
         return None
-    return StagedProgressiveRuntimeAdapter(
-        create_episode_assembly_service(settings, storage=storage)
-    )
+    try:
+        return StagedProgressiveRuntimeAdapter(
+            create_episode_assembly_service(settings, storage=storage)
+        )
+    except ProviderConfigurationError:
+        if settings.mode == "live" or settings.has_live_episode_capability:
+            raise
+        return None
 
 
 progressive_runtime = _build_progressive_runtime(_provider_settings, audio_storage)
