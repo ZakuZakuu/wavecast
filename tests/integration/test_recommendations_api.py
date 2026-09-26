@@ -119,7 +119,8 @@ def test_recommendation_materialization_is_owned_quota_bound_and_single_use(monk
 
     inventory = client.get("/api/recommendations/me", headers=headers_a)
     assert inventory.status_code == 200
-    idea_id = inventory.json()[0]["id"]
+    idea = inventory.json()[0]
+    idea_id = idea["id"]
 
     other_user = client.post(
         f"/api/recommendations/me/{idea_id}/program-proposal",
@@ -132,7 +133,12 @@ def test_recommendation_materialization_is_owned_quota_bound_and_single_use(monk
         headers=headers_a,
     )
     assert generated.status_code == 200
-    proposal_id = generated.json()["proposals"][0]["id"]
+    proposal = generated.json()["proposals"][0]
+    proposal_id = proposal["id"]
+    assert proposal["title"] == idea["title"]
+    assert proposal["short_description"] == idea["description"]
+    assert set(idea["tags"]).issubset(set(proposal["genre_tags"]))
+    assert proposal["anchor_artists"] == []
     assert proposals.get_for_user("user-a", proposal_id) is not None
     assert proposals.get_for_user("user-b", proposal_id) is None
 
