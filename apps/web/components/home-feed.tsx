@@ -1,17 +1,26 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api";
-import type { Seed } from "../lib/types";
+import { authClient } from "../lib/auth-client";
+import type { ProgramIdea, Seed } from "../lib/types";
 import { AppShell } from "./app-shell";
 import { ProgramCard } from "./program-card";
+import { RecommendationCard } from "./recommendation-card";
 import { WaveIcon } from "./wave-icon";
 
 export function HomeFeed() {
+  const router = useRouter();
+  const { data: session, isPending: authPending } = authClient.useSession();
   const [seeds, setSeeds] = useState<Seed[]>([]);
+  const [recommendations, setRecommendations] = useState<ProgramIdea[]>([]);
+  const [recommendationsLoading, setRecommendationsLoading] = useState(false);
+  const [startingIdeaId, setStartingIdeaId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [recommendationError, setRecommendationError] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -20,6 +29,38 @@ export function HomeFeed() {
       .then(setSeeds)
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "节目暂时无法载入"));
   }, []);
+
+  useEffect(() => {
+    if (authPending) return;
+    const userId = session?.user?.id;
+    if (!userId) {
+      setRecommendations([]);
+      setRecommendationError(null);
+      setRecommendationsLoading(false);
+      return;
+    }
+
+    let active = true;
+    setRecommendationsLoading(true);
+    setRecommendationError(null);
+    api.recommendations(userId)
+      .then((ideas) => {
+        if (active) setRecommendations(ideas);
+      })
+      .catch((reason: unknown) => {
+        if (active) {
+          setRecommendationError(
+            reason instanceof Error ? reason.message : "个性化节目暂时无法载入",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setRecommendationsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [authPending, session?.user?.id]);
 
   const searchResults = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -34,6 +75,26 @@ export function HomeFeed() {
       ].some((value) => value.toLocaleLowerCase().includes(needle)),
     );
   }, [query, seeds]);
+
+  const startRecommendation = async (idea: ProgramIdea) => {
+    const userId = session?.user?.id;
+    if (!userId || startingIdeaId) return;
+    setStartingIdeaId(idea.id);
+    setRecommendationError(null);
+    try {
+      const batch = await api.materializeRecommendation(idea.id, userId);
+      const proposal = batch.proposals[0];
+      if (!proposal) throw new Error("节目暂时无法生成");
+      router.push(`/program/${proposal.id}`);
+    } catch (reason: unknown) {
+      setRecommendationError(
+        reason instanceof Error ? reason.message : "节目暂时无法生成",
+      );
+      setStartingIdeaId(null);
+    }
+  };
+
+  const signedIn = Boolean(session?.user?.id);
 
   return (
     <AppShell>
@@ -55,7 +116,9 @@ export function HomeFeed() {
           <WaveIcon name={searchOpen ? "close" : "search"} />
         </button>
         <Link href="/account" className="profile-link" aria-label="账户">
-          <span className="profile-dot" aria-hidden="true">访</span>
+          <span className="profile-dot" aria-hidden="true">
+            {session?.user?.name?.slice(0, 1) ?? "访"}
+          </span>
         </Link>
       </div>
 
@@ -97,10 +160,42 @@ export function HomeFeed() {
       {error ? <p className="inline-error">{error}</p> : null}
 
       <section className="feed-section">
-        <div className="program-shelf" aria-label="为你推荐的节目">
-          {seeds.map((seed) => <ProgramCard seed={seed} key={seed.id} />)}
-          {!seeds.length && !error ? Array.from({ length: 4 }).map((_, index) => <div className="program-skeleton" key={index} />) : null}
-        </div>
+        {signedIn ? (
+          <>
+            <div className="section-title-row">
+              <h2>专属电台</h2>
+              <span>根据你的偏好与最近收听</span>
+            </div>
+            {recommendationError ? <p className="inline-error">{recommendationError}</p> : null}
+            <div className="program-shelf" aria-label="为你生成的节目">
+              {recommendations.map((idea) => (
+                <RecommendationCard
+                  idea={idea}
+                  busy={startingIdeaId === idea.id}
+                  onStart={(selected) => void startRecommendation(selected)}
+                  key={idea.id}
+                />
+              ))}
+              {(recommendationsLoading || authPending) && !recommendations.length
+                ? Array.from({ length: 3 }).map((_, index) => (
+                    <div className="program-skeleton" key={"recommendation-skeleton-" + index} />
+                  ))
+                : null}
+            </div>
+            {!recommendationsLoading && !recommendations.length && !recommendationError ? (
+              <p className="home-recommendation-empty">
+                先去 <Link href="/onboarding">补充一点音乐偏好</Link>，WaveCast 会从这里开始认识你。
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <div className="program-shelf" aria-label="推荐节目">
+            {seeds.map((seed) => <ProgramCard seed={seed} key={seed.id} />)}
+            {!seeds.length && !error
+              ? Array.from({ length: 4 }).map((_, index) => <div className="program-skeleton" key={index} />)
+              : null}
+          </div>
+        )}
       </section>
 
       <section className="feed-section">
