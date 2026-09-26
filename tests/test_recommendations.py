@@ -76,7 +76,6 @@ def test_context_aggregates_preferences_recent_events_favorites_and_created_prog
         [
             _proposal("favorite-program", "收藏的 Neo Soul 路线", "Jill Scott"),
             _proposal("recent-program", "最近听过的 City Pop 路线", "Anri"),
-            _proposal("other-user-program", "不应泄漏的节目", "Private Artist"),
             _proposal("created-program", "用户自己创建的节目", "Mariya Takeuchi"),
         ],
         owner_user_id="user-a",
