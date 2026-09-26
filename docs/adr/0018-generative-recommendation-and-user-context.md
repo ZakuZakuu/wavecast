@@ -107,3 +107,27 @@ Event identifiers are treated as optional opaque references in this MVP. Only
 signals that can be resolved through an owner-scoped proposal lookup or a
 public static program lookup contribute program metadata to context; unknown
 references are ignored rather than granting access or creating records.
+
+
+## Phase 8C.3 MVP inventory and commit-point notes
+
+For the hackathon MVP, persisted `ProgramIdea` records are the recommendation
+inventory instead of introducing a second inventory table or a background worker.
+
+- `AVAILABLE` ideas are eligible for Home.
+- Clicking a personalized card is the commit point: the idea is atomically
+  claimed as `USED`, adapted through `ProgramIdeaProposalSeed`, then sent
+  through the existing proposal generator, quota, ownership, and Library paths.
+- Failed proposal generation restores the idea to `AVAILABLE`.
+- Home inventory reads may opportunistically refill with the deterministic
+  planner when recent stock has been consumed below the low-water mark. Merely
+  having a small fresh initial batch does not trigger repeated refill.
+- Home loading itself never calls the proposal provider. Paid/live work can only
+  begin after an explicit listener click.
+- Guest Home remains the shared editorial/static feed; personalized inventory is
+  authenticated and owner-scoped.
+
+This synchronous deterministic refill is intentionally an MVP seam. If the
+recommendation planner later becomes provider-backed, trend-aware, or expensive,
+inventory creation should move behind a durable background/scheduled mechanism
+without changing the Home or proposal commit-point contracts.
