@@ -30,7 +30,7 @@ export function programPresentation(seed: Seed): ProgramPresentation {
   return {
     genres: override.genres ?? seed.topic,
     description: override.description ?? seed.short_description,
-    artists: override.artists ?? [seed.opening_track_artist],
+    artists: override.artists ?? (seed.opening_track_ref.startsWith("mock:") ? [] : [seed.opening_track_artist]),
     route: override.route ?? ["开场", "展开", "转折", "收尾"],
     mood: override.mood ?? seed.topic,
   };
