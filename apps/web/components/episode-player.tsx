@@ -10,7 +10,7 @@ import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixd
 import { createLatestSegmentCommitQueue, type LatestSegmentCommitQueue } from "../lib/mix-commit-queue";
 import { linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition } from "../lib/mix-timeline";
 import type { MixPlan } from "../lib/mix-timeline";
-import { formatSeconds, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
+import { formatSeconds, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
 import { isEpisodeSaved, recordRecentEpisode, saveMaterializedEpisode } from "../lib/user-library";
@@ -220,8 +220,23 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, []);
 
   const completeBrowserSegment = useCallback(() => {
-    if (localEpisode?.is_playing) void update(api.completed(localEpisode.id));
-  }, [localEpisode?.id, localEpisode?.is_playing]);
+    if (!localEpisode?.is_playing) return;
+    void api.completed(localEpisode.id)
+      .then((completed) => {
+        setEpisode(completed);
+        setError(null);
+        if (isProgramPlaybackComplete(completed)) {
+          void api.recordUserEvent({
+            event_type: "PLAY_COMPLETE",
+            program_id: completed.seed_id,
+            episode_id: completed.id,
+          }).catch(() => undefined);
+        }
+      })
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : "操作暂时没有完成");
+      });
+  }, [localEpisode?.id, localEpisode?.is_playing, setEpisode]);
 
   const exportEpisode = useCallback(async () => {
     if (!localEpisode || localEpisode.state !== "MATERIALIZED" || exportState === "preparing") return;
