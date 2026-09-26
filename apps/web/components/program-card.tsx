@@ -19,7 +19,10 @@ export function ProgramCard({ seed, compact = false }: { seed: Seed; compact?: b
       />
       <div className="program-card-copy">
         <strong>{seed.title}</strong>
-        <span>{durationLabel(seed.estimated_duration_seconds)} · {seed.opening_track_artist}</span>
+        <span>
+          {durationLabel(seed.estimated_duration_seconds)}
+          {seed.opening_track_ref.startsWith("mock:") ? "" : ` · ${seed.opening_track_artist}`}
+        </span>
       </div>
     </Link>
   );

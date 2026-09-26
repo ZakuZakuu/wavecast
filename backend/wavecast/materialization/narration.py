@@ -47,7 +47,16 @@ class NarrationMaterializer:
         rendered = render_narration(synthesis_text, segment.tts_cues)
         # Profile selection must inspect authored synthesis text, not rendered cue markers.
         # Cue markers are transport instructions rather than spoken language.
-        profile = SpeechDirector.profile_for(segment.narration_role, synthesis_text)
+        baseline_speed = getattr(
+            self.tts_provider,
+            "speech_speed_baseline",
+            SpeechDirector.DEFAULT_BASE_SPEED,
+        )
+        profile = SpeechDirector.profile_for(
+            segment.narration_role,
+            synthesis_text,
+            baseline_speed=baseline_speed if isinstance(baseline_speed, (int, float)) else None,
+        )
         cache_key = _provider_cache_key(
             self.tts_provider, rendered.text, rendered.recognized_cues, profile
         )

@@ -75,7 +75,8 @@ class MockTTSProvider:
     provider_name = "mock-tts"
     model = "mock-speech"
     voice_id = "mock-narrator"
-    speed = 1.0
+    speed = 0.8
+    speech_speed_baseline = 0.8
     language_boost = "auto"
     audio_settings = {"sample_rate": 8000, "bitrate": 128000, "format": "wav", "channel": 1}
 

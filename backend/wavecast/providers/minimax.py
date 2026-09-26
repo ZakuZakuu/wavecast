@@ -1,4 +1,4 @@
-"""MiniMax Speech 2.8 HD synchronous TTS adapter."""
+"""MiniMax Speech 2.8 synchronous TTS adapter."""
 
 from __future__ import annotations
 
@@ -50,6 +50,10 @@ class MiniMaxTTSProvider:
         self.client = client or httpx.AsyncClient(timeout=self.settings.timeout_seconds)
         self._owns_client = client is None
         self._locks: dict[str, asyncio.Lock] = {}
+
+    @property
+    def speech_speed_baseline(self) -> float:
+        return self.settings.minimax_tts_speed
 
     def cache_key(
         self,

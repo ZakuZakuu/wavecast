@@ -17,30 +17,38 @@ class SpeechProfile(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    profile_id: str = "adaptive-v1"
-    version: int = Field(default=1, ge=1)
-    speed: float = Field(ge=0.85, le=0.96)
+    profile_id: str = "adaptive-v2"
+    version: int = Field(default=2, ge=1)
+    speed: float = Field(ge=0.5, le=2.0)
     language_boost: str | None = None
 
 
 class SpeechDirector:
-    """Pure policy: role and a tiny mixed-script signal choose a bounded profile."""
+    """Pure policy: start from one baseline and make only small role/text adjustments."""
 
-    MIN_SPEED = 0.85
-    MAX_SPEED = 0.96
-    MIXED_SCRIPT_DELTA = 0.03
-    _ROLE_SPEEDS = {
-        NarrationRole.INTRO: 0.90,
-        NarrationRole.TRACK_INTRO: 0.92,
-        NarrationRole.TRANSITION: 0.90,
-        NarrationRole.OUTRO: 0.88,
-        NarrationRole.GENERAL: 0.90,
+    DEFAULT_BASE_SPEED = 0.80
+    MIN_SPEED = 0.50
+    MAX_SPEED = 2.00
+    MIXED_SCRIPT_DELTA = 0.02
+    _ROLE_SPEED_DELTAS = {
+        NarrationRole.INTRO: 0.00,
+        NarrationRole.TRACK_INTRO: 0.02,
+        NarrationRole.TRANSITION: 0.00,
+        NarrationRole.OUTRO: -0.02,
+        NarrationRole.GENERAL: 0.00,
     }
 
     @classmethod
-    def profile_for(cls, role: NarrationRole, rendered_text: str) -> SpeechProfile:
-        speed = cls._ROLE_SPEEDS[role]
+    def profile_for(
+        cls,
+        role: NarrationRole,
+        rendered_text: str,
+        *,
+        baseline_speed: float | None = None,
+    ) -> SpeechProfile:
+        baseline = cls.DEFAULT_BASE_SPEED if baseline_speed is None else baseline_speed
+        speed = baseline + cls._ROLE_SPEED_DELTAS[role]
         if _CJK_RE.search(rendered_text) and _LATIN_RE.search(rendered_text):
             speed -= cls.MIXED_SCRIPT_DELTA
         speed = min(cls.MAX_SPEED, max(cls.MIN_SPEED, speed))
-        return SpeechProfile(speed=speed)
+        return SpeechProfile(speed=round(speed, 3))

@@ -28,8 +28,8 @@ def test_speech_director_is_deterministic_and_bounded() -> None:
     second = SpeechDirector.profile_for(NarrationRole.TRACK_INTRO, "\u5148\u542c\u8fd9\u4e00\u9996")
 
     assert first == second
-    assert 0.85 <= first.speed <= 0.96
-    assert first.speed == 0.92
+    assert 0.5 <= first.speed <= 2.0
+    assert first.speed == 0.82
 
 
 def test_mixed_cjk_and_latin_is_slower_than_same_role_plain_cjk() -> None:
@@ -41,13 +41,13 @@ def test_mixed_cjk_and_latin_is_slower_than_same_role_plain_cjk() -> None:
     )
 
     assert mixed.speed < plain.speed
-    assert mixed.speed >= 0.85
+    assert mixed.speed >= 0.5
 
 
 def test_tts_cache_key_includes_selected_profile() -> None:
     provider = MockTTSProvider(LocalObjectStorageProvider())
-    slow = SpeechProfile(speed=0.88)
-    quick = SpeechProfile(speed=0.92)
+    slow = SpeechProfile(speed=0.78)
+    quick = SpeechProfile(speed=0.82)
 
     assert provider.cache_key(
         "\u540c\u4e00\u6bb5\u65c1\u767d", [], profile=slow
@@ -92,4 +92,16 @@ def test_materializer_passes_profile_and_keeps_visible_text(tmp_path) -> None:
 
     assert segment.narration_text == "\u542c\u542c\u8fd9\u4e00\u6bb5\u3002"
     assert provider.calls == 1
-    assert provider.profiles == [SpeechProfile(speed=0.92)]
+    assert provider.profiles == [SpeechProfile(speed=0.82)]
+
+
+def test_speech_director_tracks_provider_baseline() -> None:
+    default = SpeechDirector.profile_for(NarrationRole.TRANSITION, "继续听下去")
+    overridden = SpeechDirector.profile_for(
+        NarrationRole.TRANSITION,
+        "继续听下去",
+        baseline_speed=0.9,
+    )
+
+    assert default.speed == 0.8
+    assert overridden.speed == 0.9
