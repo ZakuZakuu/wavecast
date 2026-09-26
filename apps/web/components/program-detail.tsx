@@ -109,17 +109,19 @@ export function ProgramDetail({ seedId }: { seedId: string }) {
 
           <p className="detail-description">{presentation.description}</p>
 
-          <section className="detail-section">
-            <h2>你可能会听到</h2>
-            <div className="artist-row">
-              {presentation.artists.map((artist, index) => (
-                <div className="artist-pill" key={artist}>
-                  <span className={"artist-avatar avatar-" + (index % 4)}>{artist.slice(0, 1)}</span>
-                  <small>{artist}</small>
-                </div>
-              ))}
-            </div>
-          </section>
+          {presentation.artists.length ? (
+            <section className="detail-section">
+              <h2>你可能会听到</h2>
+              <div className="artist-row">
+                {presentation.artists.map((artist, index) => (
+                  <div className="artist-pill" key={artist}>
+                    <span className={"artist-avatar avatar-" + (index % 4)}>{artist.slice(0, 1)}</span>
+                    <small>{artist}</small>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <section className="detail-section route-section">
             <div className="section-title-row"><h2>节目路线</h2><span>{presentation.route.length} 章</span></div>
