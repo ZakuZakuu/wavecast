@@ -3,6 +3,7 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -72,6 +73,8 @@ from wavecast.recommendations import (
     InMemoryProgramIdeaRepository,
     ProgramIdeaRepository,
     ProgramIdeaResponse,
+    ProviderBackedRecommendationPlanner,
+    RecommendationPlanner,
     RecommendationService,
     UserContextAggregator,
 )
@@ -151,7 +154,30 @@ recommendation_repository: ProgramIdeaRepository = (
     if DATABASE_URL
     else InMemoryProgramIdeaRepository()
 )
-recommendation_planner = DeterministicRecommendationPlanner()
+
+
+def _build_recommendation_planner(settings: ProviderSettings) -> RecommendationPlanner:
+    mode = os.getenv("WAVECAST_RECOMMENDATION_PLANNER", "deterministic").strip().lower()
+    if mode == "deterministic":
+        return DeterministicRecommendationPlanner()
+    if mode != "deepseek":
+        raise ProviderConfigurationError(
+            "WAVECAST_RECOMMENDATION_PLANNER must be deterministic or deepseek"
+        )
+
+    # Recommendation inference is an independently gated capability.  It may use
+    # DeepSeek while episode assembly, TTS, and music providers remain in mock
+    # mode, so enabling personalized ideas does not implicitly enable paid
+    # generation elsewhere.
+    recommendation_settings = replace(settings, mode="live")
+    recommendation_settings.credential_for("deepseek")
+    ledger = UsageLedger()
+    return ProviderBackedRecommendationPlanner(
+        lambda: DeepSeekLLMProvider(recommendation_settings, ledger=ledger)
+    )
+
+
+recommendation_planner = _build_recommendation_planner(_provider_settings)
 
 _auth_jwks_url = os.getenv("WAVECAST_AUTH_JWKS_URL")
 _auth_issuer = os.getenv("WAVECAST_AUTH_ISSUER")
