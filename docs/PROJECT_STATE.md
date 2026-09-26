@@ -11,26 +11,22 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 8B.1 — durable proposals and optional account identity.
-- **Current stage:** UI v1 / PR #68 is merged at
-  26908b98013a1515fd8197ee92de18ad1894acf4. Phase 8A mock/live proposal code
-  remains in Draft PRs #69 and #70. The one authorized Phase 8A-live proposal
-  probe at `bc9953633f53da6b4bc9f52ad4b95b7475ac4737` failed after music
-  readiness with one provider call and no retry; the original success-gated
-  merge of #69/#70 therefore remains closed. Phase 8B.1 is being developed on
-  `codex/phase8b-user-foundation`, stacked from that reviewed #70 HEAD.
-- **Canonical main:** 26908b98013a1515fd8197ee92de18ad1894acf4 (PR #68 merge
-  commit).
-- **Active development stack:** `codex/phase8b-user-foundation` starts from
-  reviewed PR #70 HEAD. PRs #69/#70 remain Draft; do not retry the original
-  bounded probe or merge them under its failed-probe success gate.
-- **Immediate work:** make generated proposals durable across API restarts,
-  add an optional Better Auth/JWT identity seam while preserving `listener_id`,
-  and keep `/api/auth/*` in Next.js ahead of the FastAPI fallback rewrite.
-- **Release/cost gate:** later bounded live validation is authorized when it
-  has a specific purpose and cost guard; the original #70 first probe remains
-  strictly single-call/no-retry. OAuth provider credentials are environment
-  variables only. No credential or live-provider secret is stored in this state.
+- **Current milestone:** Phase 8C.2 — Generative Recommendation Planner MVP.
+- **Current stage:** PR #73 Phase 8C.1 was reviewed and merged at
+  `18ed2914c891cd5a6d5b35249c7decaaec5d4063`. Phase 8C.2 is being implemented
+  on `codex/phase8c2-generative-recommendation-planner` from that exact base.
+  This slice adds private user-context aggregation, a deterministic planner,
+  durable user-owned program ideas, and authenticated recommendation endpoints;
+  it does not add a recommendation feed UI or call an LLM/provider.
+- **Canonical Phase 8C base:**
+  `18ed2914c891cd5a6d5b35249c7decaaec5d4063` (PR #73 merge commit).
+- **Immediate work:** finish targeted/full validation, open a Draft PR, and
+  request exact-head GPT review. Do not merge, deploy, or run live/provider
+  calls before that review and a later explicit task.
+- **Privacy and cost gate:** recommendation context is internal and owner
+  scoped; API responses omit internal user identity. Behavior events remain
+  bounded product signals, with no prompts, model responses, reasoning, or
+  provider metadata. No live provider calls are part of this milestone.
 
 ## Phase 7A progressive generation contract
 

@@ -103,6 +103,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     const load = episodeId ? api.get(episodeId) : api.start(seedId!);
     load.then((started) => {
       episodeIdRef.current = started.id;
+      void api.recordUserEvent({
+        event_type: "PLAY_START",
+        program_id: started.seed_id,
+        episode_id: started.id,
+      }).catch(() => undefined);
       if (mounted) setEpisode(started);
       else deferLeave(started.id);
     }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "节目暂时无法开始"));
@@ -252,6 +257,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       }
       setSaved(true);
       setError(null);
+      void api.recordUserEvent({
+        event_type: "SAVE",
+        program_id: ready.seed_id,
+        episode_id: ready.id,
+      }).catch(() => undefined);
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "保存节目失败，请稍后重试");
     } finally {
@@ -392,6 +402,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       mixCommitQueueRef.current?.acknowledge(response.current_segment_id);
       setEpisode(response);
       setError(null);
+      void api.recordUserEvent({
+        event_type: "SKIP",
+        program_id: response.seed_id,
+        episode_id: response.id,
+      }).catch(() => undefined);
     };
     try {
       await (mixCommitQueueRef.current ? mixCommitQueueRef.current.runExclusive(runNext) : runNext());

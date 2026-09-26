@@ -110,3 +110,13 @@ export type UserPreferences = {
 export type UserPreferencesUpdate = Omit<UserPreferences, "user_id" | "updated_at">;
 export type UserEventType = "PLAY_START" | "PLAY_COMPLETE" | "LIKE" | "FAVORITE" | "SAVE" | "SKIP";
 export type UserEventInput = { event_type: UserEventType; program_id?: string; episode_id?: string };
+export type ProgramIdea = {
+  id: string;
+  title: string;
+  description: string;
+  reason: string;
+  tags: string[];
+  source: string;
+  status: "AVAILABLE" | "DISMISSED" | "USED";
+  created_at: string;
+};
