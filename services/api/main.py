@@ -520,7 +520,7 @@ def _recommendation_service() -> RecommendationService:
 
 @app.get("/api/recommendations/me", response_model=list[ProgramIdeaResponse])
 def list_recommendations(request: Request) -> list[ProgramIdeaResponse]:
-    ideas = _recommendation_service().list_for_user(authenticated_user(request))
+    ideas = _recommendation_service().inventory_for_user(authenticated_user(request))
     return [ProgramIdeaResponse.from_idea(idea) for idea in ideas]
 
 
@@ -528,6 +528,105 @@ def list_recommendations(request: Request) -> list[ProgramIdeaResponse]:
 def refresh_recommendations(request: Request) -> list[ProgramIdeaResponse]:
     ideas = _recommendation_service().refresh_for_user(authenticated_user(request))
     return [ProgramIdeaResponse.from_idea(idea) for idea in ideas]
+
+
+@app.post(
+    "/api/recommendations/me/{idea_id}/program-proposal",
+    response_model=ProgramProposalBatch,
+)
+async def materialize_recommendation(
+    idea_id: str,
+    request: Request,
+) -> ProgramProposalBatch:
+    user_id = authenticated_user(request)
+    recommendation_service = _recommendation_service()
+    current = recommendation_service.get_for_user(user_id, idea_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    claimed = recommendation_service.claim_for_materialization(user_id, idea_id)
+    if claimed is None:
+        raise HTTPException(status_code=409, detail="Recommendation is no longer available")
+    owner = principal(request)
+    seed = claimed.to_proposal_seed()
+    body = seed.request
+    if proposal_generator is None:
+        recommendation_service.restore_available(user_id, idea_id)
+        raise HTTPException(status_code=503, detail="Program proposal generation is not configured")
+
+    try:
+        reservations = await to_thread.run_sync(
+            lambda: generation_quota_repository.reserve(
+                owner.listener_id,
+                owner.user_id,
+                body.count,
+                guest_limit=GUEST_PROGRAM_LIMIT,
+                auth_daily_limit=AUTH_DAILY_PROGRAM_LIMIT,
+                global_daily_limit=GLOBAL_DAILY_PROGRAM_LIMIT,
+            )
+        )
+    except QuotaExceededError as error:
+        recommendation_service.restore_available(user_id, idea_id)
+        if error.reason == "account_daily_limit":
+            detail = "今天的调频次数已达上限，请明天再试。"
+        else:
+            detail = "今天的调频服务已达到使用上限，请稍后再试。"
+        raise HTTPException(status_code=429, detail=detail) from error
+    except BaseException:
+        recommendation_service.restore_available(user_id, idea_id)
+        raise
+
+    proposal_persisted = False
+    try:
+        proposals = await proposal_generator.generate(body)
+        if len(proposals) != 1:
+            raise ProgramProposalGenerationError("proposal_count_mismatch")
+        proposal = proposals[0]
+        await to_thread.run_sync(
+            lambda: proposal_repository.save_many(
+                proposals,
+                owner_listener_id=owner.listener_id,
+                owner_user_id=user_id,
+                source="recommendation",
+            )
+        )
+        proposal_persisted = True
+        await to_thread.run_sync(
+            generation_quota_repository.charge,
+            reservations,
+            [proposal.id],
+        )
+        await to_thread.run_sync(
+            user_library_repository.put,
+            user_id,
+            "CREATED",
+            proposal.id,
+            {
+                "id": proposal.id,
+                "recommendationId": idea_id,
+                "reason": claimed.reason,
+            },
+        )
+        return ProgramProposalBatch(proposals=proposals)
+    except ProgramProposalGenerationError as error:
+        await to_thread.run_sync(generation_quota_repository.release, reservations)
+        recommendation_service.restore_available(user_id, idea_id)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Program proposal generation failed ({error.reason})",
+        ) from error
+    except ProviderError as error:
+        await to_thread.run_sync(generation_quota_repository.release, reservations)
+        recommendation_service.restore_available(user_id, idea_id)
+        raise HTTPException(status_code=502, detail="Program proposal provider failed") from error
+    except ProposalPersistenceConflict as error:
+        await to_thread.run_sync(generation_quota_repository.release, reservations)
+        recommendation_service.restore_available(user_id, idea_id)
+        raise HTTPException(status_code=409, detail="Program proposal could not be saved") from error
+    except BaseException:
+        if not proposal_persisted:
+            await to_thread.run_sync(generation_quota_repository.release, reservations)
+            recommendation_service.restore_available(user_id, idea_id)
+        raise
 
 
 
