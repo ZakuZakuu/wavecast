@@ -118,6 +118,28 @@ class ProgramIdea(BaseModel):
             ),
         )
 
+    def apply_to_proposal(self, proposal: ProgramProposal) -> ProgramProposal:
+        """Keep the recommendation's editorial promise authoritative after materialization.
+
+        The downstream proposal generator may still supply implementation-owned details such
+        as the opening track, cover, duration, and route. Recommendation copy and taste tags
+        must not be replaced by deterministic mock templates. Mock catalog identities remain
+        internal scaffolding and are never promoted to user-visible anchor artists.
+        """
+        return proposal.model_copy(
+            update={
+                "title": self.title,
+                "short_description": self.description,
+                "genre_tags": list(self.tags[:8]),
+                "mood_tags": [],
+                "anchor_artists": (
+                    []
+                    if proposal.opening_track_ref.startswith("mock:")
+                    else list(proposal.anchor_artists)
+                ),
+            }
+        )
+
 
 class ProgramIdeaResponse(BaseModel):
     """Public candidate shape; repository ownership identifiers stay private."""
