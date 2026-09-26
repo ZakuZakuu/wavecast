@@ -1,6 +1,13 @@
 from fastapi.testclient import TestClient
-from wavecast.proposals import InMemoryProgramProposalRepository
+from wavecast.proposals import (
+    DeterministicMockProgramProposalGenerator,
+    InMemoryProgramProposalRepository,
+)
 from wavecast.recommendations import InMemoryProgramIdeaRepository
+from wavecast.storage import (
+    InMemoryGenerationQuotaRepository,
+    InMemoryUserLibraryRepository,
+)
 from wavecast.user_context import (
     Genre,
     InMemoryUserEventRepository,
@@ -66,4 +73,71 @@ def test_recommendation_refresh_is_authenticated_personalized_and_rate_limited(m
     assert [idea["id"] for idea in second.json()] == [idea["id"] for idea in payload]
     assert [idea["id"] for idea in listed.json()] == [idea["id"] for idea in payload]
     assert other_user.status_code == 200
-    assert other_user.json() == []
+    assert other_user.json()
+    assert all("R&B" not in idea["title"] for idea in other_user.json())
+
+
+def test_recommendation_materialization_is_owned_quota_bound_and_single_use(monkeypatch) -> None:
+    class FakeVerifier:
+        async def verify(self, token: str) -> str:
+            return {"token-a": "user-a", "token-b": "user-b"}[token]
+
+    ideas = InMemoryProgramIdeaRepository()
+    proposals = InMemoryProgramProposalRepository()
+    monkeypatch.setattr(api_module, "_auth_verifier", FakeVerifier())
+    monkeypatch.setattr(
+        api_module,
+        "user_preferences_repository",
+        InMemoryUserPreferencesRepository(),
+    )
+    monkeypatch.setattr(api_module, "_user_event_repository", InMemoryUserEventRepository())
+    monkeypatch.setattr(api_module, "proposal_repository", proposals)
+    monkeypatch.setattr(api_module, "recommendation_repository", ideas)
+    monkeypatch.setattr(
+        api_module,
+        "proposal_generator",
+        DeterministicMockProgramProposalGenerator(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "generation_quota_repository",
+        InMemoryGenerationQuotaRepository(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "user_library_repository",
+        InMemoryUserLibraryRepository(),
+    )
+    client = TestClient(api_module.app)
+    headers_a = {"Authorization": "Bearer token-a"}
+    headers_b = {"Authorization": "Bearer token-b"}
+
+    inventory = client.get("/api/recommendations/me", headers=headers_a)
+    assert inventory.status_code == 200
+    idea_id = inventory.json()[0]["id"]
+
+    other_user = client.post(
+        f"/api/recommendations/me/{idea_id}/program-proposal",
+        headers=headers_b,
+    )
+    assert other_user.status_code == 404
+
+    generated = client.post(
+        f"/api/recommendations/me/{idea_id}/program-proposal",
+        headers=headers_a,
+    )
+    assert generated.status_code == 200
+    proposal_id = generated.json()["proposals"][0]["id"]
+    assert proposals.get_for_user("user-a", proposal_id) is not None
+    assert proposals.get_for_user("user-b", proposal_id) is None
+
+    repeated = client.post(
+        f"/api/recommendations/me/{idea_id}/program-proposal",
+        headers=headers_a,
+    )
+    assert repeated.status_code == 409
+
+    refreshed_inventory = client.get("/api/recommendations/me", headers=headers_a)
+    assert refreshed_inventory.status_code == 200
+    assert idea_id not in {idea["id"] for idea in refreshed_inventory.json()}
+    assert len(refreshed_inventory.json()) >= 2
