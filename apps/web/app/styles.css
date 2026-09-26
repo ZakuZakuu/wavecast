@@ -275,6 +275,35 @@ h1, h2, h3, strong { text-wrap: balance; }
 .program-card:active { transform: scale(.975); }
 
 .recommendation-card {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.recommendation-card:disabled {
+  cursor: wait;
+  opacity: .72;
+}
+.recommendation-card .program-card-copy span {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.recommendation-empty {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+}
+.recommendation-empty p { margin-bottom: 8px; }
+.recommendation-empty a { color: var(--accent); font-weight: 700; }
+
+.recommendation-card {
   width: 100%;
   padding: 0;
   border: 0;
