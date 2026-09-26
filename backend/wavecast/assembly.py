@@ -71,6 +71,7 @@ from wavecast.providers.contracts import (
 )
 from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.errors import (
+    ProviderConfigurationError,
     ProviderError,
     ProviderSchemaValidationError,
 )
