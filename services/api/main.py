@@ -3,7 +3,6 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
