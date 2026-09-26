@@ -110,6 +110,51 @@ def test_concurrent_refreshes_use_database_cooldown_lock() -> None:
             repository.close()
 
 
+def test_refresh_generator_can_run_sync_async_facades() -> None:
+    assert DATABASE_URL is not None
+    user_id = f"recommendation-nested-loop-test-{uuid4().hex}"
+    now = datetime.now(UTC)
+    repository = PostgresProgramIdeaRepository(DATABASE_URL)
+
+    def generate() -> list[ProgramIdea]:
+        # Recommendation generation reads through synchronous repository facades
+        # that internally use asyncio.run(). This must not execute on the
+        # Postgres refresh event loop.
+        asyncio.run(asyncio.sleep(0))
+        return [
+            ProgramIdea(
+                id=uuid4().hex,
+                user_id=user_id,
+                title="事件循环回归测试",
+                description="验证生成阶段可以安全读取同步异步仓储。",
+                reason="nested asyncio.run regression",
+                created_at=now,
+            )
+        ]
+
+    async def cleanup() -> None:
+        engine = create_async_engine(DATABASE_URL)
+        async with engine.begin() as connection:
+            await connection.execute(
+                delete(program_ideas_table).where(program_ideas_table.c.user_id == user_id)
+            )
+        await engine.dispose()
+
+    asyncio.run(cleanup())
+    try:
+        ideas = repository.refresh_if_due(
+            user_id,
+            now=now,
+            refresh_interval=timedelta(hours=24),
+            generate=generate,
+        )
+        assert len(ideas) == 1
+        assert ideas[0].user_id == user_id
+    finally:
+        repository.close()
+        asyncio.run(cleanup())
+
+
 def test_program_idea_status_transition_is_owner_scoped_and_single_use() -> None:
     assert DATABASE_URL is not None
     user_id = f"recommendation-status-test-{uuid4().hex}"
