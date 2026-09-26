@@ -97,6 +97,7 @@ def test_concurrent_refreshes_use_database_cooldown_lock() -> None:
                         user_id,
                         now=now,
                         refresh_interval=timedelta(hours=24),
+                        source="heuristic",
                         generate=generate,
                     ),
                     repositories,
@@ -146,10 +147,70 @@ def test_refresh_generator_can_run_sync_async_facades() -> None:
             user_id,
             now=now,
             refresh_interval=timedelta(hours=24),
+            source="heuristic",
             generate=generate,
         )
         assert len(ideas) == 1
         assert ideas[0].user_id == user_id
+    finally:
+        repository.close()
+        asyncio.run(cleanup())
+
+
+def test_refresh_ignores_cached_inventory_from_another_planner_source() -> None:
+    assert DATABASE_URL is not None
+    user_id = f"recommendation-source-test-{uuid4().hex}"
+    now = datetime.now(UTC)
+    repository = PostgresProgramIdeaRepository(DATABASE_URL)
+    old = ProgramIdea(
+        id=uuid4().hex,
+        user_id=user_id,
+        title="旧模板推荐",
+        description="旧 source 不应阻塞新 planner。",
+        reason="heuristic cache",
+        source="heuristic",
+        created_at=now,
+    )
+
+    async def cleanup() -> None:
+        engine = create_async_engine(DATABASE_URL)
+        async with engine.begin() as connection:
+            await connection.execute(
+                delete(program_ideas_table).where(program_ideas_table.c.user_id == user_id)
+            )
+        await engine.dispose()
+
+    asyncio.run(cleanup())
+    repository.save_many([old])
+    calls = 0
+
+    def generate() -> list[ProgramIdea]:
+        nonlocal calls
+        calls += 1
+        return [
+            ProgramIdea(
+                id=uuid4().hex,
+                user_id=user_id,
+                title="新的 AI 推荐",
+                description="planner source 改变后立即刷新。",
+                reason="provider-backed planner",
+                source="deepseek_planner",
+                created_at=now,
+            )
+        ]
+
+    try:
+        refreshed = repository.refresh_if_due(
+            user_id,
+            now=now,
+            refresh_interval=timedelta(hours=24),
+            source="deepseek_planner",
+            generate=generate,
+        )
+        assert calls == 1
+        assert len(refreshed) == 1
+        assert refreshed[0].source == "deepseek_planner"
+        assert refreshed[0].id != old.id
     finally:
         repository.close()
         asyncio.run(cleanup())
