@@ -126,17 +126,14 @@ class ProgramIdea(BaseModel):
         must not be replaced by deterministic mock templates. Mock catalog identities remain
         internal scaffolding and are never promoted to user-visible anchor artists.
         """
+        is_mock_opening = proposal.opening_track_ref.startswith("mock:")
         return proposal.model_copy(
             update={
                 "title": self.title,
                 "short_description": self.description,
                 "genre_tags": list(self.tags[:8]),
-                "mood_tags": [],
-                "anchor_artists": (
-                    []
-                    if proposal.opening_track_ref.startswith("mock:")
-                    else list(proposal.anchor_artists)
-                ),
+                "mood_tags": [] if is_mock_opening else list(proposal.mood_tags),
+                "anchor_artists": [] if is_mock_opening else list(proposal.anchor_artists),
             }
         )
 
