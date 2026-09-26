@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta
+from threading import RLock
 from typing import Any, cast
 
-from sqlalchemy import Column, DateTime, Index, String, Table, delete, desc, func, select
+from sqlalchemy import Column, DateTime, Index, String, Table, delete, desc, func, select, update
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -16,8 +17,10 @@ from wavecast.deployment import normalize_database_url
 from wavecast.recommendations import (
     MAX_LISTED_IDEAS_PER_USER,
     MAX_STORED_IDEAS_PER_USER,
+    MIN_AVAILABLE_IDEAS_PER_USER,
     ProgramIdea,
     ProgramIdeaRepository,
+    ProgramIdeaStatus,
 )
 from wavecast.storage.schema import metadata
 
@@ -41,12 +44,36 @@ class PostgresProgramIdeaRepository(ProgramIdeaRepository):
         self.engine: AsyncEngine = create_async_engine(
             normalize_database_url(database_url), poolclass=NullPool
         )
+        self._run_lock = RLock()
 
     def save_many(self, ideas: Iterable[ProgramIdea]) -> None:
         self._run(self._save_many(list(ideas)))
 
     def list_for_user(self, user_id: str, *, limit: int = 12) -> list[ProgramIdea]:
         return cast(list[ProgramIdea], self._run(self._list_for_user(user_id, limit)))
+
+    def get_for_user(self, user_id: str, idea_id: str) -> ProgramIdea | None:
+        return cast(ProgramIdea | None, self._run(self._get_for_user(user_id, idea_id)))
+
+    def transition_status(
+        self,
+        user_id: str,
+        idea_id: str,
+        *,
+        from_status: ProgramIdeaStatus,
+        to_status: ProgramIdeaStatus,
+    ) -> ProgramIdea | None:
+        return cast(
+            ProgramIdea | None,
+            self._run(
+                self._transition_status(
+                    user_id,
+                    idea_id,
+                    from_status=from_status,
+                    to_status=to_status,
+                )
+            ),
+        )
 
     def refresh_if_due(
         self,
@@ -64,9 +91,9 @@ class PostgresProgramIdeaRepository(ProgramIdeaRepository):
     def close(self) -> None:
         self._run(self.engine.dispose())
 
-    @staticmethod
-    def _run(coroutine: Any) -> Any:
-        return asyncio.run(coroutine)
+    def _run(self, coroutine: Any) -> Any:
+        with self._run_lock:
+            return asyncio.run(coroutine)
 
     async def _save_many(self, ideas: list[ProgramIdea]) -> None:
         if not ideas:
@@ -107,24 +134,37 @@ class PostgresProgramIdeaRepository(ProgramIdeaRepository):
             await connection.execute(
                 select(func.pg_advisory_xact_lock(1330667079, func.hashtext(user_id)))
             )
-            latest = await connection.scalar(
-                select(program_ideas_table.c.created_at)
-                .where(program_ideas_table.c.user_id == user_id)
-                .order_by(desc(program_ideas_table.c.created_at), desc(program_ideas_table.c.id))
-                .limit(1)
-            )
-            if latest is not None and now - latest < refresh_interval:
-                rows = (
-                    await connection.execute(
-                        select(program_ideas_table.c.payload)
-                        .where(program_ideas_table.c.user_id == user_id)
-                        .order_by(
-                            desc(program_ideas_table.c.created_at), desc(program_ideas_table.c.id)
-                        )
-                        .limit(MAX_LISTED_IDEAS_PER_USER)
+            rows = (
+                await connection.execute(
+                    select(
+                        program_ideas_table.c.created_at,
+                        program_ideas_table.c.payload,
                     )
-                ).all()
-                return [ProgramIdea.model_validate(row.payload) for row in rows]
+                    .where(program_ideas_table.c.user_id == user_id)
+                    .order_by(
+                        desc(program_ideas_table.c.created_at),
+                        desc(program_ideas_table.c.id),
+                    )
+                    .limit(MAX_LISTED_IDEAS_PER_USER)
+                )
+            ).all()
+            existing = [ProgramIdea.model_validate(row.payload) for row in rows]
+            available = [
+                idea for idea in existing if idea.status is ProgramIdeaStatus.AVAILABLE
+            ]
+            latest = rows[0].created_at if rows else None
+            has_consumed = any(
+                idea.status is not ProgramIdeaStatus.AVAILABLE for idea in existing
+            )
+            if (
+                latest is not None
+                and now - latest < refresh_interval
+                and (
+                    len(available) >= MIN_AVAILABLE_IDEAS_PER_USER
+                    or not has_consumed
+                )
+            ):
+                return available
 
             ideas = generate()
             if ideas:
@@ -141,7 +181,12 @@ class PostgresProgramIdeaRepository(ProgramIdeaRepository):
                 )
                 await connection.execute(statement)
                 await self._prune_user(connection, user_id=user_id)
-            return ideas
+            combined = [*ideas, *available]
+            return sorted(
+                combined,
+                key=lambda idea: (idea.created_at, idea.id),
+                reverse=True,
+            )[:MAX_LISTED_IDEAS_PER_USER]
 
     @staticmethod
     async def _prune_user(connection: Any, *, user_id: str) -> None:
@@ -169,3 +214,51 @@ class PostgresProgramIdeaRepository(ProgramIdeaRepository):
                 )
             ).all()
         return [ProgramIdea.model_validate(row.payload) for row in rows]
+
+
+    async def _get_for_user(self, user_id: str, idea_id: str) -> ProgramIdea | None:
+        async with self.engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    select(program_ideas_table.c.payload).where(
+                        program_ideas_table.c.id == idea_id,
+                        program_ideas_table.c.user_id == user_id,
+                    )
+                )
+            ).first()
+        return ProgramIdea.model_validate(row.payload) if row else None
+
+    async def _transition_status(
+        self,
+        user_id: str,
+        idea_id: str,
+        *,
+        from_status: ProgramIdeaStatus,
+        to_status: ProgramIdeaStatus,
+    ) -> ProgramIdea | None:
+        async with self.engine.begin() as connection:
+            row = (
+                await connection.execute(
+                    select(program_ideas_table.c.payload)
+                    .where(
+                        program_ideas_table.c.id == idea_id,
+                        program_ideas_table.c.user_id == user_id,
+                    )
+                    .with_for_update()
+                )
+            ).first()
+            if row is None:
+                return None
+            current = ProgramIdea.model_validate(row.payload)
+            if current.status is not from_status:
+                return None
+            updated = current.model_copy(update={"status": to_status})
+            await connection.execute(
+                update(program_ideas_table)
+                .where(
+                    program_ideas_table.c.id == idea_id,
+                    program_ideas_table.c.user_id == user_id,
+                )
+                .values(payload=updated.model_dump(mode="json"))
+            )
+            return updated
