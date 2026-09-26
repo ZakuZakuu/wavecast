@@ -28,14 +28,73 @@ def test_mock_mode_is_credential_free(monkeypatch: pytest.MonkeyPatch) -> None:
         "AUDIUS_BEARER_TOKEN",
         "MINIMAX_API_KEY",
         "MINIMAX_TTS_VOICE_ID",
+        "WAVECAST_PROPOSAL_PLANNER",
+        "WAVECAST_MUSIC_PROVIDER",
+        "WAVECAST_FAST_START_PROVIDER",
+        "WAVECAST_RESEARCH_PROVIDER",
+        "WAVECAST_CURATOR_PROVIDER",
+        "WAVECAST_WRITER_PROVIDER",
+        "WAVECAST_TTS_PROVIDER",
     ):
         monkeypatch.delenv(name, raising=False)
 
     settings = ProviderSettings.from_env()
 
     assert settings.mode == "mock"
+    assert settings.resolved_proposal_planner == "mock"
+    assert settings.resolved_music_provider == "mock"
+    assert settings.resolved_fast_start_provider == "mock"
+    assert settings.resolved_research_provider == "mock"
+    assert settings.resolved_curator_provider == "mock"
+    assert settings.resolved_writer_provider == "mock"
+    assert settings.resolved_tts_provider == "mock"
+    assert settings.minimax_tts_model == "speech-2.8-turbo"
+    assert settings.minimax_tts_speed == 0.8
     with pytest.raises(ProviderConfigurationError):
         settings.credential_for("deepseek")
+
+
+def test_global_live_is_only_the_default_for_inherited_capabilities() -> None:
+    settings = ProviderSettings(mode="live")
+
+    assert settings.resolved_proposal_planner == "deepseek"
+    assert settings.resolved_music_provider == "auto"
+    assert settings.resolved_fast_start_provider == "deepseek"
+    assert settings.resolved_research_provider == "live"
+    assert settings.resolved_curator_provider == "deepseek"
+    assert settings.resolved_writer_provider == "deepseek"
+    assert settings.resolved_tts_provider == "minimax"
+    assert settings.has_live_episode_capability
+
+
+def test_capability_overrides_can_enable_one_live_boundary_under_global_mock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WAVECAST_PROVIDER_MODE", "mock")
+    monkeypatch.setenv("WAVECAST_PROPOSAL_PLANNER", "deepseek")
+    monkeypatch.setenv("WAVECAST_MUSIC_PROVIDER", "netease")
+    monkeypatch.setenv("WAVECAST_TTS_PROVIDER", "minimax")
+
+    settings = ProviderSettings.from_env()
+
+    assert settings.resolved_proposal_planner == "deepseek"
+    assert settings.resolved_music_provider == "netease"
+    assert settings.resolved_fast_start_provider == "mock"
+    assert settings.resolved_research_provider == "mock"
+    assert settings.resolved_curator_provider == "mock"
+    assert settings.resolved_writer_provider == "mock"
+    assert settings.resolved_tts_provider == "minimax"
+    assert settings.has_live_episode_capability
+    assert settings.for_live_capability().mode == "live"
+
+
+def test_invalid_capability_selector_fails_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WAVECAST_WRITER_PROVIDER", "anything")
+
+    with pytest.raises(ProviderConfigurationError, match="WAVECAST_WRITER_PROVIDER"):
+        ProviderSettings.from_env()
 
 
 def test_minimax_tts_configuration_is_explicit_and_optional(
