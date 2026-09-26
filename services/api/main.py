@@ -571,7 +571,11 @@ async def materialize_recommendation(
         else:
             detail = "今天的调频服务已达到使用上限，请稍后再试。"
         raise HTTPException(status_code=429, detail=detail) from error
+    except BaseException:
+        recommendation_service.restore_available(user_id, idea_id)
+        raise
 
+    proposal_persisted = False
     try:
         proposals = await proposal_generator.generate(body)
         if len(proposals) != 1:
@@ -585,6 +589,7 @@ async def materialize_recommendation(
                 source="recommendation",
             )
         )
+        proposal_persisted = True
         await to_thread.run_sync(
             generation_quota_repository.charge,
             reservations,
@@ -618,8 +623,9 @@ async def materialize_recommendation(
         recommendation_service.restore_available(user_id, idea_id)
         raise HTTPException(status_code=409, detail="Program proposal could not be saved") from error
     except BaseException:
-        await to_thread.run_sync(generation_quota_repository.release, reservations)
-        recommendation_service.restore_available(user_id, idea_id)
+        if not proposal_persisted:
+            await to_thread.run_sync(generation_quota_repository.release, reservations)
+            recommendation_service.restore_available(user_id, idea_id)
         raise
 
 
