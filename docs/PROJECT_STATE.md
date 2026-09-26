@@ -11,14 +11,16 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Hackathon MVP release hardening after Phase 8C.
-- **Canonical base before this hardening PR:**
-  `a8784bb3d6a195d6c1722608fc7094c95a668af6` (PR #76 merge commit).
+- **Current milestone:** hosted production provider activation after the first real personalized recommendation flow.
+- **Canonical base for capability wiring:** `b0937c835af470c3a86ee5540f8265c1efcd7f6a` (PR #82 merge commit).
+- **Hosted proof so far:** Better Auth/user context, DeepSeek recommendation inventory, Postgres persistence, Recommendation -> Program Proposal, and Program Detail are live in production. PR #81 removed the Postgres async-facade 500; PR #82 preserves the recommendation's editorial identity across Program Proposal materialization and hides unresolved mock artist metadata.
+- **Provider activation contract:** keep `WAVECAST_PROVIDER_MODE=mock` as the production safety default and activate proposal, music, fast-start, research, curator, writer, and TTS with capability-level selectors. Deploying the wiring alone must not create new paid calls.
+- **Narration default for the live rollout:** MiniMax `speech-2.8-turbo`, baseline speed `0.8`, with environment overrides retained.
 - **Phase 8B.2:** cloud Library, account episode/proposal ownership, guest/account/global generation quotas, and durable quota reservation expiry are merged after the #75 stack repair. The current Alembic chain is `0003_user_context -> 0004_program_ideas -> 0005_cloud_library_quota -> 0006_quota_reservation_expiry`.
 - **Phase 8C:** optional authenticated onboarding/preferences, bounded product events, explainable private UserContext, owner-scoped durable recommendation inventory, low-water refill, and authenticated For You Home are merged. The current hardening branch adds an independently gated DeepSeek recommendation planner with deterministic provider-failure fallback; production remains deterministic until `WAVECAST_RECOMMENDATION_PLANNER=deepseek` is explicitly configured.
 - **Recommendation commit point:** Home inventory reads do not call paid/live proposal providers. Clicking a personalized recommendation atomically consumes the idea and reuses the existing proposal generator, quota, ownership, CREATED Library, Program detail, Episode, and Player paths. Failed generation restores the recommendation.
 - **Release smoke at `a8784bb...`:** Ruff/mypy passed; backend pytest 440 passed / 20 skipped; Web lint/typecheck/build passed with 59 Vitest tests; isolated Postgres targets 17 passed; Alembic upgraded through `0006`; credential-free deployment smoke and Guest browser product smoke passed. A Docker Hub auth timeout prevented a separate Compose image pull, but did not indicate an application failure.
-- **Immediate work:** only release hardening and hosted deployment preparation. Do not reopen embeddings, ML ranking, vector search, trend/news ingestion, or complex workers before the initial hackathon release.
+- **Immediate work:** merge and deploy capability-level provider wiring once, then progressively enable real Proposal/Music -> FastStart/Research/Curator -> Writer -> TTS through Railway variables and run the first hosted end-to-end listening episode. Do not reopen embeddings, ML ranking, vector search, trend/news ingestion, or complex workers before that E2E path works.
 - **Privacy and cost gate:** recommendation context remains internal and owner-scoped; the recommendation prompt excludes user IDs and API responses omit private context and ownership identifiers. AI recommendation generation is inventory-based rather than per-Home-load and remains off by default. Other live/paid provider calls remain explicit commit-point actions and are never performed by ordinary CI or Home loading.
 
 ## Phase 7A progressive generation contract
