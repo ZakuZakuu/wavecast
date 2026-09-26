@@ -65,6 +65,7 @@ def test_global_live_is_only_the_default_for_inherited_capabilities() -> None:
     assert settings.resolved_writer_provider == "deepseek"
     assert settings.resolved_tts_provider == "minimax"
     assert settings.has_live_episode_capability
+    assert settings.has_live_progressive_intelligence
 
 
 def test_capability_overrides_can_enable_one_live_boundary_under_global_mock(
@@ -85,8 +86,24 @@ def test_capability_overrides_can_enable_one_live_boundary_under_global_mock(
     assert settings.resolved_writer_provider == "mock"
     assert settings.resolved_tts_provider == "minimax"
     assert settings.has_live_episode_capability
+    assert not settings.has_live_progressive_intelligence
     assert settings.for_live_capability().mode == "live"
 
+
+
+def test_progressive_intelligence_flag_ignores_music_and_tts_only() -> None:
+    passive = ProviderSettings(
+        mode="mock",
+        music_provider="netease",
+        tts_provider="minimax",
+    )
+    active = ProviderSettings(
+        mode="mock",
+        fast_start_provider="deepseek",
+    )
+
+    assert not passive.has_live_progressive_intelligence
+    assert active.has_live_progressive_intelligence
 
 def test_invalid_capability_selector_fails_configuration(
     monkeypatch: pytest.MonkeyPatch,
