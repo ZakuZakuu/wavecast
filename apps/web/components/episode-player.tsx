@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
-import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
+import { createEffectGenerationGuard, createIndependentSynchronizationTasks, createSynchronizationGuard } from "../lib/episode-synchronization";
 import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
 import { createLatestSegmentCommitQueue, type LatestSegmentCommitQueue } from "../lib/mix-commit-queue";
 import { linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition } from "../lib/mix-timeline";
@@ -173,31 +173,44 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (!localEpisode?.is_listener_active) return;
     const synchronizationGuard = synchronizationGuardRef.current;
     const generation = synchronizationGuard.start();
-    let syncing = false;
     const isCurrent = () => synchronizationGuard.isCurrent(
       generation,
       localEpisodeRef.current?.is_listener_active ?? false,
     );
-    const synchronize = async () => {
-      if (syncing || !isCurrent()) return;
-      syncing = true;
-      try {
-        let updated = await api.heartbeat(localEpisode.id);
-        if (updated.state !== "MATERIALIZED") updated = await api.ensureBuffer(updated.id);
-        if (isCurrent()) setEpisode(updated);
-      } catch (reason) {
-        if (isCurrent()) {
-          setError(reason instanceof Error ? reason.message : "播放同步失败");
+    const tasks = createIndependentSynchronizationTasks(
+      async () => {
+        if (!isCurrent()) return;
+        try {
+          await api.heartbeat(localEpisode.id);
+        } catch (reason) {
+          if (isCurrent()) {
+            setError(reason instanceof Error ? reason.message : "播放同步失败");
+          }
         }
-      } finally {
-        syncing = false;
-      }
-    };
-    void synchronize();
-    const interval = window.setInterval(() => void synchronize(), 10_000);
+      },
+      async () => {
+        if (!isCurrent()) return;
+        const currentEpisode = localEpisodeRef.current;
+        if (!currentEpisode || currentEpisode.state === "MATERIALIZED") return;
+        try {
+          const updated = await api.ensureBuffer(currentEpisode.id);
+          if (isCurrent()) setEpisode(updated);
+        } catch (reason) {
+          if (isCurrent()) {
+            setError(reason instanceof Error ? reason.message : "播放同步失败");
+          }
+        }
+      },
+    );
+
+    void tasks.heartbeat();
+    void tasks.buffer();
+    const heartbeatInterval = window.setInterval(() => void tasks.heartbeat(), 10_000);
+    const bufferInterval = window.setInterval(() => void tasks.buffer(), 10_000);
     return () => {
       synchronizationGuard.invalidate();
-      window.clearInterval(interval);
+      window.clearInterval(heartbeatInterval);
+      window.clearInterval(bufferInterval);
     };
   }, [localEpisode?.id, localEpisode?.is_listener_active, setEpisode]);
 
