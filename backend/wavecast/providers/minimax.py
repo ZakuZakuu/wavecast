@@ -51,6 +51,10 @@ class MiniMaxTTSProvider:
         self._owns_client = client is None
         self._locks: dict[str, asyncio.Lock] = {}
 
+    @property
+    def speech_speed_baseline(self) -> float:
+        return self.settings.minimax_tts_speed
+
     def cache_key(
         self,
         rendered_text: str,
