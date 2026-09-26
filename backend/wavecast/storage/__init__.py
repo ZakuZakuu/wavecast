@@ -12,13 +12,13 @@ from .library import (
     UserLibraryRepository,
 )
 from .proposals import PostgresProgramProposalRepository
-from .recommendations import PostgresProgramIdeaRepository
 from .quota import (
     GenerationQuotaRepository,
     InMemoryGenerationQuotaRepository,
     PostgresGenerationQuotaRepository,
     QuotaExceededError,
 )
+from .recommendations import PostgresProgramIdeaRepository
 from .schema import metadata
 
 __all__ = [
