@@ -48,6 +48,18 @@ export function isSeekAllowed(episode: LiveEpisode, targetSeconds: number): bool
   return targetSeconds >= 0 && targetSeconds <= episode.generated_frontier_seconds;
 }
 
+export function isProgramPlaybackComplete(episode: LiveEpisode): boolean {
+  const activeSegments = episode.segments.filter((segment) => segment.state !== "SKIPPED");
+  const reachedPlannedFrontier =
+    episode.state === "MATERIALIZED"
+    || episode.state === "PUBLISHED"
+    || episode.generated_frontier_seconds >= episode.program_estimated_duration_seconds;
+  return activeSegments.length > 0
+    && !episode.is_playing
+    && reachedPlannedFrontier
+    && activeSegments.every((segment) => segment.state === "PLAYED");
+}
+
 export function nextVisibleSegment(episode: LiveEpisode): Segment | undefined {
   const current = episode.segments.find((segment) => segment.id === episode.current_segment_id);
   return episode.segments
