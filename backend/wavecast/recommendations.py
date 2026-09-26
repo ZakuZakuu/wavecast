@@ -210,10 +210,16 @@ class InMemoryProgramIdeaRepository:
             available = [
                 idea for idea in existing if idea.status is ProgramIdeaStatus.AVAILABLE
             ]
+            has_consumed = any(
+                idea.status is not ProgramIdeaStatus.AVAILABLE for idea in existing
+            )
             if (
-                len(available) >= MIN_AVAILABLE_IDEAS_PER_USER
-                and existing
+                existing
                 and now - existing[0].created_at < refresh_interval
+                and (
+                    len(available) >= MIN_AVAILABLE_IDEAS_PER_USER
+                    or not has_consumed
+                )
             ):
                 return available
             generated = generate()
