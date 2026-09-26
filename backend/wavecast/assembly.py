@@ -2081,11 +2081,13 @@ def create_episode_assembly_service(
         discovery = ExaSearchProvider(live_settings, ledger=ledger)
         research = TavilySearchProvider(live_settings, ledger=ledger)
 
-    tts: TTSProvider = (
-        MockTTSProvider(storage)
-        if settings.resolved_tts_provider == "mock"
-        else MiniMaxTTSProvider(live_settings, storage=storage, ledger=ledger)
-    )
+    if settings.resolved_tts_provider == "mock":
+        tts: TTSProvider = MockTTSProvider(storage)
+    else:
+        live_settings.credential_for("minimax")
+        if not live_settings.minimax_tts_voice_id:
+            raise ProviderConfigurationError("minimax TTS requires MINIMAX_TTS_VOICE_ID")
+        tts = MiniMaxTTSProvider(live_settings, storage=storage, ledger=ledger)
 
     fast_research = FastResearchService(discovery=discovery, research=research, ledger=ledger)
     background_research = BackgroundResearchService(
