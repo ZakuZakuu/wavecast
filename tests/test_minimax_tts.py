@@ -118,7 +118,7 @@ def test_minimax_payload_decodes_hex_and_records_usage(tmp_path) -> None:
     assert request.url.path == "/v1/t2a_v2"
     assert request.headers["authorization"] == "Bearer minimax-secret"
     payload = request.content.decode()
-    assert '"model":"speech-2.8-hd"' in payload
+    assert '"model":"speech-2.8-turbo"' in payload
     assert '"stream":false' in payload
     assert '"output_format":"hex"' in payload
     assert '"voice_id":"test-voice"' in payload
