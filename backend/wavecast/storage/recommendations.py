@@ -166,7 +166,11 @@ class PostgresProgramIdeaRepository(ProgramIdeaRepository):
             ):
                 return available
 
-            ideas = generate()
+            # The recommendation generator is synchronous and may call other
+            # sync repository facades that use asyncio.run(). Keep it outside
+            # this repository's running event loop while retaining the
+            # transaction-scoped advisory lock and single-generator semantics.
+            ideas = await asyncio.to_thread(generate)
             if ideas:
                 statement = insert(program_ideas_table).values(
                     [
@@ -214,7 +218,6 @@ class PostgresProgramIdeaRepository(ProgramIdeaRepository):
                 )
             ).all()
         return [ProgramIdea.model_validate(row.payload) for row in rows]
-
 
     async def _get_for_user(self, user_id: str, idea_id: str) -> ProgramIdea | None:
         async with self.engine.connect() as connection:
