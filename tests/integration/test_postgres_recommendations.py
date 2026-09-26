@@ -11,7 +11,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import create_async_engine
-from wavecast.recommendations import ProgramIdea
+from wavecast.recommendations import ProgramIdea, ProgramIdeaStatus
 from wavecast.storage.recommendations import (
     PostgresProgramIdeaRepository,
     program_ideas_table,
@@ -108,3 +108,60 @@ def test_concurrent_refreshes_use_database_cooldown_lock() -> None:
         asyncio.run(cleanup())
         for repository in repositories:
             repository.close()
+
+
+def test_program_idea_status_transition_is_owner_scoped_and_single_use() -> None:
+    assert DATABASE_URL is not None
+    user_id = f"recommendation-status-test-{uuid4().hex}"
+    other_user = f"{user_id}-other"
+    idea = ProgramIdea(
+        id=uuid4().hex,
+        user_id=user_id,
+        title="状态转换测试",
+        description="验证推荐只能被拥有者原子消费一次。",
+        reason="Postgres status transition regression",
+        created_at=datetime.now(UTC),
+    )
+
+    async def cleanup() -> None:
+        engine = create_async_engine(DATABASE_URL)
+        async with engine.begin() as connection:
+            await connection.execute(
+                delete(program_ideas_table).where(program_ideas_table.c.user_id == user_id)
+            )
+        await engine.dispose()
+
+    asyncio.run(cleanup())
+    repository = PostgresProgramIdeaRepository(DATABASE_URL)
+    try:
+        repository.save_many([idea])
+        assert (
+            repository.transition_status(
+                other_user,
+                idea.id,
+                from_status=ProgramIdeaStatus.AVAILABLE,
+                to_status=ProgramIdeaStatus.USED,
+            )
+            is None
+        )
+        claimed = repository.transition_status(
+            user_id,
+            idea.id,
+            from_status=ProgramIdeaStatus.AVAILABLE,
+            to_status=ProgramIdeaStatus.USED,
+        )
+        assert claimed is not None
+        assert claimed.status is ProgramIdeaStatus.USED
+        assert (
+            repository.transition_status(
+                user_id,
+                idea.id,
+                from_status=ProgramIdeaStatus.AVAILABLE,
+                to_status=ProgramIdeaStatus.USED,
+            )
+            is None
+        )
+        assert repository.get_for_user(user_id, idea.id) == claimed
+    finally:
+        repository.close()
+        asyncio.run(cleanup())
