@@ -11,22 +11,15 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Phase 8C.2 — Generative Recommendation Planner MVP.
-- **Current stage:** PR #73 Phase 8C.1 was reviewed and merged at
-  `18ed2914c891cd5a6d5b35249c7decaaec5d4063`. Phase 8C.2 is being implemented
-  on `codex/phase8c2-generative-recommendation-planner` from that exact base.
-  This slice adds private user-context aggregation, a deterministic planner,
-  durable user-owned program ideas, and authenticated recommendation endpoints;
-  it does not add a recommendation feed UI or call an LLM/provider.
-- **Canonical Phase 8C base:**
-  `18ed2914c891cd5a6d5b35249c7decaaec5d4063` (PR #73 merge commit).
-- **Immediate work:** finish targeted/full validation, open a Draft PR, and
-  request exact-head GPT review. Do not merge, deploy, or run live/provider
-  calls before that review and a later explicit task.
-- **Privacy and cost gate:** recommendation context is internal and owner
-  scoped; API responses omit internal user identity. Behavior events remain
-  bounded product signals, with no prompts, model responses, reasoning, or
-  provider metadata. No live provider calls are part of this milestone.
+- **Current milestone:** Hackathon MVP release hardening after Phase 8C.
+- **Canonical base before this hardening PR:**
+  `a8784bb3d6a195d6c1722608fc7094c95a668af6` (PR #76 merge commit).
+- **Phase 8B.2:** cloud Library, account episode/proposal ownership, guest/account/global generation quotas, and durable quota reservation expiry are merged after the #75 stack repair. The current Alembic chain is `0003_user_context -> 0004_program_ideas -> 0005_cloud_library_quota -> 0006_quota_reservation_expiry`.
+- **Phase 8C:** optional authenticated onboarding/preferences, bounded product events, explainable private UserContext, deterministic ProgramIdea planning, owner-scoped durable recommendation inventory, low-water refill, and authenticated For You Home are merged.
+- **Recommendation commit point:** Home inventory reads do not call paid/live proposal providers. Clicking a personalized recommendation atomically consumes the idea and reuses the existing proposal generator, quota, ownership, CREATED Library, Program detail, Episode, and Player paths. Failed generation restores the recommendation.
+- **Release smoke at `a8784bb...`:** Ruff/mypy passed; backend pytest 440 passed / 20 skipped; Web lint/typecheck/build passed with 59 Vitest tests; isolated Postgres targets 17 passed; Alembic upgraded through `0006`; credential-free deployment smoke and Guest browser product smoke passed. A Docker Hub auth timeout prevented a separate Compose image pull, but did not indicate an application failure.
+- **Immediate work:** only release hardening and hosted deployment preparation. Do not reopen embeddings, ML ranking, vector search, trend/news ingestion, or complex workers before the initial hackathon release.
+- **Privacy and cost gate:** recommendation context remains internal and owner-scoped; API responses omit private context and ownership identifiers. Live/paid provider calls remain explicit commit-point actions and are never performed by ordinary CI or Home loading.
 
 ## Phase 7A progressive generation contract
 

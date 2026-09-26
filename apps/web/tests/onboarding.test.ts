@@ -80,6 +80,7 @@ describe("first-login onboarding", () => {
       await Promise.resolve();
     });
 
+    expect(mocks.api.userPreferences).toHaveBeenCalledWith("user-1");
     expect(mocks.api.saveUserPreferences).toHaveBeenCalledWith({
       genres: ["City Pop"],
       artists: [],
@@ -87,7 +88,7 @@ describe("first-login onboarding", () => {
       contexts: [],
       discovery_level: "ADVENTUROUS",
       onboarding_completed: true,
-    });
+    }, "user-1");
     expect(mocks.router.replace).toHaveBeenCalledWith("/");
   });
 
@@ -105,7 +106,7 @@ describe("first-login onboarding", () => {
       contexts: [],
       discovery_level: "BALANCED",
       onboarding_completed: true,
-    });
+    }, "user-1");
     expect(mocks.router.replace).toHaveBeenCalledWith("/");
   });
 

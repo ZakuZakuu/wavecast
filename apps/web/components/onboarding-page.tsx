@@ -45,7 +45,7 @@ export function OnboardingPage() {
     if (isPending || !session?.user) return;
     let active = true;
     setLoading(true);
-    api.userPreferences()
+    api.userPreferences(session.user.id)
       .then((value) => {
         if (!active) return;
         if (value.onboarding_completed) {
@@ -66,13 +66,14 @@ export function OnboardingPage() {
     return () => {
       active = false;
     };
-  }, [isPending, router, session?.user]);
+  }, [isPending, router, session?.user?.id]);
 
   const submit = async (skip = false) => {
     if (saving) return;
     setSaving(true);
     setError(null);
     try {
+      if (!session?.user) throw new Error("登录状态已失效");
       await api.saveUserPreferences({
         genres: skip ? [] : genres,
         artists: preferences?.artists ?? [],
@@ -80,7 +81,7 @@ export function OnboardingPage() {
         contexts: preferences?.contexts ?? [],
         discovery_level: skip ? "BALANCED" : discoveryLevel,
         onboarding_completed: true,
-      });
+      }, session.user.id);
       router.replace("/");
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "保存失败，请稍后再试");
