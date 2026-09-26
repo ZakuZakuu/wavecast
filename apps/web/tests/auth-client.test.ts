@@ -7,7 +7,11 @@ vi.mock("better-auth/react", () => ({
 }));
 vi.mock("better-auth/client/plugins", () => ({ jwtClient: () => ({}) }));
 
-import { clearApiAuthToken, getApiAuthToken } from "../lib/auth-client";
+import {
+  clearApiAuthToken,
+  getApiAuthToken,
+  getApiAuthTokenForUser,
+} from "../lib/auth-client";
 
 describe("API auth token cache", () => {
   beforeEach(() => {
@@ -32,6 +36,20 @@ describe("API auth token cache", () => {
     vi.advanceTimersByTime(30_001);
     await expect(getApiAuthToken()).resolves.toBeUndefined();
     expect(tokenRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("binds an authenticated request token to the expected JWT subject", async () => {
+    const payload = btoa(JSON.stringify({ sub: "account-two", exp: Date.now() / 1000 + 3600 }))
+      .replace(/=/g, "")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_");
+    const token = `header.${payload}.signature`;
+    tokenRequest.mockResolvedValue({ data: { token }, error: null });
+
+    await expect(getApiAuthTokenForUser("account-one"))
+      .rejects.toThrow("Could not verify the signed-in library identity");
+    await expect(getApiAuthTokenForUser("account-two")).resolves.toBe(token);
+    expect(tokenRequest).toHaveBeenCalledTimes(1);
   });
 
   it("clears the guest negative cache when the session changes", async () => {

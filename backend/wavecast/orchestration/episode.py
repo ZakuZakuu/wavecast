@@ -85,6 +85,23 @@ class InMemoryEpisodeRepository:
         episode_id = self._episode_id_by_listener_seed.get((listener_id, seed_id))
         return self._episodes.get(episode_id) if episode_id else None
 
+    def find_by_user_seed(self, user_id: str, seed_id: str) -> LiveEpisode | None:
+        return next((episode for episode in self._episodes.values()
+                     if episode.owner_user_id == user_id and episode.seed_id == seed_id), None)
+
+    def claim_user(self, episode_id: str, listener_id: str, user_id: str) -> bool:
+        episode = self._episodes.get(episode_id)
+        if episode is None or episode.listener_id != listener_id:
+            return False
+        if episode.owner_user_id not in {None, user_id}:
+            return False
+        episode.owner_user_id = user_id
+        return True
+
+    def owned_by_user(self, episode_id: str, user_id: str) -> bool:
+        episode = self._episodes.get(episode_id)
+        return episode is not None and episode.owner_user_id == user_id
+
     def all(self) -> list[LiveEpisode]:
         return list(self._episodes.values())
 
@@ -108,7 +125,10 @@ class EpisodeOrchestrator:
         )
         self.progressive_runtime = progressive_runtime
 
-    def start(self, seed: EpisodeSeed, listener_id: str = "test-listener") -> LiveEpisode:
+    def start(
+        self, seed: EpisodeSeed, listener_id: str = "test-listener",
+        owner_user_id: str | None = None,
+    ) -> LiveEpisode:
         now = self.now()
         opening_source = self.audio_provider.music_source(seed.opening_track_ref)
         opening = MusicSegment(
@@ -127,6 +147,7 @@ class EpisodeOrchestrator:
         episode = LiveEpisode(
             seed_id=seed.id,
             listener_id=listener_id,
+            owner_user_id=owner_user_id,
             state=EpisodeState.STREAMING,
             title=seed.title,
             topic=seed.topic,
@@ -138,9 +159,21 @@ class EpisodeOrchestrator:
         )
         return self.repository.save(episode)
 
-    def start_or_resume(self, seed: EpisodeSeed, listener_id: str = "test-listener") -> LiveEpisode:
+    def start_or_resume(
+        self, seed: EpisodeSeed, listener_id: str = "test-listener",
+        owner_user_id: str | None = None,
+    ) -> LiveEpisode:
+        if owner_user_id is not None:
+            existing_user_episode = self.repository.find_by_user_seed(owner_user_id, seed.id)
+            if existing_user_episode is not None:
+                return self.resume(existing_user_episode.id)
         existing = self.repository.find_by_listener_seed(listener_id, seed.id)
-        return self.resume(existing.id) if existing else self.start(seed, listener_id)
+        if existing is not None:
+            if owner_user_id is not None and existing.owner_user_id is None:
+                if self.repository.claim_user(existing.id, listener_id, owner_user_id):
+                    existing.owner_user_id = owner_user_id
+            return self.resume(existing.id)
+        return self.start(seed, listener_id, owner_user_id)
 
     def import_materialized(
         self,
@@ -151,6 +184,7 @@ class EpisodeOrchestrator:
         estimated_duration_seconds: int,
         playable_episode: PlayableEpisode,
         listener_id: str = "test-listener",
+        owner_user_id: str | None = None,
     ) -> LiveEpisode:
         """Persist a fully assembled episode through the normal runtime boundary."""
         if not playable_episode.segments:
@@ -165,8 +199,17 @@ class EpisodeOrchestrator:
                 "materialized episode contains an external audio URL"
             )
 
-        existing = self.repository.find_by_listener_seed(listener_id, seed_id)
+        existing = (
+            self.repository.find_by_user_seed(owner_user_id, seed_id)
+            if owner_user_id is not None else None
+        ) or self.repository.find_by_listener_seed(listener_id, seed_id)
         if existing is not None:
+            if (
+                owner_user_id is not None
+                and existing.owner_user_id is None
+                and self.repository.claim_user(existing.id, listener_id, owner_user_id)
+            ):
+                existing.owner_user_id = owner_user_id
             return self.resume(existing.id)
 
         now = self.now()
@@ -188,6 +231,7 @@ class EpisodeOrchestrator:
             title=title,
             topic=topic,
             listener_id=listener_id,
+            owner_user_id=owner_user_id,
             state=EpisodeState.MATERIALIZED,
             generation_mode=GenerationMode.FULL,
             program_estimated_duration_seconds=estimated_duration_seconds,
