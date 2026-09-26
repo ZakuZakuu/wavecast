@@ -622,7 +622,8 @@ Do not block the MVP on this integration. If used, prefer offline preprocessing/
 
 # 12. TTS
 
-Default provider: **MiniMax Speech 2.8 HD**.
+Default provider: **MiniMax Speech 2.8 Turbo**, with a baseline speaking speed of **0.8**.
+Both model and speed remain environment-overridable for listening tests.
 
 Reasoning:
 
