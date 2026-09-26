@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentOffset } from "../lib/playback";
+import { isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentOffset } from "../lib/playback";
 import type { LiveEpisode } from "../lib/types";
 
 const episode: LiveEpisode = {
@@ -98,5 +98,22 @@ describe("generated-frontier player behavior", () => {
     const restored = { ...episode, playback_position_seconds: 12 };
 
     expect(reconcileBrowserPosition(0, null, restored)).toBe(12);
+  });
+
+  it("records completion only after the whole program frontier is consumed", () => {
+    const completed = {
+      ...episode,
+      state: "MATERIALIZED",
+      is_playing: false,
+      generated_frontier_seconds: 58,
+      program_estimated_duration_seconds: 58,
+      segments: episode.segments.map((segment) => ({
+        ...segment,
+        state: segment.state === "SKIPPED" ? "SKIPPED" as const : "PLAYED" as const,
+      })),
+    };
+    expect(isProgramPlaybackComplete(completed)).toBe(true);
+    expect(isProgramPlaybackComplete({ ...completed, state: "STREAMING", generated_frontier_seconds: 22 })).toBe(false);
+    expect(isProgramPlaybackComplete({ ...completed, segments: [{ ...completed.segments[0], state: "COMMITTED" }] })).toBe(false);
   });
 });
