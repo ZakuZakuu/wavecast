@@ -139,6 +139,7 @@ def test_program_idea_keeps_editorial_identity_and_hides_only_mock_anchor() -> N
     assert adapted_mock.mood_tags == []
     assert adapted_mock.anchor_artists == []
     assert adapted_mock.opening_track_ref == "mock:opening"
+    assert adapted_real.mood_tags == ["Late Night"]
     assert adapted_real.anchor_artists == ["方大同"]
     assert adapted_real.opening_track_ref == "netease:123"
 
