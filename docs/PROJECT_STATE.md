@@ -1,6 +1,6 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-24
+**Last updated:** 2026-09-25
 
 ## Product reminder
 
@@ -11,24 +11,15 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-- **Current milestone:** Deployment Baseline B — hosted target compatibility.
-- **Current stage:** Deployment Baseline A / PR #64 is merged at
-  15e5c4ba44f795fc40995e6cf1e7632e105dd156. The Phase 7 progressive
-  generation contract and production-like Compose baseline are complete;
-  live and paid provider calls remain disabled. This slice prepares the same
-  contracts for Vercel Web and Railway API/Postgres/persistent audio without
-  creating hosted resources.
-- **Canonical main:** 15e5c4ba44f795fc40995e6cf1e7632e105dd156 (PR #64 merge
-  commit).
-- **Last completed code milestone:** Deployment Baseline A / PR #64,
-  including production-like images, named Postgres/audio volumes, and an
-  independent CI container smoke, merged after exact-head GPT review and all
-  required CI jobs passing.
-- **Immediate work:** complete Deployment Baseline B with Railway dynamic-port
-  compatibility, hosted Postgres URL normalization, Railway volume-aware audio
-  root resolution, Vercel build-time API rewrite coverage, and a credential-free
-  hosted deployment runbook. No public deployment, platform credentials, or
-  paid calls are part of this slice.
+- **Current milestone:** Hackathon MVP release hardening after Phase 8C.
+- **Canonical base before this hardening PR:**
+  `a8784bb3d6a195d6c1722608fc7094c95a668af6` (PR #76 merge commit).
+- **Phase 8B.2:** cloud Library, account episode/proposal ownership, guest/account/global generation quotas, and durable quota reservation expiry are merged after the #75 stack repair. The current Alembic chain is `0003_user_context -> 0004_program_ideas -> 0005_cloud_library_quota -> 0006_quota_reservation_expiry`.
+- **Phase 8C:** optional authenticated onboarding/preferences, bounded product events, explainable private UserContext, deterministic ProgramIdea planning, owner-scoped durable recommendation inventory, low-water refill, and authenticated For You Home are merged.
+- **Recommendation commit point:** Home inventory reads do not call paid/live proposal providers. Clicking a personalized recommendation atomically consumes the idea and reuses the existing proposal generator, quota, ownership, CREATED Library, Program detail, Episode, and Player paths. Failed generation restores the recommendation.
+- **Release smoke at `a8784bb...`:** Ruff/mypy passed; backend pytest 440 passed / 20 skipped; Web lint/typecheck/build passed with 59 Vitest tests; isolated Postgres targets 17 passed; Alembic upgraded through `0006`; credential-free deployment smoke and Guest browser product smoke passed. A Docker Hub auth timeout prevented a separate Compose image pull, but did not indicate an application failure.
+- **Immediate work:** only release hardening and hosted deployment preparation. Do not reopen embeddings, ML ranking, vector search, trend/news ingestion, or complex workers before the initial hackathon release.
+- **Privacy and cost gate:** recommendation context remains internal and owner-scoped; API responses omit private context and ownership identifiers. Live/paid provider calls remain explicit commit-point actions and are never performed by ordinary CI or Home loading.
 
 ## Phase 7A progressive generation contract
 

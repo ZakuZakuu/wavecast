@@ -274,6 +274,56 @@ h1, h2, h3, strong { text-wrap: balance; }
 }
 .program-card:active { transform: scale(.975); }
 
+.recommendation-card {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.recommendation-card:disabled {
+  cursor: wait;
+  opacity: .72;
+}
+.recommendation-card .program-card-copy span {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.recommendation-empty {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+}
+.recommendation-empty p { margin-bottom: 8px; }
+.recommendation-empty a { color: var(--accent); font-weight: 700; }
+
+.recommendation-card {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.recommendation-card:disabled {
+  cursor: progress;
+  opacity: .7;
+}
+.recommendation-card .program-card-copy span {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.35;
+}
+
 .program-card-copy {
   padding: 8px 2px 0;
   display: flex;
@@ -487,6 +537,17 @@ h1, h2, h3, strong { text-wrap: balance; }
 .inline-error, .player-error {
   color: var(--danger);
   font-size: 12px;
+}
+
+.home-recommendation-empty {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.home-recommendation-empty a {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 /* Program detail */
@@ -846,6 +907,30 @@ h1, h2, h3, strong { text-wrap: balance; }
   font-family: Georgia, serif;
   font-size: 14px;
 }
+.profile-link { display: inline-flex; text-decoration: none; }
+.account-header { align-items: flex-end; }
+.account-card {
+  margin-top: 20px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface);
+}
+.account-card h2 { margin: 8px 0; font-size: 22px; }
+.account-benefit, .account-status { color: var(--muted); font-size: 13px; line-height: 1.7; }
+.account-primary, .account-secondary {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--text);
+  color: var(--bg);
+  font: inherit;
+  cursor: pointer;
+}
+.account-secondary { background: var(--surface-2); color: var(--text); }
+.account-back { display: inline-block; margin-top: 22px; color: var(--muted); font-size: 13px; }
 .library-tabs {
   display: flex;
   gap: 4px;
@@ -1547,4 +1632,58 @@ h1, h2, h3, strong { text-wrap: balance; }
     grid-template-columns: 1fr 1fr;
     column-gap: 28px;
   }
+}
+
+.onboarding-card {
+  max-width: 700px;
+  margin: 18px auto 36px;
+  padding: clamp(22px, 5vw, 36px);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--surface);
+}
+
+.onboarding-card h2 { margin: 6px 0 8px; font-size: clamp(23px, 5vw, 32px); }
+.onboarding-card > p:not(.onboarding-intro) { color: var(--muted); line-height: 1.6; }
+.onboarding-intro { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.onboarding-field { margin: 26px 0 0; padding: 0; border: 0; }
+.onboarding-field legend { margin-bottom: 12px; font-size: 14px; font-weight: 700; }
+.choice-chip.selected,
+.discovery-option.selected {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.discovery-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.discovery-option {
+  min-height: 46px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--text);
+  background: var(--surface-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.onboarding-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 30px;
+}
+
+.onboarding-link { display: inline-flex; align-items: center; text-decoration: none; }
+
+@media (max-width: 420px) {
+  .discovery-options { grid-template-columns: 1fr; }
+  .onboarding-actions { flex-direction: column-reverse; }
+  .onboarding-actions button { min-height: 48px; }
 }

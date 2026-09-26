@@ -64,7 +64,6 @@ from wavecast.orchestration.staged import (
 )
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import (
-    MusicProvider,
     ObjectStorageProvider,
     ProgressiveLLMProvider,
     SearchProvider,
@@ -72,18 +71,16 @@ from wavecast.providers.contracts import (
 )
 from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.errors import (
-    ProviderConfigurationError,
     ProviderError,
     ProviderSchemaValidationError,
 )
+from wavecast.providers.factory import build_music_registry
 from wavecast.providers.fakes import (
     FakeSearchProvider,
-    MockMusicProvider,
     MockTTSProvider,
 )
 from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
-from wavecast.providers.registry import MusicProviderRegistry
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.search import ExaSearchProvider, TavilySearchProvider
 from wavecast.providers.usage import UsageLedger, UsageTotals, usage_diagnostics
@@ -2042,28 +2039,6 @@ class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
         )
 
 
-def _build_music_registry(settings: ProviderSettings) -> MusicProviderRegistry:
-    if settings.mode == "mock":
-        provider = MockMusicProvider()
-        return MusicProviderRegistry({"mock": provider}, preference=("mock",))
-
-    providers: dict[str, MusicProvider] = {}
-    from wavecast.providers.audius import AudiusMusicProvider
-    from wavecast.providers.netease import NeteaseMusicProvider
-    from wavecast.providers.qqmusic import QQMusicProvider
-
-    if settings.netease_music_api_base_url:
-        providers["netease"] = NeteaseMusicProvider(settings)
-    if settings.qq_music_api_base_url:
-        providers["qqmusic"] = QQMusicProvider(settings)
-    if settings.audius_api_key or settings.audius_bearer_token:
-        providers["audius"] = AudiusMusicProvider(settings)
-    if not providers:
-        raise ProviderConfigurationError(
-            "live episode assembly requires at least one configured real music provider"
-        )
-    return MusicProviderRegistry(providers)
-
 
 def create_episode_assembly_service(
     settings: ProviderSettings | None = None,
@@ -2073,7 +2048,7 @@ def create_episode_assembly_service(
     """Create the same assembly path in mock or explicitly configured live mode."""
     settings = settings or ProviderSettings.from_env()
     ledger = UsageLedger()
-    music_registry = _build_music_registry(settings)
+    music_registry = build_music_registry(settings)
     storage = storage or LocalObjectStorageProvider()
     if settings.mode == "mock":
         llm: ProgressiveLLMProvider = MockEpisodeAssemblyLLM()

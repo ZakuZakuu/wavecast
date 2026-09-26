@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 from wave import open as open_wave
 
@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from wavecast.arrangement import MixPlan, plan_episode_mix
 from wavecast.assembly import create_episode_assembly_service
+from wavecast.auth import AuthPrincipal, AuthTokenError, JwksJWTVerifier
 from wavecast.deployment import audio_root_from_env, normalize_database_url
 from wavecast.materialization import (
     MusicSnapshotError,
@@ -40,16 +41,40 @@ from wavecast.models.episode import (
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
 from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
+from wavecast.proposals import (
+    DeterministicMockProgramProposalGenerator,
+    InMemoryProgramProposalRepository,
+    LLMProgramProposalGenerator,
+    ProgramProposal,
+    ProgramProposalBatch,
+    ProgramProposalGenerationError,
+    ProgramProposalGenerator,
+    ProgramProposalRepository,
+    ProposalGenerationRequest,
+    ProposalPersistenceConflict,
+)
 from wavecast.providers.audius import AudiusMusicProvider
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import ObjectStorageProvider
+from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
+from wavecast.providers.factory import build_music_registry
 from wavecast.providers.fakes import MockTTSProvider
 from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.music_http import SidecarMusicProvider
 from wavecast.providers.netease import NeteaseMusicProvider
 from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
+from wavecast.providers.retrieval import MusicRetrievalService
+from wavecast.providers.usage import UsageLedger
+from wavecast.recommendations import (
+    DeterministicRecommendationPlanner,
+    InMemoryProgramIdeaRepository,
+    ProgramIdeaRepository,
+    ProgramIdeaResponse,
+    RecommendationService,
+    UserContextAggregator,
+)
 from wavecast.rendering import (
     MixdownArtifact,
     MixRenderError,
@@ -61,10 +86,33 @@ from wavecast.rendering import (
 from wavecast.rendering.fingerprint import mix_plan_fingerprint
 from wavecast.storage import (
     EpisodeConcurrencyError,
+    GenerationQuotaRepository,
+    InMemoryGenerationQuotaRepository,
+    InMemoryUserLibraryRepository,
     LocalObjectStorageProvider,
     PostgresEpisodeRepository,
+    PostgresGenerationQuotaRepository,
+    PostgresUserLibraryRepository,
+    QuotaExceededError,
+    UserLibraryRepository,
 )
 from wavecast.storage.episodes import EpisodeRepository
+from wavecast.storage.recommendations import PostgresProgramIdeaRepository
+from wavecast.storage.user_context import (
+    PostgresUserEventRepository,
+    PostgresUserPreferencesRepository,
+)
+from wavecast.user_context import (
+    InMemoryUserEventRepository,
+    InMemoryUserPreferencesRepository,
+    UserEvent,
+    UserEventInput,
+    UserEventRepository,
+    UserEventService,
+    UserPreferences,
+    UserPreferencesRepository,
+    UserPreferencesUpdate,
+)
 
 LISTENER_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 DATABASE_URL = os.getenv("WAVECAST_DATABASE_URL")
@@ -73,6 +121,61 @@ if DATABASE_URL:
 AUDIO_ROOT = audio_root_from_env()
 audio_storage: ObjectStorageProvider = LocalObjectStorageProvider(AUDIO_ROOT)
 _provider_settings = ProviderSettings.from_env()
+proposal_repository: ProgramProposalRepository = InMemoryProgramProposalRepository()
+user_library_repository: UserLibraryRepository = InMemoryUserLibraryRepository()
+generation_quota_repository: GenerationQuotaRepository = InMemoryGenerationQuotaRepository()
+if DATABASE_URL:
+    from wavecast.storage import PostgresProgramProposalRepository
+
+    proposal_repository = PostgresProgramProposalRepository(DATABASE_URL)
+    user_library_repository = PostgresUserLibraryRepository(DATABASE_URL)
+    generation_quota_repository = PostgresGenerationQuotaRepository(DATABASE_URL)
+
+GUEST_PROGRAM_LIMIT = int(os.getenv("WAVECAST_GUEST_PROGRAM_LIMIT", "3"))
+AUTH_DAILY_PROGRAM_LIMIT = int(os.getenv("WAVECAST_AUTH_DAILY_PROGRAM_LIMIT", "20"))
+GLOBAL_DAILY_PROGRAM_LIMIT = int(os.getenv("WAVECAST_GLOBAL_DAILY_PROGRAM_LIMIT", "100"))
+if min(GUEST_PROGRAM_LIMIT, AUTH_DAILY_PROGRAM_LIMIT, GLOBAL_DAILY_PROGRAM_LIMIT) < 0:
+    raise RuntimeError("generation quota limits must be non-negative")
+
+user_preferences_repository: UserPreferencesRepository = (
+    PostgresUserPreferencesRepository(DATABASE_URL)
+    if DATABASE_URL
+    else InMemoryUserPreferencesRepository()
+)
+_user_event_repository: UserEventRepository = (
+    PostgresUserEventRepository(DATABASE_URL) if DATABASE_URL else InMemoryUserEventRepository()
+)
+user_event_service = UserEventService(_user_event_repository)
+recommendation_repository: ProgramIdeaRepository = (
+    PostgresProgramIdeaRepository(DATABASE_URL)
+    if DATABASE_URL
+    else InMemoryProgramIdeaRepository()
+)
+recommendation_planner = DeterministicRecommendationPlanner()
+
+_auth_jwks_url = os.getenv("WAVECAST_AUTH_JWKS_URL")
+_auth_issuer = os.getenv("WAVECAST_AUTH_ISSUER")
+_auth_audience = os.getenv("WAVECAST_AUTH_AUDIENCE")
+_auth_verifier = (
+    JwksJWTVerifier(_auth_jwks_url, _auth_issuer, _auth_audience)
+    if _auth_jwks_url and _auth_issuer and _auth_audience
+    else None
+)
+
+
+def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGenerator:
+    if settings.mode == "mock":
+        return DeterministicMockProgramProposalGenerator()
+    ledger = UsageLedger()
+    return LLMProgramProposalGenerator(
+        DeepSeekLLMProvider(settings, ledger=ledger),
+        MusicRetrievalService(build_music_registry(settings)),
+    )
+
+
+proposal_generator: ProgramProposalGenerator | None = _build_proposal_generator(
+    _provider_settings
+)
 repository: EpisodeRepository = (
     PostgresEpisodeRepository(DATABASE_URL) if DATABASE_URL else InMemoryEpisodeRepository()
 )
@@ -197,6 +300,19 @@ async def anonymous_listener(
     )
     listener_id = proposed if proposed and LISTENER_PATTERN.fullmatch(proposed) else uuid4().hex
     request.state.listener_id = listener_id
+    request.state.principal = AuthPrincipal(listener_id=listener_id)
+    authorization = request.headers.get("authorization")
+    if authorization is not None:
+        scheme, separator, token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not separator or not token.strip():
+            return Response(status_code=401, content="Invalid bearer token")
+        if _auth_verifier is None:
+            return Response(status_code=503, content="Authentication is not configured")
+        try:
+            user_id = await _auth_verifier.verify(token.strip())
+        except AuthTokenError:
+            return Response(status_code=401, content="Invalid bearer token")
+        request.state.principal = AuthPrincipal(listener_id=listener_id, user_id=user_id)
     response = await call_next(request)
     response.set_cookie("wavecast_listener", listener_id, httponly=True, samesite="lax")
     return response
@@ -252,6 +368,26 @@ class PlaybackCheckpointRequest(BaseModel):
     position_seconds: int = Field(ge=0)
 
 
+class LibraryMergeRequest(BaseModel):
+    library: dict[str, Any]
+
+
+class LibraryRecentRecord(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    episode_id: str = Field(alias="episodeId", min_length=1, max_length=128)
+    seed_id: str = Field(alias="seedId", min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=200)
+    topic: str | None
+    current_title: str | None = Field(alias="currentTitle")
+    updated_at: int = Field(alias="updatedAt", ge=0)
+    progress_seconds: float = Field(alias="progressSeconds", ge=0)
+    duration_seconds: float = Field(alias="durationSeconds", ge=0)
+
+
+class LibrarySavedRecord(LibraryRecentRecord):
+    saved_at: int = Field(alias="savedAt", ge=0)
+
+
 class BlockedMusicSource(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -275,17 +411,32 @@ def listener(request: Request) -> str:
     return cast(str, request.state.listener_id)
 
 
-def owned(episode_id: str, listener_id: str) -> None:
+def principal(request: Request) -> AuthPrincipal:
+    return cast(AuthPrincipal, request.state.principal)
+
+
+def require_user(request: Request) -> AuthPrincipal:
+    actor = principal(request)
+    if actor.user_id is None:
+        raise HTTPException(status_code=401, detail="Sign in required")
+    return actor
+
+
+def owned(episode_id: str, actor: AuthPrincipal) -> None:
     try:
-        orchestrator.get(episode_id, listener_id)
+        episode = orchestrator.get(episode_id)
+        if episode.listener_id != actor.listener_id and (
+            actor.user_id is None or episode.owner_user_id != actor.user_id
+        ):
+            raise EpisodeRuntimeError("episode does not belong to this listener")
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
     except EpisodeRuntimeError as error:
         raise HTTPException(status_code=404, detail="Episode not found") from error
 
 
-def operate(episode_id: str, listener_id: str, operation: Callable[[], LiveEpisode]) -> LiveEpisode:
-    owned(episode_id, listener_id)
+def operate(episode_id: str, actor: AuthPrincipal, operation: Callable[[], LiveEpisode]) -> LiveEpisode:
+    owned(episode_id, actor)
     try:
         return operation()
     except EpisodeConcurrencyError as error:
@@ -296,10 +447,10 @@ def operate(episode_id: str, listener_id: str, operation: Callable[[], LiveEpiso
 
 async def operate_async(
     episode_id: str,
-    listener_id: str,
+    actor: AuthPrincipal,
     operation: Callable[[], Awaitable[LiveEpisode]],
 ) -> LiveEpisode:
-    await to_thread.run_sync(owned, episode_id, listener_id)
+    await to_thread.run_sync(owned, episode_id, actor)
     try:
         return await operation()
     except EpisodeConcurrencyError as error:
@@ -311,6 +462,172 @@ async def operate_async(
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "mode": "postgres" if DATABASE_URL else "mock"}
+
+def authenticated_user(request: Request) -> str:
+    user_id = principal(request).user_id
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user_id
+
+
+@app.get("/api/user-preferences/me", response_model=UserPreferences)
+def get_user_preferences(request: Request) -> UserPreferences:
+    user_id = authenticated_user(request)
+    return user_preferences_repository.get(user_id) or UserPreferences(user_id=user_id)
+
+
+@app.put("/api/user-preferences/me", response_model=UserPreferences)
+def put_user_preferences(
+    request: Request, body: UserPreferencesUpdate
+) -> UserPreferences:
+    preferences = UserPreferences(
+        user_id=authenticated_user(request),
+        **body.model_dump(),
+    )
+    return user_preferences_repository.save(preferences)
+
+
+@app.delete("/api/user-preferences/me", response_model=UserPreferences)
+def delete_user_preferences(request: Request) -> UserPreferences:
+    user_id = authenticated_user(request)
+    user_preferences_repository.delete(user_id)
+    return UserPreferences(user_id=user_id)
+
+
+@app.post("/api/user-events", response_model=UserEvent, status_code=201)
+def create_user_event(request: Request, body: UserEventInput) -> UserEvent:
+    return user_event_service.record(user_id=authenticated_user(request), event=body)
+
+
+def _public_program_for_context(program_id: str) -> ProgramProposal | None:
+    seed = _static_seed(program_id)
+    return ProgramProposal.from_episode_seed(seed) if seed is not None else None
+
+
+def _recommendation_service() -> RecommendationService:
+    aggregator = UserContextAggregator(
+        user_preferences_repository,
+        _user_event_repository,
+        proposal_repository,
+        public_program_lookup=_public_program_for_context,
+    )
+    return RecommendationService(
+        aggregator,
+        recommendation_planner,
+        recommendation_repository,
+    )
+
+
+@app.get("/api/recommendations/me", response_model=list[ProgramIdeaResponse])
+def list_recommendations(request: Request) -> list[ProgramIdeaResponse]:
+    ideas = _recommendation_service().inventory_for_user(authenticated_user(request))
+    return [ProgramIdeaResponse.from_idea(idea) for idea in ideas]
+
+
+@app.post("/api/recommendations/me/refresh", response_model=list[ProgramIdeaResponse])
+def refresh_recommendations(request: Request) -> list[ProgramIdeaResponse]:
+    ideas = _recommendation_service().refresh_for_user(authenticated_user(request))
+    return [ProgramIdeaResponse.from_idea(idea) for idea in ideas]
+
+
+@app.post(
+    "/api/recommendations/me/{idea_id}/program-proposal",
+    response_model=ProgramProposalBatch,
+)
+async def materialize_recommendation(
+    idea_id: str,
+    request: Request,
+) -> ProgramProposalBatch:
+    user_id = authenticated_user(request)
+    recommendation_service = _recommendation_service()
+    current = recommendation_service.get_for_user(user_id, idea_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    claimed = recommendation_service.claim_for_materialization(user_id, idea_id)
+    if claimed is None:
+        raise HTTPException(status_code=409, detail="Recommendation is no longer available")
+    owner = principal(request)
+    seed = claimed.to_proposal_seed()
+    body = seed.request
+    if proposal_generator is None:
+        recommendation_service.restore_available(user_id, idea_id)
+        raise HTTPException(status_code=503, detail="Program proposal generation is not configured")
+
+    try:
+        reservations = await to_thread.run_sync(
+            lambda: generation_quota_repository.reserve(
+                owner.listener_id,
+                owner.user_id,
+                body.count,
+                guest_limit=GUEST_PROGRAM_LIMIT,
+                auth_daily_limit=AUTH_DAILY_PROGRAM_LIMIT,
+                global_daily_limit=GLOBAL_DAILY_PROGRAM_LIMIT,
+            )
+        )
+    except QuotaExceededError as error:
+        recommendation_service.restore_available(user_id, idea_id)
+        if error.reason == "account_daily_limit":
+            detail = "今天的调频次数已达上限，请明天再试。"
+        else:
+            detail = "今天的调频服务已达到使用上限，请稍后再试。"
+        raise HTTPException(status_code=429, detail=detail) from error
+    except BaseException:
+        recommendation_service.restore_available(user_id, idea_id)
+        raise
+
+    proposal_persisted = False
+    try:
+        proposals = await proposal_generator.generate(body)
+        if len(proposals) != 1:
+            raise ProgramProposalGenerationError("proposal_count_mismatch")
+        proposal = proposals[0]
+        await to_thread.run_sync(
+            lambda: proposal_repository.save_many(
+                proposals,
+                owner_listener_id=owner.listener_id,
+                owner_user_id=user_id,
+                source="recommendation",
+            )
+        )
+        proposal_persisted = True
+        await to_thread.run_sync(
+            generation_quota_repository.charge,
+            reservations,
+            [proposal.id],
+        )
+        await to_thread.run_sync(
+            user_library_repository.put,
+            user_id,
+            "CREATED",
+            proposal.id,
+            {
+                "id": proposal.id,
+                "recommendationId": idea_id,
+                "reason": claimed.reason,
+            },
+        )
+        return ProgramProposalBatch(proposals=proposals)
+    except ProgramProposalGenerationError as error:
+        await to_thread.run_sync(generation_quota_repository.release, reservations)
+        recommendation_service.restore_available(user_id, idea_id)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Program proposal generation failed ({error.reason})",
+        ) from error
+    except ProviderError as error:
+        await to_thread.run_sync(generation_quota_repository.release, reservations)
+        recommendation_service.restore_available(user_id, idea_id)
+        raise HTTPException(status_code=502, detail="Program proposal provider failed") from error
+    except ProposalPersistenceConflict as error:
+        await to_thread.run_sync(generation_quota_repository.release, reservations)
+        recommendation_service.restore_available(user_id, idea_id)
+        raise HTTPException(status_code=409, detail="Program proposal could not be saved") from error
+    except BaseException:
+        if not proposal_persisted:
+            await to_thread.run_sync(generation_quota_repository.release, reservations)
+            recommendation_service.restore_available(user_id, idea_id)
+        raise
+
 
 
 def _mock_wav(duration_seconds: int) -> bytes:
@@ -496,18 +813,112 @@ async def audius_audio(track_id: str, request: Request) -> StreamingResponse:
     )
 
 
+def _static_seed(program_id: str) -> EpisodeSeed | None:
+    return next((candidate for candidate in SEEDS if candidate.id == program_id), None)
+
+
+def _proposal_for_program(program_id: str, actor: AuthPrincipal | None = None) -> ProgramProposal | None:
+    proposal = proposal_repository.get(program_id)
+    if proposal is not None:
+        owner = proposal_repository.get_owner(program_id)
+        if actor is not None and owner is not None and (
+            (owner[1] is not None and owner[1] == actor.user_id)
+            or (owner[1] is None and owner[0] == actor.listener_id)
+        ):
+            return proposal
+        return None
+    seed = _static_seed(program_id)
+    return ProgramProposal.from_episode_seed(seed) if seed is not None else None
+
+
 @app.get("/api/seeds", response_model=list[EpisodeSeed])
 def list_seeds() -> list[EpisodeSeed]:
     return SEEDS
 
 
+@app.get("/api/programs/{program_id}", response_model=ProgramProposal)
+def program(program_id: str, request: Request) -> ProgramProposal:
+    proposal = _proposal_for_program(program_id, principal(request))
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return proposal
+
+
+@app.post("/api/program-proposals", response_model=ProgramProposalBatch)
+async def create_program_proposals(
+    body: ProposalGenerationRequest, request: Request,
+) -> ProgramProposalBatch:
+    if proposal_generator is None:
+        raise HTTPException(status_code=503, detail="Program proposal generation is not configured")
+    owner = principal(request)
+    try:
+        reservations = await to_thread.run_sync(
+            lambda: generation_quota_repository.reserve(
+                owner.listener_id, owner.user_id, body.count,
+                guest_limit=GUEST_PROGRAM_LIMIT,
+                auth_daily_limit=AUTH_DAILY_PROGRAM_LIMIT,
+                global_daily_limit=GLOBAL_DAILY_PROGRAM_LIMIT,
+            )
+        )
+    except QuotaExceededError as error:
+        if error.reason == "guest_limit":
+            detail = f"\u8bbf\u5ba2\u53ef\u4ee5\u5148\u521b\u5efa {GUEST_PROGRAM_LIMIT} \u6863\u8282\u76ee\u3002\u767b\u5f55\u540e\u53ef\u4ee5\u7ee7\u7eed\u8c03\u9891\uff0c\u5e76\u540c\u6b65\u4f60\u7684\u8282\u76ee\u5e93\u3002"
+        elif error.reason == "account_daily_limit":
+            detail = "\u4eca\u5929\u7684\u8c03\u9891\u6b21\u6570\u5df2\u8fbe\u4e0a\u9650\uff0c\u8bf7\u660e\u5929\u518d\u8bd5\u3002"
+        else:
+            detail = "\u4eca\u5929\u7684\u8c03\u9891\u670d\u52a1\u5df2\u8fbe\u5230\u4f7f\u7528\u4e0a\u9650\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5\u3002"
+        raise HTTPException(status_code=429, detail=detail) from error
+    try:
+        proposals = await proposal_generator.generate(body)
+        if len(proposals) != body.count:
+            raise ProgramProposalGenerationError("proposal_count_mismatch")
+        proposal_ids = [item.id for item in proposals]
+        if len(set(proposal_ids)) != len(proposal_ids):
+            raise ProgramProposalGenerationError("proposal_id_collision")
+        await to_thread.run_sync(
+            lambda: proposal_repository.save_many(
+                proposals, owner_listener_id=owner.listener_id,
+                owner_user_id=owner.user_id, source="tune",
+            )
+        )
+        # A quota slot represents a successfully persisted dynamic program, not
+        # merely a provider response that failed the application contract.
+        await to_thread.run_sync(generation_quota_repository.charge, reservations, proposal_ids)
+        if owner.user_id is not None:
+            for item in proposals:
+                await to_thread.run_sync(
+                    user_library_repository.put,
+                    owner.user_id,
+                    "CREATED",
+                    item.id,
+                    {"id": item.id},
+                )
+        return ProgramProposalBatch(proposals=proposals)
+    except ProgramProposalGenerationError as error:
+        await to_thread.run_sync(generation_quota_repository.release, reservations)
+        raise HTTPException(status_code=502, detail=f"Program proposal generation failed ({error.reason})") from error
+    except ProviderError as error:
+        await to_thread.run_sync(generation_quota_repository.release, reservations)
+        raise HTTPException(status_code=502, detail="Program proposal provider failed") from error
+    except ProposalPersistenceConflict as error:
+        await to_thread.run_sync(generation_quota_repository.release, reservations)
+        raise HTTPException(status_code=409, detail="Program proposal could not be saved") from error
+    except BaseException:
+        await to_thread.run_sync(generation_quota_repository.release, reservations)
+        raise
+
+
 @app.post("/api/episodes/from-seed/{seed_id}", response_model=LiveEpisode)
 def create_episode(seed_id: str, request: Request) -> LiveEpisode:
-    seed = next((candidate for candidate in SEEDS if candidate.id == seed_id), None)
+    actor = principal(request)
+    seed = _static_seed(seed_id)
+    if seed is None:
+        proposal = _proposal_for_program(seed_id, actor)
+        seed = proposal.to_episode_seed() if proposal is not None else None
     if seed is None:
         raise HTTPException(status_code=404, detail="Episode seed not found")
     try:
-        return orchestrator.start_or_resume(seed, listener(request))
+        return orchestrator.start_or_resume(seed, actor.listener_id, actor.user_id)
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode creation raced; retry") from error
 
@@ -523,7 +934,8 @@ def import_materialized_episode(
             topic=body.topic,
             estimated_duration_seconds=body.estimated_duration_seconds,
             playable_episode=body.playable_episode,
-            listener_id=listener(request),
+            listener_id=principal(request).listener_id,
+            owner_user_id=principal(request).user_id,
         )
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode creation raced; retry") from error
@@ -531,15 +943,171 @@ def import_materialized_episode(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
+def _library_episode_payload(
+    episode: LiveEpisode, source: LibraryRecentRecord | LibrarySavedRecord,
+) -> dict[str, Any]:
+    payload = source.model_dump(by_alias=True)
+    payload.update({
+        "episodeId": episode.id,
+        "seedId": episode.seed_id,
+        "title": episode.title or "WaveCast",
+        "topic": episode.topic,
+        "durationSeconds": max(episode.timeline_duration_seconds, episode.program_estimated_duration_seconds),
+        "progressSeconds": min(float(payload["progressSeconds"]), float(episode.generated_frontier_seconds)),
+    })
+    if episode.current_segment_id:
+        try:
+            payload["currentTitle"] = episode.segment(episode.current_segment_id).title
+        except KeyError:
+            payload["currentTitle"] = None
+    return payload
+
+
+def _proposal_belongs_to_actor(proposal_id: str, actor: AuthPrincipal) -> bool:
+    owner = proposal_repository.get_owner(proposal_id)
+    if owner is None:
+        return False
+    return (
+        owner[1] == actor.user_id
+        if owner[1] is not None
+        else owner[0] == actor.listener_id
+    )
+
+
+@app.get("/api/me/library")
+def get_my_library(request: Request) -> dict[str, Any]:
+    actor = require_user(request)
+    assert actor.user_id is not None
+    return user_library_repository.snapshot(actor.user_id)
+
+
+@app.post("/api/me/library/merge")
+def merge_my_library(body: LibraryMergeRequest, request: Request) -> dict[str, Any]:
+    actor = require_user(request)
+    assert actor.user_id is not None
+    incoming = body.library
+    favorites = incoming.get("favoriteSeedIds", [])
+    created = incoming.get("createdProgramIds", [])
+    recents = incoming.get("recentPrograms", [])
+    saved = incoming.get("savedEpisodes", [])
+    safe_favorites: list[str] = []
+    for item in favorites if isinstance(favorites, list) else []:
+        if not isinstance(item, str):
+            continue
+        if _static_seed(item) is not None:
+            safe_favorites.append(item)
+        elif proposal_repository.claim_user(item, actor.listener_id, actor.user_id) or _proposal_belongs_to_actor(item, actor):
+            safe_favorites.append(item)
+    safe_created: list[str] = []
+    for item in created if isinstance(created, list) else []:
+        if isinstance(item, str) and (
+            proposal_repository.claim_user(item, actor.listener_id, actor.user_id)
+            or _proposal_belongs_to_actor(item, actor)
+        ):
+            safe_created.append(item)
+
+    safe_recents: list[dict[str, Any]] = []
+    for raw in recents if isinstance(recents, list) else []:
+        try:
+            item = LibraryRecentRecord.model_validate(raw)
+            claimed = repository.claim_user(item.episode_id, actor.listener_id, actor.user_id)
+            if not claimed and not repository.owned_by_user(item.episode_id, actor.user_id):
+                continue
+            episode = repository.get(item.episode_id)
+            if episode.seed_id == item.seed_id:
+                safe_recents.append(_library_episode_payload(episode, item))
+        except (ValueError, KeyError):
+            continue
+
+    safe_saved: list[dict[str, Any]] = []
+    for raw in saved if isinstance(saved, list) else []:
+        try:
+            item = LibrarySavedRecord.model_validate(raw)
+            claimed = repository.claim_user(item.episode_id, actor.listener_id, actor.user_id)
+            if not claimed and not repository.owned_by_user(item.episode_id, actor.user_id):
+                continue
+            episode = repository.get(item.episode_id)
+            if episode.seed_id == item.seed_id and episode.state is EpisodeState.MATERIALIZED:
+                safe_saved.append(_library_episode_payload(episode, item))
+        except (ValueError, KeyError):
+            continue
+
+    filtered = {
+        "version": 1,
+        "favoriteSeedIds": safe_favorites,
+        "recentPrograms": safe_recents,
+        "savedEpisodes": safe_saved,
+        "createdProgramIds": safe_created,
+    }
+    return user_library_repository.merge(actor.user_id, filtered)
+
+
+@app.put("/api/me/library/favorites/{program_id}")
+def add_my_favorite(program_id: str, request: Request) -> dict[str, Any]:
+    actor = require_user(request)
+    if _static_seed(program_id) is None and not _proposal_belongs_to_actor(program_id, actor):
+        raise HTTPException(status_code=404, detail="Program not found")
+    assert actor.user_id is not None
+    return user_library_repository.put(actor.user_id, "FAVORITE", program_id, {"id": program_id})
+
+
+@app.delete("/api/me/library/favorites/{program_id}")
+def remove_my_favorite(program_id: str, request: Request) -> dict[str, Any]:
+    actor = require_user(request)
+    if _static_seed(program_id) is None and not _proposal_belongs_to_actor(program_id, actor):
+        raise HTTPException(status_code=404, detail="Program not found")
+    assert actor.user_id is not None
+    return user_library_repository.delete(actor.user_id, "FAVORITE", program_id)
+
+
+@app.put("/api/me/library/recents/{episode_id}")
+def put_my_recent(episode_id: str, body: LibraryRecentRecord, request: Request) -> dict[str, Any]:
+    actor = require_user(request)
+    owned(episode_id, actor)
+    episode = orchestrator.get(episode_id)
+    if episode.owner_user_id is None and episode.listener_id == actor.listener_id:
+        if repository.claim_user(episode_id, actor.listener_id, actor.user_id or ""):
+            episode = orchestrator.get(episode_id)
+    if body.episode_id != episode_id or body.seed_id != episode.seed_id:
+        raise HTTPException(status_code=422, detail="Library item does not match episode")
+    assert actor.user_id is not None
+    payload = _library_episode_payload(episode, body)
+    return user_library_repository.put(actor.user_id, "RECENT", episode_id, payload)
+
+
+@app.put("/api/me/library/saved/{episode_id}")
+def put_my_saved(episode_id: str, body: LibrarySavedRecord, request: Request) -> dict[str, Any]:
+    actor = require_user(request)
+    owned(episode_id, actor)
+    episode = orchestrator.get(episode_id)
+    if episode.owner_user_id is None and episode.listener_id == actor.listener_id:
+        if repository.claim_user(episode_id, actor.listener_id, actor.user_id or ""):
+            episode = orchestrator.get(episode_id)
+    if episode.state is not EpisodeState.MATERIALIZED:
+        raise HTTPException(status_code=409, detail="Only complete episodes can be saved")
+    if body.episode_id != episode_id or body.seed_id != episode.seed_id:
+        raise HTTPException(status_code=422, detail="Library item does not match episode")
+    assert actor.user_id is not None
+    payload = _library_episode_payload(episode, body)
+    return user_library_repository.put(actor.user_id, "SAVED", episode_id, payload)
+
+
+@app.delete("/api/me/library/saved/{episode_id}")
+def delete_my_saved(episode_id: str, request: Request) -> dict[str, Any]:
+    actor = require_user(request)
+    assert actor.user_id is not None
+    return user_library_repository.delete(actor.user_id, "SAVED", episode_id)
+
+
 @app.get("/api/episodes/{episode_id}", response_model=LiveEpisode)
 def episode(episode_id: str, request: Request) -> LiveEpisode:
-    owned(episode_id, listener(request))
+    owned(episode_id, principal(request))
     return orchestrator.get(episode_id)
 
 
-def canonical_mix_plan_for_episode(episode_id: str, listener_id: str) -> MixPlan:
+def canonical_mix_plan_for_episode(episode_id: str, actor: AuthPrincipal) -> MixPlan:
     """Build the canonical arrangement for the currently ready timeline prefix."""
-    current = orchestrator.get(episode_id, listener_id)
+    current = orchestrator.get(episode_id)
     ready_segments: list[MusicSegment | NarrationSegment] = []
     for segment in current.timeline_segments:
         if not segment.is_audio_ready:
@@ -553,10 +1121,10 @@ def canonical_mix_plan_for_episode(episode_id: str, listener_id: str) -> MixPlan
 @app.get("/api/episodes/{episode_id}/mix-plan", response_model=MixPlan)
 def episode_mix_plan(episode_id: str, request: Request) -> MixPlan:
     """Return the deterministic server-owned arrangement for the ready prefix."""
-    listener_id = listener(request)
-    owned(episode_id, listener_id)
+    actor = principal(request)
+    owned(episode_id, actor)
     try:
-        return canonical_mix_plan_for_episode(episode_id, listener_id)
+        return canonical_mix_plan_for_episode(episode_id, actor)
     except ValueError as error:
         raise HTTPException(status_code=409, detail="Mix plan is not ready") from error
 
@@ -567,9 +1135,9 @@ def episode_mix_plan(episode_id: str, request: Request) -> MixPlan:
 )
 async def prepare_mixdown(episode_id: str, request: Request) -> MixdownPreparationResult:
     """Snapshot provider-backed music into owned assets without rendering."""
-    listener_id = listener(request)
-    owned(episode_id, listener_id)
-    current = orchestrator.get(episode_id, listener_id)
+    actor = principal(request)
+    owned(episode_id, actor)
+    current = orchestrator.get(episode_id)
     working = current.model_copy(deep=True)
     updates: list[tuple[MusicSegment, str, str, int]] = []
     blocked: list[BlockedMusicSource] = []
@@ -650,10 +1218,10 @@ async def prepare_mixdown(episode_id: str, request: Request) -> MixdownPreparati
 @app.post("/api/episodes/{episode_id}/mixdown", response_model=MixdownArtifact)
 async def episode_mixdown(episode_id: str, request: Request) -> MixdownArtifact:
     """Render the current canonical plan from already-owned local audio assets."""
-    listener_id = listener(request)
-    owned(episode_id, listener_id)
+    actor = principal(request)
+    owned(episode_id, actor)
     try:
-        plan = canonical_mix_plan_for_episode(episode_id, listener_id)
+        plan = canonical_mix_plan_for_episode(episode_id, actor)
         with TemporaryDirectory(prefix="wavecast-mixdown-") as temporary:
             sources = await resolve_mix_sources(plan, audio_storage, Path(temporary) / "inputs")
             output_path = Path(temporary) / "mixdown.mp3"
@@ -692,7 +1260,7 @@ async def episode_mixdown(episode_id: str, request: Request) -> MixdownArtifact:
 async def ensure_buffer(episode_id: str, request: Request, body: BufferRequest) -> LiveEpisode:
     return await operate_async(
         episode_id,
-        listener(request),
+        principal(request),
         lambda: scheduler.ensure_buffer(episode_id, target_chapters=body.target_chapters),
     )
 
@@ -700,20 +1268,20 @@ async def ensure_buffer(episode_id: str, request: Request, body: BufferRequest) 
 @app.post("/api/episodes/{episode_id}/advance", response_model=LiveEpisode)
 async def advance_compatibility(episode_id: str, request: Request) -> LiveEpisode:
     return await operate_async(
-        episode_id, listener(request), lambda: scheduler.ensure_buffer(episode_id)
+        episode_id, principal(request), lambda: scheduler.ensure_buffer(episode_id)
     )
 
 
 @app.post("/api/episodes/{episode_id}/heartbeat", response_model=LiveEpisode)
 def heartbeat(episode_id: str, request: Request) -> LiveEpisode:
-    return operate(episode_id, listener(request), lambda: orchestrator.heartbeat(episode_id))
+    return operate(episode_id, principal(request), lambda: orchestrator.heartbeat(episode_id))
 
 
 @app.post("/api/episodes/{episode_id}/commit/{segment_id}", response_model=LiveEpisode)
 def commit_segment(episode_id: str, segment_id: str, request: Request) -> LiveEpisode:
     return operate(
         episode_id,
-        listener(request),
+        principal(request),
         lambda: orchestrator.commit_segment(episode_id, segment_id),
     )
 
@@ -721,14 +1289,14 @@ def commit_segment(episode_id: str, segment_id: str, request: Request) -> LiveEp
 @app.post("/api/episodes/{episode_id}/completed", response_model=LiveEpisode)
 def completed(episode_id: str, request: Request) -> LiveEpisode:
     return operate(
-        episode_id, listener(request), lambda: orchestrator.complete_current_segment(episode_id)
+        episode_id, principal(request), lambda: orchestrator.complete_current_segment(episode_id)
     )
 
 
 @app.post("/api/episodes/{episode_id}/seek", response_model=LiveEpisode)
 def seek(episode_id: str, request: Request, body: SeekRequest) -> LiveEpisode:
     return operate(
-        episode_id, listener(request), lambda: orchestrator.seek(episode_id, body.position_seconds)
+        episode_id, principal(request), lambda: orchestrator.seek(episode_id, body.position_seconds)
     )
 
 
@@ -738,29 +1306,29 @@ def playback_checkpoint(
 ) -> LiveEpisode:
     return operate(
         episode_id,
-        listener(request),
+        principal(request),
         lambda: orchestrator.checkpoint_playback(episode_id, body.position_seconds),
     )
 
 
 @app.post("/api/episodes/{episode_id}/next", response_model=LiveEpisode)
 def next_playable(episode_id: str, request: Request) -> LiveEpisode:
-    return operate(episode_id, listener(request), lambda: orchestrator.next_playable(episode_id))
+    return operate(episode_id, principal(request), lambda: orchestrator.next_playable(episode_id))
 
 
 @app.post("/api/episodes/{episode_id}/leave", response_model=LiveEpisode)
 def leave(episode_id: str, request: Request) -> LiveEpisode:
-    return operate(episode_id, listener(request), lambda: orchestrator.leave(episode_id))
+    return operate(episode_id, principal(request), lambda: orchestrator.leave(episode_id))
 
 
 @app.post("/api/episodes/{episode_id}/pause", response_model=LiveEpisode)
 def pause(episode_id: str, request: Request) -> LiveEpisode:
-    return operate(episode_id, listener(request), lambda: orchestrator.pause(episode_id))
+    return operate(episode_id, principal(request), lambda: orchestrator.pause(episode_id))
 
 
 @app.post("/api/episodes/{episode_id}/resume", response_model=LiveEpisode)
 def resume(episode_id: str, request: Request) -> LiveEpisode:
-    return operate(episode_id, listener(request), lambda: orchestrator.resume(episode_id))
+    return operate(episode_id, principal(request), lambda: orchestrator.resume(episode_id))
 
 
 @app.post(
@@ -770,9 +1338,9 @@ def resume(episode_id: str, request: Request) -> LiveEpisode:
 async def materialize_narration(
     episode_id: str, segment_id: str, request: Request
 ) -> LiveEpisode:
-    listener_id = listener(request)
-    await to_thread.run_sync(owned, episode_id, listener_id)
-    episode = await to_thread.run_sync(orchestrator.get, episode_id, listener_id)
+    actor = principal(request)
+    await to_thread.run_sync(owned, episode_id, actor)
+    episode = await to_thread.run_sync(orchestrator.get, episode_id)
     try:
         segment = episode.segment(segment_id)
     except KeyError as error:
@@ -805,8 +1373,8 @@ async def materialize_narration(
 
 @app.post("/api/episodes/{episode_id}/materialize", response_model=LiveEpisode)
 async def materialize(episode_id: str, request: Request) -> LiveEpisode:
-    listener_id = listener(request)
-    await to_thread.run_sync(owned, episode_id, listener_id)
+    actor = principal(request)
+    await to_thread.run_sync(owned, episode_id, actor)
     episode: LiveEpisode | None = None
     try:
         await scheduler.materialize_all(episode_id)
@@ -847,7 +1415,7 @@ async def materialize(episode_id: str, request: Request) -> LiveEpisode:
 def replan(episode_id: str, request: Request, body: ReplaceRequest) -> LiveEpisode:
     return operate(
         episode_id,
-        listener(request),
+        principal(request),
         lambda: orchestrator.replace_speculative_music(episode_id, body.title),
     )
 
@@ -856,13 +1424,13 @@ def replan(episode_id: str, request: Request, body: ReplaceRequest) -> LiveEpiso
 async def episode_events(
     episode_id: str, request: Request, once: bool = False
 ) -> StreamingResponse:
-    listener_id = listener(request)
-    await to_thread.run_sync(owned, episode_id, listener_id)
+    actor = principal(request)
+    await to_thread.run_sync(owned, episode_id, actor)
 
     async def stream() -> AsyncIterator[str]:
         version = -1
         while not await request.is_disconnected():
-            current = await to_thread.run_sync(orchestrator.get, episode_id, listener_id)
+            current = await to_thread.run_sync(orchestrator.get, episode_id)
             if current.version != version:
                 version = current.version
                 payload = json.dumps(current.model_dump(mode="json"), ensure_ascii=False)
