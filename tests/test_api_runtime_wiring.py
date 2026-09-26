@@ -114,7 +114,7 @@ def test_pure_mock_keeps_deterministic_progressive_runtime(
     )
 
     assert runtime is not None
-    assert runtime.service is assembly
+    assert runtime.assembly is assembly
 
 
 def test_music_only_live_override_does_not_activate_progressive_runtime(
