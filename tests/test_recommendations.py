@@ -8,6 +8,8 @@ from time import sleep
 from pydantic import BaseModel
 from wavecast.models.episode import CoverParams
 from wavecast.proposals import InMemoryProgramProposalRepository, ProgramProposal
+from wavecast.providers.errors import ProviderUnavailableError
+from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.recommendations import (
     DeterministicRecommendationPlanner,
     InMemoryProgramIdeaRepository,
@@ -19,8 +21,6 @@ from wavecast.recommendations import (
     UserContext,
     UserContextAggregator,
 )
-from wavecast.providers.errors import ProviderUnavailableError
-from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.user_context import (
     DiscoveryLevel,
     Genre,
