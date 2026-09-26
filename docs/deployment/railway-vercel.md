@@ -52,6 +52,41 @@ cached heuristic cards do not occupy the 24-hour cooldown. This setting does
 not enable live episode assembly, MiniMax TTS, search providers, or music
 providers.
 
+### Staged live-provider activation
+
+Keep `WAVECAST_PROVIDER_MODE=mock` as the hosted safety default. The remaining
+provider graph can be activated without another code deploy by setting only the
+capabilities being validated:
+
+~~~text
+WAVECAST_PROPOSAL_PLANNER=inherit   # mock | deepseek
+WAVECAST_MUSIC_PROVIDER=inherit     # mock | auto | netease | qqmusic | audius
+WAVECAST_FAST_START_PROVIDER=inherit # mock | deepseek
+WAVECAST_RESEARCH_PROVIDER=inherit  # mock | live (DeepSeek planner + Exa/Tavily)
+WAVECAST_CURATOR_PROVIDER=inherit   # mock | deepseek
+WAVECAST_WRITER_PROVIDER=inherit    # mock | deepseek
+WAVECAST_TTS_PROVIDER=inherit       # mock | minimax
+~~~
+
+`inherit` follows the global mode, so the current production environment keeps
+all of these mock until an explicit selector is changed. A live selector is
+fail-closed: missing credentials or a missing music endpoint should block that
+deployment instead of silently calling a mock provider.
+
+Recommended rollout order after the wiring deploy:
+
+~~~text
+1. proposal=deepseek + music=<real provider>
+2. fast_start=deepseek + research=live + curator=deepseek
+3. writer=deepseek
+4. tts=minimax
+~~~
+
+For the first MiniMax production run, configure `MINIMAX_API_KEY` and
+`MINIMAX_TTS_VOICE_ID`. The code defaults are
+`MINIMAX_TTS_MODEL=speech-2.8-turbo` and `MINIMAX_TTS_SPEED=0.8`; set
+environment overrides only when testing another model or pace.
+
 ### Optional Better Auth identity
 
 WaveCast business migrations remain Alembic-managed. Better Auth owns its
