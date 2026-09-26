@@ -36,3 +36,38 @@ export function createSynchronizationGuard(): SynchronizationGuard {
       listenerActive && generation === currentGeneration,
   };
 }
+
+
+export type IndependentSynchronizationTasks = {
+  heartbeat: () => Promise<void>;
+  buffer: () => Promise<void>;
+};
+
+export function createIndependentSynchronizationTasks(
+  heartbeatTask: () => Promise<void>,
+  bufferTask: () => Promise<void>,
+): IndependentSynchronizationTasks {
+  let heartbeating = false;
+  let buffering = false;
+
+  return {
+    heartbeat: async () => {
+      if (heartbeating) return;
+      heartbeating = true;
+      try {
+        await heartbeatTask();
+      } finally {
+        heartbeating = false;
+      }
+    },
+    buffer: async () => {
+      if (buffering) return;
+      buffering = true;
+      try {
+        await bufferTask();
+      } finally {
+        buffering = false;
+      }
+    },
+  };
+}
