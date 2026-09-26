@@ -23,6 +23,7 @@ Recommended variables:
 ~~~text
 WAVECAST_DATABASE_URL=<Railway Postgres DATABASE_URL reference>
 WAVECAST_PROVIDER_MODE=mock
+WAVECAST_RECOMMENDATION_PLANNER=deterministic
 RAILWAY_VOLUME_MOUNT_PATH=<attached volume mount path>
 ~~~
 
@@ -30,6 +31,26 @@ WAVECAST_AUDIO_ROOT wins when explicitly set; otherwise the API uses
 RAILWAY_VOLUME_MOUNT_PATH, then .wavecast-data/audio. Railway's PORT is used
 by the entrypoint, while local Compose still falls back to 8000. Do not add
 railway.toml or railway.json; use Railway dashboard/Git integration.
+
+### Optional AI recommendation inventory
+
+Recommendation inference is gated separately from the global provider mode. Keep
+`WAVECAST_PROVIDER_MODE=mock` and set only these values when personalized Home
+ideas are ready to use DeepSeek:
+
+~~~text
+WAVECAST_RECOMMENDATION_PLANNER=deepseek
+DEEPSEEK_API_KEY=<server-only secret>
+~~~
+
+This enables one bounded FAST structured DeepSeek call only when a user's
+durable recommendation inventory needs generation or refill. Ordinary Home
+reads reuse Postgres inventory and do not call the model. Provider failures fall
+back to the deterministic planner for that refresh. Switching planner source
+invalidates the old source's visible inventory immediately, so previously
+cached heuristic cards do not occupy the 24-hour cooldown. This setting does
+not enable live episode assembly, MiniMax TTS, search providers, or music
+providers.
 
 ### Optional Better Auth identity
 

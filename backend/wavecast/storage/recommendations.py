@@ -81,11 +81,20 @@ class PostgresProgramIdeaRepository(ProgramIdeaRepository):
         *,
         now: datetime,
         refresh_interval: timedelta,
+        source: str,
         generate: Callable[[], list[ProgramIdea]],
     ) -> list[ProgramIdea]:
         return cast(
             list[ProgramIdea],
-            self._run(self._refresh_if_due(user_id, now, refresh_interval, generate)),
+            self._run(
+                self._refresh_if_due(
+                    user_id,
+                    now,
+                    refresh_interval,
+                    source,
+                    generate,
+                )
+            ),
         )
 
     def close(self) -> None:
@@ -126,6 +135,7 @@ class PostgresProgramIdeaRepository(ProgramIdeaRepository):
         user_id: str,
         now: datetime,
         refresh_interval: timedelta,
+        source: str,
         generate: Callable[[], list[ProgramIdea]],
     ) -> list[ProgramIdea]:
         async with self.engine.begin() as connection:
@@ -149,12 +159,15 @@ class PostgresProgramIdeaRepository(ProgramIdeaRepository):
                 )
             ).all()
             existing = [ProgramIdea.model_validate(row.payload) for row in rows]
+            same_source = [idea for idea in existing if idea.source == source]
             available = [
-                idea for idea in existing if idea.status is ProgramIdeaStatus.AVAILABLE
+                idea
+                for idea in same_source
+                if idea.status is ProgramIdeaStatus.AVAILABLE
             ]
-            latest = rows[0].created_at if rows else None
+            latest = same_source[0].created_at if same_source else None
             has_consumed = any(
-                idea.status is not ProgramIdeaStatus.AVAILABLE for idea in existing
+                idea.status is not ProgramIdeaStatus.AVAILABLE for idea in same_source
             )
             if (
                 latest is not None
