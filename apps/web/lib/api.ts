@@ -69,9 +69,20 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
-  recommendations: () => request<ProgramIdea[]>("/recommendations/me"),
-  refreshRecommendations: () =>
-    request<ProgramIdea[]>("/recommendations/me/refresh", { method: "POST" }),
+  recommendations: (expectedUserId: string) =>
+    request<ProgramIdea[]>("/recommendations/me", undefined, expectedUserId),
+  refreshRecommendations: (expectedUserId: string) =>
+    request<ProgramIdea[]>(
+      "/recommendations/me/refresh",
+      { method: "POST" },
+      expectedUserId,
+    ),
+  materializeRecommendation: (id: string, expectedUserId: string) =>
+    request<ProgramProposalBatch>(
+      `/recommendations/me/${encodeURIComponent(id)}/program-proposal`,
+      { method: "POST" },
+      expectedUserId,
+    ),
   createProgramProposals: (input: ProposalGenerationRequest) =>
     request<ProgramProposalBatch>("/program-proposals", {
       method: "POST",
