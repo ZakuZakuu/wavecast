@@ -56,7 +56,7 @@ export function AccountPage() {
           <p className="program-kicker">已登录</p>
           <h2>{session.user.name}</h2>
           {session.user.email ? <p>{session.user.email}</p> : null}
-          <p className="account-benefit">你的节目库已准备好连接到账号，跨设备同步会在下一步开放。</p>
+          <p className="account-benefit">你的节目库已同步到账号，可在其他设备继续使用。</p>
           <button type="button" className="account-secondary" onClick={() => void signOut()}>
             退出登录
           </button>
