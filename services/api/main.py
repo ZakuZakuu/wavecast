@@ -169,7 +169,7 @@ def _build_recommendation_planner(settings: ProviderSettings) -> RecommendationP
     # DeepSeek while episode assembly, TTS, and music providers remain in mock
     # mode, so enabling personalized ideas does not implicitly enable paid
     # generation elsewhere.
-    recommendation_settings = replace(settings, mode="live")
+    recommendation_settings = settings.for_live_capability()
     recommendation_settings.credential_for("deepseek")
     ledger = UsageLedger()
     return ProviderBackedRecommendationPlanner(
@@ -190,11 +190,13 @@ _auth_verifier = (
 
 
 def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGenerator:
-    if settings.mode == "mock":
+    if settings.resolved_proposal_planner == "mock":
         return DeterministicMockProgramProposalGenerator()
+    live_settings = settings.for_live_capability()
+    live_settings.credential_for("deepseek")
     ledger = UsageLedger()
     return LLMProgramProposalGenerator(
-        DeepSeekLLMProvider(settings, ledger=ledger),
+        DeepSeekLLMProvider(live_settings, ledger=ledger),
         MusicRetrievalService(build_music_registry(settings)),
     )
 
@@ -210,9 +212,9 @@ repository: EpisodeRepository = (
 def _build_tts_provider(
     settings: ProviderSettings, storage: ObjectStorageProvider
 ) -> MiniMaxTTSProvider | MockTTSProvider:
-    if settings.mode == "mock":
+    if settings.resolved_tts_provider == "mock":
         return MockTTSProvider(storage)
-    return MiniMaxTTSProvider(settings, storage=storage)
+    return MiniMaxTTSProvider(settings.for_live_capability(), storage=storage)
 
 
 _tts_provider = _build_tts_provider(_provider_settings, audio_storage)
@@ -227,7 +229,7 @@ def _build_progressive_runtime(
             create_episode_assembly_service(settings, storage=storage)
         )
     except ProviderConfigurationError:
-        if settings.mode == "live":
+        if settings.mode == "live" or settings.has_live_episode_capability:
             raise
         return None
 
@@ -623,6 +625,24 @@ async def materialize_recommendation(
         if len(proposals) != 1:
             raise ProgramProposalGenerationError("proposal_count_mismatch")
         proposal = proposals[0]
+        # A personalized recommendation is already the public editorial promise.
+        # Keep its title/description/tags stable even while the downstream proposal
+        # capability is still mock. Mock opening-track identities remain runtime-only
+        # and must not leak into the visible artist preview.
+        merged_tags = list(dict.fromkeys([*claimed.tags, *proposal.genre_tags]))[:8]
+        proposal = proposal.model_copy(
+            update={
+                "title": claimed.title,
+                "short_description": claimed.description,
+                "genre_tags": merged_tags,
+                "anchor_artists": (
+                    []
+                    if proposal.opening_track_ref.startswith("mock:")
+                    else proposal.anchor_artists
+                ),
+            }
+        )
+        proposals = [proposal]
         await to_thread.run_sync(
             lambda: proposal_repository.save_many(
                 proposals,
