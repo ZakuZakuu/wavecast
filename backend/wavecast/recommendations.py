@@ -126,6 +126,17 @@ class ProgramIdeaRepository(Protocol):
 
     def list_for_user(self, user_id: str, *, limit: int = 12) -> list[ProgramIdea]: ...
 
+    def get_for_user(self, user_id: str, idea_id: str) -> ProgramIdea | None: ...
+
+    def transition_status(
+        self,
+        user_id: str,
+        idea_id: str,
+        *,
+        from_status: ProgramIdeaStatus,
+        to_status: ProgramIdeaStatus,
+    ) -> ProgramIdea | None: ...
+
     def refresh_if_due(
         self,
         user_id: str,
@@ -138,6 +149,7 @@ class ProgramIdeaRepository(Protocol):
 
 MAX_STORED_IDEAS_PER_USER = 30
 MAX_LISTED_IDEAS_PER_USER = 12
+MIN_AVAILABLE_IDEAS_PER_USER = 2
 
 
 class InMemoryProgramIdeaRepository:
@@ -154,6 +166,37 @@ class InMemoryProgramIdeaRepository:
         with self._lock:
             return self._list_for_user(user_id, limit)
 
+    def get_for_user(self, user_id: str, idea_id: str) -> ProgramIdea | None:
+        with self._lock:
+            return next(
+                (
+                    idea
+                    for idea in self._ideas
+                    if idea.user_id == user_id and idea.id == idea_id
+                ),
+                None,
+            )
+
+    def transition_status(
+        self,
+        user_id: str,
+        idea_id: str,
+        *,
+        from_status: ProgramIdeaStatus,
+        to_status: ProgramIdeaStatus,
+    ) -> ProgramIdea | None:
+        with self._lock:
+            for index, idea in enumerate(self._ideas):
+                if (
+                    idea.user_id == user_id
+                    and idea.id == idea_id
+                    and idea.status is from_status
+                ):
+                    updated = idea.model_copy(update={"status": to_status})
+                    self._ideas[index] = updated
+                    return updated
+        return None
+
     def refresh_if_due(
         self,
         user_id: str,
@@ -164,12 +207,24 @@ class InMemoryProgramIdeaRepository:
     ) -> list[ProgramIdea]:
         with self._lock:
             existing = self._list_for_user(user_id, MAX_LISTED_IDEAS_PER_USER)
-            if existing and now - existing[0].created_at < refresh_interval:
-                return existing
+            available = [
+                idea for idea in existing if idea.status is ProgramIdeaStatus.AVAILABLE
+            ]
+            if (
+                len(available) >= MIN_AVAILABLE_IDEAS_PER_USER
+                and existing
+                and now - existing[0].created_at < refresh_interval
+            ):
+                return available
             generated = generate()
             self._ideas.extend(generated)
             self._trim_to_user_limit()
-            return generated
+            combined = [*generated, *available]
+            return sorted(
+                combined,
+                key=lambda idea: (idea.created_at, idea.id),
+                reverse=True,
+            )[:MAX_LISTED_IDEAS_PER_USER]
 
     def _list_for_user(self, user_id: str, limit: int) -> list[ProgramIdea]:
         matches = sorted(
@@ -364,6 +419,32 @@ class RecommendationService:
 
     def list_for_user(self, user_id: str) -> list[ProgramIdea]:
         return self._repository.list_for_user(user_id, limit=MAX_LISTED_IDEAS_PER_USER)
+
+    def inventory_for_user(self, user_id: str) -> list[ProgramIdea]:
+        return [
+            idea
+            for idea in self.refresh_for_user(user_id)
+            if idea.status is ProgramIdeaStatus.AVAILABLE
+        ]
+
+    def get_for_user(self, user_id: str, idea_id: str) -> ProgramIdea | None:
+        return self._repository.get_for_user(user_id, idea_id)
+
+    def claim_for_materialization(self, user_id: str, idea_id: str) -> ProgramIdea | None:
+        return self._repository.transition_status(
+            user_id,
+            idea_id,
+            from_status=ProgramIdeaStatus.AVAILABLE,
+            to_status=ProgramIdeaStatus.USED,
+        )
+
+    def restore_available(self, user_id: str, idea_id: str) -> ProgramIdea | None:
+        return self._repository.transition_status(
+            user_id,
+            idea_id,
+            from_status=ProgramIdeaStatus.USED,
+            to_status=ProgramIdeaStatus.AVAILABLE,
+        )
 
     def refresh_for_user(self, user_id: str) -> list[ProgramIdea]:
         now = self._clock()
