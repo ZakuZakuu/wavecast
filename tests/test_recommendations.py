@@ -111,6 +111,38 @@ def test_context_aggregates_preferences_recent_events_favorites_and_created_prog
     assert "Private Artist" not in context.preferred_artists
 
 
+def test_program_idea_keeps_editorial_identity_and_hides_only_mock_anchor() -> None:
+    idea = ProgramIdea(
+        id="idea-a",
+        user_id="user-a",
+        title="雨夜爵士：慢一点进入城市",
+        description="从柔和的爵士与 Bossa 出发，沿着夜色慢慢展开。",
+        reason="结合 Jazz、Late Night 与放松场景。",
+        tags=["Jazz", "Bossa", "Late Night"],
+    )
+    mock = _proposal("proposal-mock", "旧的 mock 模板", "Mira Fields")
+    real = mock.model_copy(
+        update={
+            "id": "proposal-real",
+            "opening_track_ref": "netease:123",
+            "opening_track_artist": "方大同",
+            "anchor_artists": ["方大同"],
+        }
+    )
+
+    adapted_mock = idea.apply_to_proposal(mock)
+    adapted_real = idea.apply_to_proposal(real)
+
+    assert adapted_mock.title == idea.title
+    assert adapted_mock.short_description == idea.description
+    assert adapted_mock.genre_tags == idea.tags
+    assert adapted_mock.mood_tags == []
+    assert adapted_mock.anchor_artists == []
+    assert adapted_mock.opening_track_ref == "mock:opening"
+    assert adapted_real.anchor_artists == ["方大同"]
+    assert adapted_real.opening_track_ref == "netease:123"
+
+
 def test_deterministic_planner_uses_preferences_and_recent_context() -> None:
     ideas = DeterministicRecommendationPlanner().generate_program_ideas(
         UserContext(
