@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
+from urllib.parse import quote
 from uuid import uuid4
 from wave import open as open_wave
 
@@ -55,11 +56,11 @@ from wavecast.proposals import (
 )
 from wavecast.providers.audius import AudiusMusicProvider
 from wavecast.providers.config import ProviderSettings
-from wavecast.providers.contracts import ObjectStorageProvider
+from wavecast.providers.contracts import AudioProvider, AudioSource, ObjectStorageProvider
 from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
 from wavecast.providers.factory import build_music_registry
-from wavecast.providers.fakes import MockTTSProvider
+from wavecast.providers.fakes import MockAudioProvider, MockTTSProvider
 from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.music_http import SidecarMusicProvider
 from wavecast.providers.netease import NeteaseMusicProvider
@@ -220,6 +221,45 @@ def _build_tts_provider(
     return MiniMaxTTSProvider(live_settings, storage=storage)
 
 
+class BrowserProxyAudioProvider:
+    """Expose provider-qualified music through same-origin WaveCast proxy routes."""
+
+    def __init__(self, fallback: MockAudioProvider | None = None) -> None:
+        self.fallback = fallback or MockAudioProvider()
+
+    def music_source(self, track_ref: str) -> AudioSource:
+        fallback_source = self.fallback.music_source(track_ref)
+        provider_name, separator, track_id = track_ref.partition(":")
+        if not separator or not track_id:
+            return fallback_source
+
+        encoded_id = quote(track_id, safe="")
+        if provider_name in {"netease", "qqmusic"}:
+            return AudioSource(
+                source_url=f"/api/audio/sidecar/{provider_name}/{encoded_id}",
+                duration_seconds=fallback_source.duration_seconds,
+            )
+        if provider_name == "audius":
+            return AudioSource(
+                source_url=f"/api/audio/audius/{encoded_id}",
+                duration_seconds=fallback_source.duration_seconds,
+            )
+        return fallback_source
+
+    def narration_source(
+        self, segment_id: str, narration_text: str, duration_seconds: int
+    ) -> AudioSource:
+        return self.fallback.narration_source(
+            segment_id, narration_text, duration_seconds
+        )
+
+
+def _build_audio_provider(settings: ProviderSettings) -> AudioProvider:
+    if settings.resolved_music_provider == "mock":
+        return MockAudioProvider()
+    return BrowserProxyAudioProvider()
+
+
 _tts_provider = _build_tts_provider(_provider_settings, audio_storage)
 narration_materializer = NarrationMaterializer(_tts_provider, audio_storage)
 
@@ -227,6 +267,12 @@ narration_materializer = NarrationMaterializer(_tts_provider, audio_storage)
 def _build_progressive_runtime(
     settings: ProviderSettings, storage: ObjectStorageProvider
 ) -> StagedProgressiveRuntimeAdapter | None:
+    if (
+        settings.mode == "mock"
+        and settings.resolved_music_provider != "mock"
+        and not settings.has_live_progressive_intelligence
+    ):
+        return None
     try:
         return StagedProgressiveRuntimeAdapter(
             create_episode_assembly_service(settings, storage=storage)
@@ -238,7 +284,12 @@ def _build_progressive_runtime(
 
 
 progressive_runtime = _build_progressive_runtime(_provider_settings, audio_storage)
-orchestrator = EpisodeOrchestrator(repository, progressive_runtime=progressive_runtime)
+audio_provider = _build_audio_provider(_provider_settings)
+orchestrator = EpisodeOrchestrator(
+    repository,
+    audio_provider=audio_provider,
+    progressive_runtime=progressive_runtime,
+)
 scheduler = InlineGenerationScheduler(orchestrator)
 
 
@@ -279,6 +330,7 @@ def configure_runtime(
         progressive_runtime = progressive_runtime_adapter
     orchestrator = EpisodeOrchestrator(
         repository,
+        audio_provider=audio_provider,
         progressive_runtime=progressive_runtime,
     )
     scheduler = InlineGenerationScheduler(orchestrator)
@@ -309,6 +361,7 @@ def configure_narration_materializer(materializer: NarrationMaterializer) -> Non
     )
     orchestrator = EpisodeOrchestrator(
         repository,
+        audio_provider=audio_provider,
         progressive_runtime=progressive_runtime,
     )
     scheduler = InlineGenerationScheduler(orchestrator)

@@ -198,6 +198,18 @@ class ProviderSettings:
             )
         )
 
+    @property
+    def has_live_progressive_intelligence(self) -> bool:
+        """Whether staged research/curation/writing should own episode generation."""
+        return any(
+            (
+                self.resolved_fast_start_provider != "mock",
+                self.resolved_research_provider != "mock",
+                self.resolved_curator_provider != "mock",
+                self.resolved_writer_provider != "mock",
+            )
+        )
+
     def for_live_capability(self) -> "ProviderSettings":
         """Allow one explicitly gated live adapter without flipping sibling capabilities."""
         return replace(self, mode="live")
