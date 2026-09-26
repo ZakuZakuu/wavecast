@@ -98,6 +98,25 @@ def test_mock_music_audio_provider_keeps_mock_route(api_module) -> None:
     assert music.source_url.startswith("/api/audio/mock/music/")
 
 
+def test_pure_mock_keeps_deterministic_progressive_runtime(
+    api_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assembly = object()
+    monkeypatch.setattr(
+        api_module,
+        "create_episode_assembly_service",
+        lambda settings, storage: assembly,
+    )
+
+    runtime = api_module._build_progressive_runtime(
+        ProviderSettings(mode="mock"),
+        LocalObjectStorageProvider(),
+    )
+
+    assert runtime is not None
+    assert runtime.service is assembly
+
+
 def test_music_only_live_override_does_not_activate_progressive_runtime(
     api_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
