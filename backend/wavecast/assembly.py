@@ -2045,37 +2045,63 @@ def create_episode_assembly_service(
     *,
     storage: ObjectStorageProvider | None = None,
 ) -> LiveEpisodeAssemblyService:
-    """Create the same assembly path in mock or explicitly configured live mode."""
+    """Create one assembly path whose provider capabilities can be gated independently."""
     settings = settings or ProviderSettings.from_env()
     ledger = UsageLedger()
     music_registry = build_music_registry(settings)
     storage = storage or LocalObjectStorageProvider()
-    if settings.mode == "mock":
-        llm: ProgressiveLLMProvider = MockEpisodeAssemblyLLM()
+    live_settings = settings.for_live_capability()
+    mock_llm = MockEpisodeAssemblyLLM()
+
+    fast_llm: ProgressiveLLMProvider = (
+        mock_llm
+        if settings.resolved_fast_start_provider == "mock"
+        else DeepSeekLLMProvider(live_settings, ledger=ledger)
+    )
+    research_llm: ProgressiveLLMProvider = (
+        mock_llm
+        if settings.resolved_research_provider == "mock"
+        else DeepSeekLLMProvider(live_settings, ledger=ledger)
+    )
+    curator_llm: ProgressiveLLMProvider = (
+        mock_llm
+        if settings.resolved_curator_provider == "mock"
+        else DeepSeekLLMProvider(live_settings, ledger=ledger)
+    )
+    writer_llm: ProgressiveLLMProvider = (
+        mock_llm
+        if settings.resolved_writer_provider == "mock"
+        else DeepSeekLLMProvider(live_settings, ledger=ledger)
+    )
+
+    if settings.resolved_research_provider == "mock":
         discovery: SearchProvider = FakeSearchProvider()
         research: SearchProvider = FakeSearchProvider()
-        tts: TTSProvider = MockTTSProvider(storage)
     else:
-        llm = DeepSeekLLMProvider(settings, ledger=ledger)
-        discovery = ExaSearchProvider(settings, ledger=ledger)
-        research = TavilySearchProvider(settings, ledger=ledger)
-        tts = MiniMaxTTSProvider(settings, storage=storage, ledger=ledger)
+        discovery = ExaSearchProvider(live_settings, ledger=ledger)
+        research = TavilySearchProvider(live_settings, ledger=ledger)
+
+    tts: TTSProvider = (
+        MockTTSProvider(storage)
+        if settings.resolved_tts_provider == "mock"
+        else MiniMaxTTSProvider(live_settings, storage=storage, ledger=ledger)
+    )
 
     fast_research = FastResearchService(discovery=discovery, research=research, ledger=ledger)
     background_research = BackgroundResearchService(
         discovery=discovery,
         research=research,
         ledger=ledger,
-        planner=BackgroundResearchPlanner(llm),
+        planner=BackgroundResearchPlanner(research_llm),
     )
     fast_path = FastPathCoordinator(
         research=fast_research,
-        planner=FastStartPlanner(llm),
+        planner=FastStartPlanner(fast_llm),
     )
     background_pipeline = BackgroundIntelligencePipeline(
         research=background_research,
-        curator=CuratorService(llm),
-        writer=WriterService(llm),
+        curator=CuratorService(curator_llm),
+        writer=WriterService(writer_llm),
     )
     return LiveEpisodeAssemblyService(
         fast_path=fast_path,
