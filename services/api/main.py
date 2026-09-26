@@ -622,7 +622,8 @@ async def materialize_recommendation(
         proposals = await proposal_generator.generate(body)
         if len(proposals) != 1:
             raise ProgramProposalGenerationError("proposal_count_mismatch")
-        proposal = proposals[0]
+        proposal = claimed.apply_to_proposal(proposals[0])
+        proposals = [proposal]
         await to_thread.run_sync(
             lambda: proposal_repository.save_many(
                 proposals,

@@ -29,9 +29,17 @@ export function ProgramDetail({ seedId }: { seedId: string }) {
     return {
       ...fallback,
       genres: seed.genre_tags.length ? seed.genre_tags.join(" · ") : fallback.genres,
-      artists: seed.anchor_artists.length ? seed.anchor_artists : fallback.artists,
+      artists: seed.anchor_artists.length
+        ? seed.anchor_artists
+        : seed.opening_track_ref.startsWith("mock:")
+          ? []
+          : fallback.artists,
       route: seed.editorial_route.length ? seed.editorial_route : fallback.route,
-      mood: seed.mood_tags.length ? seed.mood_tags.join(" / ") : fallback.mood,
+      mood: seed.mood_tags.length
+        ? seed.mood_tags.join(" / ")
+        : seed.genre_tags.length
+          ? seed.genre_tags.slice(0, 3).join(" / ")
+          : fallback.mood,
     };
   }, [seed]);
 
@@ -109,17 +117,19 @@ export function ProgramDetail({ seedId }: { seedId: string }) {
 
           <p className="detail-description">{presentation.description}</p>
 
-          <section className="detail-section">
-            <h2>你可能会听到</h2>
-            <div className="artist-row">
-              {presentation.artists.map((artist, index) => (
-                <div className="artist-pill" key={artist}>
-                  <span className={"artist-avatar avatar-" + (index % 4)}>{artist.slice(0, 1)}</span>
-                  <small>{artist}</small>
-                </div>
-              ))}
-            </div>
-          </section>
+          {presentation.artists.length ? (
+            <section className="detail-section">
+              <h2>你可能会听到</h2>
+              <div className="artist-row">
+                {presentation.artists.map((artist, index) => (
+                  <div className="artist-pill" key={artist}>
+                    <span className={"artist-avatar avatar-" + (index % 4)}>{artist.slice(0, 1)}</span>
+                    <small>{artist}</small>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <section className="detail-section route-section">
             <div className="section-title-row"><h2>节目路线</h2><span>{presentation.route.length} 章</span></div>
