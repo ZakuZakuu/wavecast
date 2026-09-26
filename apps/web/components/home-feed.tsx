@@ -55,7 +55,7 @@ export function HomeFeed() {
     let active = true;
     setRecommendationsLoading(true);
     setRecommendationError(null);
-    api.recommendations()
+    api.recommendations(session.user.id)
       .then((value) => {
         if (active) setIdeas(value);
       })
@@ -71,7 +71,7 @@ export function HomeFeed() {
     return () => {
       active = false;
     };
-  }, [session?.user, sessionPending]);
+  }, [session?.user?.id, sessionPending]);
 
   const searchResults = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -92,7 +92,8 @@ export function HomeFeed() {
     setMaterializingId(idea.id);
     setRecommendationError(null);
     try {
-      const batch = await api.materializeRecommendation(idea.id);
+      if (!session?.user) throw new Error("请先登录后再生成个性化节目");
+      const batch = await api.materializeRecommendation(idea.id, session.user.id);
       const proposal = batch.proposals[0];
       if (!proposal) throw new Error("节目暂时无法生成");
       setIdeas((current) => current.filter((candidate) => candidate.id !== idea.id));
