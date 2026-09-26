@@ -1,4 +1,4 @@
-"""MiniMax Speech 2.8 HD synchronous TTS adapter."""
+"""MiniMax Speech 2.8 synchronous TTS adapter."""
 
 from __future__ import annotations
 
