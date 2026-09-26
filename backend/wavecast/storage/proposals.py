@@ -6,13 +6,13 @@ import asyncio
 from collections.abc import Iterable
 from typing import Any, cast
 
-from sqlalchemy import Column, DateTime, Index, String, Table, desc, select
+from sqlalchemy import Column, DateTime, Index, String, Table, desc, select, update
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from wavecast.deployment import normalize_database_url
-from wavecast.proposals import ProgramProposal
+from wavecast.proposals import ProgramProposal, ProposalPersistenceConflict
 from wavecast.storage.schema import metadata
 
 program_proposals_table = Table(
@@ -56,11 +56,14 @@ class PostgresProgramProposalRepository:
     def get(self, proposal_id: str) -> ProgramProposal | None:
         return cast(ProgramProposal | None, self._run(self._get(proposal_id)))
 
+    def get_owner(self, proposal_id: str) -> tuple[str | None, str | None] | None:
+        return cast(tuple[str | None, str | None] | None, self._run(self._get_owner(proposal_id)))
+
+    def claim_user(self, proposal_id: str, listener_id: str, user_id: str) -> bool:
+        return bool(self._run(self._claim_user(proposal_id, listener_id, user_id)))
+
     def get_for_user(self, user_id: str, proposal_id: str) -> ProgramProposal | None:
-        return cast(
-            ProgramProposal | None,
-            self._run(self._get_for_user(user_id, proposal_id)),
-        )
+        return cast(ProgramProposal | None, self._run(self._get_for_user(user_id, proposal_id)))
 
     def list_for_user(self, user_id: str, *, limit: int = 20) -> list[ProgramProposal]:
         return cast(list[ProgramProposal], self._run(self._list_for_user(user_id, limit)))
@@ -94,29 +97,55 @@ class PostgresProgramProposalRepository:
             for proposal in proposals
         ]
         statement = insert(program_proposals_table).values(rows)
-        statement = statement.on_conflict_do_update(
-            index_elements=[program_proposals_table.c.id],
-            set_={
-                "owner_listener_id": statement.excluded.owner_listener_id,
-                "owner_user_id": statement.excluded.owner_user_id,
-                "source": statement.excluded.source,
-                "payload": statement.excluded.payload,
-                "created_at": statement.excluded.created_at,
-            },
+        statement = statement.on_conflict_do_nothing(
+            index_elements=[program_proposals_table.c.id]
         )
         async with self.engine.begin() as connection:
             await connection.execute(statement)
+            existing = (
+                await connection.execute(
+                    select(
+                        program_proposals_table.c.id,
+                        program_proposals_table.c.owner_listener_id,
+                        program_proposals_table.c.owner_user_id,
+                        program_proposals_table.c.source,
+                        program_proposals_table.c.payload,
+                    ).where(program_proposals_table.c.id.in_([row["id"] for row in rows]))
+                )
+            ).all()
+            expected = {row["id"]: row for row in rows}
+            if len(existing) != len(rows) or any(
+                row.owner_listener_id != owner_listener_id
+                or row.owner_user_id != owner_user_id
+                or row.source != source
+                or dict(row.payload) != expected[row.id]["payload"]
+                for row in existing
+            ):
+                raise ProposalPersistenceConflict("proposal id already exists")
 
     async def _get(self, proposal_id: str) -> ProgramProposal | None:
         async with self.engine.connect() as connection:
-            row = (
-                await connection.execute(
-                    select(program_proposals_table.c.payload).where(
-                        program_proposals_table.c.id == proposal_id
-                    )
-                )
-            ).first()
+            row = (await connection.execute(select(program_proposals_table.c.payload).where(program_proposals_table.c.id == proposal_id))).first()
         return ProgramProposal.model_validate(row.payload) if row else None
+
+    async def _get_owner(self, proposal_id: str) -> tuple[str | None, str | None] | None:
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(select(program_proposals_table.c.owner_listener_id, program_proposals_table.c.owner_user_id).where(program_proposals_table.c.id == proposal_id))).first()
+        return (row.owner_listener_id, row.owner_user_id) if row else None
+
+    async def _claim_user(self, proposal_id: str, listener_id: str, user_id: str) -> bool:
+        async with self.engine.begin() as connection:
+            result = await connection.execute(
+                update(program_proposals_table)
+                .where(
+                    program_proposals_table.c.id == proposal_id,
+                    program_proposals_table.c.owner_listener_id == listener_id,
+                    (program_proposals_table.c.owner_user_id.is_(None))
+                    | (program_proposals_table.c.owner_user_id == user_id),
+                )
+                .values(owner_user_id=user_id)
+            )
+        return result.rowcount == 1
 
     async def _get_for_user(self, user_id: str, proposal_id: str) -> ProgramProposal | None:
         async with self.engine.connect() as connection:

@@ -168,6 +168,10 @@ class ProgramProposalGenerationError(RuntimeError):
         super().__init__(reason)
 
 
+class ProposalPersistenceConflict(RuntimeError):
+    """A proposal ID already belongs to different durable content or an owner."""
+
+
 class ProgramProposalGenerator(Protocol):
     async def generate(self, request: ProposalGenerationRequest) -> list[ProgramProposal]: ...
 
@@ -184,6 +188,10 @@ class ProgramProposalRepository(Protocol):
 
     def get(self, proposal_id: str) -> ProgramProposal | None: ...
 
+    def get_owner(self, proposal_id: str) -> tuple[str | None, str | None] | None: ...
+
+    def claim_user(self, proposal_id: str, listener_id: str, user_id: str) -> bool: ...
+
     def get_for_user(self, user_id: str, proposal_id: str) -> ProgramProposal | None: ...
 
     def list_for_user(self, user_id: str, *, limit: int = 20) -> list[ProgramProposal]: ...
@@ -192,7 +200,7 @@ class ProgramProposalRepository(Protocol):
 class InMemoryProgramProposalRepository:
     def __init__(self) -> None:
         self._proposals: dict[str, ProgramProposal] = {}
-        self._owners: dict[str, str | None] = {}
+        self._owners: dict[str, tuple[str | None, str | None]] = {}
 
     def save_many(
         self,
@@ -202,15 +210,34 @@ class InMemoryProgramProposalRepository:
         owner_user_id: str | None = None,
         source: str = "tune",
     ) -> None:
-        for proposal in proposals:
+        batch = list(proposals)
+        owner = (owner_listener_id, owner_user_id)
+        for proposal in batch:
+            current = self._proposals.get(proposal.id)
+            if current is not None and (
+                current != proposal or self._owners[proposal.id] != owner
+            ):
+                raise ProposalPersistenceConflict("proposal id already exists")
+        for proposal in batch:
             self._proposals[proposal.id] = proposal
-            self._owners[proposal.id] = owner_user_id
+            self._owners[proposal.id] = owner
 
     def get(self, proposal_id: str) -> ProgramProposal | None:
         return self._proposals.get(proposal_id)
 
+    def get_owner(self, proposal_id: str) -> tuple[str | None, str | None] | None:
+        return self._owners.get(proposal_id)
+
+    def claim_user(self, proposal_id: str, listener_id: str, user_id: str) -> bool:
+        owner = self._owners.get(proposal_id)
+        if owner is None or owner[0] != listener_id or owner[1] not in {None, user_id}:
+            return False
+        self._owners[proposal_id] = (listener_id, user_id)
+        return True
+
     def get_for_user(self, user_id: str, proposal_id: str) -> ProgramProposal | None:
-        if self._owners.get(proposal_id) != user_id:
+        owner = self._owners.get(proposal_id)
+        if owner is None or owner[1] != user_id:
             return None
         return self._proposals.get(proposal_id)
 
@@ -218,7 +245,7 @@ class InMemoryProgramProposalRepository:
         owned = (
             proposal
             for proposal_id, proposal in self._proposals.items()
-            if self._owners.get(proposal_id) == user_id
+            if (owner := self._owners.get(proposal_id)) is not None and owner[1] == user_id
         )
         return sorted(owned, key=lambda proposal: proposal.created_at, reverse=True)[:limit]
 
