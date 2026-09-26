@@ -205,3 +205,51 @@ def test_program_idea_repository_retains_only_latest_thirty_per_user() -> None:
     assert len(retained) == 30
     assert retained[0].id == "idea-34"
     assert retained[-1].id == "idea-05"
+
+
+def test_inventory_refills_after_available_stock_falls_below_low_water() -> None:
+    preferences = InMemoryUserPreferencesRepository()
+    events = InMemoryUserEventRepository()
+    proposals = InMemoryProgramProposalRepository()
+    ideas = InMemoryProgramIdeaRepository()
+    now = datetime(2026, 9, 26, tzinfo=UTC)
+    service = RecommendationService(
+        UserContextAggregator(preferences, events, proposals),
+        DeterministicRecommendationPlanner(),
+        ideas,
+        clock=lambda: now,
+    )
+
+    first = service.inventory_for_user("user-a")
+    assert len(first) >= 2
+
+    claimed = service.claim_for_materialization("user-a", first[0].id)
+    assert claimed is not None
+    assert claimed.status.value == "USED"
+
+    refilled = service.inventory_for_user("user-a")
+    assert len(refilled) >= 2
+    assert all(idea.status.value == "AVAILABLE" for idea in refilled)
+    assert first[0].id not in {idea.id for idea in refilled}
+
+
+def test_recommendation_claim_is_single_use_and_can_be_restored() -> None:
+    service = RecommendationService(
+        UserContextAggregator(
+            InMemoryUserPreferencesRepository(),
+            InMemoryUserEventRepository(),
+            InMemoryProgramProposalRepository(),
+        ),
+        DeterministicRecommendationPlanner(),
+        InMemoryProgramIdeaRepository(),
+        clock=lambda: datetime(2026, 9, 26, tzinfo=UTC),
+    )
+    idea = service.inventory_for_user("user-a")[0]
+
+    first_claim = service.claim_for_materialization("user-a", idea.id)
+    second_claim = service.claim_for_materialization("user-a", idea.id)
+
+    assert first_claim is not None
+    assert second_claim is None
+    assert service.restore_available("user-a", idea.id) is not None
+    assert service.claim_for_materialization("user-a", idea.id) is not None
