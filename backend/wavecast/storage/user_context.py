@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, cast
 
-from sqlalchemy import Boolean, Column, DateTime, Index, String, Table, delete, select
+from sqlalchemy import Boolean, Column, DateTime, Index, String, Table, delete, desc, select
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -116,6 +116,9 @@ class PostgresUserEventRepository:
         self._run(self._create(event))
         return event
 
+    def list_for_user(self, user_id: str, *, limit: int = 100) -> list[UserEvent]:
+        return cast(list[UserEvent], self._run(self._list_for_user(user_id, limit)))
+
     def close(self) -> None:
         self._run(self.engine.dispose())
 
@@ -135,3 +138,15 @@ class PostgresUserEventRepository:
                     occurred_at=event.occurred_at,
                 )
             )
+
+    async def _list_for_user(self, user_id: str, limit: int) -> list[UserEvent]:
+        async with self.engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    select(user_events_table)
+                    .where(user_events_table.c.user_id == user_id)
+                    .order_by(desc(user_events_table.c.occurred_at))
+                    .limit(limit)
+                )
+            ).all()
+        return [UserEvent.model_validate(dict(row._mapping)) for row in rows]

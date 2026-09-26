@@ -184,10 +184,15 @@ class ProgramProposalRepository(Protocol):
 
     def get(self, proposal_id: str) -> ProgramProposal | None: ...
 
+    def get_for_user(self, user_id: str, proposal_id: str) -> ProgramProposal | None: ...
+
+    def list_for_user(self, user_id: str, *, limit: int = 20) -> list[ProgramProposal]: ...
+
 
 class InMemoryProgramProposalRepository:
     def __init__(self) -> None:
         self._proposals: dict[str, ProgramProposal] = {}
+        self._owners: dict[str, str | None] = {}
 
     def save_many(
         self,
@@ -199,9 +204,23 @@ class InMemoryProgramProposalRepository:
     ) -> None:
         for proposal in proposals:
             self._proposals[proposal.id] = proposal
+            self._owners[proposal.id] = owner_user_id
 
     def get(self, proposal_id: str) -> ProgramProposal | None:
         return self._proposals.get(proposal_id)
+
+    def get_for_user(self, user_id: str, proposal_id: str) -> ProgramProposal | None:
+        if self._owners.get(proposal_id) != user_id:
+            return None
+        return self._proposals.get(proposal_id)
+
+    def list_for_user(self, user_id: str, *, limit: int = 20) -> list[ProgramProposal]:
+        owned = (
+            proposal
+            for proposal_id, proposal in self._proposals.items()
+            if self._owners.get(proposal_id) == user_id
+        )
+        return sorted(owned, key=lambda proposal: proposal.created_at, reverse=True)[:limit]
 
 
 _DURATION_SECONDS = {

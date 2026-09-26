@@ -111,6 +111,8 @@ class UserEvent(BaseModel):
 class UserEventRepository(Protocol):
     def create(self, event: UserEvent) -> UserEvent: ...
 
+    def list_for_user(self, user_id: str, *, limit: int = 100) -> list[UserEvent]: ...
+
 
 class InMemoryUserEventRepository:
     def __init__(self) -> None:
@@ -120,8 +122,13 @@ class InMemoryUserEventRepository:
         self._events.append(event)
         return event
 
-    def list_for_user(self, user_id: str) -> list[UserEvent]:
-        return [event for event in self._events if event.user_id == user_id]
+    def list_for_user(self, user_id: str, *, limit: int = 100) -> list[UserEvent]:
+        events = sorted(
+            (event for event in self._events if event.user_id == user_id),
+            key=lambda event: event.occurred_at,
+            reverse=True,
+        )
+        return events[:limit]
 
 
 class UserEventService:
