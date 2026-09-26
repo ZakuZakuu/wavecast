@@ -34,27 +34,18 @@ def test_minimax_mock_mode_does_not_require_credentials(tmp_path) -> None:
     ("api_key", "voice_id"),
     [(None, "test-voice"), ("minimax-secret", None)],
 )
-def test_live_mode_with_incomplete_configuration_never_uses_mock_tts(
+def test_live_mode_with_incomplete_configuration_fails_before_runtime_use(
     tmp_path, api_key: str | None, voice_id: str | None
 ) -> None:
-    async def run() -> None:
-        from wavecast.providers.fakes import MockTTSProvider
+    from services.api.main import _build_tts_provider
 
-        from services.api.main import _build_tts_provider
-
-        provider = _build_tts_provider(
+    with pytest.raises(ProviderConfigurationError):
+        _build_tts_provider(
             ProviderSettings(
                 mode="live", minimax_api_key=api_key, minimax_tts_voice_id=voice_id
             ),
             LocalObjectStorageProvider(tmp_path / "audio"),
         )
-        assert isinstance(provider, MiniMaxTTSProvider)
-        assert not isinstance(provider, MockTTSProvider)
-        with pytest.raises(ProviderConfigurationError):
-            await provider.synthesize("No fallback", cues=[])
-        await provider.aclose()
-
-    asyncio.run(run())
 
 
 def test_minimax_probe_loads_repository_env_as_source_of_truth(monkeypatch) -> None:
