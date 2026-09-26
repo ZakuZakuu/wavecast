@@ -153,10 +153,16 @@ class PostgresProgramIdeaRepository(ProgramIdeaRepository):
                 idea for idea in existing if idea.status is ProgramIdeaStatus.AVAILABLE
             ]
             latest = rows[0].created_at if rows else None
+            has_consumed = any(
+                idea.status is not ProgramIdeaStatus.AVAILABLE for idea in existing
+            )
             if (
-                len(available) >= MIN_AVAILABLE_IDEAS_PER_USER
-                and latest is not None
+                latest is not None
                 and now - latest < refresh_interval
+                and (
+                    len(available) >= MIN_AVAILABLE_IDEAS_PER_USER
+                    or not has_consumed
+                )
             ):
                 return available
 
