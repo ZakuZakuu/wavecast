@@ -1,6 +1,18 @@
 import { parseMixPlan, type MixPlan } from "./mix-timeline";
-import type { LiveEpisode, Seed } from "./types";
+import type {
+  UserEventInput,
+  UserEventType,
+  UserPreferences,
+  UserPreferencesUpdate,
+  ProgramIdea,
+  LiveEpisode,
+  ProgramProposal,
+  ProgramProposalBatch,
+  ProposalGenerationRequest,
+  Seed,
+} from "./types";
 import type { MixdownArtifact, MixdownPreparationResult } from "./episode-export";
+import { getApiAuthToken, getApiAuthTokenForUser, getApiAuthUserId } from "./auth-client";
 
 const listenerStorageKey = "wavecast-anonymous-listener";
 
@@ -13,11 +25,23 @@ function listenerId(): string | undefined {
   return created;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(
+  path: string,
+  init?: RequestInit,
+  expectedUserId?: string,
+): Promise<T> {
   const anonymousListener = listenerId();
+  const bearerToken = expectedUserId
+    ? await getApiAuthTokenForUser(expectedUserId)
+    : await getApiAuthToken();
   const response = await fetch(`/api${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(anonymousListener ? { "X-Wavecast-Listener": anonymousListener } : {}), ...init?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...(anonymousListener ? { "X-Wavecast-Listener": anonymousListener } : {}),
+      ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
+      ...init?.headers,
+    },
   });
   if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail ?? "Request failed");
   return response.json() as Promise<T>;
@@ -25,6 +49,48 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   seeds: () => request<Seed[]>("/seeds"),
+  program: (id: string) => request<ProgramProposal>(`/programs/${id}`),
+  userPreferences: (expectedUserId: string) =>
+    request<UserPreferences>("/user-preferences/me", undefined, expectedUserId),
+  saveUserPreferences: (input: UserPreferencesUpdate, expectedUserId: string) =>
+    request<UserPreferences>("/user-preferences/me", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }, expectedUserId),
+  deleteUserPreferences: (expectedUserId: string) =>
+    request<UserPreferences>("/user-preferences/me", { method: "DELETE" }, expectedUserId),
+  createUserEvent: (input: UserEventInput, expectedUserId: string) =>
+    request<{ id: string; event_type: UserEventType }>("/user-events", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }, expectedUserId),
+  recordUserEvent: async (input: UserEventInput) => {
+    const expectedUserId = await getApiAuthUserId();
+    if (!expectedUserId) return;
+    await request<{ id: string; event_type: UserEventType }>("/user-events", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }, expectedUserId);
+  },
+  recommendations: (expectedUserId: string) =>
+    request<ProgramIdea[]>("/recommendations/me", undefined, expectedUserId),
+  refreshRecommendations: (expectedUserId: string) =>
+    request<ProgramIdea[]>(
+      "/recommendations/me/refresh",
+      { method: "POST" },
+      expectedUserId,
+    ),
+  materializeRecommendation: (id: string, expectedUserId: string) =>
+    request<ProgramProposalBatch>(
+      `/recommendations/me/${encodeURIComponent(id)}/program-proposal`,
+      { method: "POST" },
+      expectedUserId,
+    ),
+  createProgramProposals: (input: ProposalGenerationRequest) =>
+    request<ProgramProposalBatch>("/program-proposals", {
+      method: "POST",
+      body: JSON.stringify({ ...input, count: input.count ?? 1 }),
+    }),
   start: (seedId: string) => request<LiveEpisode>(`/episodes/from-seed/${seedId}`, { method: "POST" }),
   get: (id: string) => request<LiveEpisode>(`/episodes/${id}`),
   mixPlan: async (id: string): Promise<MixPlan> => parseMixPlan(await request<unknown>(`/episodes/${id}/mix-plan`)),
@@ -41,4 +107,33 @@ export const api = {
   materialize: (id: string) => request<LiveEpisode>(`/episodes/${id}/materialize`, { method: "POST" }),
   prepareMixdown: (id: string) => request<MixdownPreparationResult>(`/episodes/${id}/prepare-mixdown`, { method: "POST" }),
   mixdown: (id: string) => request<MixdownArtifact>(`/episodes/${id}/mixdown`, { method: "POST" }),
+  myLibrary: (expectedUserId: string) => request<unknown>("/me/library", undefined, expectedUserId),
+  mergeMyLibrary: (library: unknown, expectedUserId: string) => request<unknown>("/me/library/merge", {
+    method: "POST",
+    body: JSON.stringify({ library }),
+  }, expectedUserId),
+  favoriteProgram: (id: string, favorite: boolean, expectedUserId: string) => request<unknown>(
+    `/me/library/favorites/${encodeURIComponent(id)}`,
+    { method: favorite ? "PUT" : "DELETE" },
+    expectedUserId,
+  ),
+  recordLibraryRecent: (record: unknown, expectedUserId: string) => {
+    const value = record as { episodeId: string };
+    return request<unknown>(`/me/library/recents/${encodeURIComponent(value.episodeId)}`, {
+      method: "PUT",
+      body: JSON.stringify(record),
+    }, expectedUserId);
+  },
+  saveLibraryEpisode: (record: unknown, expectedUserId: string) => {
+    const value = record as { episodeId: string };
+    return request<unknown>(`/me/library/saved/${encodeURIComponent(value.episodeId)}`, {
+      method: "PUT",
+      body: JSON.stringify(record),
+    }, expectedUserId);
+  },
+  removeLibraryEpisode: (id: string, expectedUserId: string) => request<unknown>(
+    `/me/library/saved/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+    expectedUserId,
+  ),
 };

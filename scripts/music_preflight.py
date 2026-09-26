@@ -12,11 +12,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import httpx
-from wavecast.assembly import _build_music_registry
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.errors import ProviderError
+from wavecast.providers.factory import build_music_registry
 from wavecast.providers.registry import MusicProviderRegistry
 from wavecast.providers.retrieval import MusicRetrievalService
 
@@ -66,7 +66,7 @@ async def preflight_music(
     """
     owns_registry = registry is None
     try:
-        configured_registry = registry or _build_music_registry(settings)
+        configured_registry = registry or build_music_registry(settings)
     except ProviderError as error:
         raise MusicPreflightError("music preflight has no usable catalog provider") from error
     try:

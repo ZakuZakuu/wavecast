@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "../lib/api";
-import type { Seed } from "../lib/types";
+import type { ProgramProposal } from "../lib/types";
 import {
   emptyUserLibrary,
   readUserLibrary,
@@ -82,22 +82,43 @@ function EpisodeLibraryRow({
 
 export function LibraryPage() {
   const [tab, setTab] = useState<Tab>("最近收听");
-  const [seeds, setSeeds] = useState<Seed[]>([]);
   const [library, setLibrary] = useState<UserLibraryState>(emptyUserLibrary);
+  const [favoritePrograms, setFavoritePrograms] = useState<ProgramProposal[]>([]);
+  const [createdPrograms, setCreatedPrograms] = useState<ProgramProposal[]>([]);
 
   useEffect(() => {
-    api.seeds().then(setSeeds).catch(() => setSeeds([]));
     const refresh = () => setLibrary(readUserLibrary());
     refresh();
     return subscribeUserLibrary(refresh);
   }, []);
 
-  const favorites = useMemo(() => {
-    const byId = new Map(seeds.map((seed) => [seed.id, seed]));
-    return library.favoriteSeedIds
-      .map((id) => byId.get(id))
-      .filter((seed): seed is Seed => Boolean(seed));
-  }, [library.favoriteSeedIds, seeds]);
+  useEffect(() => {
+    let active = true;
+    void Promise.all(
+      library.favoriteSeedIds.map((id) => api.program(id).catch(() => null)),
+    ).then((items) => {
+      if (active) {
+        setFavoritePrograms(items.filter((item): item is ProgramProposal => Boolean(item)));
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [library.favoriteSeedIds]);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all(
+      library.createdProgramIds.map((id) => api.program(id).catch(() => null)),
+    ).then((items) => {
+      if (active) {
+        setCreatedPrograms(items.filter((item): item is ProgramProposal => Boolean(item)));
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [library.createdProgramIds]);
 
   const removeSaved = (episodeId: string) => {
     removeSavedEpisode(episodeId);
@@ -105,18 +126,22 @@ export function LibraryPage() {
   };
 
   const hasContent = tab === "收藏"
-    ? favorites.length > 0
+    ? favoritePrograms.length > 0
     : tab === "最近收听"
       ? library.recentPrograms.length > 0
       : tab === "已保存"
         ? library.savedEpisodes.length > 0
-        : false;
+        : tab === "我创建的"
+          ? createdPrograms.length > 0
+          : false;
 
   return (
     <AppShell>
       <div className="page-header library-header">
         <div><p className="program-kicker">YOUR PROGRAMS</p><h1>节目库</h1></div>
-        <span className="profile-dot">R</span>
+        <Link href="/account" className="profile-link" aria-label="账户">
+          <span className="profile-dot" aria-hidden="true">访</span>
+        </Link>
       </div>
 
       <div className="library-tabs" role="tablist" aria-label="节目库分类">
@@ -134,9 +159,9 @@ export function LibraryPage() {
         ))}
       </div>
 
-      {tab === "收藏" && favorites.length ? (
+      {tab === "收藏" && favoritePrograms.length ? (
         <section className="library-list">
-          {favorites.map((seed) => <ProgramCard seed={seed} compact key={seed.id} />)}
+          {favoritePrograms.map((program) => <ProgramCard seed={program} compact key={program.id} />)}
         </section>
       ) : null}
 
@@ -161,6 +186,14 @@ export function LibraryPage() {
         </section>
       ) : null}
 
+      {tab === "我创建的" && createdPrograms.length ? (
+        <section className="library-list">
+          {createdPrograms.map((program) => (
+            <ProgramCard seed={program} compact key={program.id} />
+          ))}
+        </section>
+      ) : null}
+
       {!hasContent ? (
         <section className="library-empty">
           <div className="empty-disc"><i /></div>
@@ -180,7 +213,7 @@ export function LibraryPage() {
                 ? "开始收听后，进度会自动留在这里。"
                 : tab === "已保存"
                   ? "完整生成节目后，可以把这个固定版本保存下来。"
-                  : "真实调频生成会在下一阶段接入这里。"}
+                  : "去调频页说出你想听什么，生成的节目提案会留在这里。"}
           </p>
         </section>
       ) : null}

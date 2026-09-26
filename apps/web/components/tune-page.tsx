@@ -1,37 +1,50 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { api } from "../lib/api";
-import type { Seed } from "../lib/types";
+import type { DurationIntent, ProgramProposal } from "../lib/types";
+import { recordCreatedProgram } from "../lib/user-library";
 import { AppShell } from "./app-shell";
 import { ProgramCard } from "./program-card";
 import { WaveIcon } from "./wave-icon";
 
 const INSPIRATIONS = ["雨夜爵士", "城市漫游", "Chill 电子", "方大同风格", "周末早晨", "专注工作"];
-const DURATIONS = ["自动", "短 · 15–30 分钟", "标准 · 30–60 分钟", "深入 · 1 小时+"];
+const DURATIONS: Array<{ label: string; value: DurationIntent }> = [
+  { label: "自动", value: "AUTO" },
+  { label: "短 · 15–30 分钟", value: "SHORT" },
+  { label: "标准 · 30–60 分钟", value: "STANDARD" },
+  { label: "深入 · 1 小时+", value: "DEEP" },
+];
 
 export function TunePage() {
   const [prompt, setPrompt] = useState("");
-  const [duration, setDuration] = useState(DURATIONS[0]);
-  const [seeds, setSeeds] = useState<Seed[]>([]);
+  const [duration, setDuration] = useState<DurationIntent>("AUTO");
   const [tuning, setTuning] = useState(false);
-  const [result, setResult] = useState<Seed | null>(null);
+  const [result, setResult] = useState<ProgramProposal | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    api.seeds().then(setSeeds).catch(() => setSeeds([]));
-  }, []);
-
-  const beginTune = () => {
-    if (tuning) return;
+  const beginTune = async () => {
+    const normalizedPrompt = prompt.trim();
+    if (tuning || normalizedPrompt.length < 2) return;
     setTuning(true);
     setResult(null);
-    window.setTimeout(() => {
-      const pick = seeds.length ? seeds[Math.abs(prompt.length + duration.length) % seeds.length] : null;
-      setResult(pick);
+    setError(null);
+    try {
+      const batch = await api.createProgramProposals({
+        prompt: normalizedPrompt,
+        duration_intent: duration,
+        count: 1,
+      });
+      const proposal = batch.proposals[0] ?? null;
+      setResult(proposal);
+      if (proposal) recordCreatedProgram(proposal.id);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "调频失败，请稍后重试");
+    } finally {
       setTuning(false);
-    }, 900);
+    }
   };
 
   return (
@@ -54,7 +67,7 @@ export function TunePage() {
           placeholder="下雨的夜晚，想听点温柔的爵士，带一点城市感…"
           rows={4}
         />
-        <button type="button" className="composer-arrow" aria-label="开始调频" onClick={beginTune}>
+        <button type="button" className="composer-arrow" aria-label="开始调频" onClick={() => void beginTune()}>
           <WaveIcon name="chevron" />
         </button>
       </section>
@@ -74,20 +87,22 @@ export function TunePage() {
           {DURATIONS.map((item) => (
             <button
               type="button"
-              className={duration === item ? "duration-option selected" : "duration-option"}
-              key={item}
-              onClick={() => setDuration(item)}
+              className={duration === item.value ? "duration-option selected" : "duration-option"}
+              key={item.value}
+              onClick={() => setDuration(item.value)}
             >
-              {item}
+              {item.label}
             </button>
           ))}
         </div>
       </section>
 
-      <button type="button" className="tune-cta" onClick={beginTune} disabled={tuning}>
+      <button type="button" className="tune-cta" onClick={() => void beginTune()} disabled={tuning || prompt.trim().length < 2}>
         <WaveIcon name="sparkle" size={18} />
         {tuning ? "正在调频…" : "开始调频"}
       </button>
+
+      {error ? <p className="inline-error tune-error">{error}</p> : null}
 
       {tuning ? (
         <section className="tuning-state" aria-live="polite">

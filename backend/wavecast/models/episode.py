@@ -164,6 +164,8 @@ class LiveEpisode(BaseModel):
     title: str | None = None
     topic: str | None = None
     listener_id: str = "test-listener"
+    # Account ownership is separate from immutable runtime listener identity.
+    owner_user_id: str | None = Field(default=None, exclude=True)
     version: int = Field(default=0, ge=0)
     state: EpisodeState = EpisodeState.STARTED
     generation_mode: GenerationMode = GenerationMode.PROGRESSIVE

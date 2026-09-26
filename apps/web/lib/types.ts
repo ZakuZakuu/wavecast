@@ -1,6 +1,8 @@
 export type SegmentKind = "MUSIC" | "NARRATION";
 export type SegmentState = "PLANNED" | "SCRIPT_READY" | "AUDIO_GENERATING" | "AUDIO_READY" | "COMMITTED" | "PLAYED" | "SKIPPED";
 
+export type DurationIntent = "AUTO" | "SHORT" | "STANDARD" | "DEEP";
+
 export type Seed = {
   id: string;
   title: string;
@@ -11,6 +13,25 @@ export type Seed = {
   opening_track_title: string;
   opening_track_artist: string;
   cover: { family: string; seed: number; palette: [string, string] };
+};
+
+export type ProgramProposal = Seed & {
+  editorial_route: string[];
+  genre_tags: string[];
+  mood_tags: string[];
+  anchor_artists: string[];
+  generation_profile: string;
+  created_at: string;
+};
+
+export type ProgramProposalBatch = {
+  proposals: ProgramProposal[];
+};
+
+export type ProposalGenerationRequest = {
+  prompt: string;
+  duration_intent: DurationIntent;
+  count?: number;
 };
 
 type SegmentBase = {
@@ -62,4 +83,40 @@ export type LiveEpisode = {
   buffer_ahead_seconds: number;
   committed_frontier_seconds: number;
   timeline_duration_seconds: number;
+};
+
+export type UserGenre =
+  | "City Pop"
+  | "R&B"
+  | "Jazz"
+  | "Electronic"
+  | "Hip-Hop"
+  | "Rock"
+  | "Classical";
+export type UserMood = "Chill" | "Focus" | "Late Night" | "Discovery";
+export type DiscoveryLevel = "SAFE" | "BALANCED" | "ADVENTUROUS";
+
+export type UserPreferences = {
+  user_id: string;
+  genres: UserGenre[];
+  artists: string[];
+  moods: UserMood[];
+  contexts: string[];
+  discovery_level: DiscoveryLevel;
+  onboarding_completed: boolean;
+  updated_at: string;
+};
+
+export type UserPreferencesUpdate = Omit<UserPreferences, "user_id" | "updated_at">;
+export type UserEventType = "PLAY_START" | "PLAY_COMPLETE" | "LIKE" | "FAVORITE" | "SAVE" | "SKIP";
+export type UserEventInput = { event_type: UserEventType; program_id?: string; episode_id?: string };
+export type ProgramIdea = {
+  id: string;
+  title: string;
+  description: string;
+  reason: string;
+  tags: string[];
+  source: string;
+  status: "AVAILABLE" | "DISMISSED" | "USED";
+  created_at: string;
 };
