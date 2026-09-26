@@ -213,7 +213,11 @@ def _build_tts_provider(
 ) -> MiniMaxTTSProvider | MockTTSProvider:
     if settings.resolved_tts_provider == "mock":
         return MockTTSProvider(storage)
-    return MiniMaxTTSProvider(settings.for_live_capability(), storage=storage)
+    live_settings = settings.for_live_capability()
+    live_settings.credential_for("minimax")
+    if not live_settings.minimax_tts_voice_id:
+        raise ProviderConfigurationError("minimax TTS requires MINIMAX_TTS_VOICE_ID")
+    return MiniMaxTTSProvider(live_settings, storage=storage)
 
 
 _tts_provider = _build_tts_provider(_provider_settings, audio_storage)
