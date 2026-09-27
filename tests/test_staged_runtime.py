@@ -237,6 +237,41 @@ def test_fast_successor_is_durable_before_full_session_finishes() -> None:
     assert staged.prepare_calls == 1
 
 
+
+def test_fast_successor_resumes_playback_before_full_planning_finishes() -> None:
+    staged = _BootstrapRuntime()
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
+    episode = runtime.start(_seed())
+
+    ended = repository.get(episode.id)
+    opening = ended.segment(ended.current_segment_id or "")
+    opening.state = SegmentState.PLAYED
+    ended.is_playing = False
+    repository.save(ended)
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            runtime.ensure_buffer_async(
+                episode.id,
+                target_chapters=1,
+                target_ahead_seconds=300,
+            )
+        )
+        await asyncio.wait_for(staged.started.wait(), timeout=1)
+
+        during_planning = repository.get(episode.id)
+        successor = during_planning.segment("chapter-2:music:0")
+        assert successor.is_committed
+        assert during_planning.current_segment_id == successor.id
+        assert during_planning.is_playing is True
+        assert task.done() is False
+
+        staged.release.set()
+        await task
+
+    asyncio.run(run())
+
 class _RejectBootstrapRuntime(_FakeRuntime):
     def __init__(self) -> None:
         super().__init__()
