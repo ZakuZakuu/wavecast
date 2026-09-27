@@ -324,3 +324,135 @@ def test_music_only_chunk_skips_writer_and_tts(tmp_path) -> None:
     assert len(generated.segments) == 1
     assert isinstance(generated.segments[0], MusicSegment)
     assert generated.segments[0].is_audio_ready
+
+
+def test_runtime_persists_ready_music_before_tts_finishes(tmp_path) -> None:
+    async def scenario() -> None:
+        track = ResolvedTrack(
+            track_ref="mock:bridge",
+            canonical_artist="Bridge Artist",
+            canonical_title="Bridge Track",
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+        storage = LocalObjectStorageProvider(tmp_path / "audio")
+        delegate = MockTTSProvider(storage)
+
+        class _BlockingTTS:
+            provider_name = "blocking-tts"
+            speech_speed_baseline = 0.8
+
+            async def synthesize(self, *args: object, **kwargs: object) -> object:
+                started.set()
+                await release.wait()
+                return await delegate.synthesize(*args, **kwargs)
+
+        generator = StagedProgressiveChapterGenerator(
+            session=_session(track),
+            writer=_Writer(),  # type: ignore[arg-type]
+            composer=EpisodeComposer(MockMusicProvider()),
+            materializer=NarrationMaterializer(
+                _BlockingTTS(),  # type: ignore[arg-type]
+                storage,
+            ),
+        )
+        repository = InMemoryEpisodeRepository()
+        episode = _episode().model_copy(update={"current_segment_id": "opening"})
+        repository.save(episode)
+        runtime = EpisodeOrchestrator(
+            repository,
+            progressive_generator=generator,
+        )
+
+        task = asyncio.create_task(
+            runtime.ensure_buffer_async(
+                episode.id,
+                target_chapters=1,
+                target_ahead_seconds=300,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        during_tts = repository.get(episode.id)
+        ready_music = during_tts.segment("chapter-2:music:0")
+        assert isinstance(ready_music, MusicSegment)
+        assert ready_music.track_ref == "mock:bridge"
+        assert ready_music.is_audio_ready
+        assert during_tts.has_ready_successor is True
+        assert task.done() is False
+
+        release.set()
+        completed = await task
+        chapter = [
+            segment
+            for segment in completed.ordered_segments
+            if segment.chapter_id == "chapter-2"
+        ]
+        assert len(chapter) == 3
+        assert sum(isinstance(segment, MusicSegment) for segment in chapter) == 1
+
+    asyncio.run(scenario())
+
+
+def test_late_narration_never_rewrites_music_after_listener_reaches_it(tmp_path) -> None:
+    async def scenario() -> None:
+        track = ResolvedTrack(
+            track_ref="mock:bridge",
+            canonical_artist="Bridge Artist",
+            canonical_title="Bridge Track",
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+        storage = LocalObjectStorageProvider(tmp_path / "audio")
+        delegate = MockTTSProvider(storage)
+
+        class _BlockingTTS:
+            provider_name = "blocking-tts"
+            speech_speed_baseline = 0.8
+
+            async def synthesize(self, *args: object, **kwargs: object) -> object:
+                started.set()
+                await release.wait()
+                return await delegate.synthesize(*args, **kwargs)
+
+        generator = StagedProgressiveChapterGenerator(
+            session=_session(track),
+            writer=_Writer(),  # type: ignore[arg-type]
+            composer=EpisodeComposer(MockMusicProvider()),
+            materializer=NarrationMaterializer(
+                _BlockingTTS(),  # type: ignore[arg-type]
+                storage,
+            ),
+        )
+        repository = InMemoryEpisodeRepository()
+        episode = _episode().model_copy(update={"current_segment_id": "opening"})
+        repository.save(episode)
+        runtime = EpisodeOrchestrator(
+            repository,
+            progressive_generator=generator,
+        )
+
+        task = asyncio.create_task(
+            runtime.ensure_buffer_async(
+                episode.id,
+                target_chapters=1,
+                target_ahead_seconds=300,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        playing_successor = runtime.complete_current_segment(episode.id)
+        assert playing_successor.current_segment_id == "chapter-2:music:0"
+        assert playing_successor.segment("chapter-2:music:0").is_committed
+
+        release.set()
+        completed = await task
+        chapter = [
+            segment
+            for segment in completed.ordered_segments
+            if segment.chapter_id == "chapter-2"
+        ]
+        assert [segment.id for segment in chapter] == ["chapter-2:music:0"]
+        assert completed.current_segment_id == "chapter-2:music:0"
+
+    asyncio.run(scenario())
