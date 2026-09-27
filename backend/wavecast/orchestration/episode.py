@@ -383,7 +383,7 @@ class EpisodeOrchestrator:
             # least one future chapter before the queue can be considered healthy.
             if ready_future_chapters >= 1 and (
                 ready_future_chapters >= target_chapters
-                or episode.buffer_ahead_seconds >= target_ahead_seconds
+                or episode.ready_audio_seconds_ahead >= target_ahead_seconds
             ):
                 break
             next_chapter_id = self._next_future_chapter_id(episode)
@@ -431,8 +431,10 @@ class EpisodeOrchestrator:
             remaining -= seconds_to_end
             current.state = SegmentState.PLAYED
             current.played_at = self.now()
-            next_segment = self._next_active_segment(episode, current.order)
-            if next_segment is None or not next_segment.is_audio_ready:
+            next_segment = self._next_ready_after_optional_narration(
+                episode, current.order
+            )
+            if next_segment is None:
                 episode.is_playing = False
                 break
             self._commit(episode, next_segment)
@@ -456,8 +458,10 @@ class EpisodeOrchestrator:
         )
         current.state = SegmentState.PLAYED
         current.played_at = self.now()
-        next_segment = self._next_active_segment(episode, current.order)
-        if next_segment is None or not next_segment.is_audio_ready:
+        next_segment = self._next_ready_after_optional_narration(
+            episode, current.order
+        )
+        if next_segment is None:
             episode.is_playing = False
         else:
             self._commit(episode, next_segment)
@@ -744,13 +748,39 @@ class EpisodeOrchestrator:
         current = self._current_segment(episode)
         if current is None or current.state is not SegmentState.PLAYED:
             return
-        next_segment = self._next_active_segment(episode, current.order)
-        if next_segment is None or not next_segment.is_audio_ready:
+        next_segment = self._next_ready_after_optional_narration(
+            episode, current.order
+        )
+        if next_segment is None:
             episode.is_playing = False
             return
         self._commit(episode, next_segment)
         episode.playback_position_seconds = self._timeline_start(episode, next_segment.id)
         episode.is_playing = True
+
+    @staticmethod
+    def _next_ready_after_optional_narration(
+        episode: LiveEpisode, order: int
+    ) -> Segment | None:
+        """Find a ready successor, skipping narration only when audio can continue.
+
+        Unfinished narration remains speculative while there is no ready source
+        behind it. Once a later source is ready, the narration can be skipped
+        without turning a recoverable generation delay into dead air.
+        """
+        skipped: list[Segment] = []
+        for segment in episode.timeline_segments:
+            if segment.order <= order:
+                continue
+            if segment.is_audio_ready:
+                for optional in skipped:
+                    optional.state = SegmentState.SKIPPED
+                return segment
+            if segment.kind is SegmentKind.NARRATION:
+                skipped.append(segment)
+                continue
+            return None
+        return None
 
     @staticmethod
     def _next_active_segment(episode: LiveEpisode, order: int) -> Segment | None:
@@ -782,6 +812,16 @@ class EpisodeOrchestrator:
         return None
 
     @staticmethod
+    def _chapter_ready_for_continuity(segments: list[Segment]) -> bool:
+        """A chapter is continuity-ready when optional narration cannot block it."""
+        if not any(segment.is_audio_ready for segment in segments):
+            return False
+        return not any(
+            segment.kind is SegmentKind.MUSIC and not segment.is_audio_ready
+            for segment in segments
+        )
+
+    @staticmethod
     def _ready_future_chapter_count(episode: LiveEpisode) -> int:
         current = EpisodeOrchestrator._current_segment(episode)
         if current is None:
@@ -792,10 +832,12 @@ class EpisodeOrchestrator:
                 if segment.chapter_id not in chapter_ids:
                     chapter_ids.append(segment.chapter_id)
         return sum(
-            all(
-                segment.is_audio_ready
-                for segment in episode.timeline_segments
-                if segment.chapter_id == chapter_id
+            EpisodeOrchestrator._chapter_ready_for_continuity(
+                [
+                    segment
+                    for segment in episode.timeline_segments
+                    if segment.chapter_id == chapter_id
+                ]
             )
             for chapter_id in chapter_ids
         )
@@ -819,6 +861,9 @@ class EpisodeOrchestrator:
             if (
                 any(segment.is_audio_ready for segment in chapter_segments)
                 and any(not segment.is_audio_ready for segment in chapter_segments)
+                and not EpisodeOrchestrator._chapter_ready_for_continuity(
+                    chapter_segments
+                )
             ):
                 return chapter_id
         return None
@@ -828,9 +873,22 @@ class EpisodeOrchestrator:
         current = EpisodeOrchestrator._current_segment(episode)
         if current is None:
             return None
+        chapter_ids: list[str] = []
         for segment in episode.timeline_segments:
-            if segment.order > current.order and not segment.is_audio_ready:
-                return segment.chapter_id
+            if segment.order <= current.order:
+                continue
+            if segment.chapter_id not in chapter_ids:
+                chapter_ids.append(segment.chapter_id)
+        for chapter_id in chapter_ids:
+            chapter_segments = [
+                segment
+                for segment in episode.timeline_segments
+                if segment.chapter_id == chapter_id
+            ]
+            if EpisodeOrchestrator._chapter_ready_for_continuity(chapter_segments):
+                continue
+            if any(not segment.is_audio_ready for segment in chapter_segments):
+                return chapter_id
         return None
 
     def _materialize_chapter(self, episode: LiveEpisode, chapter_id: str) -> None:
