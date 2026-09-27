@@ -88,13 +88,16 @@ declarative DJ arrangement layered on the stable browser transport.
   stopping share current-source remaining time, playable seconds ahead, real
   successor readiness, bounded per-Episode successful refill latency, mode, and
   the existing one/two-chapter cap. The policy never acts as a playback deadline.
-- The current worker-hardening slice makes durable lease ownership an execution
-  boundary: stale workers stop in-flight generation when ownership cannot be
-  renewed, completion-time lease loss cannot duplicate Writer/TTS enrichment,
-  and worker shutdown cancels claimed provider work instead of leaving orphan
-  coroutines. Listener leave/resume and FULL lifetime semantics remain unchanged.
-- After worker/listener hardening, the next product-facing milestone is
-  deterministic Arrangement/DJ v2 on top of the stable browser transport.
+- Worker lease ownership is hardened: stale or shutting-down workers cancel
+  claimed generation instead of continuing provider work after ownership becomes
+  uncertain, completion-time lease races cannot duplicate narration enrichment,
+  and worker shutdown cannot leave claimed provider work orphaned. Listener
+  leave/resume and FULL lifetime semantics remain unchanged.
+- Arrangement/DJ v2 now begins with a transport-safe realtime renderer: the
+  canonical MixPlan may skip unfinished optional narration to retain later ready
+  music, EpisodePlayer can preload the next source, and short edge fades sample
+  the authoritative media element currentTime. This first slice deliberately
+  does not enable source-window seeks, dual-source overlap, or ducking in realtime.
 - The legacy Web `MixEngine` is not the active EpisodePlayer transport and must
   not be revived as a synthetic playback clock. Arrangement/DJ v2 remains
   deferred until continuity no longer depends on slow narration/intelligence

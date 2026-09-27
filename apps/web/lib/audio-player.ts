@@ -1,3 +1,37 @@
+export type TransportSafeArrangement = {
+  sourceOffsetSeconds: number;
+  playableDurationSeconds: number;
+  fadeInSeconds: number;
+  fadeOutSeconds: number;
+};
+
+const MAX_TRANSPORT_SAFE_EDGE_FADE_SECONDS = 0.15;
+
+export function transportSafeGain(
+  arrangement: TransportSafeArrangement | null | undefined,
+  sourcePositionSeconds: number,
+): number {
+  if (!arrangement) return 1;
+  const local = Math.max(0, sourcePositionSeconds - arrangement.sourceOffsetSeconds);
+  const duration = Math.max(0, arrangement.playableDurationSeconds);
+  if (duration <= 0 || local >= duration) return 0;
+
+  const fadeIn = Math.min(
+    MAX_TRANSPORT_SAFE_EDGE_FADE_SECONDS,
+    arrangement.fadeInSeconds,
+    duration,
+  );
+  const fadeOut = Math.min(
+    MAX_TRANSPORT_SAFE_EDGE_FADE_SECONDS,
+    arrangement.fadeOutSeconds,
+    duration,
+  );
+  let gain = 1;
+  if (fadeIn > 0) gain = Math.min(gain, local / fadeIn);
+  if (fadeOut > 0) gain = Math.min(gain, (duration - local) / fadeOut);
+  return Math.max(0, Math.min(1, gain));
+}
+
 export type AudioElementLike = {
   src: string;
   currentTime: number;

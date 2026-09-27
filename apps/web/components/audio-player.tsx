@@ -2,7 +2,12 @@
 
 import { useEffect, useRef } from "react";
 
-import { attachAudioLifecycle, syncAudioPlayback } from "../lib/audio-player";
+import {
+  attachAudioLifecycle,
+  syncAudioPlayback,
+  transportSafeGain,
+  type TransportSafeArrangement,
+} from "../lib/audio-player";
 import type { Segment } from "../lib/types";
 
 export function AudioPlayer({
@@ -11,6 +16,8 @@ export function AudioPlayer({
   positionSeconds,
   seekToken = 0,
   maxDurationSeconds,
+  arrangement,
+  preloadSourceUrl,
   onPositionChange,
   onEnded,
   onError,
@@ -20,6 +27,8 @@ export function AudioPlayer({
   positionSeconds: number;
   seekToken?: number;
   maxDurationSeconds?: number | null;
+  arrangement?: TransportSafeArrangement | null;
+  preloadSourceUrl?: string | null;
   onPositionChange: (positionSeconds: number) => void;
   onEnded: () => void;
   onError?: () => void;
@@ -27,6 +36,11 @@ export function AudioPlayer({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastSeekTokenRef = useRef(seekToken);
   const completedRef = useRef(false);
+  const hasArrangement = arrangement !== null && arrangement !== undefined;
+  const arrangementSourceOffsetSeconds = arrangement?.sourceOffsetSeconds ?? 0;
+  const arrangementPlayableDurationSeconds = arrangement?.playableDurationSeconds ?? 0;
+  const arrangementFadeInSeconds = arrangement?.fadeInSeconds ?? 0;
+  const arrangementFadeOutSeconds = arrangement?.fadeOutSeconds ?? 0;
 
   useEffect(() => {
     completedRef.current = false;
@@ -36,7 +50,8 @@ export function AudioPlayer({
     const audio = audioRef.current;
     if (!audio) return;
     return attachAudioLifecycle(audio, {
-      onTimeUpdate: (position) => {
+      onTimeUpdate: (sourcePosition) => {
+        const position = Math.max(0, sourcePosition - arrangementSourceOffsetSeconds);
         if (
           maxDurationSeconds !== null
           && maxDurationSeconds !== undefined
@@ -59,7 +74,13 @@ export function AudioPlayer({
       },
       onError,
     });
-  }, [maxDurationSeconds, onEnded, onError, onPositionChange]);
+  }, [
+    arrangementSourceOffsetSeconds,
+    maxDurationSeconds,
+    onEnded,
+    onError,
+    onPositionChange,
+  ]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -68,11 +89,72 @@ export function AudioPlayer({
     lastSeekTokenRef.current = seekToken;
     syncAudioPlayback(audio, {
       sourceUrl: segment?.audio_source_url ?? null,
-      positionSeconds,
+      positionSeconds: arrangementSourceOffsetSeconds + positionSeconds,
       playing,
       syncPosition,
     });
-  }, [playing, positionSeconds, seekToken, segment?.audio_source_url, segment?.id]);
+  }, [
+    arrangementSourceOffsetSeconds,
+    playing,
+    positionSeconds,
+    seekToken,
+    segment?.audio_source_url,
+    segment?.id,
+  ]);
 
-  return <audio ref={audioRef} preload="auto" aria-hidden="true" data-testid="episode-audio" />;
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    let frame: number | null = null;
+
+    const gainArrangement = hasArrangement
+      ? {
+          sourceOffsetSeconds: arrangementSourceOffsetSeconds,
+          playableDurationSeconds: arrangementPlayableDurationSeconds,
+          fadeInSeconds: arrangementFadeInSeconds,
+          fadeOutSeconds: arrangementFadeOutSeconds,
+        }
+      : null;
+
+    const applyGain = () => {
+      audio.volume = transportSafeGain(gainArrangement, audio.currentTime);
+      if (playing) {
+        frame = window.requestAnimationFrame(applyGain);
+      }
+    };
+
+    applyGain();
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      audio.volume = 1;
+    };
+  }, [
+    arrangementFadeInSeconds,
+    arrangementFadeOutSeconds,
+    arrangementPlayableDurationSeconds,
+    arrangementSourceOffsetSeconds,
+    hasArrangement,
+    playing,
+    segment?.id,
+  ]);
+
+  const preload = preloadSourceUrl && preloadSourceUrl !== segment?.audio_source_url
+    ? preloadSourceUrl
+    : null;
+
+  return (
+    <>
+      <audio ref={audioRef} preload="auto" aria-hidden="true" data-testid="episode-audio" />
+      {preload
+        ? (
+            <audio
+              src={preload}
+              preload="auto"
+              aria-hidden="true"
+              data-testid="episode-audio-preload"
+            />
+          )
+        : null}
+    </>
+  );
 }

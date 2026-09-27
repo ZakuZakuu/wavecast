@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   attachAudioLifecycle,
   syncAudioPlayback,
+  transportSafeGain,
   type AudioElementLike,
 } from "../lib/audio-player";
 
@@ -91,5 +92,27 @@ describe("browser audio lifecycle", () => {
     audio.emit("ended");
     expect(onTimeUpdate).toHaveBeenCalledOnce();
     expect(onEnded).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe("transport-safe arrangement envelope", () => {
+  const arrangement = {
+    sourceOffsetSeconds: 5,
+    playableDurationSeconds: 10,
+    fadeInSeconds: 3,
+    fadeOutSeconds: 3,
+  };
+
+  it("uses the media source position and caps edge fades to a short transport-safe window", () => {
+    expect(transportSafeGain(arrangement, 5)).toBe(0);
+    expect(transportSafeGain(arrangement, 5.075)).toBeCloseTo(0.5);
+    expect(transportSafeGain(arrangement, 5.2)).toBe(1);
+    expect(transportSafeGain(arrangement, 14.925)).toBeCloseTo(0.5);
+    expect(transportSafeGain(arrangement, 15)).toBe(0);
+  });
+
+  it("does not alter volume when no arrangement is available", () => {
+    expect(transportSafeGain(null, 42)).toBe(1);
   });
 });
