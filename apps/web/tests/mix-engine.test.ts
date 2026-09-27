@@ -44,3 +44,23 @@ describe("MixEngine transport ownership", () => {
     engine.dispose();
   });
 });
+
+
+  it("pauses scheduled media elements when transport is paused", () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    const engine = new MixEngine({
+      onPositionChange: vi.fn(),
+      onEnded: vi.fn(),
+      audioContextFactory: fakeAudioContext,
+    });
+
+    engine.setPlan(canonicalPlan);
+    engine.sync(0, true);
+    const pauseCallsBefore = pause.mock.calls.length;
+    engine.sync(0, false);
+
+    expect(play).toHaveBeenCalled();
+    expect(pause.mock.calls.length).toBeGreaterThan(pauseCallsBefore);
+    engine.dispose();
+  });
