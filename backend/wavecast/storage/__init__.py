@@ -6,6 +6,16 @@ from .episodes import (
     EpisodeRepository,
     PostgresEpisodeRepository,
 )
+from .generation_jobs import (
+    GenerationJob,
+    GenerationJobLeaseError,
+    GenerationJobMode,
+    GenerationJobNotFoundError,
+    GenerationJobRepository,
+    GenerationJobStatus,
+    InMemoryGenerationJobRepository,
+    PostgresGenerationJobRepository,
+)
 from .library import (
     InMemoryUserLibraryRepository,
     PostgresUserLibraryRepository,
@@ -26,6 +36,14 @@ __all__ = [
     "EpisodeNotFoundError",
     "EpisodeRepository",
     "PostgresEpisodeRepository",
+    "GenerationJob",
+    "GenerationJobLeaseError",
+    "GenerationJobMode",
+    "GenerationJobNotFoundError",
+    "GenerationJobRepository",
+    "GenerationJobStatus",
+    "InMemoryGenerationJobRepository",
+    "PostgresGenerationJobRepository",
     "LocalObjectStorageProvider",
     "StoredObject",
     "metadata",
