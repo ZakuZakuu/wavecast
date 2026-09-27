@@ -272,3 +272,85 @@ def test_non_retryable_provider_failure_is_sanitized_and_terminal() -> None:
     assert job is not None
     assert job.status is GenerationJobStatus.FAILED
     assert job.last_error_code == "provider_configuration"
+
+
+def test_worker_cancels_inflight_generation_when_lease_is_lost() -> None:
+    class SlowRuntime(EpisodeOrchestrator):
+        def __init__(self) -> None:
+            super().__init__(InMemoryEpisodeRepository())
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def ensure_buffer_async(
+            self,
+            episode_id: str,
+            *,
+            target_chapters: int = 2,
+            target_ahead_seconds: int = 300,
+        ):
+            del episode_id, target_chapters, target_ahead_seconds
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    class LeaseLosingWorker(GenerationWorker):
+        async def _renew_lease(self, job, stop, lease_lost) -> None:
+            del job, stop
+            await runtime.started.wait()
+            lease_lost.set()
+
+    runtime = SlowRuntime()
+    jobs = InMemoryGenerationJobRepository()
+    jobs.request("episode-lease-loss")
+    worker = LeaseLosingWorker(jobs, runtime, worker_id="worker-lease-loss")
+
+    assert asyncio.run(worker.run_once()) is True
+
+    job = jobs.get_for_episode("episode-lease-loss")
+    assert runtime.cancelled.is_set()
+    assert job is not None
+    assert job.status is GenerationJobStatus.RUNNING
+
+
+def test_external_worker_cancellation_does_not_leave_generation_running() -> None:
+    class SlowRuntime(EpisodeOrchestrator):
+        def __init__(self) -> None:
+            super().__init__(InMemoryEpisodeRepository())
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def ensure_buffer_async(
+            self,
+            episode_id: str,
+            *,
+            target_chapters: int = 2,
+            target_ahead_seconds: int = 300,
+        ):
+            del episode_id, target_chapters, target_ahead_seconds
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    runtime = SlowRuntime()
+    jobs = InMemoryGenerationJobRepository()
+    jobs.request("episode-worker-stop")
+    worker = GenerationWorker(jobs, runtime, worker_id="worker-stop")
+
+    async def run() -> None:
+        task = asyncio.create_task(worker.run_once())
+        await runtime.started.wait()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        await asyncio.sleep(0)
+        assert runtime.cancelled.is_set()
+
+    asyncio.run(run())
