@@ -282,6 +282,12 @@ class LiveEpisodeAssemblyService:
         except ProviderError:
             return None
 
+        if fast_result.trace.fallback_used:
+            # A fallback FastStart is intentionally conservative and may expose
+            # unranked research candidates. Do not freeze one of those into the
+            # Episode merely to gain a few seconds of buffer.
+            return None
+
         proposals: list[TrackProposal] = []
         if fast_result.plan.selected_next_track is not None:
             proposals.append(fast_result.plan.selected_next_track)
