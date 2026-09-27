@@ -45,6 +45,7 @@ from wavecast.orchestration import (
     GenerationWorker,
     InlineGenerationScheduler,
 )
+from wavecast.orchestration.buffer import buffer_decision
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
 from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
 from wavecast.proposals import (
@@ -459,9 +460,11 @@ def _queue_progressive_generation(
 
         if (
             not force
-            and episode.has_ready_successor
-            and episode.ready_audio_seconds_ahead
-            >= generation_worker.policy.target_ahead_seconds
+            and not buffer_decision(
+                episode,
+                baseline_seconds=generation_worker.policy.target_ahead_seconds,
+                max_chapters=generation_worker.policy.target_chapters,
+            ).needs_generation
         ):
             return episode
 

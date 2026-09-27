@@ -341,6 +341,16 @@ def test_existing_ready_successor_skips_duplicate_fast_bootstrap() -> None:
     )
 
     assert staged.fast_calls == 0
+    assert staged.prepare_calls == 0
+    assert buffered.progressive_session is None
+    # Healthy buffers defer expensive planning; a larger unmet target must
+    # still prepare the route without duplicating the known exact successor.
+    buffered = asyncio.run(
+        runtime.ensure_buffer_async(
+            episode.id, target_chapters=2, target_ahead_seconds=1000
+        )
+    )
+    assert staged.fast_calls == 0
     assert staged.prepare_calls == 1
     assert buffered.progressive_session is not None
     assert buffered.progressive_session.chapters[0].resolved_track == staged.fast_track

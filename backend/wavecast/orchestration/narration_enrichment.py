@@ -131,7 +131,6 @@ def _finish_authoring(
         if not existing:
             return episode
 
-        first_order = min(segment.order for segment in existing)
         last_order = max(segment.order for segment in existing)
         exposed = (
             episode.current_segment_id in {segment.id for segment in existing}
