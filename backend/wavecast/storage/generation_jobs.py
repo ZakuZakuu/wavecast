@@ -34,6 +34,7 @@ class GenerationJobStatus(StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
     CANCELLED = "CANCELLED"
 
 
@@ -87,6 +88,15 @@ class GenerationJobRepository(Protocol):
         *,
         error_code: str,
         delay_seconds: int,
+    ) -> GenerationJob: ...
+
+    def fail(
+        self,
+        job_id: str,
+        worker_id: str,
+        request_version: int,
+        *,
+        error_code: str,
     ) -> GenerationJob: ...
 
     def cancel_for_episode(self, episode_id: str) -> GenerationJob | None: ...
@@ -321,6 +331,43 @@ class InMemoryGenerationJobRepository:
             self._store(updated)
             return updated.model_copy(deep=True)
 
+    def fail(
+        self,
+        job_id: str,
+        worker_id: str,
+        request_version: int,
+        *,
+        error_code: str,
+    ) -> GenerationJob:
+        worker_id = _validate_worker(worker_id)
+        error_code = _validate_error_code(error_code)
+        with self._lock:
+            current = self._running_owned(job_id, worker_id)
+            now = self._now()
+            if current.request_version != request_version:
+                updated = current.model_copy(
+                    update={
+                        "status": GenerationJobStatus.PENDING,
+                        "available_at": now,
+                        "lease_owner": None,
+                        "lease_expires_at": None,
+                        "last_error_code": None,
+                        "updated_at": now,
+                    }
+                )
+            else:
+                updated = current.model_copy(
+                    update={
+                        "status": GenerationJobStatus.FAILED,
+                        "lease_owner": None,
+                        "lease_expires_at": None,
+                        "last_error_code": error_code,
+                        "updated_at": now,
+                    }
+                )
+            self._store(updated)
+            return updated.model_copy(deep=True)
+
     def cancel_for_episode(self, episode_id: str) -> GenerationJob | None:
         with self._lock:
             current = self._jobs_by_episode.get(episode_id)
@@ -452,6 +499,28 @@ class PostgresGenerationJobRepository:
             ),
         )
 
+    def fail(
+        self,
+        job_id: str,
+        worker_id: str,
+        request_version: int,
+        *,
+        error_code: str,
+    ) -> GenerationJob:
+        worker_id = _validate_worker(worker_id)
+        error_code = _validate_error_code(error_code)
+        return cast(
+            GenerationJob,
+            self._run(
+                self._fail(
+                    job_id,
+                    worker_id,
+                    request_version,
+                    error_code=error_code,
+                )
+            ),
+        )
+
     def cancel_for_episode(self, episode_id: str) -> GenerationJob | None:
         return cast(
             GenerationJob | None,
@@ -523,6 +592,7 @@ class PostgresGenerationJobRepository:
             dominant_mode = _dominant_mode(current.mode, mode)
             reactivating = current.status in {
                 GenerationJobStatus.COMPLETED,
+                GenerationJobStatus.FAILED,
                 GenerationJobStatus.CANCELLED,
             }
             upgrading = dominant_mode is not current.mode
@@ -690,6 +760,44 @@ class PostgresGenerationJobRepository:
                         last_error_code=None if superseded else error_code,
                         updated_at=now,
                     )
+                    .returning(generation_jobs_table)
+                )
+            ).mappings().one()
+            return _job_from_mapping(row)
+
+    async def _fail(
+        self,
+        job_id: str,
+        worker_id: str,
+        request_version: int,
+        *,
+        error_code: str,
+    ) -> GenerationJob:
+        now = _utc_now()
+        async with self.engine.begin() as connection:
+            current = await self._locked_owned(connection, job_id, worker_id)
+            if current.request_version != request_version:
+                values = {
+                    "status": GenerationJobStatus.PENDING.value,
+                    "available_at": now,
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "last_error_code": None,
+                    "updated_at": now,
+                }
+            else:
+                values = {
+                    "status": GenerationJobStatus.FAILED.value,
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "last_error_code": error_code,
+                    "updated_at": now,
+                }
+            row = (
+                await connection.execute(
+                    update(generation_jobs_table)
+                    .where(generation_jobs_table.c.id == job_id)
+                    .values(**values)
                     .returning(generation_jobs_table)
                 )
             ).mappings().one()
