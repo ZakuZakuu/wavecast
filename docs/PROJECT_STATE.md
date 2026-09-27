@@ -57,10 +57,26 @@ declarative DJ arrangement layered on the stable browser transport.
 - Speculative narrative-only or unresolved route beats cannot hold the music
   ready queue in front of a later playable track. Continuity generation advances
   past them while preserving exact resolved music identity.
-- One major coupling point intentionally remains after this slice: initial
-  `ProgressiveAssemblySession` preparation still runs the broader
-  research/curation/resolution path before the first staged successor exists.
-  That is the next continuity target before Arrangement/DJ v2.
+- The FastStart successor bootstrap now removes the remaining initial-session
+  coupling from the continuity path. A successful, non-fallback FastStart
+  candidate crosses exact catalog resolution and playback-asset validation,
+  then persists as durable `chapter-2` before Background Research or Curator
+  completes. Full planning reconstructs from that persisted identity instead of
+  rerunning FastStart, and the locked successor is injected into Curator context
+  so the same Episode route cannot silently replace the song already promised
+  to playback.
+- If full route planning fails after a real successor is durable, progressive
+  generation treats that as deferred planning rather than failed continuity.
+  The current ready music remains usable and later low-buffer signals may retry
+  planning without regenerating chapter-2. FULL materialization remains strict.
+  If the opening has already ended when the bootstrap arrives, the runtime
+  arbitrates against the latest durable browser state and starts the successor
+  immediately without waiting for full planning.
+- FastStart fallback output is never frozen into Episode identity; degraded fast
+  intelligence falls back to the existing full-planning path instead.
+- The next continuity target is adaptive buffer policy: use current-source
+  remaining time and observed generation latency rather than only static ready
+  seconds/chapter counts. Arrangement/DJ v2 remains after that continuity work.
 - The legacy Web `MixEngine` is not the active EpisodePlayer transport and must
   not be revived as a synthetic playback clock. Arrangement/DJ v2 remains
   deferred until continuity no longer depends on slow narration/intelligence
