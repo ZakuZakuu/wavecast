@@ -1660,7 +1660,14 @@ class StagedProgressiveChapterGenerator:
             (item for item in self.session.chapters if item.chapter_id == chapter_id),
             None,
         )
-        if chapter is None or not chapter.slot_contexts:
+        if (
+            chapter is None
+            or not chapter.slot_contexts
+            or (
+                chapter.resolved_track is None
+                and chapter.chapter.track is not None
+            )
+        ):
             return None
 
         chapter_segments = [
