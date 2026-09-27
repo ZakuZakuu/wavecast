@@ -177,6 +177,9 @@ class LiveEpisode(BaseModel):
     segments: list[MusicSegment | NarrationSegment]
     current_segment_id: str | None = None
     playback_position_seconds: int = Field(default=0, ge=0)
+    # Safe, provider-neutral observation of the most recent progressive run
+    # that materially advanced route/session readiness.
+    last_generation_latency_seconds: float | None = Field(default=None, ge=0)
     is_listener_active: bool = True
     is_playing: bool = True
     last_activity_at: datetime = Field(default_factory=utc_now)
@@ -209,6 +212,31 @@ class LiveEpisode(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def current_source_remaining_seconds(self) -> int:
+        """Return remaining browser-authoritative time in the current source."""
+
+        if self.current_segment_id is None:
+            return 0
+        try:
+            current_index = next(
+                index
+                for index, segment in enumerate(self.timeline_segments)
+                if segment.id == self.current_segment_id
+            )
+        except StopIteration:
+            return 0
+        current = self.timeline_segments[current_index]
+        if not current.is_audio_ready:
+            return 0
+        current_start = sum(
+            segment.duration_seconds
+            for segment in self.timeline_segments[:current_index]
+        )
+        played_in_current = max(0, self.playback_position_seconds - current_start)
+        return max(0, current.duration_seconds - played_in_current)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def ready_audio_seconds_ahead(self) -> int:
         """Return playable audio ahead, treating unfinished narration as optional.
 
@@ -231,12 +259,7 @@ class LiveEpisode(BaseModel):
         if not current.is_audio_ready:
             return 0
 
-        current_start = sum(
-            segment.duration_seconds
-            for segment in self.timeline_segments[:current_index]
-        )
-        played_in_current = max(0, self.playback_position_seconds - current_start)
-        ready_seconds = max(0, current.duration_seconds - played_in_current)
+        ready_seconds = self.current_source_remaining_seconds
 
         for segment in self.timeline_segments[current_index + 1 :]:
             if segment.is_audio_ready:
