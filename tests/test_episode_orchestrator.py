@@ -170,6 +170,31 @@ def test_armed_handoff_rejects_a_stale_successor_identity_without_side_effects(
     assert unchanged.segment("segment-bridge").state is SegmentState.AUDIO_READY
 
 
+def test_stale_ended_event_cannot_advance_a_new_seek_target(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    episode = runtime.start(seed)
+    runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
+    buffered = runtime.get(episode.id)
+    opening = buffered.segment("segment-opening")
+    narration = buffered.segment("segment-narration-1")
+    bridge_start = opening.duration_seconds + narration.duration_seconds
+
+    sought = runtime.seek(episode.id, bridge_start)
+    assert sought.current_segment_id == "segment-bridge"
+
+    with pytest.raises(EpisodeRuntimeError, match="completed segment is stale"):
+        runtime.complete_current_segment(
+            episode.id,
+            expected_segment_id="segment-opening",
+        )
+
+    unchanged = runtime.get(episode.id)
+    assert unchanged.current_segment_id == "segment-bridge"
+    assert unchanged.segment("segment-bridge").state is SegmentState.COMMITTED
+    assert unchanged.segment("segment-opening").state is not SegmentState.PLAYED
+
+
 def test_seek_cannot_cross_generated_frontier(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
