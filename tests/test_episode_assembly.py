@@ -137,6 +137,8 @@ def service(tmp_path, llm: RecordingAssemblyLLM | None = None) -> LiveEpisodeAss
 
 
 def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypatch) -> None:
+    from wavecast.providers.config import ProviderSettings
+
     monkeypatch.chdir(tmp_path)
     assembly = create_episode_assembly_service(ProviderSettings(mode="mock"))
     opening = ResolvedTrack(
