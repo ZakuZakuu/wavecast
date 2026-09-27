@@ -106,9 +106,9 @@ describe("transport-safe arrangement envelope", () => {
 
   it("uses the media source position and caps edge fades to a short transport-safe window", () => {
     expect(transportSafeGain(arrangement, 5)).toBe(0);
-    expect(transportSafeGain(arrangement, 5.2)).toBeCloseTo(0.5);
-    expect(transportSafeGain(arrangement, 6)).toBe(1);
-    expect(transportSafeGain(arrangement, 14.8)).toBeCloseTo(0.5);
+    expect(transportSafeGain(arrangement, 5.075)).toBeCloseTo(0.5);
+    expect(transportSafeGain(arrangement, 5.2)).toBe(1);
+    expect(transportSafeGain(arrangement, 14.925)).toBeCloseTo(0.5);
     expect(transportSafeGain(arrangement, 15)).toBe(0);
   });
 
