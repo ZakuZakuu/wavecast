@@ -15,6 +15,7 @@ from .models import (
     OutputLanguage,
     ProgramSkeleton,
     ResearchBundle,
+    TrackProposal,
     resolve_output_language,
 )
 from .trace import GenerationTrace
@@ -218,7 +219,7 @@ def normalize_curator_skeleton(
             if support_ids:
                 supports.append(support.model_copy(update={"evidence_ids": support_ids}))
         track = chapter.track
-        alternates: list = []
+        alternates: list[TrackProposal] = []
         if track is not None:
             track_ids, dropped, remaining = _retain_evidence_ids(track.evidence_ids, available)
             if dropped:
