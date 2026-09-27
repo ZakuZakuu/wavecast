@@ -274,7 +274,12 @@ class EpisodeOrchestrator:
                 self.repository.save(episode)
 
     def capture_generation_snapshot(self, episode_id: str) -> GenerationSnapshot:
-        episode = self._active_episode(episode_id)
+        episode = self.get(episode_id)
+        if (
+            not episode.is_listener_active
+            and episode.generation_mode is not GenerationMode.FULL
+        ):
+            raise EpisodeRuntimeError("listener session is inactive; generation is progressive")
         segments = episode.ordered_segments
         if not segments:
             raise EpisodeRuntimeError("episode has no timeline segments")
@@ -296,8 +301,11 @@ class EpisodeOrchestrator:
         snapshot: GenerationSnapshot,
     ) -> LiveEpisode:
         latest = self.get(episode_id)
-        if not latest.is_listener_active:
-            raise EpisodeRuntimeError("listener session is inactive; discard generated chapter")
+        if (
+            not latest.is_listener_active
+            and latest.generation_mode is not GenerationMode.FULL
+        ):
+            raise EpisodeRuntimeError("listener session is inactive; discard progressive chapter")
         if latest.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
             raise EpisodeRuntimeError("episode is no longer progressively writable")
         current = latest.ordered_segments
