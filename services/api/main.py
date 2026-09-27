@@ -378,7 +378,8 @@ def configure_narration_materializer(materializer: NarrationMaterializer) -> Non
         music_snapshot_store, \
         progressive_runtime, \
         orchestrator, \
-        scheduler
+        scheduler, \
+        generation_worker
     narration_materializer = materializer
     audio_storage = materializer.storage
     progressive_runtime = _build_progressive_runtime(_provider_settings, audio_storage)
@@ -391,6 +392,11 @@ def configure_narration_materializer(materializer: NarrationMaterializer) -> Non
         progressive_runtime=progressive_runtime,
     )
     scheduler = InlineGenerationScheduler(orchestrator)
+    generation_worker = GenerationWorker(
+        generation_job_repository,
+        orchestrator,
+        worker_id=f"api-{uuid4().hex[:12]}",
+    )
 
 app = FastAPI(title="Wavecast API", version="0.2.0")
 
