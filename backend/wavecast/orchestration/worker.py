@@ -77,6 +77,7 @@ class GenerationWorker:
         self.worker_id = normalized
         self.policy = policy or GenerationWorkerPolicy()
         self._enrichment_tasks: set[asyncio.Task[None]] = set()
+        self._enrichment_episode_ids: set[str] = set()
 
     async def run_once(self) -> bool:
         job = await asyncio.to_thread(
@@ -141,9 +142,17 @@ class GenerationWorker:
         return True
 
     def _schedule_narration_enrichment(self, episode_id: str) -> None:
+        if episode_id in self._enrichment_episode_ids:
+            return
+        self._enrichment_episode_ids.add(episode_id)
         task = asyncio.create_task(self._enrich_narration(episode_id))
         self._enrichment_tasks.add(task)
-        task.add_done_callback(self._enrichment_tasks.discard)
+
+        def _done(completed: asyncio.Task[None]) -> None:
+            self._enrichment_tasks.discard(completed)
+            self._enrichment_episode_ids.discard(episode_id)
+
+        task.add_done_callback(_done)
 
     async def _enrich_narration(self, episode_id: str) -> None:
         # Music readiness is already durable before this optional task starts.
@@ -167,6 +176,7 @@ class GenerationWorker:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._enrichment_tasks.clear()
+        self._enrichment_episode_ids.clear()
 
     async def serve(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
