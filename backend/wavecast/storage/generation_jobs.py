@@ -178,17 +178,23 @@ class InMemoryGenerationJobRepository:
                     updated_at=now,
                 )
             else:
+                dominant_mode = _dominant_mode(existing.mode, mode)
+                reactivating = existing.status in {
+                    GenerationJobStatus.COMPLETED,
+                    GenerationJobStatus.CANCELLED,
+                }
+                upgrading = dominant_mode is not existing.mode
+                if not reactivating and not upgrading:
+                    return existing.model_copy(deep=True)
+
                 update_values: dict[str, Any] = {
-                    "mode": _dominant_mode(existing.mode, mode),
+                    "mode": dominant_mode,
                     "request_version": existing.request_version + 1,
                     "requested_at": now,
                     "updated_at": now,
                     "last_error_code": None,
                 }
-                if existing.status in {
-                    GenerationJobStatus.COMPLETED,
-                    GenerationJobStatus.CANCELLED,
-                }:
+                if reactivating:
                     update_values.update(
                         status=GenerationJobStatus.PENDING,
                         attempts=0,
@@ -196,8 +202,6 @@ class InMemoryGenerationJobRepository:
                         lease_owner=None,
                         lease_expires_at=None,
                     )
-                elif existing.status is GenerationJobStatus.PENDING:
-                    update_values["available_at"] = min(existing.available_at, ready_at)
                 job = existing.model_copy(update=update_values)
             self._jobs_by_episode[episode_id] = job
             self._jobs_by_id[job.id] = job
@@ -483,17 +487,23 @@ class PostgresGenerationJobRepository:
                 return _job_from_mapping(row)
 
             current = _job_from_mapping(row)
+            dominant_mode = _dominant_mode(current.mode, mode)
+            reactivating = current.status in {
+                GenerationJobStatus.COMPLETED,
+                GenerationJobStatus.CANCELLED,
+            }
+            upgrading = dominant_mode is not current.mode
+            if not reactivating and not upgrading:
+                return current
+
             update_values: dict[str, Any] = {
-                "mode": _dominant_mode(current.mode, mode).value,
+                "mode": dominant_mode.value,
                 "request_version": current.request_version + 1,
                 "requested_at": now,
                 "updated_at": now,
                 "last_error_code": None,
             }
-            if current.status in {
-                GenerationJobStatus.COMPLETED,
-                GenerationJobStatus.CANCELLED,
-            }:
+            if reactivating:
                 update_values.update(
                     status=GenerationJobStatus.PENDING.value,
                     attempts=0,
@@ -501,8 +511,6 @@ class PostgresGenerationJobRepository:
                     lease_owner=None,
                     lease_expires_at=None,
                 )
-            elif current.status is GenerationJobStatus.PENDING:
-                update_values["available_at"] = min(current.available_at, ready_at)
             row = (
                 await connection.execute(
                     update(generation_jobs_table)
