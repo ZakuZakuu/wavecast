@@ -98,7 +98,10 @@ class GenerationWorker:
                     target_ahead_seconds=self.policy.target_ahead_seconds,
                 )
         except EpisodeRuntimeError as error:
-            if "inactive" in str(error).casefold():
+            if (
+                job.mode is GenerationJobMode.PROGRESSIVE
+                and "inactive" in str(error).casefold()
+            ):
                 await asyncio.to_thread(self.jobs.cancel_for_episode, job.episode_id)
             else:
                 await self._retry_or_fail(job, "episode_runtime", retryable=True)
@@ -183,6 +186,12 @@ class GenerationWorker:
                     delay_seconds=delay,
                 )
             return
+        if job.mode is GenerationJobMode.FULL:
+            with suppress(Exception):
+                await asyncio.to_thread(
+                    self.orchestrator.abort_full_generation,
+                    job.episode_id,
+                )
         with suppress(GenerationJobLeaseError):
             await asyncio.to_thread(
                 self.jobs.fail,

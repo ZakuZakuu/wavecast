@@ -30,12 +30,13 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const [exportArtifact, setExportArtifact] = useState<MixdownArtifact | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [saveState, setSaveState] = useState<"idle" | "preparing">("idle");
+  const [saveState, setSaveState] = useState<"idle" | "requesting" | "preparing">("idle");
   const episodeIdRef = useRef<string | null>(null);
   const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
   const seekPreviewRef = useRef<number | null>(null);
   const awaitingSuccessorRef = useRef(false);
+  const materializationRequestVersionRef = useRef<number | null>(null);
   const playbackAnchorRef = useRef<ReturnType<typeof playbackAnchor>>(null);
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
   const startEffectGuardRef = useRef(createEffectGenerationGuard());
@@ -252,31 +253,77 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     }
   }, [exportArtifact, exportState, localEpisode]);
 
-  const prepareAndSaveEpisode = useCallback(async () => {
-    if (!localEpisode || saveState === "preparing" || saved) return;
-    setSaveState("preparing");
-    try {
-      const ready = localEpisode.state === "MATERIALIZED"
-        ? localEpisode
-        : await api.materialize(localEpisode.id);
-      if (ready !== localEpisode) setEpisode(ready);
-      recordRecentEpisode(ready, current?.title ?? null);
-      if (!saveMaterializedEpisode(ready, current?.title ?? null)) {
-        throw new Error("完整节目还没有准备好");
-      }
-      setSaved(true);
-      setError(null);
-      void api.recordUserEvent({
-        event_type: "SAVE",
-        program_id: ready.seed_id,
-        episode_id: ready.id,
-      }).catch(() => undefined);
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "保存节目失败，请稍后重试");
-    } finally {
-      setSaveState("idle");
+  const persistMaterializedEpisode = useCallback((ready: LiveEpisode) => {
+    recordRecentEpisode(ready, current?.title ?? null);
+    if (!saveMaterializedEpisode(ready, current?.title ?? null)) {
+      throw new Error("完整节目还没有准备好");
     }
-  }, [current?.title, localEpisode, saveState, saved, setEpisode]);
+    setSaved(true);
+    setError(null);
+    void api.recordUserEvent({
+      event_type: "SAVE",
+      program_id: ready.seed_id,
+      episode_id: ready.id,
+    }).catch(() => undefined);
+  }, [current?.title]);
+
+  const prepareAndSaveEpisode = useCallback(async () => {
+    if (!localEpisode || saveState !== "idle" || saved) return;
+    if (localEpisode.state === "MATERIALIZED") {
+      try {
+        persistMaterializedEpisode(localEpisode);
+      } catch (reason: unknown) {
+        setError(reason instanceof Error ? reason.message : "保存节目失败，请稍后重试");
+      }
+      return;
+    }
+
+    setSaveState("requesting");
+    try {
+      const requested = await api.materialize(localEpisode.id);
+      materializationRequestVersionRef.current = requested.version;
+      setEpisode(requested);
+      if (requested.state === "MATERIALIZED") {
+        persistMaterializedEpisode(requested);
+        setSaveState("idle");
+        return;
+      }
+      setSaveState("preparing");
+    } catch (reason: unknown) {
+      materializationRequestVersionRef.current = null;
+      setSaveState("idle");
+      setError(reason instanceof Error ? reason.message : "完整节目生成请求失败，请稍后重试");
+    }
+  }, [
+    localEpisode,
+    persistMaterializedEpisode,
+    saveState,
+    saved,
+    setEpisode,
+  ]);
+
+  useEffect(() => {
+    if (saveState !== "preparing" || !localEpisode) return;
+    if (localEpisode.state === "MATERIALIZED") {
+      try {
+        persistMaterializedEpisode(localEpisode);
+      } catch (reason: unknown) {
+        setError(reason instanceof Error ? reason.message : "保存节目失败，请稍后重试");
+      } finally {
+        materializationRequestVersionRef.current = null;
+        setSaveState("idle");
+      }
+      return;
+    }
+    if (localEpisode.state === "MATERIALIZING") return;
+
+    const requestedVersion = materializationRequestVersionRef.current;
+    if (requestedVersion !== null && localEpisode.version > requestedVersion) {
+      materializationRequestVersionRef.current = null;
+      setSaveState("idle");
+      setError("完整节目生成失败，可以稍后重试");
+    }
+  }, [localEpisode, persistMaterializedEpisode, saveState]);
 
   const handleAudioPosition = useCallback((segmentPosition: number) => {
     if (!localEpisode || !current || seekPreviewRef.current !== null) return;
@@ -452,9 +499,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
             <button
               type="button"
               onClick={() => void prepareAndSaveEpisode()}
-              disabled={saveState === "preparing" || saved}
+              disabled={saveState !== "idle" || saved}
             >
-              {saveState === "preparing"
+              {saveState !== "idle"
                 ? "正在准备并保存…"
                 : saved
                   ? "已保存到节目库"
@@ -466,7 +513,13 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
               {exportState === "preparing" ? "正在准备导出…" : "导出 MP3"}
             </button>
             {localEpisode.is_listener_active
-              ? <button type="button" onClick={leaveEpisode}>停止后台准备</button>
+              ? (
+                  <button type="button" onClick={leaveEpisode}>
+                    {localEpisode.state === "MATERIALIZING"
+                      ? "停止播放（完整节目继续准备）"
+                      : "停止后台准备"}
+                  </button>
+                )
               : <button type="button" onClick={resumePlayback}>恢复节目</button>}
           </div>
         </details>
