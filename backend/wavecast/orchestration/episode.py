@@ -587,7 +587,7 @@ class EpisodeOrchestrator:
         current = self._current_segment(episode)
         if current is None:
             raise EpisodeRuntimeError("episode has no current segment")
-        successor = self._next_ready_after_optional_narration(
+        successor, optional_narration = self._peek_ready_after_optional_narration(
             episode,
             current.order,
         )
@@ -595,6 +595,8 @@ class EpisodeOrchestrator:
             raise EpisodeRuntimeError("no ready handoff successor exists")
         if successor.id != segment_id:
             raise EpisodeRuntimeError("handoff successor changed")
+        for optional in optional_narration:
+            optional.state = SegmentState.SKIPPED
         if successor.state is SegmentState.AUDIO_READY:
             successor.state = SegmentState.COMMITTED
             successor.committed_at = self.now()
@@ -1075,6 +1077,24 @@ class EpisodeOrchestrator:
         episode.is_playing = True
 
     @staticmethod
+    def _peek_ready_after_optional_narration(
+        episode: LiveEpisode, order: int
+    ) -> tuple[Segment | None, list[Segment]]:
+        """Find the next ready source without mutating optional narration."""
+
+        optional_narration: list[Segment] = []
+        for segment in episode.timeline_segments:
+            if segment.order <= order:
+                continue
+            if segment.is_audio_ready:
+                return segment, optional_narration
+            if segment.kind is SegmentKind.NARRATION:
+                optional_narration.append(segment)
+                continue
+            return None, []
+        return None, []
+
+    @staticmethod
     def _next_ready_after_optional_narration(
         episode: LiveEpisode, order: int
     ) -> Segment | None:
@@ -1084,19 +1104,17 @@ class EpisodeOrchestrator:
         behind it. Once a later source is ready, the narration can be skipped
         without turning a recoverable generation delay into dead air.
         """
-        skipped: list[Segment] = []
-        for segment in episode.timeline_segments:
-            if segment.order <= order:
-                continue
-            if segment.is_audio_ready:
-                for optional in skipped:
-                    optional.state = SegmentState.SKIPPED
-                return segment
-            if segment.kind is SegmentKind.NARRATION:
-                skipped.append(segment)
-                continue
+        successor, optional_narration = (
+            EpisodeOrchestrator._peek_ready_after_optional_narration(
+                episode,
+                order,
+            )
+        )
+        if successor is None:
             return None
-        return None
+        for optional in optional_narration:
+            optional.state = SegmentState.SKIPPED
+        return successor
 
     @staticmethod
     def _next_active_segment(episode: LiveEpisode, order: int) -> Segment | None:
