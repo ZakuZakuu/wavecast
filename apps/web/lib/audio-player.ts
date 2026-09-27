@@ -34,7 +34,12 @@ export function attachAudioLifecycle(
 
 export function syncAudioPlayback(
   audio: AudioElementLike,
-  options: { sourceUrl: string | null; positionSeconds: number; playing: boolean },
+  options: {
+    sourceUrl: string | null;
+    positionSeconds: number;
+    playing: boolean;
+    syncPosition?: boolean;
+  },
 ): void {
   const requestedSource = options.sourceUrl
     ? (() => {
@@ -53,7 +58,10 @@ export function syncAudioPlayback(
       audio.load();
       audio.currentTime = Math.max(0, options.positionSeconds);
     }
-  } else if (Math.abs(audio.currentTime - options.positionSeconds) > 1) {
+  } else if (
+    options.syncPosition
+    && Math.abs(audio.currentTime - options.positionSeconds) > 0.05
+  ) {
     audio.currentTime = Math.max(0, options.positionSeconds);
   }
 
