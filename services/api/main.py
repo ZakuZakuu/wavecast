@@ -43,8 +43,8 @@ from wavecast.models.episode import (
 )
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
-from wavecast.orchestration.worker import GenerationWorker, GenerationWorkerAction
 from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
+from wavecast.orchestration.worker import GenerationWorker, GenerationWorkerAction
 from wavecast.proposals import (
     DeterministicMockProgramProposalGenerator,
     InMemoryProgramProposalRepository,
