@@ -7,7 +7,7 @@ import { api, ApiRequestError } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
 import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
-import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff } from "../lib/playback";
+import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
 import { mixPlanSignature, type MixPlan } from "../lib/mix-timeline";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
@@ -559,6 +559,20 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       .catch((reason: unknown) => {
         seekPreviewRef.current = null;
         setSeekPreview(null);
+        if (
+          reason instanceof ApiRequestError
+          && shouldSuppressSeekConflict({
+            status: reason.status,
+            withinCurrent,
+          })
+        ) {
+          // A checkpoint/heartbeat may win the durable Episode update while the
+          // browser is seeking inside the same audio source. The local media
+          // position is already authoritative here; a later heartbeat/checkpoint
+          // will reconcile durable progress without interrupting playback.
+          setError(null);
+          return;
+        }
         setError(reason instanceof Error ? reason.message : "跳转暂时没有完成");
       });
   }, [current, localEpisode, setEpisode]);

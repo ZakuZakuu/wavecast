@@ -91,6 +91,14 @@ class GenerationWorker:
         if job is None:
             return False
 
+        logger.info(
+            "generation_job_claimed episode_id=%s mode=%s attempts=%s request_version=%s",
+            job.episode_id,
+            job.mode.value,
+            job.attempts,
+            job.request_version,
+        )
+
         renewal_stop = asyncio.Event()
         lease_lost = asyncio.Event()
         renewal = asyncio.create_task(
@@ -127,27 +135,62 @@ class GenerationWorker:
                         self.jobs.cancel_for_episode,
                         job.episode_id,
                     )
+                    logger.info(
+                        "generation_job_cancelled episode_id=%s reason=inactive_listener",
+                        job.episode_id,
+                    )
                 else:
+                    logger.warning(
+                        "generation_job_execution_failed episode_id=%s "
+                        "error_code=episode_runtime error_type=%s",
+                        job.episode_id,
+                        type(error).__name__,
+                    )
                     await self._retry_or_fail(
                         job,
                         "episode_runtime",
                         retryable=True,
                     )
-            except EpisodeConcurrencyError:
+            except EpisodeConcurrencyError as error:
+                logger.warning(
+                    "generation_job_execution_failed episode_id=%s "
+                    "error_code=episode_concurrency error_type=%s",
+                    job.episode_id,
+                    type(error).__name__,
+                )
                 await self._retry_or_fail(
                     job,
                     "episode_concurrency",
                     retryable=True,
                 )
             except ProviderError as error:
+                error_code = _provider_error_code(error)
+                logger.warning(
+                    "generation_job_execution_failed episode_id=%s "
+                    "error_code=%s error_type=%s",
+                    job.episode_id,
+                    error_code,
+                    type(error).__name__,
+                )
                 await self._retry_or_fail(
                     job,
-                    _provider_error_code(error),
+                    error_code,
                     retryable=is_retryable(error),
                 )
-            except Exception:
-                # Never persist exception text: provider responses, URLs, or other
-                # sensitive implementation details do not belong in durable job state.
+            except Exception as error:
+                # Never persist or log exception text: provider responses, URLs,
+                # prompts, or other sensitive implementation details do not belong
+                # in durable state or operational diagnostics.
+                stage = getattr(error, "stage", None) or "unknown"
+                reason_code = getattr(error, "reason_code", None) or "unknown"
+                logger.warning(
+                    "generation_job_execution_failed episode_id=%s "
+                    "error_code=generation_internal error_type=%s stage=%s reason_code=%s",
+                    job.episode_id,
+                    type(error).__name__,
+                    stage,
+                    reason_code,
+                )
                 await self._retry_or_fail(
                     job,
                     "generation_internal",
@@ -158,7 +201,7 @@ class GenerationWorker:
                     enrich_episode_id = None
                 else:
                     try:
-                        await asyncio.to_thread(
+                        completed = await asyncio.to_thread(
                             self.jobs.complete,
                             job.id,
                             self.worker_id,
@@ -167,7 +210,22 @@ class GenerationWorker:
                     except GenerationJobLeaseError:
                         # A newer owner is responsible for terminal state and
                         # optional enrichment. Do not duplicate Writer/TTS work.
+                        logger.warning(
+                            "generation_job_completion_lease_lost episode_id=%s "
+                            "request_version=%s",
+                            job.episode_id,
+                            job.request_version,
+                        )
                         enrich_episode_id = None
+                    else:
+                        logger.info(
+                            "generation_job_completed episode_id=%s mode=%s "
+                            "attempts=%s request_version=%s",
+                            job.episode_id,
+                            completed.mode.value,
+                            completed.attempts,
+                            completed.request_version,
+                        )
         finally:
             renewal_stop.set()
             lease_watch.cancel()
@@ -355,7 +413,7 @@ class GenerationWorker:
     ) -> None:
         if retryable and job.attempts < self.policy.max_attempts:
             delay = min(60, 5 * (2 ** max(0, job.attempts - 1)))
-            with suppress(GenerationJobLeaseError):
+            try:
                 await asyncio.to_thread(
                     self.jobs.retry,
                     job.id,
@@ -364,6 +422,17 @@ class GenerationWorker:
                     error_code=error_code,
                     delay_seconds=delay,
                 )
+            except GenerationJobLeaseError:
+                return
+            logger.warning(
+                "generation_job_retry_scheduled episode_id=%s error_code=%s "
+                "attempts=%s request_version=%s delay_seconds=%s",
+                job.episode_id,
+                error_code,
+                job.attempts,
+                job.request_version,
+                delay,
+            )
             return
         if job.mode is GenerationJobMode.FULL:
             with suppress(Exception):
@@ -371,7 +440,7 @@ class GenerationWorker:
                     self.orchestrator.abort_full_generation,
                     job.episode_id,
                 )
-        with suppress(GenerationJobLeaseError):
+        try:
             await asyncio.to_thread(
                 self.jobs.fail,
                 job.id,
@@ -379,6 +448,16 @@ class GenerationWorker:
                 job.request_version,
                 error_code=error_code,
             )
+        except GenerationJobLeaseError:
+            return
+        logger.warning(
+            "generation_job_failed episode_id=%s error_code=%s "
+            "attempts=%s request_version=%s",
+            job.episode_id,
+            error_code,
+            job.attempts,
+            job.request_version,
+        )
 
 
 def _narration_state_counts(episode: object) -> dict[str, int]:

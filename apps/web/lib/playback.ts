@@ -60,6 +60,13 @@ export function canUseArmedHandoff(options: {
   );
 }
 
+export function shouldSuppressSeekConflict(options: {
+  status: number;
+  withinCurrent: boolean;
+}): boolean {
+  return options.status === 409 && options.withinCurrent;
+}
+
 export type PlaybackAnchor = Pick<LiveEpisode, "current_segment_id" | "playback_position_seconds">;
 
 export function playbackAnchor(episode: LiveEpisode | null): PlaybackAnchor | null {
