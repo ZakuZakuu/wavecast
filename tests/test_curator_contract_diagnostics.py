@@ -137,6 +137,56 @@ def test_curator_normalizes_unknown_references_and_records_safe_diagnostics() ->
     }
 
 
+def test_curator_drops_connection_from_narrative_only_chapter() -> None:
+    skeleton = ProgramSkeleton(
+        thesis="fixture",
+        estimated_duration_seconds=60,
+        chapters=[
+            ChapterPlan(
+                index=0,
+                track=None,
+                narrative_role=NarrativeRole.BRIDGE,
+                reason="narrative beat",
+                novelty_distance=NoveltyDistance.CLOSE,
+                evidence_ids=["e1"],
+                connection_from_previous_track=EditorialConnection(
+                    relation_type=EditorialRelationType.SCENE_OR_LINEAGE,
+                    musical_dimensions=["scene"],
+                    rationale="model attached this relation to the wrong chapter",
+                    evidence_ids=["e1"],
+                ),
+                narration_goal="connect",
+            )
+        ],
+    )
+    trace = GenerationTrace(request_id="fixture")
+    result = asyncio.run(
+        CuratorService(CuratorFixture(skeleton)).curate(
+            ResearchBundle(
+                anchors=[],
+                taste_hypotheses=[],
+                evidence=[evidence("e1")],
+                candidates=[],
+            ),
+            fast_plan(),
+            desired_duration_seconds=60,
+            trace=trace,
+        )
+    )
+
+    assert result.chapters[0].connection_from_previous_track is None
+    diagnostics = [
+        event.metadata
+        for event in trace.events
+        if event.name == "curator_reference_normalized"
+    ]
+    assert any(
+        item.get("reference_kind") == "connection_without_track"
+        and item.get("dropped_reference_count") == 1
+        for item in diagnostics
+    )
+
+
 def test_curator_contract_helper_remains_strict_after_normalization() -> None:
     skeleton = ProgramSkeleton(
         thesis="fixture",
