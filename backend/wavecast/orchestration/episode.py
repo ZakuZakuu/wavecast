@@ -524,12 +524,19 @@ class EpisodeOrchestrator:
         episode.last_activity_at = self.now()
         return self.repository.save(episode)
 
-    def complete_current_segment(self, episode_id: str) -> LiveEpisode:
+    def complete_current_segment(
+        self,
+        episode_id: str,
+        expected_segment_id: str | None = None,
+    ) -> LiveEpisode:
         """Apply a browser ``ended`` event without running a server playback clock."""
+
         episode = self._active_episode(episode_id)
         current = self._current_segment(episode)
         if current is None:
             raise EpisodeRuntimeError("episode has no current segment")
+        if expected_segment_id is not None and current.id != expected_segment_id:
+            raise EpisodeRuntimeError("completed segment is stale")
         if not current.is_audio_ready:
             raise EpisodeRuntimeError("cannot complete audio that is not ready")
         if current.state is SegmentState.AUDIO_READY:
