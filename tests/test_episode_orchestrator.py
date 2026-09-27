@@ -153,14 +153,21 @@ def test_complete_handoff_is_idempotent_after_browser_switch(
     assert repeated.segment("segment-bridge").state is SegmentState.COMMITTED
 
 
-def test_armed_handoff_rejects_a_stale_successor_identity(
+def test_armed_handoff_rejects_a_stale_successor_identity_without_side_effects(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
     episode = runtime.start(seed)
     runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
+    staged = runtime.get(episode.id)
+    staged.segment("segment-narration-1").state = SegmentState.SCRIPT_READY
+    runtime.repository.save(staged)
 
     with pytest.raises(EpisodeRuntimeError, match="successor changed"):
-        runtime.arm_handoff(episode.id, "segment-bridge")
+        runtime.arm_handoff(episode.id, "stale-successor")
+
+    unchanged = runtime.get(episode.id)
+    assert unchanged.segment("segment-narration-1").state is SegmentState.SCRIPT_READY
+    assert unchanged.segment("segment-bridge").state is SegmentState.AUDIO_READY
 
 
 def test_seek_cannot_cross_generated_frontier(
