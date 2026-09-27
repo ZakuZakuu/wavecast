@@ -32,6 +32,7 @@ from .generation import (
     GeneratedChapter,
     ProgressiveChapterGenerator,
 )
+from .narration_enrichment import author_pending_narration
 from .runtime import StagedProgressiveRuntime
 
 SESSION_TTL = timedelta(seconds=30)
@@ -593,6 +594,19 @@ class EpisodeOrchestrator:
             return self.repository.save(episode)
         return episode
 
+    async def author_pending_narration_async(
+        self,
+        episode_id: str,
+        *,
+        max_chapters: int = 2,
+    ) -> LiveEpisode:
+        """Run optional Writer enrichment after playable music is durable."""
+        return await author_pending_narration(
+            self,
+            episode_id,
+            max_chapters=max_chapters,
+        )
+
     async def materialize_pending_narration_async(
         self,
         episode_id: str,
@@ -720,6 +734,10 @@ class EpisodeOrchestrator:
             episode = await asyncio.to_thread(
                 self.append_generated_chapter, episode_id, chapter, snapshot
             )
+        await self.author_pending_narration_async(
+            episode_id,
+            max_chapters=64,
+        )
         await self.materialize_pending_narration_async(
             episode_id,
             max_segments=64,
