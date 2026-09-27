@@ -71,6 +71,7 @@ class EpisodeSeed(BaseModel):
     opening_track_ref: str
     opening_track_title: str
     opening_track_artist: str
+    opening_track_duration_seconds: int | None = Field(default=None, gt=0)
     cover: CoverParams
     generation_profile: str = "balanced"
     created_at: datetime = Field(default_factory=utc_now)
