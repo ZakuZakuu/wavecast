@@ -9,7 +9,7 @@ export function AudioPlayer({
   segment,
   playing,
   positionSeconds,
-  seekToken,
+  seekToken = 0,
   onPositionChange,
   onEnded,
   onError,
@@ -17,7 +17,7 @@ export function AudioPlayer({
   segment: Segment | undefined;
   playing: boolean;
   positionSeconds: number;
-  seekToken: number;
+  seekToken?: number;
   onPositionChange: (positionSeconds: number) => void;
   onEnded: () => void;
   onError?: () => void;
