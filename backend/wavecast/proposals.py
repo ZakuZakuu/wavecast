@@ -13,6 +13,7 @@ from wavecast.intelligence.models import TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.models.episode import CoverParams, EpisodeSeed, utc_now
 from wavecast.providers.contracts import ProgressiveLLMProvider
+from wavecast.providers.errors import ProviderError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
 
@@ -52,6 +53,7 @@ class ProgramProposal(BaseModel):
     opening_track_ref: str = Field(min_length=1, max_length=500)
     opening_track_title: str = Field(min_length=1, max_length=300)
     opening_track_artist: str = Field(min_length=1, max_length=300)
+    opening_track_duration_seconds: int | None = Field(default=None, gt=0)
     cover: CoverParams
     editorial_route: list[str] = Field(min_length=2, max_length=8)
     genre_tags: list[str] = Field(default_factory=list, max_length=8)
@@ -70,6 +72,7 @@ class ProgramProposal(BaseModel):
             opening_track_ref=self.opening_track_ref,
             opening_track_title=self.opening_track_title,
             opening_track_artist=self.opening_track_artist,
+            opening_track_duration_seconds=self.opening_track_duration_seconds,
             cover=self.cover,
             generation_profile=self.generation_profile,
             created_at=self.created_at,
@@ -86,6 +89,7 @@ class ProgramProposal(BaseModel):
             opening_track_ref=seed.opening_track_ref,
             opening_track_title=seed.opening_track_title,
             opening_track_artist=seed.opening_track_artist,
+            opening_track_duration_seconds=seed.opening_track_duration_seconds,
             cover=seed.cover,
             editorial_route=["开场", "展开", "转折", "收尾"],
             genre_tags=[],
@@ -373,15 +377,26 @@ class LLMProgramProposalGenerator:
         proposals: list[ProgramProposal] = []
         for draft in raw.proposals:
             resolved = None
+            opening_duration_seconds: int | None = None
             for candidate in draft.opening_track_candidates[: self.max_opening_candidates]:
                 resolved = await resolve_track_proposal_across_providers(
                     self.retrieval,
                     candidate.to_track_proposal(),
                     limit=5,
                 )
-                if resolved is not None:
-                    break
-            if resolved is None:
+                if resolved is None:
+                    continue
+                try:
+                    metadata = await self.retrieval.registry.resolve_track(resolved)
+                except ProviderError:
+                    resolved = None
+                    continue
+                if not metadata.playable or metadata.duration_seconds <= 0:
+                    resolved = None
+                    continue
+                opening_duration_seconds = metadata.duration_seconds
+                break
+            if resolved is None or opening_duration_seconds is None:
                 raise ProgramProposalGenerationError("opening_track_unresolved")
 
             proposal_id = f"proposal-{uuid4().hex}"
@@ -395,6 +410,7 @@ class LLMProgramProposalGenerator:
                     opening_track_ref=resolved.track_ref,
                     opening_track_title=resolved.canonical_title,
                     opening_track_artist=resolved.canonical_artist,
+                    opening_track_duration_seconds=opening_duration_seconds,
                     cover=_cover_for(proposal_id, draft.title),
                     editorial_route=list(draft.editorial_route),
                     genre_tags=list(draft.genre_tags),
@@ -453,6 +469,7 @@ class DeterministicMockProgramProposalGenerator:
                     opening_track_ref="mock:opening",
                     opening_track_title="Neon First Light",
                     opening_track_artist="Mira Fields",
+                    opening_track_duration_seconds=22,
                     cover=CoverParams(family=family, seed=seed % 1000, palette=palette),
                     editorial_route=list(route),
                     genre_tags=list(genres),

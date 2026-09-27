@@ -50,6 +50,19 @@ def test_opening_track_is_ready_immediately_and_future_is_generated_on_demand(
     assert updated.segment("segment-bridge").is_audio_ready
 
 
+def test_verified_seed_duration_overrides_audio_provider_fallback(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    verified = seed.model_copy(update={"opening_track_duration_seconds": 187})
+
+    episode = runtime.start(verified)
+    opening = episode.segment("segment-opening")
+
+    assert opening.duration_seconds == 187
+    assert episode.generated_frontier_seconds == 187
+    assert opening.audio_source_url is not None
+
+
 def test_timeline_serializes_explicit_playable_audio_segment_fields(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
