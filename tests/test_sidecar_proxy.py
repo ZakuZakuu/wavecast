@@ -89,3 +89,28 @@ async def test_sidecar_proxy_hides_upstream_url_and_preserves_range(
     assert client.request.headers["range"] == "bytes=0-3"
     assert client.request.headers["if-range"] == "etag-1"
     assert "upstream.example.test" not in str(response.url)
+
+
+@pytest.mark.asyncio
+async def test_sidecar_playback_resolution_is_reused_for_nearby_range_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sidecar = FakeSidecar()
+    api_module._playback_request_cache.clear()
+    monkeypatch.setattr(api_module, "_build_sidecar_provider", lambda _: sidecar)
+
+    try:
+        first = await api_module._resolve_sidecar_playback_request(
+            "netease",
+            "track-cache",
+        )
+        second = await api_module._resolve_sidecar_playback_request(
+            "netease",
+            "track-cache",
+        )
+    finally:
+        api_module._playback_request_cache.clear()
+
+    assert first == second
+    assert sidecar.track_refs == ["netease:track-cache"]
+    assert sidecar.closed is True
