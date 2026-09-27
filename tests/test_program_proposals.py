@@ -39,6 +39,8 @@ def test_mock_proposal_generation_is_deterministic_and_seed_compatible() -> None
     assert seed.id == first.id
     assert seed.topic == request.prompt
     assert seed.opening_track_ref == "mock:opening"
+    assert first.opening_track_duration_seconds == 22
+    assert seed.opening_track_duration_seconds == 22
     assert seed.cover == first.cover
 
 
@@ -170,6 +172,8 @@ def test_llm_generator_resolves_opening_track_before_creating_proposal() -> None
     assert proposal.opening_track_ref == "mock:bridge"
     assert proposal.opening_track_artist == "Signal Garden"
     assert proposal.opening_track_title == "Midnight Transfer"
+    assert proposal.opening_track_duration_seconds == 24
+    assert proposal.to_episode_seed().opening_track_duration_seconds == 24
     assert proposal.anchor_artists == ["Signal Garden"]
     assert proposal.estimated_duration_seconds == 72 * 60
     assert "Taste context:" in llm.prompt
