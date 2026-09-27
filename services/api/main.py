@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -130,6 +131,8 @@ from wavecast.user_context import (
     UserPreferencesRepository,
     UserPreferencesUpdate,
 )
+
+logger = logging.getLogger(__name__)
 
 LISTENER_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 DATABASE_URL = os.getenv("WAVECAST_DATABASE_URL")
@@ -488,14 +491,30 @@ def _queue_progressive_generation(
             # completed or deferred behind safe music.
             return episode
 
-        generation_job_repository.request(
+        queued = generation_job_repository.request(
             episode.id,
             GenerationJobMode.PROGRESSIVE,
         )
-    except Exception:
+        logger.info(
+            "generation_job_requested episode_id=%s status=%s mode=%s "
+            "attempts=%s request_version=%s force=%s retry_failed=%s",
+            episode.id,
+            queued.status.value,
+            queued.mode.value,
+            queued.attempts,
+            queued.request_version,
+            force,
+            retry_failed,
+        )
+    except Exception as error:
         # Playback stays authoritative even if queue persistence is temporarily
-        # unavailable. A later low-buffer signal or explicit resume can requeue.
-        pass
+        # unavailable. Log only the exception type; provider/database payloads
+        # and connection details must never enter application logs.
+        logger.warning(
+            "generation_job_queue_failed episode_id=%s error_type=%s",
+            episode.id,
+            type(error).__name__,
+        )
     return episode
 
 

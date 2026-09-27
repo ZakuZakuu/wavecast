@@ -41,6 +41,31 @@ def _seed(*, opening_seconds: int = 300) -> EpisodeSeed:
     )
 
 
+def test_worker_logs_safe_generation_lifecycle(caplog) -> None:
+    generator = DeterministicMockProgressiveGenerator()
+    runtime = EpisodeOrchestrator(
+        InMemoryEpisodeRepository(),
+        progressive_generator=generator,
+    )
+    episode = runtime.start(_seed())
+    jobs = InMemoryGenerationJobRepository()
+    jobs.request(episode.id)
+    worker = GenerationWorker(jobs, runtime, worker_id="worker-observability")
+    caplog.set_level("INFO", logger="wavecast.orchestration.worker")
+
+    assert asyncio.run(worker.run_once()) is True
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        message.startswith(f"generation_job_claimed episode_id={episode.id}")
+        for message in messages
+    )
+    assert any(
+        message.startswith(f"generation_job_completed episode_id={episode.id}")
+        for message in messages
+    )
+
+
 def test_worker_prepares_successor_behind_long_opening() -> None:
     generator = DeterministicMockProgressiveGenerator()
     runtime = EpisodeOrchestrator(

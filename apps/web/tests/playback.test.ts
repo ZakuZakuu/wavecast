@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentAtPosition, segmentOffset, shouldArmHandoff } from "../lib/playback";
+import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentAtPosition, segmentOffset, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
 import type { LiveEpisode } from "../lib/types";
 
 const episode: LiveEpisode = {
@@ -178,6 +178,15 @@ describe("armed browser handoff", () => {
       ...readySuccessor,
       audio_source_url: null,
     })).toBe(false);
+  });
+});
+
+
+describe("seek conflict handling", () => {
+  it("treats an in-segment 409 as a recoverable synchronization race", () => {
+    expect(shouldSuppressSeekConflict({ status: 409, withinCurrent: true })).toBe(true);
+    expect(shouldSuppressSeekConflict({ status: 409, withinCurrent: false })).toBe(false);
+    expect(shouldSuppressSeekConflict({ status: 500, withinCurrent: true })).toBe(false);
   });
 });
 
