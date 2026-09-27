@@ -3,9 +3,9 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
-from datetime import UTC, datetime
 from tempfile import TemporaryDirectory
 from time import monotonic
 from typing import Any, cast
