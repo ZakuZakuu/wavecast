@@ -271,6 +271,68 @@ def test_progressive_preparation_counts_application_opening_as_first_resolved_tr
     ]
 
 
+def test_progressive_preparation_uses_ranked_alternate_before_skipping_slot(tmp_path) -> None:
+    class AlternateResolutionLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                primary = (
+                    "Missing Artist",
+                    "Definitely Not In Catalog",
+                    NoveltyDistance.CLOSE,
+                )
+                alternate = self._tracks[1]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(primary),
+                            track_alternates=[self._proposal(alternate)],
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="same editorial slot with a playable fallback",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="connect the opening to the resolved fallback",
+                        )
+                    ],
+                    estimated_duration_seconds=900,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, AlternateResolutionLLM())
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3),
+            opening_track=opening,
+        )
+    )
+
+    assert len(session.chapters) == 1
+    chapter = session.chapters[0]
+    assert chapter.resolved_track is not None
+    assert chapter.resolved_track.canonical_title == "Midnight Transfer"
+    assert chapter.chapter.track is not None
+    assert chapter.chapter.track.title == "Midnight Transfer"
+    assert chapter.chapter.track_alternates == []
+    assert session.skeleton.chapters[-1].track is not None
+    assert session.skeleton.chapters[-1].track.title == "Midnight Transfer"
+    assert any(
+        diagnostic.code == "unresolved_track"
+        and "no exact playable catalog match" in diagnostic.detail
+        for diagnostic in session.diagnostics
+    )
+
+
 def test_progressive_preparation_skips_unresolved_selected_music_slot(tmp_path) -> None:
     class MixedResolutionLLM(RecordingAssemblyLLM):
         async def structured(
