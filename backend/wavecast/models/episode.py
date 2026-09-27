@@ -204,8 +204,66 @@ class LiveEpisode(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def buffer_ahead_seconds(self) -> int:
-        """Return the generated audio that remains ahead of the browser position."""
+        """Return the contiguous seekable audio ahead of the browser position."""
         return max(0, self.generated_frontier_seconds - self.playback_position_seconds)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def ready_audio_seconds_ahead(self) -> int:
+        """Return playable audio ahead, treating unfinished narration as optional.
+
+        This is a readiness/buffer metric rather than a seek boundary. A future
+        ready music source may protect continuity even when an optional
+        narration segment before it has not reached AUDIO_READY yet.
+        """
+        if self.current_segment_id is None:
+            return 0
+        try:
+            current_index = next(
+                index
+                for index, segment in enumerate(self.timeline_segments)
+                if segment.id == self.current_segment_id
+            )
+        except StopIteration:
+            return 0
+
+        current = self.timeline_segments[current_index]
+        if not current.is_audio_ready:
+            return 0
+
+        current_start = sum(
+            segment.duration_seconds
+            for segment in self.timeline_segments[:current_index]
+        )
+        played_in_current = max(0, self.playback_position_seconds - current_start)
+        ready_seconds = max(0, current.duration_seconds - played_in_current)
+
+        for segment in self.timeline_segments[current_index + 1 :]:
+            if segment.is_audio_ready:
+                ready_seconds += segment.duration_seconds
+                continue
+            if segment.kind is SegmentKind.NARRATION:
+                continue
+            break
+        return ready_seconds
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def has_ready_successor(self) -> bool:
+        """Whether playback can reach another ready source without waiting."""
+        if self.current_segment_id is None:
+            return False
+        seen_current = False
+        for segment in self.timeline_segments:
+            if not seen_current:
+                seen_current = segment.id == self.current_segment_id
+                continue
+            if segment.is_audio_ready:
+                return True
+            if segment.kind is SegmentKind.NARRATION:
+                continue
+            return False
+        return False
 
     @computed_field  # type: ignore[prop-decorator]
     @property
