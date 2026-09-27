@@ -376,21 +376,27 @@ class LiveEpisodeAssemblyService:
         unresolved: list[UnresolvedAssemblyProposal] = []
         for chapter in chapters:
             resolved: ResolvedTrack | None = None
-            resolution_reason: str | None = None
+            selected_proposal: TrackProposal | None = None
             if chapter.track is not None:
-                try:
-                    resolved = await resolve_track_proposal_across_providers(
-                        self.retrieval, chapter.track
-                    )
-                except ProviderError as error:
-                    resolution_reason = f"resolution provider failed: {type(error).__name__}"
-                if resolved is None and resolution_reason is None:
-                    resolution_reason = "no exact playable catalog match"
-                if resolution_reason is not None:
+                for proposal in [chapter.track, *chapter.track_alternates]:
+                    resolution_reason: str | None = None
+                    try:
+                        resolved = await resolve_track_proposal_across_providers(
+                            self.retrieval, proposal
+                        )
+                    except ProviderError as error:
+                        resolution_reason = (
+                            f"resolution provider failed: {type(error).__name__}"
+                        )
+                    if resolved is not None:
+                        selected_proposal = proposal
+                        break
+                    if resolution_reason is None:
+                        resolution_reason = "no exact playable catalog match"
                     unresolved.append(
                         UnresolvedAssemblyProposal(
                             chapter_index=chapter.index,
-                            proposal=chapter.track,
+                            proposal=proposal,
                             reason=resolution_reason,
                         )
                     )
@@ -400,7 +406,8 @@ class LiveEpisodeAssemblyService:
                     writer_chapter=chapter.model_copy(
                         update={
                             "index": len(resolved_chapters),
-                            "track": chapter.track if resolved is not None else None,
+                            "track": selected_proposal,
+                            "track_alternates": [],
                         }
                     ),
                     track=resolved,
