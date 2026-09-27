@@ -374,6 +374,41 @@ class EpisodeOrchestrator:
             )
         )
 
+    def needs_progressive_catchup(self, episode: LiveEpisode) -> bool:
+        """Whether durable music is ahead of the optional program-enrichment state."""
+
+        if self.progressive_runtime is None:
+            return False
+        if episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+            return False
+        if episode.generation_mode is not GenerationMode.PROGRESSIVE:
+            return False
+        if not episode.is_listener_active:
+            return False
+
+        session = episode.progressive_session
+        if session is None:
+            # A FastStart successor can survive process loss before Research /
+            # Curator finishes. Music is safe, but the durable program route must
+            # eventually catch up so Writer/TTS can resume.
+            return self._has_fast_successor(episode)
+
+        persisted_chapters = {segment.chapter_id for segment in episode.ordered_segments}
+        authored = set(session.narration_authored_chapter_ids)
+        if any(
+            chapter.chapter_id in persisted_chapters
+            and chapter.chapter_id not in authored
+            for chapter in session.chapters
+        ):
+            return True
+
+        return any(
+            isinstance(segment, NarrationSegment)
+            and segment.state is SegmentState.SCRIPT_READY
+            and not segment.is_committed
+            for segment in episode.timeline_segments
+        )
+
     async def ensure_buffer_async(
         self,
         episode_id: str,
@@ -391,10 +426,18 @@ class EpisodeOrchestrator:
             return episode
         started_at = monotonic()
         initial_ready_ids = {item.id for item in episode.segments if item.is_audio_ready}
-        if not buffer_decision(
-            episode, baseline_seconds=target_ahead_seconds, max_chapters=target_chapters
-        ).needs_generation:
-            return await asyncio.to_thread(self._resume_ready_successor_if_waiting, episode_id)
+        needs_music = buffer_decision(
+            episode,
+            baseline_seconds=target_ahead_seconds,
+            max_chapters=target_chapters,
+        ).needs_generation
+        needs_catchup = self.needs_progressive_catchup(episode)
+        if not needs_music and not needs_catchup:
+            return await asyncio.to_thread(
+                self._resume_ready_successor_if_waiting,
+                episode_id,
+            )
+
         episode = await self._ensure_fast_successor(episode_id, episode)
         episode = await self._ensure_progressive_session(episode_id, episode)
         if (
