@@ -29,6 +29,7 @@ from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
     ProgressiveAssemblySession,
 )
+from wavecast.providers.errors import ProviderTimeoutError
 from wavecast.providers.fakes import MockMusicProvider, MockTTSProvider
 from wavecast.storage.assets import LocalObjectStorageProvider
 from wavecast.timing import build_program_timing_plan
@@ -228,6 +229,70 @@ def test_staged_generator_uses_unique_ids_through_append_seam(tmp_path) -> None:
         "chapter-2",
         "chapter-3",
     }
+
+
+def test_writer_failure_degrades_resolved_chapter_to_music_only(tmp_path) -> None:
+    track = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Bridge Artist",
+        canonical_title="Bridge Track",
+    )
+
+    class _FailingWriter:
+        async def write(self, *args: object, **kwargs: object) -> RadioScript:
+            raise ProviderTimeoutError("writer timeout")
+
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    generator = StagedProgressiveChapterGenerator(
+        session=_session(track),
+        writer=_FailingWriter(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+    )
+
+    generated = asyncio.run(generator.generate_next(_episode()))
+
+    assert generated is not None
+    assert generated.chapter_id == "chapter-2"
+    assert len(generated.segments) == 1
+    assert isinstance(generated.segments[0], MusicSegment)
+    assert generated.segments[0].track_ref == "mock:bridge"
+    assert generated.segments[0].is_audio_ready
+
+
+def test_tts_failure_drops_narration_but_keeps_ready_music(tmp_path) -> None:
+    track = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Bridge Artist",
+        canonical_title="Bridge Track",
+    )
+
+    class _FailingTTS:
+        provider_name = "failing-tts"
+        speech_speed_baseline = 0.8
+
+        async def synthesize(self, *args: object, **kwargs: object) -> object:
+            raise ProviderTimeoutError("tts timeout")
+
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    generator = StagedProgressiveChapterGenerator(
+        session=_session(track),
+        writer=_Writer(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(
+            _FailingTTS(),  # type: ignore[arg-type]
+            storage,
+        ),
+    )
+
+    generated = asyncio.run(generator.generate_next(_episode()))
+
+    assert generated is not None
+    assert generated.chapter_id == "chapter-2"
+    assert len(generated.segments) == 1
+    assert isinstance(generated.segments[0], MusicSegment)
+    assert generated.segments[0].track_ref == "mock:bridge"
+    assert generated.segments[0].is_audio_ready
 
 
 def test_music_only_chunk_skips_writer_and_tts(tmp_path) -> None:
