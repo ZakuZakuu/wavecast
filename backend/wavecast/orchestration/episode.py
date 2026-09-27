@@ -543,6 +543,27 @@ class EpisodeOrchestrator:
         episode.last_activity_at = self.now()
         return self.repository.save(episode)
 
+    def arm_handoff(self, episode_id: str, segment_id: str) -> LiveEpisode:
+        """Lock the next ready source without changing the active browser segment."""
+
+        episode = self._active_episode(episode_id)
+        current = self._current_segment(episode)
+        if current is None:
+            raise EpisodeRuntimeError("episode has no current segment")
+        successor = self._next_ready_after_optional_narration(
+            episode,
+            current.order,
+        )
+        if successor is None:
+            raise EpisodeRuntimeError("no ready handoff successor exists")
+        if successor.id != segment_id:
+            raise EpisodeRuntimeError("handoff successor changed")
+        if successor.state is SegmentState.AUDIO_READY:
+            successor.state = SegmentState.COMMITTED
+            successor.committed_at = self.now()
+        episode.last_activity_at = self.now()
+        return self.repository.save(episode)
+
     def commit_segment(self, episode_id: str, segment_id: str) -> LiveEpisode:
         """Explicit player-start seam retained for callers that have a selected segment."""
         episode = self._active_episode(episode_id)
