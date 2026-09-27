@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
+from wavecast.intelligence.models import ChapterPlan, NarrationSlotContext
 from wavecast.models.episode import (
     EpisodeState,
     LiveEpisode,
@@ -9,10 +11,10 @@ from wavecast.models.episode import (
     NarrationSegment,
     SegmentState,
 )
-from wavecast.models.progressive import ProgressiveAssemblySession
+from wavecast.models.progressive import ProgressiveAssemblyChapter, ProgressiveAssemblySession
 from wavecast.orchestration.episode import InMemoryEpisodeRepository
 from wavecast.orchestration.generation import GeneratedChapter
-from wavecast.orchestration.narration_enrichment import _finish_authoring
+from wavecast.orchestration.narration_enrichment import _finish_authoring, author_pending_narration
 
 
 class _Host:
@@ -268,3 +270,55 @@ def test_late_trackless_writer_never_inserts_before_committed_future_music() -> 
     assert updated.segment("chapter-3:music:0").order == 2
     assert updated.progressive_session is not None
     assert updated.progressive_session.narration_authored_chapter_ids == ["chapter-2"]
+
+
+class _DegradingRuntime:
+    async def author_narration(
+        self,
+        episode: LiveEpisode,
+        chapter_id: str,
+    ) -> GeneratedChapter | None:
+        del episode, chapter_id
+        return None
+
+
+class _DegradingHost(_Host):
+    def __init__(self, repository: InMemoryEpisodeRepository) -> None:
+        super().__init__(repository)
+        self.progressive_runtime = _DegradingRuntime()
+
+
+def test_writer_degradation_marks_chapter_authored_without_crashing() -> None:
+    repository = InMemoryEpisodeRepository()
+    episode = _episode()
+    episode.progressive_session = ProgressiveAssemblySession.model_construct(
+        narration_authored_chapter_ids=[],
+        chapters=[
+            ProgressiveAssemblyChapter.model_construct(
+                chapter_id="chapter-2",
+                chapter=ChapterPlan.model_construct(track=None),
+                resolved_track=None,
+                slot_contexts=[NarrationSlotContext.model_construct()],
+                target_narration_seconds=8,
+            )
+        ],
+    )
+    repository.save(episode)
+
+    updated = asyncio.run(
+        author_pending_narration(
+            _DegradingHost(repository),
+            episode.id,
+            max_chapters=1,
+        )
+    )
+
+    assert updated.progressive_session is not None
+    assert updated.progressive_session.narration_authored_chapter_ids == ["chapter-2"]
+    chapter = [
+        segment
+        for segment in updated.ordered_segments
+        if segment.chapter_id == "chapter-2"
+    ]
+    assert [segment.id for segment in chapter] == ["chapter-2:music:0"]
+    assert chapter[0].state is SegmentState.AUDIO_READY

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from collections import Counter
 from collections.abc import Sequence
@@ -104,6 +105,8 @@ from wavecast.timing import (
     build_program_timing_plan,
     summarize_program_timing,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class EpisodeAssemblyError(RuntimeError):
@@ -2125,9 +2128,21 @@ class StagedProgressiveChapterGenerator:
             )
             playable = self.composer.compose_prepared(prepared_tracks, radio_script)
             _assert_narration_blocks_materialized(radio_script, playable)
-        except (ProviderError, NarrationPlacementError, EpisodeAssemblyError, ValueError):
-            # Narration is optional for continuity and FULL generation. The
-            # caller records this chapter as authored/degraded so ordinary
+        except (
+            ProviderError,
+            NarrationPlacementError,
+            EpisodeAssemblyError,
+            ValueError,
+        ) as error:
+            # Narration is optional for continuity and FULL generation. Keep
+            # diagnostics safe: record only the typed failure boundary, never
+            # prompt/model/provider payloads or exception text.
+            logger.warning(
+                "narration_authoring_failed chapter_id=%s error_type=%s",
+                chapter.chapter_id,
+                type(error).__name__,
+            )
+            # The caller records this chapter as authored/degraded so ordinary
             # playback never retries the same paid Writer work blindly.
             return None
         return _generated_runtime_chapter(

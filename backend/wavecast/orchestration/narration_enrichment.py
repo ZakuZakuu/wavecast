@@ -98,17 +98,25 @@ async def author_pending_narration(
                 episode.model_copy(deep=True),
                 chapter_id,
             )
-            narration_count = sum(
-                isinstance(segment, NarrationSegment)
-                for segment in generated.segments
-            )
-            logger.info(
-                "narration_authoring_generated episode_id=%s chapter_id=%s "
-                "narration_segments=%s",
-                episode_id,
-                chapter_id,
-                narration_count,
-            )
+            if generated is None:
+                logger.info(
+                    "narration_authoring_degraded episode_id=%s chapter_id=%s "
+                    "reason=writer_degraded",
+                    episode_id,
+                    chapter_id,
+                )
+            else:
+                narration_count = sum(
+                    isinstance(segment, NarrationSegment)
+                    for segment in generated.segments
+                )
+                logger.info(
+                    "narration_authoring_generated episode_id=%s chapter_id=%s "
+                    "narration_segments=%s",
+                    episode_id,
+                    chapter_id,
+                    narration_count,
+                )
 
         await asyncio.to_thread(
             _finish_authoring,
