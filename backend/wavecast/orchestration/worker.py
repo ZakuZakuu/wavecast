@@ -236,16 +236,42 @@ class GenerationWorker:
 
     async def serve(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
+            run = asyncio.create_task(self.run_once())
+            stop_watch = asyncio.create_task(stop.wait())
             try:
-                worked = await self.run_once()
-            except Exception:
-                # Database availability may transiently affect claim/lease calls.
-                # Durable jobs remain in Postgres and can be claimed later.
-                worked = False
+                await asyncio.wait(
+                    {run, stop_watch},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if stop.is_set() and not run.done():
+                    run.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await run
+                    return
+                stop_watch.cancel()
+                with suppress(asyncio.CancelledError):
+                    await stop_watch
+                try:
+                    worked = await run
+                except Exception:
+                    # Database availability may transiently affect claim/lease calls.
+                    # Durable jobs remain in Postgres and can be claimed later.
+                    worked = False
+            finally:
+                stop_watch.cancel()
+                if not run.done():
+                    run.cancel()
+                with suppress(asyncio.CancelledError):
+                    await stop_watch
+                with suppress(asyncio.CancelledError, Exception):
+                    await run
             if worked:
                 continue
             try:
-                await asyncio.wait_for(stop.wait(), timeout=self.policy.idle_sleep_seconds)
+                await asyncio.wait_for(
+                    stop.wait(),
+                    timeout=self.policy.idle_sleep_seconds,
+                )
             except TimeoutError:
                 pass
 
