@@ -16,6 +16,7 @@ from wavecast.assembly import (
     _assemble_writer_scripts,
     _bound_progressive_resolved_route,
     _build_narration_slot_contexts,
+    _lock_successor_after_opening,
     _mock_writer_chapter_index,
     _mock_writer_slot_contexts,
     _normalize_opening_resolved_route,
@@ -31,6 +32,7 @@ from wavecast.intelligence.models import (
     ChapterPlan,
     EditorialConnection,
     EditorialRelationType,
+    FastStartPlan,
     NarrativeRole,
     NoveltyDistance,
     OutputLanguage,
@@ -133,6 +135,140 @@ def service(tmp_path, llm: RecordingAssemblyLLM | None = None) -> LiveEpisodeAss
         ledger=ledger,
     )
 
+
+
+def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    llm = RecordingAssemblyLLM()
+    assembly = service(tmp_path, llm)
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    request = LiveEpisodeAssemblyRequest(
+        topic="night textures",
+        anchor_tracks=["Neon First Light"],
+        desired_duration_seconds=900,
+        max_tracks=4,
+        max_chapters=8,
+    )
+
+    bootstrap = asyncio.run(
+        assembly.prepare_fast_successor(
+            request,
+            opening_track=opening,
+        )
+    )
+
+    assert bootstrap is not None
+    assert bootstrap.chapter_id == "chapter-2"
+    assert len(bootstrap.segments) == 1
+    successor = bootstrap.segments[0]
+    assert successor.track_ref == "mock:bridge"
+    assert successor.title == "Midnight Transfer"
+    assert successor.artist == "Signal Garden"
+    assert successor.is_audio_ready
+
+    locked = ResolvedTrack(
+        track_ref=successor.track_ref,
+        canonical_artist=successor.artist or "",
+        canonical_title=successor.title,
+    )
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            request,
+            opening_track=opening,
+            locked_successor=locked,
+        )
+    )
+
+    assert session.chapters[0].chapter_id == "chapter-2"
+    assert session.chapters[0].resolved_track == locked
+    resolved_refs = [
+        chapter.resolved_track.track_ref
+        for chapter in session.chapters
+        if chapter.resolved_track is not None
+    ]
+    assert resolved_refs.count("mock:bridge") == 1
+    fast_start_calls = [
+        call
+        for call in llm.calls
+        if call["output_type"] is FastStartPlan
+    ]
+    assert len(fast_start_calls) == 1
+
+
+def test_locked_successor_is_inserted_when_curator_route_does_not_contain_it() -> None:
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Opening Artist",
+        canonical_title="Opening Track",
+    )
+    locked = ResolvedTrack(
+        track_ref="mock:fast",
+        canonical_artist="Fast Artist",
+        canonical_title="Fast Successor",
+    )
+    later = ResolvedTrack(
+        track_ref="mock:later",
+        canonical_artist="Later Artist",
+        canonical_title="Later Track",
+    )
+    opening_plan = ChapterPlan(
+        index=0,
+        track=TrackProposal(
+            artist=opening.canonical_artist,
+            title=opening.canonical_title,
+            confidence=1.0,
+        ),
+        narrative_role=NarrativeRole.ANCHOR,
+        reason="Opening.",
+        narration_goal="Open.",
+    )
+    later_plan = ChapterPlan(
+        index=1,
+        track=TrackProposal(
+            artist=later.canonical_artist,
+            title=later.canonical_title,
+            confidence=0.9,
+        ),
+        connection_from_previous_track=EditorialConnection(
+            relation_type=EditorialRelationType.CONTRAST,
+            rationale="This relation belongs to the old opening-to-later adjacency.",
+        ),
+        narrative_role=NarrativeRole.DISCOVERY,
+        reason="Continue.",
+        narration_goal="Continue.",
+    )
+    route = [
+        _ResolvedChapter(
+            chapter=opening_plan,
+            writer_chapter=opening_plan,
+            track=opening,
+            music_index=0,
+        ),
+        _ResolvedChapter(
+            chapter=later_plan,
+            writer_chapter=later_plan,
+            track=later,
+            music_index=1,
+        ),
+    ]
+
+    locked_route = _lock_successor_after_opening(route, locked)
+
+    assert [item.track.track_ref if item.track else None for item in locked_route] == [
+        "mock:opening",
+        "mock:fast",
+        "mock:later",
+    ]
+    assert locked_route[1].writer_chapter.track is not None
+    assert locked_route[1].writer_chapter.track.artist == "Fast Artist"
+    assert locked_route[1].writer_chapter.track.title == "Fast Successor"
+    reindexed = _reindex_resolved_chapters(locked_route)
+    assert reindexed[1].writer_chapter.connection_from_previous_track is None
+    assert reindexed[2].writer_chapter.connection_from_previous_track is None
 
 def test_mock_factory_assembles_real_music_and_narration_assets(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
