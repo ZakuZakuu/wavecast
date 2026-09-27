@@ -7,7 +7,7 @@ import { api } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
 import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
-import { formatSeconds, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
+import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart, shouldArmHandoff } from "../lib/playback";
 import { mixPlanSignature, type MixPlan } from "../lib/mix-timeline";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
@@ -19,7 +19,6 @@ import { WaveIcon } from "./wave-icon";
 
 const CHAPTER_TITLES = ["开场", "夜色开始变暖", "从旋律走进城市", "另一面的节奏", "慢慢收回来"];
 const HANDOFF_ARM_SECONDS = 2;
-const PLAYBACK_READY_STATES = new Set(["AUDIO_READY", "COMMITTED", "PLAYED"]);
 
 export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeId?: string }) {
   const { episode, setEpisode } = usePlayerStore();
@@ -289,13 +288,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     const armedSegment = armedId
       ? (armedEpisode ?? localEpisode).segments.find((segment) => segment.id === armedId)
       : undefined;
-    const canHandoffOptimistically = Boolean(
-      armedSegment
-      && PLAYBACK_READY_STATES.has(armedSegment.state)
-      && armedFromSegmentIdRef.current === current.id
-      && armedSegment.id !== current.id
-      && current.id === localEpisode.current_segment_id,
-    );
+    const canHandoffOptimistically = canUseArmedHandoff({
+      current,
+      armedSegment,
+      serverCurrentId: localEpisode.current_segment_id,
+      armedFromSegmentId: armedFromSegmentIdRef.current,
+    });
 
     if (canHandoffOptimistically && armedSegment && armedEpisode) {
       const nextPosition = segmentStart(armedEpisode, armedSegment.id);
@@ -466,13 +464,14 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       ?? current.actual_duration_seconds
       ?? current.planned_duration_seconds;
     const remainingSeconds = Math.max(0, currentDuration - segmentPosition);
-    const canArm = (
-      transportSegmentId === null
-      && localEpisode.current_segment_id === current.id
-      && remainingSeconds <= HANDOFF_ARM_SECONDS
-      && upcoming?.audio_source_url
-      && PLAYBACK_READY_STATES.has(upcoming.state)
-    );
+    const canArm = shouldArmHandoff({
+      current,
+      upcoming,
+      serverCurrentId: localEpisode.current_segment_id,
+      transportSegmentId,
+      remainingSeconds,
+      armThresholdSeconds: HANDOFF_ARM_SECONDS,
+    });
     if (canArm && upcoming) {
       const handoffKey = `${current.id}->${upcoming.id}`;
       if (handoffAttemptRef.current !== handoffKey) {
@@ -619,9 +618,8 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const currentOffset = current
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
-  const preloadSourceUrl = upcoming
-    && ["AUDIO_READY", "COMMITTED", "PLAYED"].includes(upcoming.state)
-    ? upcoming.audio_source_url
+  const preloadSourceUrl = isPlaybackReadySegment(upcoming)
+    ? upcoming?.audio_source_url ?? null
     : null;
   const chapterIds = Array.from(new Set(localEpisode.segments.map((segment) => segment.chapter_id)));
   const currentChapterIndex = Math.max(0, chapterIds.indexOf(current?.chapter_id ?? chapterIds[0]));
