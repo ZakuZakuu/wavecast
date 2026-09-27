@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from wavecast.intelligence.models import OutputLanguage, ResolvedTrack
-from wavecast.models.episode import LiveEpisode
+from wavecast.models.episode import LiveEpisode, NarrationSegment
 from wavecast.models.progressive import ProgressiveAssemblySession
 from wavecast.orchestration.generation import ProgressiveChapterGenerator
 
@@ -17,6 +17,10 @@ class StagedProgressiveRuntime(Protocol):
     def create_generator(
         self, session: ProgressiveAssemblySession
     ) -> ProgressiveChapterGenerator: ...
+
+    async def materialize_narration(
+        self, segment: NarrationSegment
+    ) -> NarrationSegment: ...
 
 
 class StagedProgressiveRuntimeAdapter:
@@ -69,3 +73,8 @@ class StagedProgressiveRuntimeAdapter:
         self, session: ProgressiveAssemblySession
     ) -> StagedProgressiveChapterGenerator:
         return self.assembly.create_progressive_chapter_generator(session)
+
+    async def materialize_narration(
+        self, segment: NarrationSegment
+    ) -> NarrationSegment:
+        return await self.assembly.materializer.materialize(segment)
