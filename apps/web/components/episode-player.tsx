@@ -513,7 +513,13 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
               {exportState === "preparing" ? "正在准备导出…" : "导出 MP3"}
             </button>
             {localEpisode.is_listener_active
-              ? <button type="button" onClick={leaveEpisode}>停止后台准备</button>
+              ? (
+                  <button type="button" onClick={leaveEpisode}>
+                    {localEpisode.state === "MATERIALIZING"
+                      ? "停止播放（完整节目继续准备）"
+                      : "停止后台准备"}
+                  </button>
+                )
               : <button type="button" onClick={resumePlayback}>恢复节目</button>}
           </div>
         </details>
