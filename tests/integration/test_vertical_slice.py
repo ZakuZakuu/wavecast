@@ -88,8 +88,21 @@ def test_mock_vertical_slice_from_seed_to_materialized_resumeable_episode(monkey
     assert client.post(f"/api/episodes/{episode_id}/advance").status_code == 200
     assert client.post(f"/api/episodes/{episode_id}/resume").json()["is_listener_active"] is True
 
-    materialized = client.post(f"/api/episodes/{episode_id}/materialize")
-    result = materialized.json()
+    materialize_request = client.post(f"/api/episodes/{episode_id}/materialize")
+    assert materialize_request.status_code == 202
+    requested = materialize_request.json()
+    assert requested["id"] == episode_id
+    assert requested["state"] == "MATERIALIZING"
+
+    # Explicit FULL preparation belongs to the Episode, not this browser session.
+    assert client.post(f"/api/episodes/{episode_id}/leave").status_code == 200
+    queued = jobs.get_for_episode(episode_id)
+    assert queued is not None
+    assert queued.mode.value == "FULL"
+
+    assert asyncio.run(api_module.generation_worker.run_once()) is True
+    result = client.get(f"/api/episodes/{episode_id}").json()
+    assert result["id"] == episode_id
     assert result["state"] == "MATERIALIZED"
     assert result["generated_frontier_seconds"] == result["estimated_total_seconds"]
 
