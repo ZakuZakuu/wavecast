@@ -203,6 +203,37 @@ def test_unready_narration_does_not_hide_ready_music_or_create_dead_air(
     assert continued.is_playing is True
 
 
+def test_ready_narration_without_future_music_is_not_a_healthy_successor(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    episode = runtime.start(seed)
+    snapshot = runtime.capture_generation_snapshot(episode.id)
+    runtime.append_generated_chapter(
+        episode.id,
+        GeneratedChapter(
+            chapter_id="chapter-2",
+            segments=[
+                NarrationSegment(
+                    id="chapter-2:narration-only",
+                    chapter_id="chapter-2",
+                    order=0,
+                    state=SegmentState.AUDIO_READY,
+                    planned_duration_seconds=30,
+                    actual_duration_seconds=30,
+                    audio_source_url="/api/assets/audio/narration-only.mp3",
+                    title="Narration only",
+                    narration_text="This is not a music buffer.",
+                )
+            ],
+        ),
+        snapshot,
+    )
+
+    updated = runtime.get(episode.id)
+    assert updated.has_ready_successor is False
+    assert runtime._ready_future_chapter_count(updated) == 0
+
+
 class _NarrationEnrichmentRuntime:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
