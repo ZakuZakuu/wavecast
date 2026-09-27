@@ -459,7 +459,7 @@ class PostgresGenerationJobRepository:
                 )
             ).mappings().first()
             if row is None:
-                values = {
+                insert_values = {
                     "id": uuid4().hex,
                     "episode_id": episode_id,
                     "mode": mode.value,
@@ -475,7 +475,7 @@ class PostgresGenerationJobRepository:
                 }
                 row = (
                     await connection.execute(
-                        insert(generation_jobs_table).values(**values).returning(
+                        insert(generation_jobs_table).values(**insert_values).returning(
                             generation_jobs_table
                         )
                     )
@@ -483,7 +483,7 @@ class PostgresGenerationJobRepository:
                 return _job_from_mapping(row)
 
             current = _job_from_mapping(row)
-            values: dict[str, Any] = {
+            update_values: dict[str, Any] = {
                 "mode": _dominant_mode(current.mode, mode).value,
                 "request_version": current.request_version + 1,
                 "requested_at": now,
@@ -494,7 +494,7 @@ class PostgresGenerationJobRepository:
                 GenerationJobStatus.COMPLETED,
                 GenerationJobStatus.CANCELLED,
             }:
-                values.update(
+                update_values.update(
                     status=GenerationJobStatus.PENDING.value,
                     attempts=0,
                     available_at=ready_at,
@@ -502,12 +502,12 @@ class PostgresGenerationJobRepository:
                     lease_expires_at=None,
                 )
             elif current.status is GenerationJobStatus.PENDING:
-                values["available_at"] = min(current.available_at, ready_at)
+                update_values["available_at"] = min(current.available_at, ready_at)
             row = (
                 await connection.execute(
                     update(generation_jobs_table)
                     .where(generation_jobs_table.c.id == current.id)
-                    .values(**values)
+                    .values(**update_values)
                     .returning(generation_jobs_table)
                 )
             ).mappings().one()
