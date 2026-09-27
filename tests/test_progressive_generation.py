@@ -101,12 +101,12 @@ def test_invalid_generated_chapter_is_atomic() -> None:
     invalid = GeneratedChapter(
         chapter_id=valid.chapter_id,
         segments=[
-            valid.segments[0].model_copy(update={"state": SegmentState.PLANNED}),
-            valid.segments[1],
+            valid.segments[0],
+            valid.segments[1].model_copy(update={"state": SegmentState.PLANNED}),
         ],
     )
 
-    with pytest.raises(EpisodeRuntimeError, match="fully audio-ready"):
+    with pytest.raises(EpisodeRuntimeError, match="unready music"):
         runtime.append_generated_chapter(episode.id, invalid, snapshot)
 
     assert [segment.id for segment in runtime.get(episode.id).segments] == [

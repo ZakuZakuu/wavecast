@@ -250,7 +250,7 @@ class LiveEpisode(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def has_ready_successor(self) -> bool:
-        """Whether playback can reach another ready source without waiting."""
+        """Whether playback can reach another ready music source without waiting."""
         if self.current_segment_id is None:
             return False
         seen_current = False
@@ -258,11 +258,10 @@ class LiveEpisode(BaseModel):
             if not seen_current:
                 seen_current = segment.id == self.current_segment_id
                 continue
-            if segment.is_audio_ready:
-                return True
             if segment.kind is SegmentKind.NARRATION:
                 continue
-            return False
+            if segment.kind is SegmentKind.MUSIC:
+                return segment.is_audio_ready
         return False
 
     @computed_field  # type: ignore[prop-decorator]

@@ -421,6 +421,7 @@ async def stop_generation_worker() -> None:
         _generation_worker_stop.set()
     if _generation_worker_task is not None:
         await _generation_worker_task
+    await generation_worker.stop_enrichment()
     _generation_worker_stop = None
     _generation_worker_task = None
 

@@ -9,7 +9,7 @@ from wavecast.providers import AudioProvider, MockAudioProvider
 
 
 class GeneratedChapter(BaseModel):
-    """One complete, provider-neutral future chapter."""
+    """One provider-neutral future chapter with independently ready resources."""
 
     chapter_id: str = Field(min_length=1)
     segments: list[MusicSegment | NarrationSegment] = Field(min_length=1)

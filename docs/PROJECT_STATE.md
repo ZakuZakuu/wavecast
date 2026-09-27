@@ -40,6 +40,32 @@ The v2 target is a durable backend Generation Coordinator with a ready queue,
 graceful degradation, progressive/full convergence on one Episode identity, and
 declarative DJ arrangement layered on the stable browser transport.
 
+### Runtime v2 implementation progress
+
+- PR #102 separates **playable readiness** from the contiguous seek frontier.
+  `generated_frontier_seconds` remains the browser seek boundary, while
+  `ready_audio_seconds_ahead` and `has_ready_successor` describe whether
+  playback can continue through optional narration gaps. Browser completion may
+  skip unfinished narration only when another ready source is already available.
+- The current Slice C work removes **Writer and TTS from the
+  music-readiness critical path**. Staged generation persists verified
+  AUDIO_READY music first. The durable worker then authors optional narration
+  only for still-speculative chapters, persists it as SCRIPT_READY, and performs
+  TTS as a second best-effort enrichment. Late Writer/TTS results are discarded
+  once the chapter is exposed, and completed Writer attempts are recorded in the
+  durable progressive session to prevent blind paid retries.
+- Speculative narrative-only or unresolved route beats cannot hold the music
+  ready queue in front of a later playable track. Continuity generation advances
+  past them while preserving exact resolved music identity.
+- One major coupling point intentionally remains after this slice: initial
+  `ProgressiveAssemblySession` preparation still runs the broader
+  research/curation/resolution path before the first staged successor exists.
+  That is the next continuity target before Arrangement/DJ v2.
+- The legacy Web `MixEngine` is not the active EpisodePlayer transport and must
+  not be revived as a synthetic playback clock. Arrangement/DJ v2 remains
+  deferred until continuity no longer depends on slow narration/intelligence
+  stages.
+
 ## Phase 7A progressive generation contract
 
 Phase 7A changes the runtime from a static preloaded future to bounded
@@ -48,9 +74,10 @@ track and remains immediately playable; starting the episode performs zero
 generator calls. The async scheduler serializes generation per episode and
 coalesces concurrent buffer requests.
 
-Each generated chapter must be complete and AUDIO_READY before the orchestrator
-appends it. Append validation is atomic and preserves the ready/committed
-prefix. Heartbeats are allowed during provider work because the append check
+Each generated chapter must contain playback-ready music before the orchestrator
+appends it. Optional narration may remain absent or SCRIPT_READY and is enriched
+later without blocking the ready music queue. Append validation remains atomic
+for music identity/readiness and preserves the ready/committed prefix. Heartbeats are allowed during provider work because the append check
 uses a structural last-segment anchor rather than a raw version; if the
 listener leaves, the generated result is discarded and resume can request the
 next missing chapter. The deterministic generator derives its next chapter from
