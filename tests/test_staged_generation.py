@@ -16,6 +16,7 @@ from wavecast.intelligence.models import (
     RadioScriptBlockKind,
     ResearchBundle,
     ResolvedTrack,
+    TrackProposal,
 )
 from wavecast.materialization import NarrationMaterializer
 from wavecast.models.episode import (
@@ -427,3 +428,51 @@ def test_trackless_final_narration_can_be_authored_after_continuity_advances(
     assert isinstance(authored.segments[0], NarrationSegment)
     assert authored.segments[0].state is SegmentState.SCRIPT_READY
     assert authored.segments[0].narration_text == "That closes the route."
+
+
+def test_unresolved_music_slot_never_authors_narration_for_a_song_that_will_not_play(
+    tmp_path,
+) -> None:
+    track = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Bridge Artist",
+        canonical_title="Bridge Track",
+    )
+    base = _session(track)
+    unresolved_plan = base.chapters[0].chapter.model_copy(
+        update={
+            "track": TrackProposal(
+                artist="Missing Artist",
+                title="Missing Song",
+                confidence=0.8,
+            )
+        }
+    )
+    unresolved_chapter = base.chapters[0].model_copy(
+        update={
+            "chapter": unresolved_plan,
+            "resolved_track": None,
+        }
+    )
+    session = base.model_copy(update={"chapters": [unresolved_chapter]})
+
+    class _RejectWriter:
+        async def write(self, *args: object, **kwargs: object) -> RadioScript:
+            raise AssertionError("unresolved music slots must not be narrated")
+
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    generator = StagedProgressiveChapterGenerator(
+        session=session,
+        writer=_RejectWriter(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+    )
+    episode = _episode()
+    placeholder = asyncio.run(generator.generate_next(episode))
+    assert placeholder is not None
+    episode.segments.extend(placeholder.segments)
+
+    authored = asyncio.run(generator.author_narration(episode, "chapter-2"))
+
+    assert authored is None
+    assert episode.segment("chapter-2:narration:0").state is SegmentState.SKIPPED
