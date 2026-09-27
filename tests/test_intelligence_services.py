@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from wavecast.intelligence.curation import CuratorContractError, CuratorService
+from wavecast.intelligence.curation import CuratorService
 from wavecast.intelligence.models import (
     ChapterPlan,
     ClaimSupport,
@@ -150,7 +150,7 @@ def test_curator_preserves_narrative_distance_curve_without_search_dependency() 
     assert '"connection_from_previous_track"' in fixture.prompts[0]
 
 
-def test_curator_rejects_invalid_novelty_curve_with_sanitized_values() -> None:
+def test_curator_normalizes_backward_novelty_curve() -> None:
     invalid = skeleton().model_copy(
         update={
             "chapters": [
@@ -187,12 +187,14 @@ def test_curator_rejects_invalid_novelty_curve_with_sanitized_values() -> None:
         first_narration=NarrationScript(text="start", intended_duration_seconds=5),
     )
 
-    with pytest.raises(CuratorContractError) as failure:
-        asyncio.run(service.curate(bundle, fast, desired_duration_seconds=1200))
-    assert failure.value.reason_code == "curator_novelty_curve_invalid"
-    assert failure.value.diagnostics == [
-        {"novelty_distance_values": ["surprise", "bridge"]}
+    result = asyncio.run(service.curate(bundle, fast, desired_duration_seconds=1200))
+
+    assert [chapter.novelty_distance for chapter in result.chapters] == [
+        NoveltyDistance.SURPRISE,
+        NoveltyDistance.SURPRISE,
     ]
+    assert result.chapters[1].track is not None
+    assert result.chapters[1].track.novelty_distance is NoveltyDistance.SURPRISE
 
 
 def test_curator_drops_unknown_chapter_evidence_without_claim_support() -> None:
