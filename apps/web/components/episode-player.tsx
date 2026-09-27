@@ -527,8 +527,6 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       return;
     }
 
-    const previousPosition = browserPositionRef.current;
-    const target = segmentAtPosition(localEpisode, linearValue);
     const currentStart = current ? segmentStart(localEpisode, current.id) : 0;
     const currentDuration = current
       ? current.duration_seconds ?? current.actual_duration_seconds ?? current.planned_duration_seconds
@@ -538,23 +536,8 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       && linearValue >= currentStart
       && linearValue < currentStart + currentDuration,
     );
-    const optimisticCrossSegment = Boolean(
-      target
-      && current
-      && target.id !== current.id
-      && isPlaybackReadySegment(target),
-    );
 
     if (withinCurrent) {
-      setBrowserPosition(linearValue);
-      browserPositionRef.current = linearValue;
-      setSeekToken((token) => token + 1);
-      seekPreviewRef.current = null;
-      setSeekPreview(null);
-    } else if (optimisticCrossSegment && target) {
-      // Browser transport is authoritative. Ready cross-song seeks can start
-      // loading immediately while the durable server position catches up.
-      setTransportSegmentId(target.id);
       setBrowserPosition(linearValue);
       browserPositionRef.current = linearValue;
       setSeekToken((token) => token + 1);
@@ -568,23 +551,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         setEpisode(response);
         setBrowserPosition(linearValue);
         browserPositionRef.current = linearValue;
-        if (!withinCurrent && !optimisticCrossSegment) {
-          setSeekToken((token) => token + 1);
-        }
-        if (optimisticCrossSegment) {
-          setTransportSegmentId(null);
-        }
+        if (!withinCurrent) setSeekToken((token) => token + 1);
         seekPreviewRef.current = null;
         setSeekPreview(null);
         setError(null);
       })
       .catch((reason: unknown) => {
-        if (optimisticCrossSegment) {
-          setTransportSegmentId(null);
-          setBrowserPosition(previousPosition);
-          browserPositionRef.current = previousPosition;
-          setSeekToken((token) => token + 1);
-        }
         seekPreviewRef.current = null;
         setSeekPreview(null);
         setError(reason instanceof Error ? reason.message : "跳转暂时没有完成");
@@ -656,8 +628,18 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const currentOffset = current
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
-  const preloadSourceUrl = isPlaybackReadySegment(upcoming)
-    ? upcoming?.audio_source_url ?? null
+  const seekPreviewTarget = seekPreview !== null
+    ? segmentAtPosition(localEpisode, seekPreview)
+    : undefined;
+  const preloadTarget = (
+    seekPreviewTarget
+    && seekPreviewTarget.id !== current?.id
+    && isPlaybackReadySegment(seekPreviewTarget)
+  )
+    ? seekPreviewTarget
+    : upcoming;
+  const preloadSourceUrl = isPlaybackReadySegment(preloadTarget)
+    ? preloadTarget?.audio_source_url ?? null
     : null;
   const chapterIds = Array.from(new Set(localEpisode.segments.map((segment) => segment.chapter_id)));
   const currentChapterIndex = Math.max(0, chapterIds.indexOf(current?.chapter_id ?? chapterIds[0]));
