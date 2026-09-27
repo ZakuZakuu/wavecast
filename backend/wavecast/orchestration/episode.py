@@ -366,9 +366,14 @@ class EpisodeOrchestrator:
                 self._materialize_chapter(episode, partial_chapter_id)
                 episode = await asyncio.to_thread(self.repository.save, episode)
                 continue
-            if self._ready_future_chapter_count(episode) >= target_chapters:
-                break
-            if episode.buffer_ahead_seconds >= target_ahead_seconds:
+            ready_future_chapters = self._ready_future_chapter_count(episode)
+            # The current music source is a latency budget, not a substitute for
+            # a prepared successor. Even a five-minute opening must trigger at
+            # least one future chapter before the queue can be considered healthy.
+            if ready_future_chapters >= 1 and (
+                ready_future_chapters >= target_chapters
+                or episode.buffer_ahead_seconds >= target_ahead_seconds
+            ):
                 break
             next_chapter_id = self._next_future_chapter_id(episode)
             if next_chapter_id is not None:
