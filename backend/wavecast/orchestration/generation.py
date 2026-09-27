@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Protocol
+from collections.abc import AsyncIterator
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +18,13 @@ class GeneratedChapter(BaseModel):
 
 class ProgressiveChapterGenerator(Protocol):
     async def generate_next(self, episode: LiveEpisode) -> GeneratedChapter | None: ...
+
+
+@runtime_checkable
+class StreamingProgressiveChapterGenerator(Protocol):
+    """Optional two-phase generator that can publish continuity before enrichment."""
+
+    def stream_next(self, episode: LiveEpisode) -> AsyncIterator[GeneratedChapter]: ...
 
 
 class DeterministicMockProgressiveGenerator:
