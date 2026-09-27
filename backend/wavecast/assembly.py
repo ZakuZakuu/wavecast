@@ -1637,12 +1637,11 @@ class StagedProgressiveChapterGenerator:
                 prepared_tracks,
                 RadioScript(blocks=[], intended_duration_seconds=1),
             )
-            music_segments = [
-                segment
-                for segment in continuity.segments
-                if isinstance(segment, MusicSegment)
-            ]
-            if not music_segments:
+            music_segments = list(continuity.segments)
+            if (
+                not music_segments
+                or any(not isinstance(segment, MusicSegment) for segment in music_segments)
+            ):
                 raise EpisodeAssemblyError(
                     "resolved progressive chapter produced no playable music",
                     stage="progressive_chunk",
