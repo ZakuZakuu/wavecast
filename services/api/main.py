@@ -1568,6 +1568,18 @@ def playback_checkpoint(
     return _queue_progressive_generation(episode)
 
 
+@app.post(
+    "/api/episodes/{episode_id}/arm-handoff/{segment_id}",
+    response_model=LiveEpisode,
+)
+def arm_handoff(episode_id: str, segment_id: str, request: Request) -> LiveEpisode:
+    return operate(
+        episode_id,
+        principal(request),
+        lambda: orchestrator.arm_handoff(episode_id, segment_id),
+    )
+
+
 @app.post("/api/episodes/{episode_id}/next", response_model=LiveEpisode)
 def next_playable(episode_id: str, request: Request) -> LiveEpisode:
     episode = operate(
