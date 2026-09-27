@@ -252,11 +252,84 @@ class LiveEpisodeAssemblyService:
             raise ValueError("narration_ratio must be between 0.1 and 0.2")
         self.narration_ratio = narration_ratio
 
+    async def prepare_fast_successor(
+        self,
+        request: LiveEpisodeAssemblyRequest,
+        *,
+        opening_track: ResolvedTrack,
+        request_id: str | None = None,
+    ) -> GeneratedChapter | None:
+        """Prepare one exact, playable successor from FastStart only.
+
+        This is the continuity bootstrap seam: it stops before background
+        research, Curator, Writer, and TTS so the Episode can persist a real
+        ready successor while the fuller route is still being planned.
+        """
+
+        intelligence_input = FastResearchInput(
+            topic=request.topic,
+            anchor_tracks=list(request.anchor_tracks),
+            desired_duration_seconds=request.desired_duration_seconds,
+            listener_taste_context=request.listener_taste_context,
+            output_language=request.output_language,
+        )
+        try:
+            fast_result = await self.fast_path.run(
+                intelligence_input,
+                request_id=request_id or uuid4().hex,
+            )
+        except ProviderError:
+            return None
+
+        proposals: list[TrackProposal] = []
+        if fast_result.plan.selected_next_track is not None:
+            proposals.append(fast_result.plan.selected_next_track)
+        proposals.extend(fast_result.plan.next_candidates)
+
+        seen: set[tuple[str, str]] = set()
+        for proposal in proposals:
+            proposal_key = (proposal.artist.casefold(), proposal.title.casefold())
+            if proposal_key in seen:
+                continue
+            seen.add(proposal_key)
+            try:
+                resolved = await resolve_track_proposal_across_providers(
+                    self.retrieval,
+                    proposal,
+                )
+            except ProviderError:
+                continue
+            if resolved is None or _same_resolved_track(resolved, opening_track):
+                continue
+            try:
+                prepared = await self.composer.prepare_tracks([resolved])
+                playable = self.composer.compose_prepared(
+                    prepared,
+                    RadioScript(blocks=[], intended_duration_seconds=1),
+                )
+            except (ProviderError, UnresolvedTrackError, ValueError):
+                continue
+
+            music = [
+                segment
+                for segment in playable.segments
+                if isinstance(segment, MusicSegment)
+            ]
+            if len(music) != 1 or not music[0].is_audio_ready:
+                continue
+            return _generated_runtime_chapter(
+                "chapter-2",
+                music,
+                base_order=1,
+            )
+        return None
+
     async def prepare_progressive_session(
         self,
         request: LiveEpisodeAssemblyRequest,
         *,
         opening_track: ResolvedTrack,
+        locked_successor: ResolvedTrack | None = None,
         request_id: str | None = None,
     ) -> ProgressiveAssemblySession:
         """Prepare serializable intelligence without producing future audio.
@@ -270,6 +343,7 @@ class LiveEpisodeAssemblyService:
             request=request,
             prepared=prepared,
             opening_track=opening_track,
+            locked_successor=locked_successor,
             narration_ratio=self.narration_ratio,
         )
 
@@ -889,6 +963,60 @@ def _normalize_opening_resolved_route(
     return [opening, *remainder]
 
 
+def _lock_successor_after_opening(
+    chapters: list[_ResolvedChapter],
+    locked_successor: ResolvedTrack | None,
+) -> list[_ResolvedChapter]:
+    """Keep a persisted FastStart successor as the Episode's second music identity."""
+
+    if locked_successor is None or not chapters:
+        return chapters
+    if _same_resolved_track(chapters[0].track, locked_successor):
+        return chapters
+
+    successor_index = next(
+        (
+            index
+            for index, item in enumerate(chapters[1:], start=1)
+            if _same_resolved_track(item.track, locked_successor)
+        ),
+        None,
+    )
+    if successor_index is None:
+        proposal = TrackProposal(
+            artist=locked_successor.canonical_artist,
+            title=locked_successor.canonical_title,
+            reasons=["FastStart successor already persisted by the runtime."],
+            confidence=1.0,
+        )
+        plan = ChapterPlan(
+            index=1,
+            track=proposal,
+            narrative_role=NarrativeRole.BRIDGE,
+            reason="Preserve the already prepared FastStart successor.",
+            narration_goal=(
+                "Connect the opening to the already prepared next track without "
+                "inventing unsupported facts."
+            ),
+        )
+        successor = _ResolvedChapter(
+            chapter=plan,
+            writer_chapter=plan,
+            track=locked_successor,
+            music_index=None,
+        )
+    else:
+        successor = chapters[successor_index]
+
+    remainder = [
+        item
+        for index, item in enumerate(chapters[1:], start=1)
+        if index != successor_index
+        and not _same_resolved_track(item.track, locked_successor)
+    ]
+    return [chapters[0], successor, *remainder]
+
+
 def _bound_progressive_resolved_route(
     chapters: list[_ResolvedChapter],
     *,
@@ -944,13 +1072,20 @@ def _build_progressive_session(
     request: LiveEpisodeAssemblyRequest,
     prepared: _PreparedIntelligence,
     opening_track: ResolvedTrack,
+    locked_successor: ResolvedTrack | None = None,
     narration_ratio: float,
 ) -> ProgressiveAssemblySession:
     """Build the pre-Writer session from route identities and slot contexts."""
 
     normalized = _reindex_resolved_chapters(
         _bound_progressive_resolved_route(
-            _normalize_opening_resolved_route(prepared.resolved_chapters, opening_track),
+            _lock_successor_after_opening(
+                _normalize_opening_resolved_route(
+                    prepared.resolved_chapters,
+                    opening_track,
+                ),
+                locked_successor,
+            ),
             max_tracks=request.max_tracks,
             max_chapters=request.max_chapters,
         )
