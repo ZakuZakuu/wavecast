@@ -271,6 +271,70 @@ def test_progressive_preparation_counts_application_opening_as_first_resolved_tr
     ]
 
 
+def test_progressive_preparation_skips_unresolved_selected_music_slot(tmp_path) -> None:
+    class MixedResolutionLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                known_opening = self._tracks[0]
+                missing = (
+                    "Missing Artist",
+                    "Definitely Not In Catalog",
+                    NoveltyDistance.CLOSE,
+                )
+                known_future = self._tracks[1]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=index,
+                            track=self._proposal(item),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="fixture",
+                            novelty_distance=item[2],
+                            narration_goal="fixture",
+                        )
+                        for index, item in enumerate(
+                            (known_opening, missing, known_future)
+                        )
+                    ],
+                    estimated_duration_seconds=900,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, MixedResolutionLLM())
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3),
+            opening_track=opening,
+        )
+    )
+
+    assert [chapter.resolved_track.canonical_title for chapter in session.chapters if chapter.resolved_track] == [
+        "Midnight Transfer"
+    ]
+    assert all(
+        chapter.chapter.track is None
+        or chapter.chapter.track.title != "Definitely Not In Catalog"
+        for chapter in session.chapters
+    )
+    assert any(
+        diagnostic.code == "unresolved_track"
+        and diagnostic.chapter_index == 1
+        for diagnostic in session.diagnostics
+    )
+
+
 def test_progressive_opening_dedupes_exact_identity_and_keeps_other_tracks() -> None:
     def chapter(index: int, track: ResolvedTrack) -> _ResolvedChapter:
         plan = ChapterPlan(
