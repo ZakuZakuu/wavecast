@@ -20,6 +20,7 @@ from wavecast.models.episode import (
     utc_now,
 )
 from wavecast.providers import AudioProvider, MockAudioProvider
+from wavecast.providers.errors import ProviderError
 from wavecast.storage.episodes import (
     EpisodeConcurrencyError,
     EpisodeNotFoundError,
@@ -31,6 +32,7 @@ from .generation import (
     GeneratedChapter,
     ProgressiveChapterGenerator,
 )
+from .narration_enrichment import author_pending_narration
 from .runtime import StagedProgressiveRuntime
 
 SESSION_TTL = timedelta(seconds=30)
@@ -324,8 +326,23 @@ class EpisodeOrchestrator:
             raise EpisodeRuntimeError("generated chapter already exists")
         if any(segment.id in existing_ids for segment in chapter.segments):
             raise EpisodeRuntimeError("generated segment id already exists")
-        if any(not segment.is_audio_ready for segment in chapter.segments):
-            raise EpisodeRuntimeError("generated chapter is not fully audio-ready")
+        if any(
+            segment.kind is SegmentKind.MUSIC and not segment.is_audio_ready
+            for segment in chapter.segments
+        ):
+            raise EpisodeRuntimeError("generated chapter contains unready music")
+        if any(
+            segment.kind is SegmentKind.NARRATION
+            and segment.state
+            not in {
+                SegmentState.PLANNED,
+                SegmentState.SCRIPT_READY,
+                SegmentState.AUDIO_READY,
+                SegmentState.SKIPPED,
+            }
+            for segment in chapter.segments
+        ):
+            raise EpisodeRuntimeError("generated chapter has invalid narration readiness")
         if any(segment.is_committed for segment in chapter.segments):
             raise EpisodeRuntimeError("generated chapter contains committed content")
         if any(segment.chapter_id != chapter.chapter_id for segment in chapter.segments):
@@ -577,6 +594,113 @@ class EpisodeOrchestrator:
             return self.repository.save(episode)
         return episode
 
+    async def author_pending_narration_async(
+        self,
+        episode_id: str,
+        *,
+        max_chapters: int = 2,
+    ) -> LiveEpisode:
+        """Run optional Writer enrichment after playable music is durable."""
+        return await author_pending_narration(
+            self,
+            episode_id,
+            max_chapters=max_chapters,
+        )
+
+    async def materialize_pending_narration_async(
+        self,
+        episode_id: str,
+        *,
+        max_segments: int = 2,
+    ) -> LiveEpisode:
+        """Best-effort TTS enrichment after music continuity is already durable."""
+        if max_segments < 1:
+            raise EpisodeRuntimeError("narration materialization limit must be positive")
+        runtime = self.progressive_runtime
+        materialize = getattr(runtime, "materialize_narration", None)
+        if runtime is None or not callable(materialize):
+            return await asyncio.to_thread(self.repository.get, episode_id)
+
+        processed = 0
+        while processed < max_segments:
+            episode = await asyncio.to_thread(self.repository.get, episode_id)
+            if (
+                not episode.is_listener_active
+                and episode.generation_mode is not GenerationMode.FULL
+            ):
+                break
+            candidate = next(
+                (
+                    segment
+                    for segment in episode.timeline_segments
+                    if isinstance(segment, NarrationSegment)
+                    and segment.state is SegmentState.SCRIPT_READY
+                    and not segment.is_committed
+                ),
+                None,
+            )
+            if candidate is None:
+                break
+            candidate_id = candidate.id
+            detached = candidate.model_copy(deep=True)
+            try:
+                materialized = await materialize(detached)
+            except ProviderError:
+                await asyncio.to_thread(
+                    self._finish_narration_enrichment,
+                    episode_id,
+                    candidate_id,
+                    None,
+                )
+            else:
+                await asyncio.to_thread(
+                    self._finish_narration_enrichment,
+                    episode_id,
+                    candidate_id,
+                    materialized,
+                )
+            processed += 1
+        return await asyncio.to_thread(self.repository.get, episode_id)
+
+    def _finish_narration_enrichment(
+        self,
+        episode_id: str,
+        segment_id: str,
+        materialized: NarrationSegment | None,
+    ) -> LiveEpisode:
+        """Attach one finished asset, or skip failed speculative narration safely."""
+        for attempt in range(2):
+            episode = self.repository.get(episode_id)
+            if (
+                not episode.is_listener_active
+                and episode.generation_mode is not GenerationMode.FULL
+            ):
+                return episode
+            try:
+                segment = episode.segment(segment_id)
+            except KeyError:
+                return episode
+            if not isinstance(segment, NarrationSegment):
+                return episode
+            if segment.is_committed or segment.state is not SegmentState.SCRIPT_READY:
+                return episode
+
+            if materialized is None:
+                segment.state = SegmentState.SKIPPED
+            else:
+                segment.asset_ref = materialized.asset_ref
+                segment.audio_source_url = materialized.audio_source_url
+                segment.actual_duration_seconds = materialized.actual_duration_seconds
+                segment.state = SegmentState.AUDIO_READY
+            episode.last_activity_at = self.now()
+            try:
+                return self.repository.save(episode)
+            except EpisodeConcurrencyError:
+                if attempt == 0:
+                    continue
+                raise
+        return self.repository.get(episode_id)
+
     def materialize_all(self, episode_id: str) -> LiveEpisode:
         return asyncio.run(self.materialize_all_async(episode_id))
 
@@ -610,10 +734,22 @@ class EpisodeOrchestrator:
             episode = await asyncio.to_thread(
                 self.append_generated_chapter, episode_id, chapter, snapshot
             )
+        await self.author_pending_narration_async(
+            episode_id,
+            max_chapters=64,
+        )
+        await self.materialize_pending_narration_async(
+            episode_id,
+            max_segments=64,
+        )
         episode = await asyncio.to_thread(self.repository.get, episode_id)
         for segment in episode.timeline_segments:
-            if not segment.is_audio_ready:
-                self._make_ready(segment)
+            if segment.is_audio_ready:
+                continue
+            if segment.kind is SegmentKind.NARRATION:
+                segment.state = SegmentState.SKIPPED
+                continue
+            self._make_ready(segment)
         episode.state = EpisodeState.MATERIALIZED
         episode.generation_mode = GenerationMode.FULL
         episode.last_activity_at = self.now()
@@ -813,13 +949,9 @@ class EpisodeOrchestrator:
 
     @staticmethod
     def _chapter_ready_for_continuity(segments: list[Segment]) -> bool:
-        """A chapter is continuity-ready when optional narration cannot block it."""
-        if not any(segment.is_audio_ready for segment in segments):
-            return False
-        return not any(
-            segment.kind is SegmentKind.MUSIC and not segment.is_audio_ready
-            for segment in segments
-        )
+        """A chapter is continuity-ready only when its music is playable."""
+        music = [segment for segment in segments if segment.kind is SegmentKind.MUSIC]
+        return bool(music) and all(segment.is_audio_ready for segment in music)
 
     @staticmethod
     def _ready_future_chapter_count(episode: LiveEpisode) -> int:
@@ -844,6 +976,7 @@ class EpisodeOrchestrator:
 
     @staticmethod
     def _next_partial_chapter_id(episode: LiveEpisode) -> str | None:
+        """Return only chapters whose music readiness still blocks continuity."""
         current = EpisodeOrchestrator._current_segment(episode)
         if current is None:
             return None
@@ -858,18 +991,16 @@ class EpisodeOrchestrator:
                 for segment in episode.timeline_segments
                 if segment.chapter_id == chapter_id
             ]
-            if (
-                any(segment.is_audio_ready for segment in chapter_segments)
-                and any(not segment.is_audio_ready for segment in chapter_segments)
-                and not EpisodeOrchestrator._chapter_ready_for_continuity(
-                    chapter_segments
-                )
+            if any(
+                segment.kind is SegmentKind.MUSIC and not segment.is_audio_ready
+                for segment in chapter_segments
             ):
                 return chapter_id
         return None
 
     @staticmethod
     def _next_future_chapter_id(episode: LiveEpisode) -> str | None:
+        """Ignore narration-only readiness gaps while looking for missing music."""
         current = EpisodeOrchestrator._current_segment(episode)
         if current is None:
             return None
@@ -885,14 +1016,19 @@ class EpisodeOrchestrator:
                 for segment in episode.timeline_segments
                 if segment.chapter_id == chapter_id
             ]
-            if EpisodeOrchestrator._chapter_ready_for_continuity(chapter_segments):
-                continue
-            if any(not segment.is_audio_ready for segment in chapter_segments):
+            if any(
+                segment.kind is SegmentKind.MUSIC and not segment.is_audio_ready
+                for segment in chapter_segments
+            ):
                 return chapter_id
         return None
 
     def _materialize_chapter(self, episode: LiveEpisode, chapter_id: str) -> None:
-        """Make every segment in one chapter ready before checking the buffer."""
+        """Materialize music only; narration readiness is owned by enrichment."""
         for segment in episode.timeline_segments:
-            if segment.chapter_id == chapter_id and not segment.is_audio_ready:
+            if (
+                segment.chapter_id == chapter_id
+                and segment.kind is SegmentKind.MUSIC
+                and not segment.is_audio_ready
+            ):
                 self._make_ready(segment)

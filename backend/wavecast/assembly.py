@@ -11,13 +11,14 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from time import perf_counter
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from wavecast.composer import EpisodeComposer
+from wavecast.composer import EpisodeComposer, PreparedMusicAsset
 from wavecast.intelligence.background import BackgroundIntelligencePipeline
 from wavecast.intelligence.curation import CuratorContractError, CuratorService
 from wavecast.intelligence.fast_start import FastPathCoordinator, FastPathResult, FastStartPlanner
@@ -55,7 +56,14 @@ from wavecast.intelligence.resolution import resolve_track_proposal_across_provi
 from wavecast.intelligence.trace import GenerationTrace
 from wavecast.intelligence.writer import WriterService
 from wavecast.materialization import NarrationMaterializer
-from wavecast.models.episode import LiveEpisode, NarrationSegment, PlayableEpisode, SegmentKind
+from wavecast.models.episode import (
+    LiveEpisode,
+    MusicSegment,
+    NarrationSegment,
+    PlayableEpisode,
+    SegmentKind,
+    SegmentState,
+)
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
@@ -64,6 +72,8 @@ from wavecast.orchestration.staged import (
 )
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import (
+    AudioAsset,
+    AudioAssetType,
     ObjectStorageProvider,
     ProgressiveLLMProvider,
     SearchProvider,
@@ -1573,7 +1583,7 @@ def _assert_narration_blocks_materialized(
 
 
 class StagedProgressiveChapterGenerator:
-    """Materialize one session chapter while keeping narration degradable."""
+    """Publish continuity-critical music before optional narration authoring."""
 
     def __init__(
         self,
@@ -1589,20 +1599,136 @@ class StagedProgressiveChapterGenerator:
         self.materializer = materializer
 
     async def generate_next(self, episode: LiveEpisode) -> GeneratedChapter | None:
+        """Prepare the next route step without waiting for Writer or TTS."""
         chapter = self.session.next_chapter(episode)
         if chapter is None:
             return None
-        if not chapter.slot_contexts and chapter.resolved_track is None:
+
+        # Narrative-only / unresolved speculative beats must never hold the
+        # continuity queue in front of a later playable track. Persist a skipped
+        # marker so durable route reconstruction can advance past the beat.
+        if chapter.resolved_track is None:
+            return GeneratedChapter(
+                chapter_id=chapter.chapter_id,
+                segments=[
+                    NarrationSegment(
+                        id=f"{chapter.chapter_id}:narration:0",
+                        chapter_id=chapter.chapter_id,
+                        order=(episode.ordered_segments[-1].order + 1),
+                        state=SegmentState.SKIPPED,
+                        planned_duration_seconds=max(1, chapter.target_narration_seconds),
+                        title="Optional narration skipped",
+                    )
+                ],
+            )
+
+        try:
+            prepared_tracks = await self.composer.prepare_tracks([chapter.resolved_track])
+            playable = self.composer.compose_prepared(
+                prepared_tracks,
+                RadioScript(blocks=[], intended_duration_seconds=1),
+            )
+        except ProviderError as error:
+            raise EpisodeAssemblyError(str(error), stage="progressive_chunk") from error
+        except (UnresolvedTrackError, ValueError) as error:
+            raise EpisodeAssemblyError(str(error), stage="progressive_chunk") from error
+
+        music = [
+            segment
+            for segment in playable.segments
+            if isinstance(segment, MusicSegment)
+        ]
+        if len(music) != 1 or not music[0].is_audio_ready:
             raise EpisodeAssemblyError(
-                "progressive session chapter has no owned narration slot",
+                "progressive chapter did not produce exactly one ready music source",
+                stage="progressive_chunk",
+                reason_code="missing_playable_music",
+            )
+        return _generated_runtime_chapter(
+            chapter.chapter_id,
+            music,
+            base_order=episode.ordered_segments[-1].order + 1,
+        )
+
+    async def author_narration(
+        self,
+        episode: LiveEpisode,
+        chapter_id: str,
+    ) -> GeneratedChapter | None:
+        """Author SCRIPT_READY narration for one still-speculative route chapter."""
+        chapter = next(
+            (item for item in self.session.chapters if item.chapter_id == chapter_id),
+            None,
+        )
+        if (
+            chapter is None
+            or not chapter.slot_contexts
+            or (
+                chapter.resolved_track is None
+                and chapter.chapter.track is not None
+            )
+        ):
+            return None
+
+        chapter_segments = [
+            segment
+            for segment in episode.ordered_segments
+            if segment.chapter_id == chapter_id
+        ]
+        if not chapter_segments:
+            return None
+        chapter_start_order = min(segment.order for segment in chapter_segments)
+
+        existing_music = [
+            segment
+            for segment in chapter_segments
+            if isinstance(segment, MusicSegment)
+        ]
+        prepared_tracks: list[PreparedMusicAsset] = []
+        chapter_music_index: int | None = None
+        if chapter.resolved_track is not None:
+            if len(existing_music) != 1:
+                return None
+            music = existing_music[0]
+            if (
+                music.track_ref != chapter.resolved_track.track_ref
+                or music.artist != chapter.resolved_track.canonical_artist
+                or music.title != chapter.resolved_track.canonical_title
+                or not music.audio_source_url
+            ):
+                raise EpisodeAssemblyError(
+                    "persisted music identity does not match narration route",
+                    stage="writer_normalization",
+                    reason_code="narration_music_identity_mismatch",
+                )
+            prepared_tracks = [
+                PreparedMusicAsset(
+                    track=chapter.resolved_track,
+                    asset=AudioAsset(
+                        asset_id=music.asset_ref or f"persisted:{music.track_ref}",
+                        asset_type=AudioAssetType.MUSIC,
+                        provider="persisted",
+                        playback_url=music.audio_source_url,
+                        duration=music.duration_seconds,
+                    ),
+                )
+            ]
+            chapter_music_index = 0
+        elif existing_music:
+            raise EpisodeAssemblyError(
+                "trackless narration chapter unexpectedly contains music",
                 stage="writer_normalization",
-                reason_code="slotless_progressive_chapter",
+                reason_code="narration_trackless_music_mismatch",
             )
 
         previous_context = " ".join(
             segment.narration_text
             for segment in episode.ordered_segments
-            if isinstance(segment, NarrationSegment) and segment.narration_text
+            if (
+                isinstance(segment, NarrationSegment)
+                and segment.is_committed
+                and segment.narration_text
+            )
         )[-1000:]
         upcoming = next(
             (
@@ -1617,108 +1743,73 @@ class StagedProgressiveChapterGenerator:
             if upcoming is not None
             else ""
         )
-
-        writer_degraded = False
-        if chapter.slot_contexts:
-            try:
-                script = await self.writer.write(
-                    chapter.chapter,
-                    self.session.research.evidence,
-                    previous_committed_context=previous_context,
-                    next_track_metadata=next_track_metadata,
-                    target_duration_seconds=chapter.target_narration_seconds,
-                    output_language=self.session.output_language,
-                    topic=self.session.topic,
-                    slot_contexts=chapter.slot_contexts,
-                )
-            except ProviderError as error:
-                if chapter.resolved_track is None:
-                    raise EpisodeAssemblyError(str(error), stage="writer") from error
-                # Narration is optional for continuity. A resolved, playable music
-                # chapter must not disappear merely because Writer is unavailable.
-                writer_degraded = True
-                script = RadioScript(blocks=[], intended_duration_seconds=1)
-        else:
-            script = RadioScript(blocks=[], intended_duration_seconds=1)
-
-        has_persisted_music = any(
-            segment.kind is SegmentKind.MUSIC for segment in episode.segments
+        has_previous_music = any(
+            isinstance(segment, MusicSegment) and segment.order < chapter_start_order
+            for segment in episode.ordered_segments
         )
+
         try:
-            if writer_degraded:
-                radio_script = RadioScript(blocks=[], intended_duration_seconds=1)
-            else:
-                radio_script, _ = _assemble_writer_scripts(
-                    [script],
-                    1 if chapter.resolved_track is not None else 0,
-                    chapter_music_indices=[0 if chapter.resolved_track is not None else None],
-                    slot_contexts=[chapter.slot_contexts],
-                    chapter_connections=[chapter.chapter.connection_from_previous_track],
-                    previous_music_indices=[0 if has_persisted_music else None],
-                    require_final_slot=(
-                        bool(self.session.chapters)
-                        and bool(chapter.slot_contexts)
-                        and chapter.chapter_id == self.session.chapters[-1].chapter_id
-                    ),
-                )
-            prepared_tracks = await self.composer.prepare_tracks(
-                [chapter.resolved_track] if chapter.resolved_track is not None else []
+            script = await self.writer.write(
+                chapter.chapter,
+                self.session.research.evidence,
+                previous_committed_context=previous_context,
+                next_track_metadata=next_track_metadata,
+                target_duration_seconds=chapter.target_narration_seconds,
+                output_language=self.session.output_language,
+                topic=self.session.topic,
+                slot_contexts=chapter.slot_contexts,
+            )
+            radio_script, _ = _assemble_writer_scripts(
+                [script],
+                len(prepared_tracks),
+                chapter_music_indices=[chapter_music_index],
+                slot_contexts=[chapter.slot_contexts],
+                chapter_connections=[chapter.chapter.connection_from_previous_track],
+                previous_music_indices=[0 if has_previous_music else None],
+                require_final_slot=(
+                    bool(self.session.chapters)
+                    and chapter.chapter_id == self.session.chapters[-1].chapter_id
+                ),
             )
             playable = self.composer.compose_prepared(prepared_tracks, radio_script)
             _assert_narration_blocks_materialized(radio_script, playable)
-        except EpisodeAssemblyError:
-            raise
-        except ProviderError as error:
-            # Music preparation is not degradable: preserving exact catalog
-            # identity remains a hard playback trust boundary.
-            raise EpisodeAssemblyError(str(error), stage="progressive_chunk") from error
-        except NarrationPlacementError as error:
-            raise EpisodeAssemblyError(
-                str(error),
-                stage="writer_normalization",
-                reason_code="narration_slot_normalization_failed",
-            ) from error
-        except (UnresolvedTrackError, ValueError) as error:
-            raise EpisodeAssemblyError(str(error), stage="progressive_chunk") from error
+        except (ProviderError, NarrationPlacementError, EpisodeAssemblyError, ValueError):
+            # Narration is optional for continuity and FULL generation. The
+            # caller records this chapter as authored/degraded so ordinary
+            # playback never retries the same paid Writer work blindly.
+            return None
+        return _generated_runtime_chapter(
+            chapter.chapter_id,
+            list(playable.segments),
+            base_order=chapter_start_order,
+        )
 
-        ready_segments = []
-        for segment in playable.segments:
-            if isinstance(segment, NarrationSegment):
-                try:
-                    await self.materializer.materialize(segment)
-                except ProviderError:
-                    # A TTS failure must never block already prepared music.
-                    # Failed narration is omitted from this speculative chapter;
-                    # committed history is untouched.
-                    continue
-            ready_segments.append(segment)
 
-        if not ready_segments:
-            raise EpisodeAssemblyError(
-                "progressive chapter has no playable audio after narration degradation",
-                stage="narration_materialization",
-                reason_code="no_playable_audio_after_narration_degradation",
+def _generated_runtime_chapter(
+    chapter_id: str,
+    segments: Sequence[MusicSegment | NarrationSegment],
+    *,
+    base_order: int,
+) -> GeneratedChapter:
+    kind_counts: dict[SegmentKind, int] = {
+        SegmentKind.MUSIC: 0,
+        SegmentKind.NARRATION: 0,
+    }
+    normalized: list[MusicSegment | NarrationSegment] = []
+    for offset, segment in enumerate(segments):
+        kind_index = kind_counts[segment.kind]
+        kind_counts[segment.kind] += 1
+        normalized.append(
+            segment.model_copy(
+                update={
+                    "id": f"{chapter_id}:{segment.kind.value.lower()}:{kind_index}",
+                    "chapter_id": chapter_id,
+                    "order": base_order + offset,
+                }
             )
+        )
+    return GeneratedChapter(chapter_id=chapter_id, segments=normalized)
 
-        base_order = episode.ordered_segments[-1].order + 1 if episode.ordered_segments else 0
-        kind_counts: dict[SegmentKind, int] = {
-            SegmentKind.MUSIC: 0,
-            SegmentKind.NARRATION: 0,
-        }
-        segments = []
-        for offset, segment in enumerate(ready_segments):
-            kind_index = kind_counts[segment.kind]
-            kind_counts[segment.kind] += 1
-            segments.append(
-                segment.model_copy(
-                    update={
-                        "id": f"{chapter.chapter_id}:{segment.kind.value.lower()}:{kind_index}",
-                        "chapter_id": chapter.chapter_id,
-                        "order": base_order + offset,
-                    }
-                )
-            )
-        return GeneratedChapter(chapter_id=chapter.chapter_id, segments=segments)
 
 def _script_text(script: RadioScript | NarrationScript) -> str:
     return script.text

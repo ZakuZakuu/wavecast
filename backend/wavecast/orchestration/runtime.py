@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from wavecast.intelligence.models import OutputLanguage, ResolvedTrack
-from wavecast.models.episode import LiveEpisode
+from wavecast.models.episode import LiveEpisode, NarrationSegment
 from wavecast.models.progressive import ProgressiveAssemblySession
-from wavecast.orchestration.generation import ProgressiveChapterGenerator
+from wavecast.orchestration.generation import GeneratedChapter, ProgressiveChapterGenerator
 
 if TYPE_CHECKING:
     from wavecast.assembly import LiveEpisodeAssemblyService, StagedProgressiveChapterGenerator
@@ -17,6 +17,14 @@ class StagedProgressiveRuntime(Protocol):
     def create_generator(
         self, session: ProgressiveAssemblySession
     ) -> ProgressiveChapterGenerator: ...
+
+    async def author_narration(
+        self, episode: LiveEpisode, chapter_id: str
+    ) -> GeneratedChapter | None: ...
+
+    async def materialize_narration(
+        self, segment: NarrationSegment
+    ) -> NarrationSegment: ...
 
 
 class StagedProgressiveRuntimeAdapter:
@@ -69,3 +77,16 @@ class StagedProgressiveRuntimeAdapter:
         self, session: ProgressiveAssemblySession
     ) -> StagedProgressiveChapterGenerator:
         return self.assembly.create_progressive_chapter_generator(session)
+
+    async def author_narration(
+        self, episode: LiveEpisode, chapter_id: str
+    ) -> GeneratedChapter | None:
+        if episode.progressive_session is None:
+            return None
+        generator = self.create_generator(episode.progressive_session)
+        return await generator.author_narration(episode, chapter_id)
+
+    async def materialize_narration(
+        self, segment: NarrationSegment
+    ) -> NarrationSegment:
+        return await self.assembly.materializer.materialize(segment)

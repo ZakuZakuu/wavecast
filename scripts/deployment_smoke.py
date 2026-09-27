@@ -54,15 +54,20 @@ def wait_for_generated_future(base_url: str, episode_id: str) -> dict[str, Any]:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         episode, _, status = call(base_url, f"/api/episodes/{episode_id}")
-        if (
-            status == 200
-            and isinstance(episode, dict)
-            and isinstance(episode.get("segments"), list)
-            and len(episode["segments"]) > 1
-        ):
-            return episode
+        segments = episode.get("segments") if isinstance(episode, dict) else None
+        if status == 200 and isinstance(segments, list):
+            ready_future_music = [
+                segment
+                for segment in segments[1:]
+                if isinstance(segment, dict)
+                and segment.get("kind") == "MUSIC"
+                and segment.get("state") in {"AUDIO_READY", "COMMITTED", "PLAYED"}
+                and isinstance(segment.get("audio_source_url"), str)
+            ]
+            if ready_future_music:
+                return episode
         time.sleep(0.5)
-    raise RuntimeError("background generation did not prepare a future segment")
+    raise RuntimeError("background generation did not prepare a playable future music source")
 
 
 def main() -> None:
@@ -101,6 +106,26 @@ def main() -> None:
     if not isinstance(timeline, list) or len(timeline) <= 1:
         raise RuntimeError("deployment smoke did not materialize a staged future")
 
+    ready_future_music_urls = [
+        segment.get("audio_source_url")
+        for segment in timeline[1:]
+        if isinstance(segment, dict)
+        and segment.get("kind") == "MUSIC"
+        and segment.get("state") in {"AUDIO_READY", "COMMITTED", "PLAYED"}
+        and isinstance(segment.get("audio_source_url"), str)
+    ]
+    if not ready_future_music_urls:
+        raise RuntimeError("deployment smoke found no playable future music source")
+    for music_url in ready_future_music_urls:
+        content, headers, status = call(base_url, music_url)
+        if status != 200 or not isinstance(content, bytes) or not content:
+            raise RuntimeError("deployment smoke future music was not playable")
+        if not headers.get("content-type", "").startswith("audio/"):
+            raise RuntimeError("deployment smoke future music had a non-audio content type")
+
+    # Progressive narration enrichment is optional for continuity and may finish
+    # after the durable music generation job. If an owned narration asset is
+    # already present, still exercise its storage path and restart durability.
     asset_urls = [
         segment.get("audio_source_url")
         for segment in timeline
@@ -108,8 +133,6 @@ def main() -> None:
         and isinstance(segment.get("audio_source_url"), str)
         and segment["audio_source_url"].startswith("/api/assets/audio/")
     ]
-    if not asset_urls:
-        raise RuntimeError("deployment smoke found no WaveCast-owned generated audio asset")
     for asset_url in asset_urls:
         content, headers, status = call(base_url, asset_url)
         if status != 200 or not isinstance(content, bytes) or not content:
@@ -138,6 +161,12 @@ def main() -> None:
             raise RuntimeError("deployment smoke episode did not survive API replacement")
         if not isinstance(resumed.get("segments"), list) or not resumed["segments"]:
             raise RuntimeError("deployment smoke lost persisted episode timeline")
+        for music_url in ready_future_music_urls:
+            content, headers, status = call(base_url, music_url)
+            if status != 200 or not isinstance(content, bytes) or not content:
+                raise RuntimeError("deployment smoke future music did not survive API replacement")
+            if not headers.get("content-type", "").startswith("audio/"):
+                raise RuntimeError("deployment smoke recovered music had a non-audio content type")
         for asset_url in asset_urls:
             content, headers, status = call(base_url, asset_url)
             if status != 200 or not isinstance(content, bytes) or not content:
@@ -153,6 +182,7 @@ def main() -> None:
                 "episode_id": episode_id,
                 "opening_segment_count": len(opening_segments),
                 "staged_segment_count": len(timeline),
+                "ready_future_music_count": len(ready_future_music_urls),
                 "owned_audio_asset_count": len(asset_urls),
                 "api_restart_checked": args.restart_api,
             },
