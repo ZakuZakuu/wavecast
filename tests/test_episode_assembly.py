@@ -233,6 +233,10 @@ def test_locked_successor_is_inserted_when_curator_route_does_not_contain_it() -
             title=later.canonical_title,
             confidence=0.9,
         ),
+        connection_from_previous_track=EditorialConnection(
+            relation_type=EditorialRelationType.CONTRAST,
+            rationale="This relation belongs to the old opening-to-later adjacency.",
+        ),
         narrative_role=NarrativeRole.DISCOVERY,
         reason="Continue.",
         narration_goal="Continue.",
@@ -262,6 +266,9 @@ def test_locked_successor_is_inserted_when_curator_route_does_not_contain_it() -
     assert locked_route[1].writer_chapter.track is not None
     assert locked_route[1].writer_chapter.track.artist == "Fast Artist"
     assert locked_route[1].writer_chapter.track.title == "Fast Successor"
+    reindexed = _reindex_resolved_chapters(locked_route)
+    assert reindexed[1].writer_chapter.connection_from_previous_track is None
+    assert reindexed[2].writer_chapter.connection_from_previous_track is None
 
 def test_mock_factory_assembles_real_music_and_narration_assets(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
