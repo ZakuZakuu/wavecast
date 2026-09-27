@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from wavecast.intelligence.models import OutputLanguage, ResolvedTrack
-from wavecast.models.episode import LiveEpisode, NarrationSegment
+from wavecast.models.episode import LiveEpisode, MusicSegment, NarrationSegment
 from wavecast.models.progressive import ProgressiveAssemblySession
 from wavecast.orchestration.generation import GeneratedChapter, ProgressiveChapterGenerator
 
@@ -12,6 +12,10 @@ if TYPE_CHECKING:
 
 
 class StagedProgressiveRuntime(Protocol):
+    async def prepare_fast_successor(
+        self, episode: LiveEpisode
+    ) -> GeneratedChapter | None: ...
+
     async def prepare_session(self, episode: LiveEpisode) -> ProgressiveAssemblySession: ...
 
     def create_generator(
@@ -32,6 +36,45 @@ class StagedProgressiveRuntimeAdapter:
 
     def __init__(self, assembly: LiveEpisodeAssemblyService) -> None:
         self.assembly = assembly
+
+    async def prepare_fast_successor(
+        self, episode: LiveEpisode
+    ) -> GeneratedChapter | None:
+        if not episode.topic:
+            return None
+        opening = next(
+            (
+                segment
+                for segment in episode.ordered_segments
+                if segment.chapter_id == "chapter-1"
+                and isinstance(segment, MusicSegment)
+                and segment.track_ref
+                and segment.artist
+                and segment.title
+            ),
+            None,
+        )
+        if opening is None:
+            return None
+        opening_track = ResolvedTrack(
+            track_ref=opening.track_ref,
+            canonical_artist=opening.artist,
+            canonical_title=opening.title,
+        )
+        from wavecast.assembly import LiveEpisodeAssemblyRequest
+
+        request = LiveEpisodeAssemblyRequest(
+            topic=episode.topic,
+            anchor_tracks=[opening.title],
+            desired_duration_seconds=episode.program_estimated_duration_seconds,
+            max_tracks=5,
+            max_chapters=8,
+            output_language=OutputLanguage.AUTO,
+        )
+        return await self.assembly.prepare_fast_successor(
+            request,
+            opening_track=opening_track,
+        )
 
     async def prepare_session(self, episode: LiveEpisode) -> ProgressiveAssemblySession:
         if not episode.topic:
@@ -68,9 +111,31 @@ class StagedProgressiveRuntimeAdapter:
             max_chapters=8,
             output_language=OutputLanguage.AUTO,
         )
+        locked_segment = next(
+            (
+                segment
+                for segment in episode.ordered_segments
+                if segment.chapter_id == "chapter-2"
+                and isinstance(segment, MusicSegment)
+                and segment.track_ref
+                and segment.artist
+                and segment.title
+            ),
+            None,
+        )
+        locked_successor = (
+            ResolvedTrack(
+                track_ref=locked_segment.track_ref,
+                canonical_artist=locked_segment.artist,
+                canonical_title=locked_segment.title,
+            )
+            if locked_segment is not None
+            else None
+        )
         return await self.assembly.prepare_progressive_session(
             request,
             opening_track=opening_track,
+            locked_successor=locked_successor,
         )
 
     def create_generator(
