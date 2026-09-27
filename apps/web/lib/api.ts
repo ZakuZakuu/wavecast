@@ -95,6 +95,11 @@ export const api = {
   get: (id: string) => request<LiveEpisode>(`/episodes/${id}`),
   mixPlan: async (id: string): Promise<MixPlan> => parseMixPlan(await request<unknown>(`/episodes/${id}/mix-plan`)),
   completed: (id: string) => request<LiveEpisode>(`/episodes/${id}/completed`, { method: "POST" }),
+  completeHandoff: (id: string, completedSegmentId: string, successorSegmentId: string) =>
+    request<LiveEpisode>(
+      `/episodes/${id}/complete-handoff/${completedSegmentId}/${successorSegmentId}`,
+      { method: "POST" },
+    ),
   heartbeat: (id: string) => request<LiveEpisode>(`/episodes/${id}/heartbeat`, { method: "POST" }),
   commit: (id: string, segmentId: string) => request<LiveEpisode>(`/episodes/${id}/commit/${segmentId}`, { method: "POST" }),
   armHandoff: (id: string, segmentId: string) => request<LiveEpisode>(`/episodes/${id}/arm-handoff/${segmentId}`, { method: "POST" }),
