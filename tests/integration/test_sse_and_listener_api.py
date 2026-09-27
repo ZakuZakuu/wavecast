@@ -122,7 +122,10 @@ def test_heartbeat_does_not_requeue_when_ready_audio_ahead_is_healthy(monkeypatc
         "/api/episodes/from-seed/city-pop-misunderstood",
         headers=headers,
     ).json()
-    _complete_queued_job(jobs, "complete-healthy-buffer")
+    assert asyncio.run(worker.run_once()) is True
+    completed = jobs.get_for_episode(created["id"])
+    assert completed is not None
+    assert completed.status is GenerationJobStatus.COMPLETED
 
     response = client.post(
         f"/api/episodes/{created['id']}/heartbeat",
