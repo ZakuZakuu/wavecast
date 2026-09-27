@@ -22,6 +22,7 @@ from wavecast.models.episode import (
     EpisodeState,
     LiveEpisode,
     MusicSegment,
+    NarrationSegment,
     SegmentState,
 )
 from wavecast.orchestration.episode import EpisodeOrchestrator, InMemoryEpisodeRepository
@@ -153,7 +154,7 @@ class _Writer:
         )
 
 
-def test_staged_generator_materializes_one_complete_runtime_chunk(tmp_path) -> None:
+def test_staged_generator_publishes_music_before_narration_audio(tmp_path) -> None:
     track = ResolvedTrack(
         track_ref="mock:bridge",
         canonical_artist="Bridge Artist",
@@ -173,8 +174,15 @@ def test_staged_generator_materializes_one_complete_runtime_chunk(tmp_path) -> N
     assert generated.chapter_id == "chapter-2"
     assert len(generated.segments) == 3
     assert all(segment.chapter_id == "chapter-2" for segment in generated.segments)
-    assert all(segment.is_audio_ready for segment in generated.segments)
-    assert any(isinstance(segment, MusicSegment) for segment in generated.segments)
+    music = [segment for segment in generated.segments if isinstance(segment, MusicSegment)]
+    narration = [
+        segment for segment in generated.segments if isinstance(segment, NarrationSegment)
+    ]
+    assert len(music) == 1
+    assert music[0].is_audio_ready
+    assert len(narration) == 2
+    assert all(segment.state is SegmentState.SCRIPT_READY for segment in narration)
+    assert all(segment.audio_source_url is None for segment in narration)
     assert {segment.id for segment in generated.segments} == {
         "chapter-2:music:0",
         "chapter-2:narration:0",
@@ -260,7 +268,7 @@ def test_writer_failure_degrades_resolved_chapter_to_music_only(tmp_path) -> Non
     assert generated.segments[0].is_audio_ready
 
 
-def test_tts_failure_drops_narration_but_keeps_ready_music(tmp_path) -> None:
+def test_tts_is_not_called_before_ready_music_is_published(tmp_path) -> None:
     track = ResolvedTrack(
         track_ref="mock:bridge",
         canonical_artist="Bridge Artist",
@@ -272,7 +280,7 @@ def test_tts_failure_drops_narration_but_keeps_ready_music(tmp_path) -> None:
         speech_speed_baseline = 0.8
 
         async def synthesize(self, *args: object, **kwargs: object) -> object:
-            raise ProviderTimeoutError("tts timeout")
+            raise AssertionError("TTS must not run on the music readiness path")
 
     storage = LocalObjectStorageProvider(tmp_path / "audio")
     generator = StagedProgressiveChapterGenerator(
@@ -289,10 +297,15 @@ def test_tts_failure_drops_narration_but_keeps_ready_music(tmp_path) -> None:
 
     assert generated is not None
     assert generated.chapter_id == "chapter-2"
-    assert len(generated.segments) == 1
-    assert isinstance(generated.segments[0], MusicSegment)
-    assert generated.segments[0].track_ref == "mock:bridge"
-    assert generated.segments[0].is_audio_ready
+    music = [segment for segment in generated.segments if isinstance(segment, MusicSegment)]
+    narration = [
+        segment for segment in generated.segments if isinstance(segment, NarrationSegment)
+    ]
+    assert len(music) == 1
+    assert music[0].track_ref == "mock:bridge"
+    assert music[0].is_audio_ready
+    assert len(narration) == 2
+    assert all(segment.state is SegmentState.SCRIPT_READY for segment in narration)
 
 
 def test_music_only_chunk_skips_writer_and_tts(tmp_path) -> None:
