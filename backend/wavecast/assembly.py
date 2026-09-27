@@ -1655,36 +1655,63 @@ class StagedProgressiveChapterGenerator:
         episode: LiveEpisode,
         chapter_id: str,
     ) -> GeneratedChapter | None:
-        """Author SCRIPT_READY narration for one still-speculative music chapter."""
+        """Author SCRIPT_READY narration for one still-speculative route chapter."""
         chapter = next(
             (item for item in self.session.chapters if item.chapter_id == chapter_id),
             None,
         )
-        if (
-            chapter is None
-            or chapter.resolved_track is None
-            or not chapter.slot_contexts
-        ):
+        if chapter is None or not chapter.slot_contexts:
             return None
+
+        chapter_segments = [
+            segment
+            for segment in episode.ordered_segments
+            if segment.chapter_id == chapter_id
+        ]
+        if not chapter_segments:
+            return None
+        chapter_start_order = min(segment.order for segment in chapter_segments)
 
         existing_music = [
             segment
-            for segment in episode.ordered_segments
-            if segment.chapter_id == chapter_id and isinstance(segment, MusicSegment)
+            for segment in chapter_segments
+            if isinstance(segment, MusicSegment)
         ]
-        if len(existing_music) != 1:
-            return None
-        music = existing_music[0]
-        if (
-            music.track_ref != chapter.resolved_track.track_ref
-            or music.artist != chapter.resolved_track.canonical_artist
-            or music.title != chapter.resolved_track.canonical_title
-            or not music.audio_source_url
-        ):
+        prepared_tracks: list[PreparedMusicAsset] = []
+        chapter_music_index: int | None = None
+        if chapter.resolved_track is not None:
+            if len(existing_music) != 1:
+                return None
+            music = existing_music[0]
+            if (
+                music.track_ref != chapter.resolved_track.track_ref
+                or music.artist != chapter.resolved_track.canonical_artist
+                or music.title != chapter.resolved_track.canonical_title
+                or not music.audio_source_url
+            ):
+                raise EpisodeAssemblyError(
+                    "persisted music identity does not match narration route",
+                    stage="writer_normalization",
+                    reason_code="narration_music_identity_mismatch",
+                )
+            prepared_tracks = [
+                PreparedMusicAsset(
+                    track=chapter.resolved_track,
+                    asset=AudioAsset(
+                        asset_id=music.asset_ref or f"persisted:{music.track_ref}",
+                        asset_type=AudioAssetType.MUSIC,
+                        provider="persisted",
+                        playback_url=music.audio_source_url,
+                        duration=music.duration_seconds,
+                    ),
+                )
+            ]
+            chapter_music_index = 0
+        elif existing_music:
             raise EpisodeAssemblyError(
-                "persisted music identity does not match narration route",
+                "trackless narration chapter unexpectedly contains music",
                 stage="writer_normalization",
-                reason_code="narration_music_identity_mismatch",
+                reason_code="narration_trackless_music_mismatch",
             )
 
         previous_context = " ".join(
@@ -1709,6 +1736,10 @@ class StagedProgressiveChapterGenerator:
             if upcoming is not None
             else ""
         )
+        has_previous_music = any(
+            isinstance(segment, MusicSegment) and segment.order < chapter_start_order
+            for segment in episode.ordered_segments
+        )
 
         try:
             script = await self.writer.write(
@@ -1723,27 +1754,17 @@ class StagedProgressiveChapterGenerator:
             )
             radio_script, _ = _assemble_writer_scripts(
                 [script],
-                1,
-                chapter_music_indices=[0],
+                len(prepared_tracks),
+                chapter_music_indices=[chapter_music_index],
                 slot_contexts=[chapter.slot_contexts],
                 chapter_connections=[chapter.chapter.connection_from_previous_track],
-                previous_music_indices=[0],
+                previous_music_indices=[0 if has_previous_music else None],
                 require_final_slot=(
                     bool(self.session.chapters)
                     and chapter.chapter_id == self.session.chapters[-1].chapter_id
                 ),
             )
-            prepared = PreparedMusicAsset(
-                track=chapter.resolved_track,
-                asset=AudioAsset(
-                    asset_id=music.asset_ref or f"persisted:{music.track_ref}",
-                    asset_type=AudioAssetType.MUSIC,
-                    provider="persisted",
-                    playback_url=music.audio_source_url,
-                    duration=music.duration_seconds,
-                ),
-            )
-            playable = self.composer.compose_prepared([prepared], radio_script)
+            playable = self.composer.compose_prepared(prepared_tracks, radio_script)
             _assert_narration_blocks_materialized(radio_script, playable)
         except (ProviderError, NarrationPlacementError, EpisodeAssemblyError, ValueError):
             # Narration is optional for continuity and FULL generation. The
@@ -1753,11 +1774,7 @@ class StagedProgressiveChapterGenerator:
         return _generated_runtime_chapter(
             chapter.chapter_id,
             list(playable.segments),
-            base_order=min(
-                segment.order
-                for segment in episode.ordered_segments
-                if segment.chapter_id == chapter.chapter_id
-            ),
+            base_order=chapter_start_order,
         )
 
 
