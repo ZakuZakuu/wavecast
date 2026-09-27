@@ -378,27 +378,41 @@ class LiveEpisodeAssemblyService:
             resolved: ResolvedTrack | None = None
             selected_proposal: TrackProposal | None = None
             if chapter.track is not None:
-                for proposal in [chapter.track, *chapter.track_alternates]:
-                    resolution_reason: str | None = None
+                candidates = [chapter.track, *chapter.track_alternates]
+                last_resolution_reason = "no exact playable catalog match"
+                for candidate_rank, proposal in enumerate(candidates):
                     try:
                         resolved = await resolve_track_proposal_across_providers(
                             self.retrieval, proposal
                         )
                     except ProviderError as error:
-                        resolution_reason = (
+                        resolved = None
+                        last_resolution_reason = (
                             f"resolution provider failed: {type(error).__name__}"
                         )
-                    if resolved is not None:
-                        selected_proposal = proposal
-                        break
-                    if resolution_reason is None:
-                        resolution_reason = "no exact playable catalog match"
+                    if resolved is None:
+                        continue
+                    selected_proposal = proposal
+                    if candidate_rank > 0:
+                        trace.mark(
+                            "track_alternate_resolved",
+                            chapter_index=chapter.index,
+                            candidate_rank=candidate_rank + 1,
+                            candidate_count=len(candidates),
+                        )
+                    break
+                if resolved is None:
                     unresolved.append(
                         UnresolvedAssemblyProposal(
                             chapter_index=chapter.index,
-                            proposal=proposal,
-                            reason=resolution_reason,
+                            proposal=chapter.track,
+                            reason=last_resolution_reason,
                         )
+                    )
+                    trace.mark(
+                        "track_slot_unresolved",
+                        chapter_index=chapter.index,
+                        candidate_count=len(candidates),
                     )
             resolved_chapters.append(
                 _ResolvedChapter(
