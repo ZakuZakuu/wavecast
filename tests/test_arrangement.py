@@ -65,6 +65,14 @@ def test_planner_is_deterministic_and_bounds_all_clips() -> None:
         assert clip.fade_out_seconds <= clip.playable_duration_seconds
 
 
+def test_narration_exposes_transport_safe_edge_fade_metadata() -> None:
+    plan = plan_episode_mix(fixture_episode())
+    voice = next(clip for clip in plan.clips if clip.segment_id == "voice-a")
+
+    assert voice.fade_in_seconds == pytest.approx(0.08)
+    assert voice.fade_out_seconds == pytest.approx(0.08)
+
+
 def test_final_outro_overlays_last_music_tail() -> None:
     plan = plan_episode_mix(fixture_episode())
     last_music = next(clip for clip in plan.clips if clip.segment_id == "music-b")
