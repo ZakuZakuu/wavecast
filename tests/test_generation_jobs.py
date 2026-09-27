@@ -34,6 +34,25 @@ def test_requests_coalesce_per_episode_and_full_mode_dominates() -> None:
     assert second.request_version == first.request_version + 1
 
 
+def test_same_mode_active_request_is_idempotent() -> None:
+    clock = Clock()
+    repository = InMemoryGenerationJobRepository(now=clock.now)
+
+    first = repository.request("episode-1")
+    second = repository.request("episode-1")
+    claimed = repository.claim("worker-a", lease_seconds=60)
+
+    assert second == first
+    assert claimed is not None
+
+    repeated = repository.request("episode-1")
+
+    assert repeated.id == claimed.id
+    assert repeated.status is GenerationJobStatus.RUNNING
+    assert repeated.request_version == claimed.request_version
+    assert repeated.lease_owner == "worker-a"
+
+
 def test_new_request_while_running_cannot_be_consumed_by_old_completion() -> None:
     clock = Clock()
     repository = InMemoryGenerationJobRepository(now=clock.now)
