@@ -326,9 +326,8 @@ def test_progressive_preparation_uses_ranked_alternate_before_skipping_slot(tmp_
     assert chapter.chapter.track_alternates == []
     assert session.skeleton.chapters[-1].track is not None
     assert session.skeleton.chapters[-1].track.title == "Midnight Transfer"
-    assert any(
+    assert not any(
         diagnostic.code == "unresolved_track"
-        and "no exact playable catalog match" in diagnostic.detail
         for diagnostic in session.diagnostics
     )
 
