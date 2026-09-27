@@ -16,7 +16,7 @@ from typing import Any, Protocol, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, DateTime, Index, Integer, String, Table, select, update
+from sqlalchemy import Column, DateTime, Index, Integer, String, Table, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -444,6 +444,13 @@ class PostgresGenerationJobRepository:
         now = _utc_now()
         ready_at = available_at or now
         async with self.engine.begin() as connection:
+            await connection.execute(
+                select(
+                    func.pg_advisory_xact_lock(
+                        func.hashtext("wavecast:generation-job:" + episode_id)
+                    )
+                )
+            )
             row = (
                 await connection.execute(
                     select(generation_jobs_table)
