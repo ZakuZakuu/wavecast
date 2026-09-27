@@ -3,12 +3,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from wavecast.intelligence.models import OutputLanguage, ResolvedTrack
-from wavecast.models.episode import LiveEpisode, MusicSegment, NarrationSegment
+from wavecast.models.episode import GenerationMode, LiveEpisode, MusicSegment, NarrationSegment
 from wavecast.models.progressive import ProgressiveAssemblySession
 from wavecast.orchestration.generation import GeneratedChapter, ProgressiveChapterGenerator
 
 if TYPE_CHECKING:
     from wavecast.assembly import LiveEpisodeAssemblyService, StagedProgressiveChapterGenerator
+
+
+class ProgressivePlanningDeferred(RuntimeError):
+    """Full route planning may retry later because continuity is already safe."""
 
 
 class StagedProgressiveRuntime(Protocol):
@@ -139,11 +143,28 @@ class StagedProgressiveRuntimeAdapter:
                 canonical_artist=locked_artist,
                 canonical_title=locked_title,
             )
-        return await self.assembly.prepare_progressive_session(
-            request,
-            opening_track=opening_track,
-            locked_successor=locked_successor,
-        )
+        try:
+            return await self.assembly.prepare_progressive_session(
+                request,
+                opening_track=opening_track,
+                locked_successor=locked_successor,
+            )
+        except Exception as error:
+            # The assembly layer exposes a typed EpisodeAssemblyError, but importing
+            # it at module load time would create a runtime cycle. Only that known
+            # planning failure is degradable, and only while progressive listening
+            # already owns a durable successor. FULL generation remains strict.
+            from wavecast.assembly import EpisodeAssemblyError
+
+            if (
+                isinstance(error, EpisodeAssemblyError)
+                and locked_successor is not None
+                and episode.generation_mode is GenerationMode.PROGRESSIVE
+            ):
+                raise ProgressivePlanningDeferred(
+                    "full route planning deferred behind ready successor"
+                ) from error
+            raise
 
     def create_generator(
         self, session: ProgressiveAssemblySession
