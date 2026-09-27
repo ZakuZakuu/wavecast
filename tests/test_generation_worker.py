@@ -51,6 +51,36 @@ def test_worker_prepares_successor_behind_long_opening() -> None:
     assert job.status is GenerationJobStatus.COMPLETED
 
 
+def test_narration_enrichment_failure_does_not_fail_ready_music_job() -> None:
+    class NarrationFailingRuntime(EpisodeOrchestrator):
+        async def materialize_pending_narration_async(
+            self,
+            episode_id: str,
+            *,
+            max_segments: int = 2,
+        ):
+            del episode_id, max_segments
+            raise RuntimeError("synthetic narration enrichment failure")
+
+    generator = DeterministicMockProgressiveGenerator()
+    runtime = NarrationFailingRuntime(
+        InMemoryEpisodeRepository(),
+        progressive_generator=generator,
+    )
+    episode = runtime.start(_seed())
+    jobs = InMemoryGenerationJobRepository()
+    jobs.request(episode.id)
+    worker = GenerationWorker(jobs, runtime, worker_id="worker-narration-failure")
+
+    assert asyncio.run(worker.run_once()) is True
+
+    updated = runtime.get(episode.id)
+    job = jobs.get_for_episode(episode.id)
+    assert updated.segment("segment-bridge").is_audio_ready
+    assert job is not None
+    assert job.status is GenerationJobStatus.COMPLETED
+
+
 def test_worker_cancels_generation_for_inactive_listener() -> None:
     runtime = EpisodeOrchestrator(InMemoryEpisodeRepository())
     episode = runtime.start(_seed())
