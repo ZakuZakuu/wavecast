@@ -106,7 +106,7 @@ export function AudioPlayer({
 
     const applyGain = () => {
       audio.volume = transportSafeGain(arrangement, audio.currentTime);
-      if (playing && !audio.paused) {
+      if (playing) {
         frame = window.requestAnimationFrame(applyGain);
       }
     };
