@@ -102,7 +102,7 @@ def test_live_probe_rejects_non_positive_duration(monkeypatch: pytest.MonkeyPatc
         live_episode_probe.parse_args()
 
 
-def test_invalid_novelty_curve_is_classified_without_provider_text() -> None:
+def test_invalid_novelty_curve_is_normalized_without_provider_text() -> None:
     valid = ProgramSkeleton(
         thesis="fixture",
         estimated_duration_seconds=120,
@@ -137,16 +137,14 @@ def test_invalid_novelty_curve_is_classified_without_provider_text() -> None:
             ]
         }
     )
-    with pytest.raises(CuratorContractError) as failure:
-        ensure_distance_curve(invalid)
 
-    report = live_episode_probe._failure_report(
-        _wrapped(failure.value), UsageLedger()
-    )
+    normalized = ensure_distance_curve(invalid)
 
-    assert report["reason_code"] == "curator_novelty_curve_invalid"
-    assert "surprise" not in json.dumps(report)
-    assert "invalid novelty curve values" not in json.dumps(report)
+    assert [chapter.novelty_distance for chapter in normalized.chapters] == [
+        NoveltyDistance.SURPRISE,
+        NoveltyDistance.SURPRISE,
+    ]
+    assert [chapter.index for chapter in normalized.chapters] == [0, 1]
 
 
 def test_failed_report_preserves_usage_and_only_safe_provider_event_fields() -> None:
