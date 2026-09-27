@@ -151,13 +151,20 @@ class GenerationWorker:
                     retryable=False,
                 )
             else:
-                with suppress(GenerationJobLeaseError):
-                    await asyncio.to_thread(
-                        self.jobs.complete,
-                        job.id,
-                        self.worker_id,
-                        job.request_version,
-                    )
+                if lease_lost.is_set():
+                    enrich_episode_id = None
+                else:
+                    try:
+                        await asyncio.to_thread(
+                            self.jobs.complete,
+                            job.id,
+                            self.worker_id,
+                            job.request_version,
+                        )
+                    except GenerationJobLeaseError:
+                        # A newer owner is responsible for terminal state and
+                        # optional enrichment. Do not duplicate Writer/TTS work.
+                        enrich_episode_id = None
         finally:
             renewal_stop.set()
             lease_watch.cancel()
