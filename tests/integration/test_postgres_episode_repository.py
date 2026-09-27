@@ -55,6 +55,7 @@ def test_postgres_recovers_seek_skip_and_materialization_after_reconstruction() 
     first.seek(episode.id, 5)
     buffered = first.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
     buffered.segment("segment-narration-1").state = SegmentState.SCRIPT_READY
+    buffered.generation_latency_seconds = 123.5
     first_repository.save(buffered)
     first.next_playable(episode.id)
     first.materialize_all(episode.id)
@@ -66,6 +67,7 @@ def test_postgres_recovers_seek_skip_and_materialization_after_reconstruction() 
 
     assert restored.id == episode.id
     assert restored.playback_position_seconds > 0
+    assert restored.generation_latency_seconds == 123.5
     assert restored.generation_mode is GenerationMode.FULL
     assert restored.segment("segment-narration-1").state is SegmentState.SKIPPED
     assert restored.version > episode.version

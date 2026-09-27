@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from time import monotonic
 from urllib.parse import urlsplit
 
 from wavecast.models.episode import (
@@ -27,6 +28,7 @@ from wavecast.storage.episodes import (
     EpisodeRepository,
 )
 
+from .buffer import buffer_decision
 from .generation import (
     DeterministicMockProgressiveGenerator,
     GeneratedChapter,
@@ -387,6 +389,12 @@ class EpisodeOrchestrator:
         episode = await asyncio.to_thread(self._active_episode, episode_id)
         if episode.state is EpisodeState.MATERIALIZED:
             return episode
+        started_at = monotonic()
+        initial_ready_ids = {item.id for item in episode.segments if item.is_audio_ready}
+        if not buffer_decision(
+            episode, baseline_seconds=target_ahead_seconds, max_chapters=target_chapters
+        ).needs_generation:
+            return await asyncio.to_thread(self._resume_ready_successor_if_waiting, episode_id)
         episode = await self._ensure_fast_successor(episode_id, episode)
         episode = await self._ensure_progressive_session(episode_id, episode)
         if (
@@ -412,7 +420,9 @@ class EpisodeOrchestrator:
             # least one future chapter before the queue can be considered healthy.
             if ready_future_chapters >= 1 and (
                 ready_future_chapters >= target_chapters
-                or episode.ready_audio_seconds_ahead >= target_ahead_seconds
+                or not buffer_decision(
+                    episode, baseline_seconds=target_ahead_seconds, max_chapters=target_chapters
+                ).needs_generation
             ):
                 break
             next_chapter_id = self._next_future_chapter_id(episode)
@@ -431,6 +441,11 @@ class EpisodeOrchestrator:
                 self.append_generated_chapter, episode_id, chapter, snapshot
             )
         episode = await asyncio.to_thread(self.repository.get, episode_id)
+        if any(item.is_audio_ready and item.id not in initial_ready_ids for item in episode.segments):
+            observed = min(600.0, max(0.0, monotonic() - started_at))
+            # React immediately to slower generation, decay gradually after fast
+            # runs. Persist in the existing Episode snapshot across restarts.
+            episode.generation_latency_seconds = max(observed, episode.generation_latency_seconds * 0.8)
         self._start_ready_successor(episode)
         episode.last_activity_at = self.now()
         return await asyncio.to_thread(self.repository.save, episode)
@@ -904,10 +919,7 @@ class EpisodeOrchestrator:
                 raise EpisodeRuntimeError(
                     "full generation cannot defer route planning"
                 ) from error
-            if (
-                not latest.is_listener_active
-                and latest.generation_mode is not GenerationMode.FULL
-            ):
+            if not latest.is_listener_active:
                 raise EpisodeRuntimeError(
                     "listener session is inactive; discard deferred planning"
                 )
