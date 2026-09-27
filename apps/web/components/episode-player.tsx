@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
-import { createEffectGenerationGuard, createIndependentSynchronizationTasks, createSynchronizationGuard } from "../lib/episode-synchronization";
+import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
 import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
 import { formatSeconds, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
 import { usePlayerStore } from "../lib/player-store";
@@ -155,47 +155,26 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (!localEpisode?.is_listener_active) return;
     const synchronizationGuard = synchronizationGuardRef.current;
     const generation = synchronizationGuard.start();
-    const isCurrent = () => synchronizationGuard.isCurrent(
-      generation,
-      localEpisodeRef.current?.is_listener_active ?? false,
-    );
-    let bufferFailed = false;
-    const tasks = createIndependentSynchronizationTasks(
-      async () => {
-        if (!isCurrent()) return;
-        try {
-          await api.heartbeat(localEpisode.id);
-        } catch {
-          // Heartbeat is session liveness metadata. Never interrupt local audio
-          // because a background liveness write raced with another server mutation.
-        }
-      },
-      async () => {
-        if (!isCurrent() || bufferFailed) return;
-        const currentEpisode = localEpisodeRef.current;
-        if (!currentEpisode || currentEpisode.state === "MATERIALIZED") return;
-        try {
-          const updated = await api.ensureBuffer(currentEpisode.id);
-          if (isCurrent()) setEpisode(updated);
-        } catch (reason) {
-          bufferFailed = true;
-          if (isCurrent()) {
-            setError(reason instanceof Error ? reason.message : "接下来的章节生成失败");
-          }
-        }
-      },
-    );
+    const heartbeat = async () => {
+      if (!synchronizationGuard.isCurrent(
+        generation,
+        localEpisodeRef.current?.is_listener_active ?? false,
+      )) return;
+      try {
+        await api.heartbeat(localEpisode.id);
+      } catch {
+        // Heartbeat is only listener-liveness metadata. Background generation is
+        // backend-owned and must not interrupt browser-authoritative playback.
+      }
+    };
 
-    void tasks.heartbeat();
-    void tasks.buffer();
-    const heartbeatInterval = window.setInterval(() => void tasks.heartbeat(), 10_000);
-    const bufferInterval = window.setInterval(() => void tasks.buffer(), 10_000);
+    void heartbeat();
+    const heartbeatInterval = window.setInterval(() => void heartbeat(), 10_000);
     return () => {
       synchronizationGuard.invalidate();
       window.clearInterval(heartbeatInterval);
-      window.clearInterval(bufferInterval);
     };
-  }, [localEpisode?.id, localEpisode?.is_listener_active, setEpisode]);
+  }, [localEpisode?.id, localEpisode?.is_listener_active]);
 
   async function update(operation: Promise<LiveEpisode>): Promise<boolean> {
     try {
