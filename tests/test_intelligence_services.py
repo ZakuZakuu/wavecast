@@ -1,6 +1,5 @@
 import asyncio
 
-import pytest
 from wavecast.intelligence.curation import CuratorService
 from wavecast.intelligence.models import (
     ChapterPlan,
