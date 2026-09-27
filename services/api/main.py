@@ -5,6 +5,7 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from io import BytesIO
 from pathlib import Path
+from datetime import UTC, datetime
 from tempfile import TemporaryDirectory
 from time import monotonic
 from typing import Any, cast
@@ -429,6 +430,9 @@ async def stop_generation_worker() -> None:
     _generation_worker_task = None
 
 
+_PROGRESSIVE_CATCHUP_RETRY_SECONDS = 90
+
+
 def _queue_progressive_generation(
     episode: LiveEpisode,
     *,
@@ -460,14 +464,28 @@ def _queue_progressive_generation(
             ):
                 return episode
 
+        needs_music = buffer_decision(
+            episode,
+            baseline_seconds=generation_worker.policy.target_ahead_seconds,
+            max_chapters=generation_worker.policy.target_chapters,
+        ).needs_generation
+        needs_catchup = orchestrator.needs_progressive_catchup(episode)
+        if not force and not needs_music and not needs_catchup:
+            return episode
+
         if (
             not force
-            and not buffer_decision(
-                episode,
-                baseline_seconds=generation_worker.policy.target_ahead_seconds,
-                max_chapters=generation_worker.policy.target_chapters,
-            ).needs_generation
+            and not needs_music
+            and needs_catchup
+            and existing is not None
+            and existing.status is GenerationJobStatus.COMPLETED
+            and (
+                datetime.now(UTC) - existing.updated_at
+            ).total_seconds() < _PROGRESSIVE_CATCHUP_RETRY_SECONDS
         ):
+            # Catch-up may involve Research/Curator/Writer. Do not turn the
+            # heartbeat into a paid polling loop when a recent attempt already
+            # completed or deferred behind safe music.
             return episode
 
         generation_job_repository.request(
