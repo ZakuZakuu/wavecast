@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 import json
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from wavecast.orchestration.worker import GenerationWorker, GenerationWorkerPolicy
@@ -143,6 +144,11 @@ def test_heartbeat_does_not_requeue_when_ready_audio_ahead_is_healthy(monkeypatc
 
 
 def test_healthy_heartbeat_throttles_recent_program_catchup(monkeypatch) -> None:
+    monkeypatch.setattr(
+        api_module,
+        "buffer_decision",
+        lambda *_args, **_kwargs: SimpleNamespace(needs_generation=False),
+    )
     jobs = InMemoryGenerationJobRepository()
     monkeypatch.setattr(api_module, "generation_job_repository", jobs)
     monkeypatch.setattr(
@@ -168,6 +174,11 @@ def test_healthy_heartbeat_throttles_recent_program_catchup(monkeypatch) -> None
 
 
 def test_healthy_heartbeat_requeues_stale_program_catchup(monkeypatch) -> None:
+    monkeypatch.setattr(
+        api_module,
+        "buffer_decision",
+        lambda *_args, **_kwargs: SimpleNamespace(needs_generation=False),
+    )
     old_now = datetime.now(UTC) - timedelta(seconds=180)
     jobs = InMemoryGenerationJobRepository(now=lambda: old_now)
     monkeypatch.setattr(api_module, "generation_job_repository", jobs)
