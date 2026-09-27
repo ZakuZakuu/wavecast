@@ -177,6 +177,7 @@ class LiveEpisode(BaseModel):
     segments: list[MusicSegment | NarrationSegment]
     current_segment_id: str | None = None
     playback_position_seconds: int = Field(default=0, ge=0)
+    generation_latency_seconds: float = Field(default=0, ge=0, le=600)
     is_listener_active: bool = True
     is_playing: bool = True
     last_activity_at: datetime = Field(default_factory=utc_now)

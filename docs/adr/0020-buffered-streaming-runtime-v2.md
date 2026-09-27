@@ -638,3 +638,26 @@ The main implementation replaced by v2 is:
 
 Successful implementation should make WaveCast feel like a continuous radio
 product first and an AI generation system second.
+
+## Adaptive buffer implementation — September 27, 2026
+
+Refill admission and generation stopping share a deterministic decision using
+the browser checkpoint, playable seconds ahead (optional narration excluded as
+a blocker), successor readiness, mode, and a bounded recent refill latency.
+The latency estimate lives in the existing Episode snapshot, defaults to zero
+for older records, rises immediately for slower successful refills, and decays
+by 20% after faster ones. No schema migration is required.
+
+The target is the configured baseline or 1.5 times latency plus 30 seconds,
+whichever is larger; the adaptive contribution is capped at 600 seconds. The
+one/two-chapter cap still bounds generation and prevents repeated healthy-queue
+jobs. No successor always requires preparation. Less than 30 seconds remaining
+without a successor is urgent; this is not a provider deadline or a new
+cross-Episode queue priority system. FULL keeps its existing explicit drain path.
+
+This deliberately uses per-Episode successful refill wall time rather than a
+global provider percentile service. Failed/deferred refills are not observations.
+Worker ownership/lease hardening and queue prioritization are separate concerns.
+An already healthy queue skips expensive planning but still permits the existing
+browser-ended recovery to start its ready successor. No transport, timeline
+immutability, catalog identity, or seek-frontier contract changes.

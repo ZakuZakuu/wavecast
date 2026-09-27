@@ -11,6 +11,16 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
+### Local Runtime v2 milestone: adaptive buffer policy (awaiting review)
+
+- Based on `53bdde72ab64d043d5b27d2f07055447959d494c`; no live/provider calls or deployment.
+- API refill signals and orchestrator share a deterministic buffer decision. A long opening still requires a playable successor; unfinished optional narration does not make ready music unhealthy.
+- Successful refill latency is stored in the existing Episode JSON snapshot (old snapshots default to zero). The target adds a 50% latency margin plus 30 seconds, capped at 600 seconds, with the existing configured baseline and one/two-chapter cap retained. Slower observations take effect immediately; faster observations decay the estimate gradually.
+- A healthy queue is a no-op before expensive planning. FULL remains an explicit drain mode; this policy does not control browser time, alter seek boundaries, rewrite history, or introduce a playback deadline.
+- Urgency describes a missing successor with at most 30 seconds left. All refill jobs remain immediately eligible in the existing FIFO queue; cross-episode priority/preemption is not introduced.
+- Limitations: latency measures successful refill wall time, not individual provider stages, and is learned per Episode. Failed/deferred work does not supply a sample. Worker lease/listener hardening remains the next milestone.
+- Local-first workflow: finish implementation and local validation, then submit a coherent PR for human review. No browser ChatGPT review transport; no merge until review and merge-level checks.
+
 - **Current milestone:** Streaming Runtime v2 architecture and implementation after hosted live-listening validation exposed generation/playback coupling.
 - **Canonical base for capability wiring:** `b0937c835af470c3a86ee5540f8265c1efcd7f6a` (PR #82 merge commit).
 - **Hosted proof so far:** Better Auth/user context, DeepSeek recommendation inventory, Postgres persistence, Recommendation -> Program Proposal, and Program Detail are live in production. PR #81 removed the Postgres async-facade 500; PR #82 preserves the recommendation's editorial identity across Program Proposal materialization and hides unresolved mock artist metadata.

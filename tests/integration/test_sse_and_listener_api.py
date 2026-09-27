@@ -106,6 +106,9 @@ def test_heartbeat_requeues_completed_generation_when_buffer_is_low(monkeypatch)
 
 
 def test_heartbeat_does_not_requeue_when_ready_audio_ahead_is_healthy(monkeypatch) -> None:
+    # Isolate the healthy-buffer case from host filesystem/scheduling latency.
+    # Slow observed generation is covered separately below.
+    monkeypatch.setattr("wavecast.orchestration.episode.monotonic", lambda: 0.0)
     jobs = InMemoryGenerationJobRepository()
     worker = GenerationWorker(
         jobs,
@@ -136,6 +139,28 @@ def test_heartbeat_does_not_requeue_when_ready_audio_ahead_is_healthy(monkeypatc
     unchanged = jobs.get_for_episode(created["id"])
     assert unchanged is not None
     assert unchanged.status is GenerationJobStatus.COMPLETED
+
+
+def test_heartbeat_refills_earlier_after_slow_generation(monkeypatch) -> None:
+    jobs = InMemoryGenerationJobRepository()
+    worker = GenerationWorker(jobs, api_module.orchestrator, worker_id="adaptive-buffer")
+    monkeypatch.setattr(api_module, "generation_job_repository", jobs)
+    monkeypatch.setattr(api_module, "generation_worker", worker)
+    client = TestClient(app)
+    headers = {"X-Wavecast-Listener": "adaptive-buffer-listener"}
+    created = client.post("/api/episodes/from-seed/city-pop-misunderstood", headers=headers).json()
+    assert asyncio.run(worker.run_once())
+    episode = api_module.orchestrator.get(created["id"])
+    assert episode.has_ready_successor
+    successor = next(s for s in episode.ordered_segments if s.kind == "MUSIC" and s.id != episode.current_segment_id)
+    episode.segments = [s for s in episode.segments if s.id == episode.current_segment_id or s.chapter_id == successor.chapter_id]
+    episode.generation_latency_seconds = 400
+    api_module.orchestrator.repository.save(episode)
+    response = client.post(f"/api/episodes/{episode.id}/heartbeat", headers=headers)
+    assert response.status_code == 200
+    queued = jobs.get_for_episode(episode.id)
+    assert queued is not None
+    assert queued.status is GenerationJobStatus.PENDING
 
 
 def test_heartbeat_does_not_revive_failed_job_but_explicit_retry_does(monkeypatch) -> None:
