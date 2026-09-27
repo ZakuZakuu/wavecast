@@ -32,6 +32,7 @@ from wavecast.intelligence.models import (
     ChapterPlan,
     EditorialConnection,
     EditorialRelationType,
+    FastStartPlan,
     NarrativeRole,
     NoveltyDistance,
     OutputLanguage,
@@ -137,10 +138,9 @@ def service(tmp_path, llm: RecordingAssemblyLLM | None = None) -> LiveEpisodeAss
 
 
 def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypatch) -> None:
-    from wavecast.providers.config import ProviderSettings
-
     monkeypatch.chdir(tmp_path)
-    assembly = create_episode_assembly_service(ProviderSettings(mode="mock"))
+    llm = RecordingAssemblyLLM()
+    assembly = service(tmp_path, llm)
     opening = ResolvedTrack(
         track_ref="mock:opening",
         canonical_artist="Mira Fields",
@@ -191,6 +191,12 @@ def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypa
         if chapter.resolved_track is not None
     ]
     assert resolved_refs.count("mock:bridge") == 1
+    fast_start_calls = [
+        call
+        for call in llm.calls
+        if call["output_type"] is FastStartPlan
+    ]
+    assert len(fast_start_calls) == 1
 
 
 def test_locked_successor_is_inserted_when_curator_route_does_not_contain_it() -> None:
