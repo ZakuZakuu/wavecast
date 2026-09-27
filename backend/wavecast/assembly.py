@@ -414,19 +414,6 @@ class LiveEpisodeAssemblyService:
             resolved_count=sum(item.track is not None for item in resolved_chapters),
             unresolved_count=len(unresolved),
         )
-        resolved_track_count = sum(item.track is not None for item in resolved_chapters)
-        if resolved_track_count < 2:
-            raise EpisodeAssemblyError(
-                f"assembly requires at least two resolved tracks; got {resolved_track_count}",
-                stage="resolution",
-                reason_code="insufficient_resolved_tracks",
-                diagnostics={
-                    "resolved_track_count": resolved_track_count,
-                    "unresolved_track_count": len(unresolved),
-                    "required_resolved_track_count": 2,
-                },
-            )
-
         try:
             slot_contexts = _build_narration_slot_contexts(resolved_chapters)
         except NarrationPlacementError as error:
@@ -470,6 +457,17 @@ class LiveEpisodeAssemblyService:
         curator_ms = prepared.curator_ms
         resolution_ms = prepared.resolution_ms
         resolved_track_count = sum(item.track is not None for item in resolved_chapters)
+        if resolved_track_count < 2:
+            raise EpisodeAssemblyError(
+                f"assembly requires at least two resolved tracks; got {resolved_track_count}",
+                stage="resolution",
+                reason_code="insufficient_resolved_tracks",
+                diagnostics={
+                    "resolved_track_count": resolved_track_count,
+                    "unresolved_track_count": len(unresolved),
+                    "required_resolved_track_count": 2,
+                },
+            )
         trace = fast_result.trace
 
         opening_track = next(
@@ -951,6 +949,17 @@ def _build_progressive_session(
         )
 
     future_music_count = sum(item.track is not None for item in future)
+    if future_music_count < 1:
+        raise EpisodeAssemblyError(
+            "progressive route has no resolved future music after the opening",
+            stage="resolution",
+            reason_code="no_progressive_future_music",
+            diagnostics={
+                "resolved_future_track_count": future_music_count,
+                "unresolved_track_count": len(prepared.unresolved),
+                "required_future_track_count": 1,
+            },
+        )
     timing_plan = build_program_timing_plan(
         desired_total_seconds=request.desired_duration_seconds,
         target_narration_ratio=narration_ratio,
