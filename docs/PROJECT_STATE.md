@@ -40,6 +40,29 @@ The v2 target is a durable backend Generation Coordinator with a ready queue,
 graceful degradation, progressive/full convergence on one Episode identity, and
 declarative DJ arrangement layered on the stable browser transport.
 
+### Runtime v2 implementation progress
+
+- PR #102 separates **playable readiness** from the contiguous seek frontier.
+  `generated_frontier_seconds` remains the browser seek boundary, while
+  `ready_audio_seconds_ahead` and `has_ready_successor` describe whether
+  playback can continue through optional narration gaps. Browser completion may
+  skip unfinished narration only when another ready source is already available.
+- The current Slice C work removes **TTS from the music-readiness critical
+  path**. Staged generation may persist AUDIO_READY music together with
+  SCRIPT_READY narration; the durable worker publishes that state first, then
+  attempts narration materialization as best-effort enrichment. TTS failure may
+  skip only speculative narration and must not fail an otherwise healthy music
+  generation job.
+- Two coupling points intentionally remain after this slice: Writer still runs
+  before a staged chapter is published, and initial
+  `ProgressiveAssemblySession` preparation still runs the broader
+  research/curation/resolution path before the first staged successor exists.
+  These are the next continuity targets before Arrangement/DJ v2.
+- The legacy Web `MixEngine` is not the active EpisodePlayer transport and must
+  not be revived as a synthetic playback clock. Arrangement/DJ v2 remains
+  deferred until continuity no longer depends on slow narration/intelligence
+  stages.
+
 ## Phase 7A progressive generation contract
 
 Phase 7A changes the runtime from a static preloaded future to bounded
