@@ -84,9 +84,17 @@ declarative DJ arrangement layered on the stable browser transport.
   immediately without waiting for full planning.
 - FastStart fallback output is never frozen into Episode identity; degraded fast
   intelligence falls back to the existing full-planning path instead.
-- The next continuity target is adaptive buffer policy: use current-source
-  remaining time and observed generation latency rather than only static ready
-  seconds/chapter counts. Arrangement/DJ v2 remains after that continuity work.
+- Adaptive buffer policy is now merged: refill admission and orchestrator
+  stopping share current-source remaining time, playable seconds ahead, real
+  successor readiness, bounded per-Episode successful refill latency, mode, and
+  the existing one/two-chapter cap. The policy never acts as a playback deadline.
+- The current worker-hardening slice makes durable lease ownership an execution
+  boundary: stale workers stop in-flight generation when ownership cannot be
+  renewed, completion-time lease loss cannot duplicate Writer/TTS enrichment,
+  and worker shutdown cancels claimed provider work instead of leaving orphan
+  coroutines. Listener leave/resume and FULL lifetime semantics remain unchanged.
+- After worker/listener hardening, the next product-facing milestone is
+  deterministic Arrangement/DJ v2 on top of the stable browser transport.
 - The legacy Web `MixEngine` is not the active EpisodePlayer transport and must
   not be revived as a synthetic playback clock. Arrangement/DJ v2 remains
   deferred until continuity no longer depends on slow narration/intelligence

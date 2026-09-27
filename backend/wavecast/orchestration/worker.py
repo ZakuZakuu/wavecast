@@ -89,57 +89,113 @@ class GenerationWorker:
             return False
 
         renewal_stop = asyncio.Event()
-        renewal = asyncio.create_task(self._renew_lease(job, renewal_stop))
+        lease_lost = asyncio.Event()
+        renewal = asyncio.create_task(
+            self._renew_lease(job, renewal_stop, lease_lost)
+        )
+        work = asyncio.create_task(self._execute_claimed_job(job))
+        lease_watch = asyncio.create_task(lease_lost.wait())
         enrich_episode_id: str | None = None
         try:
-            if job.mode is GenerationJobMode.FULL:
-                await self.orchestrator.materialize_all_async(job.episode_id)
-            else:
-                await self.orchestrator.ensure_buffer_async(
-                    job.episode_id,
-                    target_chapters=self.policy.target_chapters,
-                    target_ahead_seconds=self.policy.target_ahead_seconds,
-                )
-                # Music readiness is the durable success boundary. Narration
-                # enrichment is scheduled only after the generation job is
-                # completed, so slow TTS cannot hold the refill channel RUNNING.
-                enrich_episode_id = job.episode_id
-        except EpisodeRuntimeError as error:
-            if (
-                job.mode is GenerationJobMode.PROGRESSIVE
-                and "inactive" in str(error).casefold()
-            ):
-                await asyncio.to_thread(self.jobs.cancel_for_episode, job.episode_id)
-            else:
-                await self._retry_or_fail(job, "episode_runtime", retryable=True)
-        except EpisodeConcurrencyError:
-            await self._retry_or_fail(job, "episode_concurrency", retryable=True)
-        except ProviderError as error:
-            await self._retry_or_fail(
-                job,
-                _provider_error_code(error),
-                retryable=is_retryable(error),
+            await asyncio.wait(
+                {work, lease_watch},
+                return_when=asyncio.FIRST_COMPLETED,
             )
-        except Exception:
-            # Never persist exception text: provider responses, URLs, or other
-            # sensitive implementation details do not belong in durable job state.
-            await self._retry_or_fail(job, "generation_internal", retryable=False)
-        else:
-            with suppress(GenerationJobLeaseError):
-                await asyncio.to_thread(
-                    self.jobs.complete,
-                    job.id,
-                    self.worker_id,
-                    job.request_version,
+            if lease_lost.is_set():
+                # Ownership is no longer trustworthy. Stop expensive provider
+                # work and leave terminal job mutation to the current lease owner.
+                if not work.done():
+                    work.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await work
+                return True
+
+            lease_watch.cancel()
+            with suppress(asyncio.CancelledError):
+                await lease_watch
+            try:
+                enrich_episode_id = await work
+            except EpisodeRuntimeError as error:
+                if (
+                    job.mode is GenerationJobMode.PROGRESSIVE
+                    and "inactive" in str(error).casefold()
+                ):
+                    await asyncio.to_thread(
+                        self.jobs.cancel_for_episode,
+                        job.episode_id,
+                    )
+                else:
+                    await self._retry_or_fail(
+                        job,
+                        "episode_runtime",
+                        retryable=True,
+                    )
+            except EpisodeConcurrencyError:
+                await self._retry_or_fail(
+                    job,
+                    "episode_concurrency",
+                    retryable=True,
                 )
+            except ProviderError as error:
+                await self._retry_or_fail(
+                    job,
+                    _provider_error_code(error),
+                    retryable=is_retryable(error),
+                )
+            except Exception:
+                # Never persist exception text: provider responses, URLs, or other
+                # sensitive implementation details do not belong in durable job state.
+                await self._retry_or_fail(
+                    job,
+                    "generation_internal",
+                    retryable=False,
+                )
+            else:
+                if lease_lost.is_set():
+                    enrich_episode_id = None
+                else:
+                    try:
+                        await asyncio.to_thread(
+                            self.jobs.complete,
+                            job.id,
+                            self.worker_id,
+                            job.request_version,
+                        )
+                    except GenerationJobLeaseError:
+                        # A newer owner is responsible for terminal state and
+                        # optional enrichment. Do not duplicate Writer/TTS work.
+                        enrich_episode_id = None
         finally:
             renewal_stop.set()
+            lease_watch.cancel()
             renewal.cancel()
+            if not work.done():
+                work.cancel()
+            with suppress(asyncio.CancelledError):
+                await lease_watch
             with suppress(asyncio.CancelledError):
                 await renewal
+            with suppress(asyncio.CancelledError, Exception):
+                await work
         if enrich_episode_id is not None:
             self._schedule_narration_enrichment(enrich_episode_id)
         return True
+
+    async def _execute_claimed_job(
+        self, job: GenerationJob
+    ) -> str | None:
+        if job.mode is GenerationJobMode.FULL:
+            await self.orchestrator.materialize_all_async(job.episode_id)
+            return None
+        await self.orchestrator.ensure_buffer_async(
+            job.episode_id,
+            target_chapters=self.policy.target_chapters,
+            target_ahead_seconds=self.policy.target_ahead_seconds,
+        )
+        # Music readiness is the durable success boundary. Narration enrichment
+        # is scheduled only after the generation job is completed, so slow TTS
+        # cannot hold the refill channel RUNNING.
+        return job.episode_id
 
     def _schedule_narration_enrichment(self, episode_id: str) -> None:
         if episode_id in self._enrichment_episode_ids:
@@ -180,21 +236,50 @@ class GenerationWorker:
 
     async def serve(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
+            run = asyncio.create_task(self.run_once())
+            stop_watch = asyncio.create_task(stop.wait())
             try:
-                worked = await self.run_once()
-            except Exception:
-                # Database availability may transiently affect claim/lease calls.
-                # Durable jobs remain in Postgres and can be claimed later.
-                worked = False
+                await asyncio.wait(
+                    {run, stop_watch},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if stop.is_set() and not run.done():
+                    run.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await run
+                    return
+                stop_watch.cancel()
+                with suppress(asyncio.CancelledError):
+                    await stop_watch
+                try:
+                    worked = await run
+                except Exception:
+                    # Database availability may transiently affect claim/lease calls.
+                    # Durable jobs remain in Postgres and can be claimed later.
+                    worked = False
+            finally:
+                stop_watch.cancel()
+                if not run.done():
+                    run.cancel()
+                with suppress(asyncio.CancelledError):
+                    await stop_watch
+                with suppress(asyncio.CancelledError, Exception):
+                    await run
             if worked:
                 continue
             try:
-                await asyncio.wait_for(stop.wait(), timeout=self.policy.idle_sleep_seconds)
+                await asyncio.wait_for(
+                    stop.wait(),
+                    timeout=self.policy.idle_sleep_seconds,
+                )
             except TimeoutError:
                 pass
 
     async def _renew_lease(
-        self, job: GenerationJob, stop: asyncio.Event
+        self,
+        job: GenerationJob,
+        stop: asyncio.Event,
+        lease_lost: asyncio.Event,
     ) -> None:
         interval = max(10.0, self.policy.lease_seconds / 3)
         while not stop.is_set():
@@ -210,7 +295,11 @@ class GenerationWorker:
                     self.worker_id,
                     lease_seconds=self.policy.lease_seconds,
                 )
-            except GenerationJobLeaseError:
+            except Exception:
+                # If ownership cannot be renewed or verified, fail closed.
+                # Continuing provider work after an uncertain lease risks
+                # duplicate paid work after another worker reclaims the job.
+                lease_lost.set()
                 return
 
     async def _retry_or_fail(
