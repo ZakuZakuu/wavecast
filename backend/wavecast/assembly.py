@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from time import perf_counter
 from uuid import uuid4
@@ -1764,7 +1765,7 @@ class StagedProgressiveChapterGenerator:
 
 def _generated_runtime_chapter(
     chapter_id: str,
-    segments: list[MusicSegment | NarrationSegment],
+    segments: Sequence[MusicSegment | NarrationSegment],
     *,
     base_order: int,
 ) -> GeneratedChapter:
