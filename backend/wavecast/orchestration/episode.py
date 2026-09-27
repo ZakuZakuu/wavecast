@@ -274,7 +274,12 @@ class EpisodeOrchestrator:
                 self.repository.save(episode)
 
     def capture_generation_snapshot(self, episode_id: str) -> GenerationSnapshot:
-        episode = self._active_episode(episode_id)
+        episode = self.get(episode_id)
+        if (
+            not episode.is_listener_active
+            and episode.generation_mode is not GenerationMode.FULL
+        ):
+            raise EpisodeRuntimeError("listener session is inactive; generation is progressive")
         segments = episode.ordered_segments
         if not segments:
             raise EpisodeRuntimeError("episode has no timeline segments")
@@ -296,8 +301,11 @@ class EpisodeOrchestrator:
         snapshot: GenerationSnapshot,
     ) -> LiveEpisode:
         latest = self.get(episode_id)
-        if not latest.is_listener_active:
-            raise EpisodeRuntimeError("listener session is inactive; discard generated chapter")
+        if (
+            not latest.is_listener_active
+            and latest.generation_mode is not GenerationMode.FULL
+        ):
+            raise EpisodeRuntimeError("listener session is inactive; discard progressive chapter")
         if latest.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
             raise EpisodeRuntimeError("episode is no longer progressively writable")
         current = latest.ordered_segments
@@ -545,12 +553,34 @@ class EpisodeOrchestrator:
         episode.last_heartbeat_at = episode.last_activity_at
         return self.repository.save(episode)
 
+    def request_full_generation(self, episode_id: str) -> LiveEpisode:
+        """Upgrade one existing Episode to durable full-generation mode."""
+        episode = self.get(episode_id)
+        if episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+            return episode
+        episode.generation_mode = GenerationMode.FULL
+        episode.state = EpisodeState.MATERIALIZING
+        episode.last_activity_at = self.now()
+        return self.repository.save(episode)
+
+    def abort_full_generation(self, episode_id: str) -> LiveEpisode:
+        """Return a failed FULL request to progressive listening without rewriting history."""
+        episode = self.get(episode_id)
+        if episode.state is EpisodeState.MATERIALIZING:
+            episode.state = EpisodeState.STREAMING
+            episode.generation_mode = GenerationMode.PROGRESSIVE
+            episode.last_activity_at = self.now()
+            return self.repository.save(episode)
+        return episode
+
     def materialize_all(self, episode_id: str) -> LiveEpisode:
         return asyncio.run(self.materialize_all_async(episode_id))
 
     async def materialize_all_async(self, episode_id: str) -> LiveEpisode:
-        """Drain the bounded generator before freezing a complete local episode."""
-        episode = await asyncio.to_thread(self._active_episode, episode_id)
+        """Drain the same durable Episode even when no listener is currently active."""
+        episode = await asyncio.to_thread(self.get, episode_id)
+        if episode.state is EpisodeState.MATERIALIZED:
+            return episode
         episode.generation_mode = GenerationMode.FULL
         episode.state = EpisodeState.MATERIALIZING
         episode = await asyncio.to_thread(self.repository.save, episode)
@@ -637,7 +667,10 @@ class EpisodeOrchestrator:
         snapshot = await asyncio.to_thread(self.capture_generation_snapshot, episode_id)
         prepared = await self.progressive_runtime.prepare_session(snapshot.episode)
         latest = await asyncio.to_thread(self.repository.get, episode_id)
-        if not latest.is_listener_active:
+        if (
+            not latest.is_listener_active
+            and latest.generation_mode is not GenerationMode.FULL
+        ):
             raise EpisodeRuntimeError("listener session is inactive; discard prepared session")
         if latest.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
             raise EpisodeRuntimeError("episode is no longer progressively writable")

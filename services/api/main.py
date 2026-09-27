@@ -442,6 +442,11 @@ def _queue_progressive_generation(episode: LiveEpisode) -> LiveEpisode:
 
 def _cancel_generation(episode_id: str) -> None:
     try:
+        job = generation_job_repository.get_for_episode(episode_id)
+        if job is not None and job.mode is GenerationJobMode.FULL:
+            # Explicit full generation belongs to the Episode, not to the current
+            # browser session. Leaving playback must not cancel preparation.
+            return
         generation_job_repository.cancel_for_episode(episode_id)
     except Exception:
         pass
@@ -1566,44 +1571,31 @@ async def materialize_narration(
         raise HTTPException(status_code=502, detail=str(error)) from error
 
 
-@app.post("/api/episodes/{episode_id}/materialize", response_model=LiveEpisode)
+@app.post(
+    "/api/episodes/{episode_id}/materialize",
+    response_model=LiveEpisode,
+    status_code=202,
+)
 async def materialize(episode_id: str, request: Request) -> LiveEpisode:
     actor = principal(request)
     await to_thread.run_sync(owned, episode_id, actor)
-    episode: LiveEpisode | None = None
+    episode = await to_thread.run_sync(orchestrator.request_full_generation, episode_id)
+    if episode.state is EpisodeState.MATERIALIZED:
+        return episode
     try:
-        await scheduler.materialize_all(episode_id)
-        episode = await to_thread.run_sync(orchestrator.prepare_materialization, episode_id)
-        for segment in episode.timeline_segments:
-            if isinstance(segment, NarrationSegment) and not segment.is_audio_ready:
-                await narration_materializer.materialize(segment)
-        episode.state = EpisodeState.MATERIALIZED
-        episode.last_activity_at = orchestrator.now()
-        return await to_thread.run_sync(repository.save, episode)
-    except EpisodeConcurrencyError as error:
-        raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
-    except ProviderConfigurationError as error:
-        if episode is not None:
-            episode.state = EpisodeState.STREAMING
-            try:
-                await to_thread.run_sync(repository.save, episode)
-            except EpisodeConcurrencyError as save_error:
-                raise HTTPException(
-                    status_code=409, detail="Episode changed; reload and retry"
-                ) from save_error
-        raise HTTPException(status_code=503, detail=str(error)) from error
-    except ProviderError as error:
-        if episode is not None:
-            episode.state = EpisodeState.STREAMING
-            try:
-                await to_thread.run_sync(repository.save, episode)
-            except EpisodeConcurrencyError as save_error:
-                raise HTTPException(
-                    status_code=409, detail="Episode changed; reload and retry"
-                ) from save_error
-        raise HTTPException(status_code=502, detail=str(error)) from error
-    except EpisodeRuntimeError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
+        await to_thread.run_sync(
+            lambda: generation_job_repository.request(
+                episode_id,
+                GenerationJobMode.FULL,
+            )
+        )
+    except Exception as error:
+        await to_thread.run_sync(orchestrator.abort_full_generation, episode_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Full episode generation queue is unavailable",
+        ) from error
+    return episode
 
 
 @app.post("/api/episodes/{episode_id}/replan", response_model=LiveEpisode)
