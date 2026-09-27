@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -38,6 +39,8 @@ from .narration_enrichment import author_pending_narration
 from .runtime import ProgressivePlanningDeferred, StagedProgressiveRuntime
 
 SESSION_TTL = timedelta(seconds=30)
+logger = logging.getLogger(__name__)
+
 DEFAULT_BUFFER_CHAPTERS = 2
 DEFAULT_BUFFER_AHEAD_SECONDS = 5 * 60
 
@@ -782,7 +785,14 @@ class EpisodeOrchestrator:
             detached = candidate.model_copy(deep=True)
             try:
                 materialized = await materialize(detached)
-            except ProviderError:
+            except ProviderError as error:
+                logger.warning(
+                    "narration_enrichment_failed episode_id=%s segment_id=%s "
+                    "stage=tts error_type=%s",
+                    episode_id,
+                    candidate_id,
+                    type(error).__name__,
+                )
                 await asyncio.to_thread(
                     self._finish_narration_enrichment,
                     episode_id,
