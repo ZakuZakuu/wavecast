@@ -330,9 +330,22 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         awaitingSuccessorRef.current = false;
         // An armed successor is already durable, so a lost persistence response
         // must not interrupt audio that has successfully handed off locally.
-        if (!canHandoffOptimistically) {
-          setBrowserPlaying(false);
+        if (canHandoffOptimistically && armedSegment) {
+          void api.completeHandoff(localEpisode.id, current.id, armedSegment.id)
+            .then((reconciled) => {
+              playbackAnchorRef.current = playbackAnchor(reconciled);
+              setEpisode(reconciled);
+              setBrowserPlaying(
+                reconciled.is_playing && reconciled.is_listener_active,
+              );
+              setError(null);
+            })
+            .catch(() => {
+              setError("播放继续中，但状态暂时没有同步");
+            });
+          return;
         }
+        setBrowserPlaying(false);
         setError(reason instanceof Error ? reason.message : "播放状态暂时没有同步");
       });
   }, [browserPlaying, current, localEpisode, setEpisode]);
@@ -460,8 +473,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
               || latest.current_segment_id !== current.id
             ) return;
             armedSuccessorIdRef.current = upcoming.id;
-            armedEpisodeRef.current = armed;
-            setEpisode(armed);
+            const effectiveEpisode = latest.version > armed.version ? latest : armed;
+            armedEpisodeRef.current = effectiveEpisode;
+            if (armed.version >= latest.version) {
+              setEpisode(armed);
+            }
           })
           .catch(() => {
             // Handoff arming is an optimization. Fall back to the conservative
