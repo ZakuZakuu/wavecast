@@ -133,3 +133,18 @@ def test_postgres_round_trips_typed_progressive_session_and_legacy_payload() -> 
     assert "progressive_session" not in legacy
     assert LiveEpisode.model_validate(legacy).progressive_session is None
     repository.close()
+
+
+def test_postgres_heartbeat_does_not_advance_compare_and_swap_version() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresEpisodeRepository(DATABASE_URL)
+    orchestrator = EpisodeOrchestrator(repository)
+    episode = orchestrator.start_or_resume(postgres_seed(), "heartbeat-cas-listener")
+    before = repository.get(episode.id)
+    heartbeat = orchestrator.heartbeat(episode.id)
+    after = repository.get(episode.id)
+
+    assert heartbeat.version == before.version
+    assert after.version == before.version
+    assert after.last_heartbeat_at >= before.last_heartbeat_at
+    repository.close()

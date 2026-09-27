@@ -75,6 +75,12 @@ class InMemoryEpisodeRepository:
         self._episode_id_by_listener_seed[(episode.listener_id, episode.seed_id)] = episode.id
         return episode
 
+    def touch_heartbeat(self, episode_id: str, at: datetime) -> LiveEpisode:
+        episode = self.get(episode_id)
+        episode.last_activity_at = at
+        episode.last_heartbeat_at = at
+        return episode
+
     def get(self, episode_id: str) -> LiveEpisode:
         try:
             return self._episodes[episode_id]
@@ -252,10 +258,8 @@ class EpisodeOrchestrator:
         return episode
 
     def heartbeat(self, episode_id: str) -> LiveEpisode:
-        episode = self._active_episode(episode_id)
-        episode.last_activity_at = self.now()
-        episode.last_heartbeat_at = episode.last_activity_at
-        return self.repository.save(episode)
+        self._active_episode(episode_id)
+        return self.repository.touch_heartbeat(episode_id, self.now())
 
     def expire_stale_sessions(self) -> None:
         now = self.now()
