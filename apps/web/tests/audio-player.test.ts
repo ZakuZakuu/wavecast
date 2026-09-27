@@ -38,8 +38,37 @@ describe("browser audio lifecycle", () => {
     expect(audio.currentTime).toBe(7.8);
 
     syncAudioPlayback(audio, { sourceUrl: audio.src, positionSeconds: 12, playing: false });
-    expect(audio.currentTime).toBe(12);
+    expect(audio.currentTime).toBe(7.8);
     expect(audio.pause).toHaveBeenCalled();
+
+    syncAudioPlayback(audio, {
+      sourceUrl: audio.src,
+      positionSeconds: 12,
+      playing: false,
+      syncPosition: true,
+    });
+    expect(audio.currentTime).toBe(12);
+  });
+
+  it("does not chase browser playback drift unless an explicit seek is requested", () => {
+    const audio = fakeAudio();
+    audio.src = "https://example.test/audio.mp3";
+    audio.currentTime = 4;
+
+    syncAudioPlayback(audio, {
+      sourceUrl: audio.src,
+      positionSeconds: 15,
+      playing: true,
+    });
+    expect(audio.currentTime).toBe(4);
+
+    syncAudioPlayback(audio, {
+      sourceUrl: audio.src,
+      positionSeconds: 15,
+      playing: true,
+      syncPosition: true,
+    });
+    expect(audio.currentTime).toBe(15);
   });
 
   it("forwards time updates and ended events and cleans up listeners", () => {
