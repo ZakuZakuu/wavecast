@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol
@@ -17,6 +18,9 @@ from wavecast.models.episode import (
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.runtime import StagedProgressiveRuntime
 from wavecast.storage.episodes import EpisodeConcurrencyError, EpisodeRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 class NarrationAuthoringHost(Protocol):
@@ -76,10 +80,34 @@ async def author_pending_narration(
         )
 
         generated: GeneratedChapter | None = None
-        if not should_degrade:
+        if should_degrade:
+            if exposed:
+                reason = "exposed"
+            elif not session_chapter.slot_contexts:
+                reason = "no_slots"
+            else:
+                reason = "unresolved_music"
+            logger.info(
+                "narration_authoring_degraded episode_id=%s chapter_id=%s reason=%s",
+                episode_id,
+                chapter_id,
+                reason,
+            )
+        else:
             generated = await runtime.author_narration(
                 episode.model_copy(deep=True),
                 chapter_id,
+            )
+            narration_count = sum(
+                isinstance(segment, NarrationSegment)
+                for segment in generated.segments
+            )
+            logger.info(
+                "narration_authoring_generated episode_id=%s chapter_id=%s "
+                "narration_segments=%s",
+                episode_id,
+                chapter_id,
+                narration_count,
             )
 
         await asyncio.to_thread(

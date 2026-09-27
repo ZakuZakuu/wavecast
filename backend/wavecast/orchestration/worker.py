@@ -9,6 +9,7 @@ without changing Episode semantics.
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Final
@@ -30,6 +31,8 @@ from wavecast.storage.generation_jobs import (
     GenerationJobMode,
     GenerationJobRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_READY_AHEAD_SECONDS: Final = 180
 DEFAULT_READY_CHAPTERS: Final = 2
@@ -213,17 +216,58 @@ class GenerationWorker:
     async def _enrich_narration(self, episode_id: str) -> None:
         # Music readiness is already durable before this optional task starts.
         # Writer creates SCRIPT_READY narration first; TTS enriches it only if
-        # the chapter is still speculative. Process loss may omit narration but
-        # cannot lose music or rewrite exposed playback history.
-        with suppress(Exception):
-            await self.orchestrator.author_pending_narration_async(
+        # the chapter is still speculative. Log only safe stage/state metadata:
+        # never prompts, model output, provider URLs, or exception text.
+        try:
+            authored = await self.orchestrator.author_pending_narration_async(
                 episode_id,
                 max_chapters=self.policy.target_chapters,
             )
-            await self.orchestrator.materialize_pending_narration_async(
+        except Exception as error:
+            logger.warning(
+                "narration_enrichment_failed episode_id=%s stage=writer error_type=%s",
+                episode_id,
+                type(error).__name__,
+            )
+            return
+
+        authored_counts = _narration_state_counts(authored)
+        logger.info(
+            "narration_enrichment_stage episode_id=%s stage=writer "
+            "script_ready=%s audio_ready=%s skipped=%s authored_chapters=%s",
+            episode_id,
+            authored_counts["SCRIPT_READY"],
+            authored_counts["AUDIO_READY"],
+            authored_counts["SKIPPED"],
+            len(
+                authored.progressive_session.narration_authored_chapter_ids
+                if authored.progressive_session is not None
+                else []
+            ),
+        )
+
+        try:
+            materialized = await self.orchestrator.materialize_pending_narration_async(
                 episode_id,
                 max_segments=self.policy.target_chapters,
             )
+        except Exception as error:
+            logger.warning(
+                "narration_enrichment_failed episode_id=%s stage=tts error_type=%s",
+                episode_id,
+                type(error).__name__,
+            )
+            return
+
+        materialized_counts = _narration_state_counts(materialized)
+        logger.info(
+            "narration_enrichment_stage episode_id=%s stage=tts "
+            "script_ready=%s audio_ready=%s skipped=%s",
+            episode_id,
+            materialized_counts["SCRIPT_READY"],
+            materialized_counts["AUDIO_READY"],
+            materialized_counts["SKIPPED"],
+        )
 
     async def stop_enrichment(self) -> None:
         tasks = list(self._enrichment_tasks)
@@ -335,6 +379,18 @@ class GenerationWorker:
                 job.request_version,
                 error_code=error_code,
             )
+
+
+def _narration_state_counts(episode: object) -> dict[str, int]:
+    counts = {"SCRIPT_READY": 0, "AUDIO_READY": 0, "SKIPPED": 0}
+    segments = getattr(episode, "timeline_segments", ())
+    for segment in segments:
+        if getattr(getattr(segment, "kind", None), "value", None) != "NARRATION":
+            continue
+        state = getattr(getattr(segment, "state", None), "value", None)
+        if state in counts:
+            counts[state] += 1
+    return counts
 
 
 def _provider_error_code(error: ProviderError) -> str:
