@@ -76,6 +76,7 @@ class GenerationWorker:
         self.orchestrator = orchestrator
         self.worker_id = normalized
         self.policy = policy or GenerationWorkerPolicy()
+        self._enrichment_tasks: set[asyncio.Task[None]] = set()
 
     async def run_once(self) -> bool:
         job = await asyncio.to_thread(
@@ -88,6 +89,7 @@ class GenerationWorker:
 
         renewal_stop = asyncio.Event()
         renewal = asyncio.create_task(self._renew_lease(job, renewal_stop))
+        enrich_episode_id: str | None = None
         try:
             if job.mode is GenerationJobMode.FULL:
                 await self.orchestrator.materialize_all_async(job.episode_id)
@@ -97,17 +99,10 @@ class GenerationWorker:
                     target_chapters=self.policy.target_chapters,
                     target_ahead_seconds=self.policy.target_ahead_seconds,
                 )
-                # Publish ready music first. Narration enrichment is strictly
-                # best-effort: once continuity is durable, a TTS or enrichment
-                # failure must not poison the generation job and prevent later
-                # music replenishment.
-                try:
-                    await self.orchestrator.materialize_pending_narration_async(
-                        job.episode_id,
-                        max_segments=self.policy.target_chapters,
-                    )
-                except Exception:
-                    pass
+                # Music readiness is the durable success boundary. Narration
+                # enrichment is scheduled only after the generation job is
+                # completed, so slow TTS cannot hold the refill channel RUNNING.
+                enrich_episode_id = job.episode_id
         except EpisodeRuntimeError as error:
             if (
                 job.mode is GenerationJobMode.PROGRESSIVE
@@ -141,7 +136,33 @@ class GenerationWorker:
             renewal.cancel()
             with suppress(asyncio.CancelledError):
                 await renewal
+        if enrich_episode_id is not None:
+            self._schedule_narration_enrichment(enrich_episode_id)
         return True
+
+    def _schedule_narration_enrichment(self, episode_id: str) -> None:
+        task = asyncio.create_task(self._enrich_narration(episode_id))
+        self._enrichment_tasks.add(task)
+        task.add_done_callback(self._enrichment_tasks.discard)
+
+    async def _enrich_narration(self, episode_id: str) -> None:
+        # SCRIPT_READY state is durable, so this task is never authoritative.
+        # Process loss may omit optional narration but cannot lose music or
+        # corrupt Episode identity; FULL generation materializes narration
+        # synchronously before freezing.
+        with suppress(Exception):
+            await self.orchestrator.materialize_pending_narration_async(
+                episode_id,
+                max_segments=self.policy.target_chapters,
+            )
+
+    async def stop_enrichment(self) -> None:
+        tasks = list(self._enrichment_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._enrichment_tasks.clear()
 
     async def serve(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
