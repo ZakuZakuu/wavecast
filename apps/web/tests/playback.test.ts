@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentOffset, shouldArmHandoff } from "../lib/playback";
+import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentAtPosition, segmentOffset, shouldArmHandoff } from "../lib/playback";
 import type { LiveEpisode } from "../lib/types";
 
 const episode: LiveEpisode = {
@@ -178,5 +178,29 @@ describe("armed browser handoff", () => {
       ...readySuccessor,
       audio_source_url: null,
     })).toBe(false);
+  });
+});
+
+
+describe("local seek target resolution", () => {
+  it("maps a generated timeline position to the same half-open segment boundary as the backend", () => {
+    expect(segmentAtPosition(episode, 0)?.id).toBe("opening");
+    expect(segmentAtPosition(episode, 21.9)?.id).toBe("opening");
+    expect(segmentAtPosition(episode, 22)?.id).toBe("narration");
+  });
+
+  it("removes skipped narration from the local seek timeline", () => {
+    const skipped = {
+      ...episode,
+      segments: episode.segments.map((segment) =>
+        segment.id === "narration"
+          ? { ...segment, state: "SKIPPED" as const }
+          : segment.id === "bridge"
+            ? { ...segment, state: "AUDIO_READY" as const }
+            : segment,
+      ),
+    };
+
+    expect(segmentAtPosition(skipped, 22)?.id).toBe("bridge");
   });
 });

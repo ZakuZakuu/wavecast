@@ -1562,6 +1562,26 @@ def complete_handoff(
     return _queue_progressive_generation(episode)
 
 
+@app.post(
+    "/api/episodes/{episode_id}/completed/{segment_id}",
+    response_model=LiveEpisode,
+)
+def completed_segment(
+    episode_id: str,
+    segment_id: str,
+    request: Request,
+) -> LiveEpisode:
+    episode = operate(
+        episode_id,
+        principal(request),
+        lambda: orchestrator.complete_current_segment(
+            episode_id,
+            expected_segment_id=segment_id,
+        ),
+    )
+    return _queue_progressive_generation(episode, force=True)
+
+
 @app.post("/api/episodes/{episode_id}/completed", response_model=LiveEpisode)
 def completed(episode_id: str, request: Request) -> LiveEpisode:
     episode = operate(
