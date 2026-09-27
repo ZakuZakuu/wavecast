@@ -56,10 +56,14 @@ class StagedProgressiveRuntimeAdapter:
         )
         if opening is None:
             return None
+        opening_track_ref = opening.track_ref
+        opening_artist = opening.artist
+        opening_title = opening.title
+        assert opening_track_ref and opening_artist and opening_title
         opening_track = ResolvedTrack(
-            track_ref=opening.track_ref,
-            canonical_artist=opening.artist,
-            canonical_title=opening.title,
+            track_ref=opening_track_ref,
+            canonical_artist=opening_artist,
+            canonical_title=opening_title,
         )
         from wavecast.assembly import LiveEpisodeAssemblyRequest
 
@@ -123,15 +127,18 @@ class StagedProgressiveRuntimeAdapter:
             ),
             None,
         )
-        locked_successor = (
-            ResolvedTrack(
-                track_ref=locked_segment.track_ref,
-                canonical_artist=locked_segment.artist,
-                canonical_title=locked_segment.title,
+        if locked_segment is None:
+            locked_successor = None
+        else:
+            locked_track_ref = locked_segment.track_ref
+            locked_artist = locked_segment.artist
+            locked_title = locked_segment.title
+            assert locked_track_ref and locked_artist and locked_title
+            locked_successor = ResolvedTrack(
+                track_ref=locked_track_ref,
+                canonical_artist=locked_artist,
+                canonical_title=locked_title,
             )
-            if locked_segment is not None
-            else None
-        )
         return await self.assembly.prepare_progressive_session(
             request,
             opening_track=opening_track,
