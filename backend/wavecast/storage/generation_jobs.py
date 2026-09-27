@@ -195,6 +195,7 @@ class InMemoryGenerationJobRepository:
                 dominant_mode = _dominant_mode(existing.mode, mode)
                 reactivating = existing.status in {
                     GenerationJobStatus.COMPLETED,
+                    GenerationJobStatus.FAILED,
                     GenerationJobStatus.CANCELLED,
                 }
                 upgrading = dominant_mode is not existing.mode
