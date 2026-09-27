@@ -458,7 +458,8 @@ def _queue_progressive_generation(
 
         if (
             not force
-            and episode.buffer_ahead_seconds
+            and episode.has_ready_successor
+            and episode.ready_audio_seconds_ahead
             >= generation_worker.policy.target_ahead_seconds
         ):
             return episode
