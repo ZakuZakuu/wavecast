@@ -857,12 +857,18 @@ class EpisodeOrchestrator:
         ):
             return latest
 
-        return await asyncio.to_thread(
+        appended = await asyncio.to_thread(
             self.append_generated_chapter,
             episode_id,
             chapter,
             snapshot,
         )
+        # If the browser already reported the opening as ended while FastStart
+        # was running, do not wait for full route planning before resuming the
+        # newly durable successor.
+        self._start_ready_successor(appended)
+        appended.last_activity_at = self.now()
+        return await asyncio.to_thread(self.repository.save, appended)
 
     async def _ensure_progressive_session(
         self, episode_id: str, episode: LiveEpisode
