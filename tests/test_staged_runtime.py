@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 from wavecast.assembly import create_episode_assembly_service
+from wavecast.intelligence.models import ResolvedTrack
 from wavecast.models.episode import (
     CoverParams,
     EpisodeSeed,
@@ -143,6 +144,173 @@ class _FakeGenerator:
             ],
         )
 
+
+
+class _BootstrapRuntime(_FakeRuntime):
+    def __init__(self) -> None:
+        super().__init__(gated=True)
+        self.fast_calls = 0
+        self.fast_track = ResolvedTrack(
+            track_ref="mock:fast-successor",
+            canonical_artist="Fast Artist",
+            canonical_title="Fast Successor",
+        )
+
+    async def prepare_fast_successor(self, episode):
+        del episode
+        self.fast_calls += 1
+        return GeneratedChapter(
+            chapter_id="chapter-2",
+            segments=[
+                MusicSegment(
+                    id="chapter-2:music:0",
+                    chapter_id="chapter-2",
+                    order=1,
+                    state=SegmentState.AUDIO_READY,
+                    planned_duration_seconds=180,
+                    actual_duration_seconds=180,
+                    track_ref=self.fast_track.track_ref,
+                    audio_source_url="/api/audio/mock/fast-successor",
+                    title=self.fast_track.canonical_title,
+                    artist=self.fast_track.canonical_artist,
+                )
+            ],
+        )
+
+    async def prepare_session(self, episode):
+        self.prepare_calls += 1
+        self.started.set()
+        await self.release.wait()
+        base = _session()
+        return base.model_copy(
+            update={
+                "opening_track_ref": "mock:opening",
+                "chapters": [
+                    base.chapters[0].model_copy(
+                        update={"resolved_track": self.fast_track}
+                    ),
+                    base.chapters[1],
+                ],
+            }
+        )
+
+
+def test_fast_successor_is_durable_before_full_session_finishes() -> None:
+    staged = _BootstrapRuntime()
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
+    episode = runtime.start(_seed())
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            runtime.ensure_buffer_async(
+                episode.id,
+                target_chapters=1,
+                target_ahead_seconds=300,
+            )
+        )
+        await asyncio.wait_for(staged.started.wait(), timeout=1)
+
+        during_planning = repository.get(episode.id)
+        successor = during_planning.segment("chapter-2:music:0")
+        assert successor.is_audio_ready
+        assert successor.track_ref == staged.fast_track.track_ref
+        assert successor.title == staged.fast_track.canonical_title
+        assert successor.artist == staged.fast_track.canonical_artist
+        assert during_planning.progressive_session is None
+        assert during_planning.has_ready_successor is True
+        assert task.done() is False
+
+        staged.release.set()
+        completed = await task
+        assert completed.progressive_session is not None
+        locked = completed.progressive_session.chapters[0].resolved_track
+        assert locked == staged.fast_track
+        assert completed.segment("chapter-2:music:0").track_ref == staged.fast_track.track_ref
+
+    asyncio.run(run())
+
+    assert staged.fast_calls == 1
+    assert staged.prepare_calls == 1
+
+
+class _RejectBootstrapRuntime(_FakeRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fast_calls = 0
+        self.fast_track = ResolvedTrack(
+            track_ref="mock:already-ready",
+            canonical_artist="Already Artist",
+            canonical_title="Already Ready",
+        )
+
+    async def prepare_fast_successor(self, episode):
+        del episode
+        self.fast_calls += 1
+        raise AssertionError("existing ready successor must skip FastStart bootstrap")
+
+    async def prepare_session(self, episode):
+        del episode
+        self.prepare_calls += 1
+        base = _session()
+        return base.model_copy(
+            update={
+                "opening_track_ref": "mock:opening",
+                "chapters": [
+                    base.chapters[0].model_copy(
+                        update={"resolved_track": self.fast_track}
+                    ),
+                    base.chapters[1],
+                ],
+            }
+        )
+
+
+def test_existing_ready_successor_skips_duplicate_fast_bootstrap() -> None:
+    staged = _RejectBootstrapRuntime()
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
+    episode = runtime.start(_seed())
+    snapshot = runtime.capture_generation_snapshot(episode.id)
+    runtime.append_generated_chapter(
+        episode.id,
+        GeneratedChapter(
+            chapter_id="chapter-2",
+            segments=[
+                MusicSegment(
+                    id="chapter-2:music:0",
+                    chapter_id="chapter-2",
+                    order=1,
+                    state=SegmentState.AUDIO_READY,
+                    planned_duration_seconds=180,
+                    actual_duration_seconds=180,
+                    track_ref=staged.fast_track.track_ref,
+                    audio_source_url="/api/audio/mock/already-ready",
+                    title=staged.fast_track.canonical_title,
+                    artist=staged.fast_track.canonical_artist,
+                )
+            ],
+        ),
+        snapshot,
+    )
+
+    buffered = asyncio.run(
+        runtime.ensure_buffer_async(
+            episode.id,
+            target_chapters=1,
+            target_ahead_seconds=300,
+        )
+    )
+
+    assert staged.fast_calls == 0
+    assert staged.prepare_calls == 1
+    assert buffered.progressive_session is not None
+    assert buffered.progressive_session.chapters[0].resolved_track == staged.fast_track
+    assert [
+        segment.id
+        for segment in buffered.ordered_segments
+        if segment.chapter_id == "chapter-2"
+    ] == ["chapter-2:music:0"]
 
 def test_heartbeat_during_staged_preparation_does_not_stale_attach() -> None:
     staged = _FakeRuntime(gated=True)
