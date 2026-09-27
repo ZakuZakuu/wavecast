@@ -67,7 +67,7 @@ class CuratorService:
             "A chapter is a narrative beat and may intentionally have no TrackProposal; do not "
             "invent a track to fill a story beat. "
             f"Return no more than {max_chapters} chapters total and no more than "
-            f"{max_tracks} chapters with a primary TrackProposal. A track-bearing chapter may "
+            f"{max_tracks} chapters with a TrackProposal. A track-bearing chapter may "
             "include up to two ranked track_alternates only when they satisfy the same editorial "
             "role and transition intent as the primary; alternates are playback recovery options, "
             "not extra chapters or unrelated backup artists. Narrative-only beats must serve the actual topic "
