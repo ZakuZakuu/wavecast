@@ -489,6 +489,58 @@ def test_progressive_preparation_counts_application_opening_as_first_resolved_tr
     ]
 
 
+def test_progressive_resolution_uses_alternate_when_primary_repeats_opening_song(
+    tmp_path,
+) -> None:
+    class DuplicatePrimaryLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                repeated = self._tracks[1]
+                alternate = self._tracks[2]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(repeated),
+                            track_alternates=[self._proposal(alternate)],
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="avoid repeating the opening song",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="move to a distinct next song",
+                        )
+                    ],
+                    estimated_duration_seconds=900,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, DuplicatePrimaryLLM())
+    opening = ResolvedTrack(
+        track_ref="external:opening-version",
+        canonical_artist="Signal Garden Trio",
+        canonical_title="Midnight Transfer",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3),
+            opening_track=opening,
+        )
+    )
+
+    assert len(session.chapters) == 1
+    chapter = session.chapters[0]
+    assert chapter.resolved_track is not None
+    assert chapter.resolved_track.canonical_title == "Daybreak in Stereo"
+    assert chapter.chapter.track is not None
+    assert chapter.chapter.track.title == "Daybreak in Stereo"
+
+
 def test_progressive_preparation_uses_ranked_alternate_before_skipping_slot(tmp_path) -> None:
     class AlternateResolutionLLM(RecordingAssemblyLLM):
         async def structured(
