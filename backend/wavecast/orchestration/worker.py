@@ -146,11 +146,11 @@ class GenerationWorker:
                 retryable=is_retryable(error),
             )
         except EpisodeRuntimeError:
-            current = await self._safe_get(job.episode_id)
-            if current is not None and not current.is_listener_active:
+            recovered = await self._safe_get(job.episode_id)
+            if recovered is not None and not recovered.is_listener_active:
                 await asyncio.to_thread(self.jobs.cancel_for_episode, job.episode_id)
                 return GenerationWorkerAction.CANCELLED
-            if current is not None and current.state in {
+            if recovered is not None and recovered.state in {
                 EpisodeState.MATERIALIZED,
                 EpisodeState.PUBLISHED,
             }:
