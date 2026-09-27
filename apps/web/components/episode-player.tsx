@@ -8,6 +8,7 @@ import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
 import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
 import { formatSeconds, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart } from "../lib/playback";
+import { mixPlanSignature, type MixPlan } from "../lib/mix-timeline";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
 import { isEpisodeSaved, recordRecentEpisode, saveMaterializedEpisode } from "../lib/user-library";
@@ -23,6 +24,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const [error, setError] = useState<string | null>(null);
   const [browserPosition, setBrowserPosition] = useState(0);
   const [browserPlaying, setBrowserPlaying] = useState(false);
+  const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
   const [seekToken, setSeekToken] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [chaptersOpen, setChaptersOpen] = useState(false);
@@ -50,7 +52,37 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     () => localEpisode?.segments.find((segment) => segment.id === localEpisode.current_segment_id),
     [localEpisode],
   );
+  const arrangementEpisodeId = localEpisode?.id ?? null;
+  const arrangementSignature = useMemo(
+    () => localEpisode ? mixPlanSignature(localEpisode) : null,
+    [localEpisode],
+  );
+  const arrangementClip = useMemo(
+    () => mixPlan?.clips.find((clip) => clip.segmentId === current?.id) ?? null,
+    [current?.id, mixPlan],
+  );
   localEpisodeRef.current = localEpisode;
+
+  useEffect(() => {
+    if (!arrangementEpisodeId || !arrangementSignature) {
+      setMixPlan(null);
+      return;
+    }
+    let cancelled = false;
+    setMixPlan(null);
+    void api.mixPlan(arrangementEpisodeId)
+      .then((plan) => {
+        if (!cancelled) setMixPlan(plan);
+      })
+      .catch(() => {
+        // Arrangement is optional decoration over stable browser transport.
+        // A stale/unavailable plan must never interrupt ordinary playback.
+        if (!cancelled) setMixPlan(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [arrangementEpisodeId, arrangementSignature]);
 
   useEffect(() => {
     let mounted = true;
@@ -482,9 +514,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         playing={browserPlaying && localEpisode.is_listener_active}
         positionSeconds={currentOffset}
         seekToken={seekToken}
-        maxDurationSeconds={current
+        arrangement={arrangementClip}
+        preloadSourceUrl={upcoming?.audio_source_url ?? null}
+        maxDurationSeconds={arrangementClip?.playableDurationSeconds ?? (current
           ? current.duration_seconds ?? current.actual_duration_seconds ?? current.planned_duration_seconds
-          : null}
+          : null)}
         onPositionChange={handleAudioPosition}
         onEnded={completeBrowserSegment}
         onError={() => setError("音频暂时无法播放")}
