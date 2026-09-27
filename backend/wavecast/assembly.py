@@ -27,6 +27,7 @@ from wavecast.intelligence.models import (
     EditorialConnection,
     Evidence,
     FastResearchInput,
+    FastResearchResult,
     FastStartPlan,
     NarrationScript,
     NarrationSlotContext,
@@ -252,11 +253,90 @@ class LiveEpisodeAssemblyService:
             raise ValueError("narration_ratio must be between 0.1 and 0.2")
         self.narration_ratio = narration_ratio
 
+    async def prepare_fast_successor(
+        self,
+        request: LiveEpisodeAssemblyRequest,
+        *,
+        opening_track: ResolvedTrack,
+        request_id: str | None = None,
+    ) -> GeneratedChapter | None:
+        """Prepare one exact, playable successor from FastStart only.
+
+        This is the continuity bootstrap seam: it stops before background
+        research, Curator, Writer, and TTS so the Episode can persist a real
+        ready successor while the fuller route is still being planned.
+        """
+
+        intelligence_input = FastResearchInput(
+            topic=request.topic,
+            anchor_tracks=list(request.anchor_tracks),
+            desired_duration_seconds=request.desired_duration_seconds,
+            listener_taste_context=request.listener_taste_context,
+            output_language=request.output_language,
+        )
+        try:
+            fast_result = await self.fast_path.run(
+                intelligence_input,
+                request_id=request_id or uuid4().hex,
+            )
+        except ProviderError:
+            return None
+
+        if fast_result.trace.fallback_used:
+            # A fallback FastStart is intentionally conservative and may expose
+            # unranked research candidates. Do not freeze one of those into the
+            # Episode merely to gain a few seconds of buffer.
+            return None
+
+        proposals: list[TrackProposal] = []
+        if fast_result.plan.selected_next_track is not None:
+            proposals.append(fast_result.plan.selected_next_track)
+        proposals.extend(fast_result.plan.next_candidates)
+
+        seen: set[tuple[str, str]] = set()
+        for proposal in proposals:
+            proposal_key = (proposal.artist.casefold(), proposal.title.casefold())
+            if proposal_key in seen:
+                continue
+            seen.add(proposal_key)
+            try:
+                resolved = await resolve_track_proposal_across_providers(
+                    self.retrieval,
+                    proposal,
+                )
+            except ProviderError:
+                continue
+            if resolved is None or _same_resolved_track(resolved, opening_track):
+                continue
+            try:
+                prepared = await self.composer.prepare_tracks([resolved])
+                playable = self.composer.compose_prepared(
+                    prepared,
+                    RadioScript(blocks=[], intended_duration_seconds=1),
+                )
+            except (ProviderError, UnresolvedTrackError, ValueError):
+                continue
+
+            music = [
+                segment
+                for segment in playable.segments
+                if isinstance(segment, MusicSegment)
+            ]
+            if len(music) != 1 or not music[0].is_audio_ready:
+                continue
+            return _generated_runtime_chapter(
+                "chapter-2",
+                music,
+                base_order=1,
+            )
+        return None
+
     async def prepare_progressive_session(
         self,
         request: LiveEpisodeAssemblyRequest,
         *,
         opening_track: ResolvedTrack,
+        locked_successor: ResolvedTrack | None = None,
         request_id: str | None = None,
     ) -> ProgressiveAssemblySession:
         """Prepare serializable intelligence without producing future audio.
@@ -265,11 +345,16 @@ class LiveEpisodeAssemblyService:
         before Writer, composition, TTS, and playback-asset preparation.
         """
 
-        prepared = await self._prepare_intelligence(request, request_id=request_id)
+        prepared = await self._prepare_intelligence(
+            request,
+            request_id=request_id,
+            locked_successor=locked_successor,
+        )
         return _build_progressive_session(
             request=request,
             prepared=prepared,
             opening_track=opening_track,
+            locked_successor=locked_successor,
             narration_ratio=self.narration_ratio,
         )
 
@@ -290,6 +375,7 @@ class LiveEpisodeAssemblyService:
         request: LiveEpisodeAssemblyRequest,
         *,
         request_id: str | None = None,
+        locked_successor: ResolvedTrack | None = None,
     ) -> _PreparedIntelligence:
         """Run the bounded intelligence and catalog-identity stages only."""
 
@@ -302,12 +388,23 @@ class LiveEpisodeAssemblyService:
             output_language=request.output_language,
         )
 
-        fast_started = perf_counter()
-        try:
-            fast_result = await self.fast_path.run(intelligence_input, request_id=request_id)
-        except ProviderError as error:
-            raise EpisodeAssemblyError(str(error), stage="fast_start") from error
-        fast_path_ms = _elapsed_ms(fast_started)
+        if locked_successor is not None:
+            fast_result = _locked_successor_fast_result(
+                intelligence_input,
+                locked_successor,
+                request_id=request_id,
+            )
+            fast_path_ms = 0
+        else:
+            fast_started = perf_counter()
+            try:
+                fast_result = await self.fast_path.run(
+                    intelligence_input,
+                    request_id=request_id,
+                )
+            except ProviderError as error:
+                raise EpisodeAssemblyError(str(error), stage="fast_start") from error
+            fast_path_ms = _elapsed_ms(fast_started)
         trace = fast_result.trace
 
         background_started = perf_counter()
@@ -831,6 +928,81 @@ def _research_failure_snapshot(
 
 
 
+def _locked_successor_fast_result(
+    request: FastResearchInput,
+    locked_successor: ResolvedTrack,
+    *,
+    request_id: str,
+) -> FastPathResult:
+    """Reconstruct deterministic FastStart context from durable successor identity.
+
+    The actual FastStart provider already chose and resolved this track before it
+    entered the Episode. Re-running that paid/model stage would add latency and
+    could disagree with the promise already made to playback.
+    """
+
+    proposal = TrackProposal(
+        artist=locked_successor.canonical_artist,
+        title=locked_successor.canonical_title,
+        reasons=["FastStart successor already persisted by the runtime."],
+        confidence=1.0,
+    )
+    language = resolve_output_language(request.output_language, request.topic)
+    if language is OutputLanguage.ZH_CN:
+        narration_text = "下一首已经准备好，我们会在播放过程中继续完善后面的节目路线。"
+    elif language is OutputLanguage.JA_JP:
+        narration_text = "次の曲は準備できています。再生中に、この先の番組構成を整えていきます。"
+    else:
+        narration_text = (
+            "The next track is already prepared while the rest of the route is refined."
+        )
+    research_plan = generic_research_plan(request)
+    plan = FastStartPlan(
+        anchor_understanding=[
+            (
+                "Continue from the opening through the already prepared successor: "
+                f"{locked_successor.canonical_artist} - "
+                f"{locked_successor.canonical_title}"
+            )
+        ],
+        immediate_taste_hypotheses=[],
+        next_candidates=[proposal],
+        selected_next_track=proposal,
+        first_narration=NarrationScript(
+            text=narration_text,
+            intended_duration_seconds=8,
+        ),
+        research_plan=research_plan,
+    )
+    bundle = ResearchBundle(
+        anchors=[
+            *request.anchor_tracks,
+            f"{locked_successor.canonical_artist} - {locked_successor.canonical_title}",
+        ],
+        taste_hypotheses=[],
+        evidence=[],
+        candidates=[proposal],
+        research_plan=research_plan,
+        uncertainties=[],
+    )
+    trace = GenerationTrace(request_id=request_id)
+    trace.mark(
+        "fast_successor_reused",
+        track_artist=locked_successor.canonical_artist,
+        track_title=locked_successor.canonical_title,
+    )
+    return FastPathResult(
+        research=FastResearchResult(
+            bundle=bundle,
+            elapsed_ms=0,
+            queries=[],
+        ),
+        plan=plan,
+        trace=trace,
+        elapsed_ms=0,
+    )
+
+
 def _same_resolved_track(left: ResolvedTrack | None, right: ResolvedTrack) -> bool:
     """Compare catalog identity exactly; never fuzzy-dedupe an opening."""
 
@@ -889,6 +1061,83 @@ def _normalize_opening_resolved_route(
     return [opening, *remainder]
 
 
+def _lock_successor_after_opening(
+    chapters: list[_ResolvedChapter],
+    locked_successor: ResolvedTrack | None,
+) -> list[_ResolvedChapter]:
+    """Keep a persisted FastStart successor as the Episode's second music identity."""
+
+    if locked_successor is None or not chapters:
+        return chapters
+    if _same_resolved_track(chapters[0].track, locked_successor):
+        return chapters
+
+    successor_index = next(
+        (
+            index
+            for index, item in enumerate(chapters[1:], start=1)
+            if _same_resolved_track(item.track, locked_successor)
+        ),
+        None,
+    )
+    if successor_index is None:
+        proposal = TrackProposal(
+            artist=locked_successor.canonical_artist,
+            title=locked_successor.canonical_title,
+            reasons=["FastStart successor already persisted by the runtime."],
+            confidence=1.0,
+        )
+        plan = ChapterPlan(
+            index=1,
+            track=proposal,
+            narrative_role=NarrativeRole.BRIDGE,
+            reason="Preserve the already prepared FastStart successor.",
+            narration_goal=(
+                "Connect the opening to the already prepared next track without "
+                "inventing unsupported facts."
+            ),
+        )
+        successor = _ResolvedChapter(
+            chapter=plan,
+            writer_chapter=plan,
+            track=locked_successor,
+            music_index=None,
+        )
+    else:
+        successor = chapters[successor_index]
+
+    remainder = [
+        item
+        for index, item in enumerate(chapters[1:], start=1)
+        if index != successor_index
+        and not _same_resolved_track(item.track, locked_successor)
+    ]
+    locked_route = [chapters[0], successor, *remainder]
+    if successor_index == 1:
+        return locked_route
+
+    # Inserting or moving the persisted successor changes route adjacency.
+    # Curator connection metadata described the old neighbors, so retaining it
+    # would invite Writer to explain a relation that no longer exists.
+    cleared: list[_ResolvedChapter] = [locked_route[0]]
+    for item in locked_route[1:]:
+        chapter = item.chapter.model_copy(
+            update={"connection_from_previous_track": None}
+        )
+        writer_chapter = item.writer_chapter.model_copy(
+            update={"connection_from_previous_track": None}
+        )
+        cleared.append(
+            _ResolvedChapter(
+                chapter=chapter,
+                writer_chapter=writer_chapter,
+                track=item.track,
+                music_index=item.music_index,
+            )
+        )
+    return cleared
+
+
 def _bound_progressive_resolved_route(
     chapters: list[_ResolvedChapter],
     *,
@@ -944,13 +1193,20 @@ def _build_progressive_session(
     request: LiveEpisodeAssemblyRequest,
     prepared: _PreparedIntelligence,
     opening_track: ResolvedTrack,
+    locked_successor: ResolvedTrack | None = None,
     narration_ratio: float,
 ) -> ProgressiveAssemblySession:
     """Build the pre-Writer session from route identities and slot contexts."""
 
     normalized = _reindex_resolved_chapters(
         _bound_progressive_resolved_route(
-            _normalize_opening_resolved_route(prepared.resolved_chapters, opening_track),
+            _lock_successor_after_opening(
+                _normalize_opening_resolved_route(
+                    prepared.resolved_chapters,
+                    opening_track,
+                ),
+                locked_successor,
+            ),
             max_tracks=request.max_tracks,
             max_chapters=request.max_chapters,
         )
