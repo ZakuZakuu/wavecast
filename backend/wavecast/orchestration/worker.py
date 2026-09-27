@@ -162,10 +162,14 @@ class GenerationWorker:
             renewal_stop.set()
             lease_watch.cancel()
             renewal.cancel()
+            if not work.done():
+                work.cancel()
             with suppress(asyncio.CancelledError):
                 await lease_watch
             with suppress(asyncio.CancelledError):
                 await renewal
+            with suppress(asyncio.CancelledError, Exception):
+                await work
         if enrich_episode_id is not None:
             self._schedule_narration_enrichment(enrich_episode_id)
         return True
