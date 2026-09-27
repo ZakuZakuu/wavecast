@@ -65,7 +65,15 @@ async def author_pending_narration(
             and episode.generation_mode is not GenerationMode.FULL
         ):
             break
-        should_degrade = exposed or not session_chapter.slot_contexts
+        unresolved_music_slot = (
+            session_chapter.resolved_track is None
+            and session_chapter.chapter.track is not None
+        )
+        should_degrade = (
+            exposed
+            or not session_chapter.slot_contexts
+            or unresolved_music_slot
+        )
 
         generated: GeneratedChapter | None = None
         if not should_degrade:
