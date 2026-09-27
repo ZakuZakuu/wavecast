@@ -2,9 +2,20 @@ from __future__ import annotations
 
 import asyncio
 
-from wavecast.models.episode import CoverParams, EpisodeSeed, EpisodeState, GenerationMode
+from wavecast.models.episode import (
+    CoverParams,
+    EpisodeSeed,
+    EpisodeState,
+    GenerationMode,
+    MusicSegment,
+    SegmentState,
+)
 from wavecast.orchestration.episode import EpisodeOrchestrator, InMemoryEpisodeRepository
-from wavecast.orchestration.generation import DeterministicMockProgressiveGenerator
+from wavecast.orchestration.generation import (
+    DeterministicMockProgressiveGenerator,
+    GeneratedChapter,
+)
+from wavecast.orchestration.runtime import ProgressivePlanningDeferred
 from wavecast.orchestration.worker import GenerationWorker
 from wavecast.providers.errors import ProviderConfigurationError
 from wavecast.storage.generation_jobs import (
@@ -124,6 +135,55 @@ def test_progressive_job_completes_while_narration_enrichment_is_still_running()
 
     asyncio.run(run())
 
+
+
+def test_worker_completes_when_full_planning_is_deferred_behind_ready_music() -> None:
+    class DeferredPlanningRuntime:
+        async def prepare_fast_successor(self, episode):
+            del episode
+            return GeneratedChapter(
+                chapter_id="chapter-2",
+                segments=[
+                    MusicSegment(
+                        id="chapter-2:music:0",
+                        chapter_id="chapter-2",
+                        order=1,
+                        state=SegmentState.AUDIO_READY,
+                        planned_duration_seconds=180,
+                        actual_duration_seconds=180,
+                        track_ref="mock:fast-successor",
+                        audio_source_url="/api/audio/mock/fast-successor",
+                        title="Fast Successor",
+                        artist="Fast Artist",
+                    )
+                ],
+            )
+
+        async def prepare_session(self, episode):
+            del episode
+            raise ProgressivePlanningDeferred("synthetic deferred planning")
+
+        def create_generator(self, session):
+            raise AssertionError("deferred planning must return before chapter generation")
+
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(
+        repository,
+        progressive_runtime=DeferredPlanningRuntime(),  # type: ignore[arg-type]
+    )
+    episode = runtime.start(_seed())
+    jobs = InMemoryGenerationJobRepository()
+    jobs.request(episode.id)
+    worker = GenerationWorker(jobs, runtime, worker_id="worker-fast-bootstrap")
+
+    assert asyncio.run(worker.run_once()) is True
+
+    updated = runtime.get(episode.id)
+    job = jobs.get_for_episode(episode.id)
+    assert updated.progressive_session is None
+    assert updated.segment("chapter-2:music:0").is_audio_ready
+    assert job is not None
+    assert job.status is GenerationJobStatus.COMPLETED
 
 def test_worker_cancels_generation_for_inactive_listener() -> None:
     runtime = EpisodeOrchestrator(InMemoryEpisodeRepository())
