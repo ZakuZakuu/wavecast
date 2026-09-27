@@ -14,6 +14,16 @@ import type {
 import type { MixdownArtifact, MixdownPreparationResult } from "./episode-export";
 import { getApiAuthToken, getApiAuthTokenForUser, getApiAuthUserId } from "./auth-client";
 
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
 const listenerStorageKey = "wavecast-anonymous-listener";
 
 function listenerId(): string | undefined {
@@ -43,7 +53,10 @@ async function request<T>(
       ...init?.headers,
     },
   });
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail ?? "Request failed");
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => null))?.detail ?? "Request failed";
+    throw new ApiRequestError(detail, response.status);
+  }
   return response.json() as Promise<T>;
 }
 
