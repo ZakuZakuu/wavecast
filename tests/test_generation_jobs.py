@@ -138,6 +138,34 @@ def test_retry_delays_same_request_and_records_only_safe_error_code() -> None:
     assert reclaimed.id == claimed.id
 
 
+def test_failed_job_is_terminal_but_new_request_reactivates_it() -> None:
+    clock = Clock()
+    repository = InMemoryGenerationJobRepository(now=clock.now)
+    original = repository.request("episode-1")
+    claimed = repository.claim("worker-a")
+
+    assert claimed is not None
+    failed = repository.fail(
+        claimed.id,
+        "worker-a",
+        claimed.request_version,
+        error_code="invalid_generation_contract",
+    )
+
+    assert failed.status is GenerationJobStatus.FAILED
+    assert failed.last_error_code == "invalid_generation_contract"
+    assert repository.claim("worker-b") is None
+
+    clock.advance(1)
+    reactivated = repository.request("episode-1")
+
+    assert reactivated.id == original.id
+    assert reactivated.status is GenerationJobStatus.PENDING
+    assert reactivated.last_error_code is None
+    assert reactivated.attempts == 0
+    assert reactivated.request_version == original.request_version + 1
+
+
 def test_cancelled_job_can_be_reactivated_by_new_request() -> None:
     clock = Clock()
     repository = InMemoryGenerationJobRepository(now=clock.now)
