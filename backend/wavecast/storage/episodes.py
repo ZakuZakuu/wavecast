@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Table,
     UniqueConstraint,
+    literal,
     select,
     update,
 )
@@ -37,6 +38,8 @@ class EpisodeConcurrencyError(RuntimeError):
 
 class EpisodeRepository(Protocol):
     def save(self, episode: LiveEpisode) -> LiveEpisode: ...
+
+    def touch_heartbeat(self, episode_id: str, at: datetime) -> LiveEpisode: ...
 
     def get(self, episode_id: str) -> LiveEpisode: ...
 
@@ -93,6 +96,12 @@ class PostgresEpisodeRepository:
         next_version = episode.version + 1
         self._run(self._save(episode, next_version))
         episode.version = next_version
+        return episode
+
+    def touch_heartbeat(self, episode_id: str, at: datetime) -> LiveEpisode:
+        episode = cast(LiveEpisode | None, self._run(self._touch_heartbeat(episode_id, at)))
+        if episode is None:
+            raise EpisodeNotFoundError(episode_id)
         return episode
 
     def get(self, episode_id: str) -> LiveEpisode:
@@ -162,6 +171,27 @@ class PostgresEpisodeRepository:
                 )
             if result.rowcount != 1:
                 raise EpisodeConcurrencyError(f"stale episode snapshot: {episode.id}")
+
+    async def _touch_heartbeat(
+        self, episode_id: str, at: datetime
+    ) -> LiveEpisode | None:
+        heartbeat_value = at.isoformat()
+        patch = {
+            "last_activity_at": heartbeat_value,
+            "last_heartbeat_at": heartbeat_value,
+        }
+        statement = (
+            update(episodes_table)
+            .where(episodes_table.c.id == episode_id)
+            .values(
+                payload=episodes_table.c.payload.op("||")(literal(patch, type_=JSONB)),
+                updated_at=datetime.now(UTC),
+            )
+            .returning(episodes_table.c.payload, episodes_table.c.owner_user_id)
+        )
+        async with self.engine.begin() as connection:
+            row = (await connection.execute(statement)).first()
+        return _episode_from_row(row) if row else None
 
     async def _get(self, episode_id: str) -> LiveEpisode | None:
         async with self.engine.connect() as connection:
