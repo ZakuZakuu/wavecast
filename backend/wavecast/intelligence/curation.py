@@ -11,6 +11,7 @@ from .fast_start import FastStructuredProvider
 from .models import (
     ChapterPlan,
     FastStartPlan,
+    NoveltyDistance,
     OutputLanguage,
     ProgramSkeleton,
     ResearchBundle,
@@ -173,7 +174,13 @@ def normalize_curator_skeleton(
     skeleton: ProgramSkeleton,
     bundle: ResearchBundle,
 ) -> tuple[ProgramSkeleton, list[dict[str, object]]]:
-    """Drop only ungrounded evidence references before strict validation."""
+    """Normalize recoverable curator mistakes before strict validation.
+
+    The model is not authoritative for evidence references or structural relation
+    placement. Unknown references are removed, unsupported claim blocks are
+    dropped, and a connection attached to a narrative-only chapter is discarded
+    rather than failing the entire progressive episode.
+    """
 
     available = {item.id for item in bundle.evidence}
     diagnostics: list[dict[str, object]] = []
@@ -236,6 +243,16 @@ def normalize_curator_skeleton(
                     )
                 )
             connection = connection.model_copy(update={"evidence_ids": connection_ids})
+        if track is None and connection is not None:
+            diagnostics.append(
+                _normalization_diagnostic(
+                    chapter.index,
+                    "connection_without_track",
+                    1,
+                    0,
+                )
+            )
+            connection = None
         chapters.append(
             chapter.model_copy(
                 update={
@@ -327,29 +344,48 @@ def _restore_committed_prefix(
 
 
 def ensure_distance_curve(skeleton: ProgramSkeleton) -> ProgramSkeleton:
+    """Clamp recoverable backward novelty labels without changing chapter order.
+
+    Novelty distance is editorial metadata, not catalog identity or evidence.
+    A single backward label should not turn an otherwise grounded progressive
+    route into a production 500. Preserve earlier/committed chapters exactly and
+    raise only later labels to the last established distance.
+    """
+
     order = {
-        "very_close": 1,
-        "close": 2,
-        "bridge": 3,
-        "discovery": 4,
-        "surprise": 5,
+        NoveltyDistance.VERY_CLOSE: 1,
+        NoveltyDistance.CLOSE: 2,
+        NoveltyDistance.BRIDGE: 3,
+        NoveltyDistance.DISCOVERY: 4,
+        NoveltyDistance.SURPRISE: 5,
     }
-    distances = [
-        order[chapter.novelty_distance.value]
-        for chapter in skeleton.chapters
-        if chapter.novelty_distance is not None
-    ]
-    if distances != sorted(distances):
-        values = [
-            chapter.novelty_distance.value
-            for chapter in skeleton.chapters
-            if chapter.novelty_distance is not None
-        ]
-        raise CuratorContractError(
-            "curator novelty curve is invalid",
-            reason_code="curator_novelty_curve_invalid",
-            diagnostics=[{"novelty_distance_values": values}],
+    by_rank = {rank: distance for distance, rank in order.items()}
+    floor = 0
+    chapters: list[ChapterPlan] = []
+    for chapter in skeleton.chapters:
+        distance = chapter.novelty_distance
+        if distance is None:
+            chapters.append(chapter)
+            continue
+        rank = order[distance]
+        if rank >= floor:
+            floor = rank
+            chapters.append(chapter)
+            continue
+
+        normalized_distance = by_rank[floor]
+        track = chapter.track
+        if track is not None and track.novelty_distance is not None:
+            track = track.model_copy(update={"novelty_distance": normalized_distance})
+        chapters.append(
+            chapter.model_copy(
+                update={
+                    "novelty_distance": normalized_distance,
+                    "track": track,
+                }
+            )
         )
-    # Curator order and chapter indices are part of the narrative contract.  Do not
+
+    # Curator order and chapter indices are part of the narrative contract. Do not
     # sort or renumber here: committed-prefix validation relies on exact identity.
-    return skeleton
+    return skeleton.model_copy(update={"chapters": chapters})
