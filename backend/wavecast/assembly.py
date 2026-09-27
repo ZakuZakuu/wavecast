@@ -503,7 +503,10 @@ class LiveEpisodeAssemblyService:
                         )
                     if candidate is None:
                         continue
-                    if any(_same_song_identity(candidate, used) for used in used_tracks):
+                    if any(
+                        _same_song_identity(candidate, used)
+                        for used in used_tracks
+                    ):
                         last_resolution_reason = "duplicate episode song identity"
                         trace.mark(
                             "duplicate_resolved_track_skipped",
@@ -1055,12 +1058,17 @@ def _same_song_identity(left: ResolvedTrack | None, right: ResolvedTrack) -> boo
         return False
     if left.track_ref == right.track_ref:
         return True
-    if _identity_words(left.canonical_title) != _identity_words(right.canonical_title):
+    if _identity_words(left.canonical_title) != _identity_words(
+        right.canonical_title
+    ):
         return False
     left_artist = _artist_identity_words(left.canonical_artist)
     right_artist = _artist_identity_words(right.canonical_artist)
     if not left_artist or not right_artist:
-        return left.canonical_artist.casefold().strip() == right.canonical_artist.casefold().strip()
+        return (
+            left.canonical_artist.casefold().strip()
+            == right.canonical_artist.casefold().strip()
+        )
     return left_artist <= right_artist or right_artist <= left_artist
 
 
