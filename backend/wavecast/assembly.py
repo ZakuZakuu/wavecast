@@ -1733,25 +1733,23 @@ class StagedProgressiveChapterGenerator:
                     and chapter.chapter_id == self.session.chapters[-1].chapter_id
                 ),
             )
-        except ProviderError:
-            # Writer is optional for continuity. The caller records the chapter
-            # as authored/degraded so ordinary playback does not retry paid work.
+            prepared = PreparedMusicAsset(
+                track=chapter.resolved_track,
+                asset=AudioAsset(
+                    asset_id=music.asset_ref or f"persisted:{music.track_ref}",
+                    asset_type=AudioAssetType.MUSIC,
+                    provider="persisted",
+                    playback_url=music.audio_source_url,
+                    duration=music.duration_seconds,
+                ),
+            )
+            playable = self.composer.compose_prepared([prepared], radio_script)
+            _assert_narration_blocks_materialized(radio_script, playable)
+        except (ProviderError, NarrationPlacementError, EpisodeAssemblyError, ValueError):
+            # Narration is optional for continuity and FULL generation. The
+            # caller records this chapter as authored/degraded so ordinary
+            # playback never retries the same paid Writer work blindly.
             return None
-        except NarrationPlacementError:
-            return None
-
-        prepared = PreparedMusicAsset(
-            track=chapter.resolved_track,
-            asset=AudioAsset(
-                asset_id=music.asset_ref or f"persisted:{music.track_ref}",
-                asset_type=AudioAssetType.MUSIC,
-                provider="persisted",
-                playback_url=music.audio_source_url,
-                duration=music.duration_seconds,
-            ),
-        )
-        playable = self.composer.compose_prepared([prepared], radio_script)
-        _assert_narration_blocks_materialized(radio_script, playable)
         return _generated_runtime_chapter(
             chapter.chapter_id,
             list(playable.segments),
