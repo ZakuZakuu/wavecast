@@ -137,13 +137,16 @@ class EpisodeOrchestrator:
     ) -> LiveEpisode:
         now = self.now()
         opening_source = self.audio_provider.music_source(seed.opening_track_ref)
+        opening_duration_seconds = (
+            seed.opening_track_duration_seconds or opening_source.duration_seconds
+        )
         opening = MusicSegment(
             id="segment-opening",
             chapter_id="chapter-1",
             order=0,
             state=SegmentState.COMMITTED,
-            planned_duration_seconds=opening_source.duration_seconds,
-            actual_duration_seconds=opening_source.duration_seconds,
+            planned_duration_seconds=opening_duration_seconds,
+            actual_duration_seconds=opening_duration_seconds,
             track_ref=seed.opening_track_ref,
             audio_source_url=opening_source.source_url,
             title=seed.opening_track_title,
