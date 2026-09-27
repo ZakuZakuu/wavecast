@@ -22,4 +22,8 @@ __all__ = [
     "ProgressiveAssemblyChapter",
     "ProgressiveAssemblySession",
     "ProgressiveSessionDiagnostic",
+    "GenerationWorker",
+    "GenerationWorkerAction",
 ]
+
+from .worker import GenerationWorker, GenerationWorkerAction
