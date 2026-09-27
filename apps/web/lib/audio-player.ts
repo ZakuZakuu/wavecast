@@ -5,7 +5,7 @@ export type TransportSafeArrangement = {
   fadeOutSeconds: number;
 };
 
-const MAX_TRANSPORT_SAFE_EDGE_FADE_SECONDS = 0.4;
+const MAX_TRANSPORT_SAFE_EDGE_FADE_SECONDS = 0.15;
 
 export function transportSafeGain(
   arrangement: TransportSafeArrangement | null | undefined,
