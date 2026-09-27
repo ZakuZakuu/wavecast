@@ -18,10 +18,6 @@ class StagedProgressiveRuntime(Protocol):
         self, session: ProgressiveAssemblySession
     ) -> ProgressiveChapterGenerator: ...
 
-    async def materialize_narration(
-        self, segment: NarrationSegment
-    ) -> NarrationSegment: ...
-
 
 class StagedProgressiveRuntimeAdapter:
     """Rebuild staged preparation and chapter generation from durable episode state."""
