@@ -226,6 +226,51 @@ def test_progressive_preparation_stops_before_writer_tts_and_playback_assets(tmp
     assert assembly.composer.music_provider.get_playback_asset.await_count == 0
 
 
+def test_progressive_preparation_counts_application_opening_as_first_resolved_track(tmp_path) -> None:
+    class OneFutureTrackLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                item = self._tracks[1]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(item),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="one future track is enough when opening is already known",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="connect the opening to the next playable track",
+                        )
+                    ],
+                    estimated_duration_seconds=900,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, OneFutureTrackLLM())
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=4),
+            opening_track=opening,
+        )
+    )
+
+    assert [chapter.resolved_track.canonical_title for chapter in session.chapters if chapter.resolved_track] == [
+        "Midnight Transfer"
+    ]
+
+
 def test_progressive_opening_dedupes_exact_identity_and_keeps_other_tracks() -> None:
     def chapter(index: int, track: ResolvedTrack) -> _ResolvedChapter:
         plan = ChapterPlan(
