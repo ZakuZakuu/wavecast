@@ -30,6 +30,7 @@ from .generation import (
     DeterministicMockProgressiveGenerator,
     GeneratedChapter,
     ProgressiveChapterGenerator,
+    StreamingProgressiveChapterGenerator,
 )
 from .runtime import StagedProgressiveRuntime
 
@@ -340,6 +341,97 @@ class EpisodeOrchestrator:
         latest.last_activity_at = self.now()
         return self.repository.save(latest)
 
+    def enrich_speculative_chapter(
+        self,
+        episode_id: str,
+        chapter: GeneratedChapter,
+    ) -> LiveEpisode:
+        """Replace an unexposed music-first chapter with richer ready resources.
+
+        Streaming Runtime v2 may publish a verified music successor before Writer
+        and TTS finish. Enrichment is allowed only while that chapter remains
+        speculative. Once any part of it is committed/played, the already exposed
+        timeline wins and late narration is dropped.
+        """
+        latest = self.get(episode_id)
+        existing = [
+            segment
+            for segment in latest.ordered_segments
+            if segment.chapter_id == chapter.chapter_id
+        ]
+        if not existing:
+            raise EpisodeRuntimeError("speculative chapter does not exist")
+        if (
+            latest.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
+            or (
+                not latest.is_listener_active
+                and latest.generation_mode is not GenerationMode.FULL
+            )
+            or latest.current_segment_id in {segment.id for segment in existing}
+            or any(segment.is_committed for segment in existing)
+        ):
+            return latest
+
+        first_order = min(segment.order for segment in existing)
+        last_order = max(segment.order for segment in existing)
+        if any(
+            segment.order > last_order and segment.is_committed
+            for segment in latest.timeline_segments
+        ):
+            return latest
+
+        if any(not segment.is_audio_ready for segment in chapter.segments):
+            raise EpisodeRuntimeError("chapter enrichment is not fully audio-ready")
+        if any(segment.is_committed for segment in chapter.segments):
+            raise EpisodeRuntimeError("chapter enrichment contains committed content")
+        if any(segment.chapter_id != chapter.chapter_id for segment in chapter.segments):
+            raise EpisodeRuntimeError("chapter enrichment has mixed chapter identities")
+
+        existing_music = [
+            (segment.track_ref, segment.artist, segment.title)
+            for segment in existing
+            if segment.kind is SegmentKind.MUSIC
+        ]
+        replacement_music = [
+            (segment.track_ref, segment.artist, segment.title)
+            for segment in chapter.segments
+            if segment.kind is SegmentKind.MUSIC
+        ]
+        if existing_music != replacement_music:
+            raise EpisodeRuntimeError("chapter enrichment changed music identity")
+
+        outside_ids = {
+            segment.id
+            for segment in latest.segments
+            if segment.chapter_id != chapter.chapter_id
+        }
+        if any(segment.id in outside_ids for segment in chapter.segments):
+            raise EpisodeRuntimeError("chapter enrichment reuses an existing segment id")
+
+        delta = len(chapter.segments) - len(existing)
+        retained: list[MusicSegment | NarrationSegment] = []
+        for segment in latest.segments:
+            if segment.chapter_id == chapter.chapter_id:
+                continue
+            if segment.order > last_order:
+                segment = segment.model_copy(
+                    update={"order": segment.order + delta}
+                )
+            retained.append(segment)
+
+        normalized = [
+            segment.model_copy(
+                update={
+                    "chapter_id": chapter.chapter_id,
+                    "order": first_order + index,
+                }
+            )
+            for index, segment in enumerate(chapter.segments)
+        ]
+        latest.segments = retained + normalized
+        latest.last_activity_at = self.now()
+        return self.repository.save(latest)
+
     def ensure_buffer(
         self,
         episode_id: str,
@@ -395,12 +487,38 @@ class EpisodeOrchestrator:
                 self.capture_generation_snapshot, episode_id
             )
             episode, generator = await self._runtime_for_generation(episode_id, episode)
-            chapter = await generator.generate_next(snapshot.episode)
-            if chapter is None:
+            if isinstance(generator, StreamingProgressiveChapterGenerator):
+                update_count = 0
+                async for chapter in generator.stream_next(snapshot.episode):
+                    if update_count == 0:
+                        episode = await asyncio.to_thread(
+                            self.append_generated_chapter,
+                            episode_id,
+                            chapter,
+                            snapshot,
+                        )
+                    else:
+                        episode = await asyncio.to_thread(
+                            self.enrich_speculative_chapter,
+                            episode_id,
+                            chapter,
+                        )
+                    update_count += 1
+                if update_count == 0:
+                    break
+            else:
+                chapter = await generator.generate_next(snapshot.episode)
+                if chapter is None:
+                    break
+                episode = await asyncio.to_thread(
+                    self.append_generated_chapter, episode_id, chapter, snapshot
+                )
+
+            if (
+                not episode.is_listener_active
+                and episode.generation_mode is not GenerationMode.FULL
+            ):
                 break
-            episode = await asyncio.to_thread(
-                self.append_generated_chapter, episode_id, chapter, snapshot
-            )
         episode = await asyncio.to_thread(self.repository.get, episode_id)
         self._start_ready_successor(episode)
         episode.last_activity_at = self.now()
