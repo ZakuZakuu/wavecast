@@ -124,6 +124,35 @@ def test_armed_handoff_locks_successor_without_changing_current_segment(
     assert completed.segment("segment-bridge").state is SegmentState.COMMITTED
 
 
+def test_complete_handoff_is_idempotent_after_browser_switch(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    episode = runtime.start(seed)
+    runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
+    staged = runtime.get(episode.id)
+    staged.segment("segment-narration-1").state = SegmentState.SCRIPT_READY
+    runtime.repository.save(staged)
+    runtime.arm_handoff(episode.id, "segment-bridge")
+
+    completed = runtime.complete_handoff(
+        episode.id,
+        "segment-opening",
+        "segment-bridge",
+    )
+    assert completed.segment("segment-opening").state is SegmentState.PLAYED
+    assert completed.current_segment_id == "segment-bridge"
+    assert completed.segment("segment-bridge").state is SegmentState.COMMITTED
+
+    repeated = runtime.complete_handoff(
+        episode.id,
+        "segment-opening",
+        "segment-bridge",
+    )
+    assert repeated.segment("segment-opening").state is SegmentState.PLAYED
+    assert repeated.current_segment_id == "segment-bridge"
+    assert repeated.segment("segment-bridge").state is SegmentState.COMMITTED
+
+
 def test_armed_handoff_rejects_a_stale_successor_identity(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
