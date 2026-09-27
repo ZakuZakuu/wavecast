@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -306,7 +307,7 @@ class LiveEpisodeAssemblyService:
                 )
             except ProviderError:
                 continue
-            if resolved is None or _same_resolved_track(resolved, opening_track):
+            if resolved is None or _same_song_identity(resolved, opening_track):
                 continue
             try:
                 prepared = await self.composer.prepare_tracks([resolved])
@@ -349,6 +350,7 @@ class LiveEpisodeAssemblyService:
             request,
             request_id=request_id,
             locked_successor=locked_successor,
+            reserved_tracks=(opening_track,),
         )
         return _build_progressive_session(
             request=request,
@@ -376,6 +378,7 @@ class LiveEpisodeAssemblyService:
         *,
         request_id: str | None = None,
         locked_successor: ResolvedTrack | None = None,
+        reserved_tracks: Sequence[ResolvedTrack] = (),
     ) -> _PreparedIntelligence:
         """Run the bounded intelligence and catalog-identity stages only."""
 
@@ -481,6 +484,7 @@ class LiveEpisodeAssemblyService:
         resolution_started = perf_counter()
         resolved_chapters: list[_ResolvedChapter] = []
         unresolved: list[UnresolvedAssemblyProposal] = []
+        used_tracks = list(reserved_tracks)
         for chapter in chapters:
             resolved: ResolvedTrack | None = None
             selected_proposal: TrackProposal | None = None
@@ -489,17 +493,30 @@ class LiveEpisodeAssemblyService:
                 last_resolution_reason = "no exact playable catalog match"
                 for candidate_rank, proposal in enumerate(candidates):
                     try:
-                        resolved = await resolve_track_proposal_across_providers(
+                        candidate = await resolve_track_proposal_across_providers(
                             self.retrieval, proposal
                         )
                     except ProviderError as error:
-                        resolved = None
+                        candidate = None
                         last_resolution_reason = (
                             f"resolution provider failed: {type(error).__name__}"
                         )
-                    if resolved is None:
+                    if candidate is None:
                         continue
+                    if any(
+                        _same_song_identity(candidate, used)
+                        for used in used_tracks
+                    ):
+                        last_resolution_reason = "duplicate episode song identity"
+                        trace.mark(
+                            "duplicate_resolved_track_skipped",
+                            chapter_index=chapter.index,
+                            candidate_rank=candidate_rank + 1,
+                        )
+                        continue
+                    resolved = candidate
                     selected_proposal = proposal
+                    used_tracks.append(candidate)
                     if candidate_rank > 0:
                         trace.mark(
                             "track_alternate_resolved",
@@ -1003,8 +1020,60 @@ def _locked_successor_fast_result(
     )
 
 
+_GENERIC_ARTIST_WORDS = {
+    "the",
+    "trio",
+    "quartet",
+    "quintet",
+    "sextet",
+    "band",
+    "ensemble",
+    "orchestra",
+    "group",
+}
+
+
+def _identity_words(value: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[\w]+", value.casefold(), flags=re.UNICODE))
+
+
+def _artist_identity_words(value: str) -> frozenset[str]:
+    return frozenset(
+        word
+        for word in _identity_words(value)
+        if word not in _GENERIC_ARTIST_WORDS
+    )
+
+
+def _same_song_identity(left: ResolvedTrack | None, right: ResolvedTrack) -> bool:
+    """Conservatively collapse catalog/version aliases of the same episode song.
+
+    Exact catalog identity remains authoritative for playback. This helper is
+    only an episode-level repetition guard: titles must normalize identically,
+    and the artist identity must be the same or one must be a strict extension
+    such as "Bill Evans" vs "Bill Evans Trio".
+    """
+
+    if left is None:
+        return False
+    if left.track_ref == right.track_ref:
+        return True
+    if _identity_words(left.canonical_title) != _identity_words(
+        right.canonical_title
+    ):
+        return False
+    left_artist = _artist_identity_words(left.canonical_artist)
+    right_artist = _artist_identity_words(right.canonical_artist)
+    if not left_artist or not right_artist:
+        return (
+            left.canonical_artist.casefold().strip()
+            == right.canonical_artist.casefold().strip()
+        )
+    return left_artist <= right_artist or right_artist <= left_artist
+
+
 def _same_resolved_track(left: ResolvedTrack | None, right: ResolvedTrack) -> bool:
-    """Compare catalog identity exactly; never fuzzy-dedupe an opening."""
+    """Compare durable catalog identity exactly."""
 
     return (
         left is not None
@@ -1138,6 +1207,28 @@ def _lock_successor_after_opening(
     return cleared
 
 
+def _dedupe_progressive_song_route(
+    chapters: list[_ResolvedChapter],
+    *,
+    protected_prefix: int,
+) -> list[_ResolvedChapter]:
+    """Drop later semantic song repeats while preserving immutable route prefix."""
+
+    kept: list[_ResolvedChapter] = []
+    seen: list[ResolvedTrack] = []
+    for index, item in enumerate(chapters):
+        if item.track is None:
+            kept.append(item)
+            continue
+        if index >= protected_prefix and any(
+            _same_song_identity(item.track, prior) for prior in seen
+        ):
+            continue
+        kept.append(item)
+        seen.append(item.track)
+    return kept
+
+
 def _bound_progressive_resolved_route(
     chapters: list[_ResolvedChapter],
     *,
@@ -1198,15 +1289,20 @@ def _build_progressive_session(
 ) -> ProgressiveAssemblySession:
     """Build the pre-Writer session from route identities and slot contexts."""
 
+    locked_route = _lock_successor_after_opening(
+        _normalize_opening_resolved_route(
+            prepared.resolved_chapters,
+            opening_track,
+        ),
+        locked_successor,
+    )
+    deduped_route = _dedupe_progressive_song_route(
+        locked_route,
+        protected_prefix=2 if locked_successor is not None else 1,
+    )
     normalized = _reindex_resolved_chapters(
         _bound_progressive_resolved_route(
-            _lock_successor_after_opening(
-                _normalize_opening_resolved_route(
-                    prepared.resolved_chapters,
-                    opening_track,
-                ),
-                locked_successor,
-            ),
+            deduped_route,
             max_tracks=request.max_tracks,
             max_chapters=request.max_chapters,
         )

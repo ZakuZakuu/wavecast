@@ -16,11 +16,13 @@ from wavecast.assembly import (
     _assemble_writer_scripts,
     _bound_progressive_resolved_route,
     _build_narration_slot_contexts,
+    _dedupe_progressive_song_route,
     _lock_successor_after_opening,
     _mock_writer_chapter_index,
     _mock_writer_slot_contexts,
     _normalize_opening_resolved_route,
     _reindex_resolved_chapters,
+    _same_song_identity,
     _ResolvedChapter,
     create_episode_assembly_service,
 )
@@ -197,6 +199,86 @@ def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypa
         if call["output_type"] is FastStartPlan
     ]
     assert len(fast_start_calls) == 1
+
+
+def test_song_identity_collapses_catalog_aliases_without_merging_unrelated_covers() -> None:
+    bill_evans = ResolvedTrack(
+        track_ref="netease:one",
+        canonical_artist="Bill Evans",
+        canonical_title="Waltz for Debby",
+    )
+    bill_evans_trio = ResolvedTrack(
+        track_ref="netease:two",
+        canonical_artist="Bill Evans Trio",
+        canonical_title="Waltz for Debby",
+    )
+    unrelated_cover = ResolvedTrack(
+        track_ref="netease:three",
+        canonical_artist="Oscar Peterson Trio",
+        canonical_title="Waltz for Debby",
+    )
+
+    assert _same_song_identity(bill_evans, bill_evans_trio) is True
+    assert _same_song_identity(bill_evans_trio, bill_evans) is True
+    assert _same_song_identity(bill_evans, unrelated_cover) is False
+
+
+def test_progressive_route_drops_later_semantic_song_repeat_after_locked_prefix() -> None:
+    opening = ResolvedTrack(
+        track_ref="netease:opening",
+        canonical_artist="Bill Evans Trio",
+        canonical_title="Waltz for Debby",
+    )
+    locked = ResolvedTrack(
+        track_ref="netease:locked",
+        canonical_artist="Bill Evans Trio",
+        canonical_title="My Foolish Heart",
+    )
+    repeated = ResolvedTrack(
+        track_ref="netease:variant",
+        canonical_artist="Bill Evans",
+        canonical_title="Waltz for Debby",
+    )
+    later = ResolvedTrack(
+        track_ref="netease:later",
+        canonical_artist="Jerry Thomas Trio",
+        canonical_title="Late Night Jam",
+    )
+
+    def item(index: int, track: ResolvedTrack) -> _ResolvedChapter:
+        plan = ChapterPlan(
+            index=index,
+            track=TrackProposal(
+                artist=track.canonical_artist,
+                title=track.canonical_title,
+                confidence=1.0,
+            ),
+            narrative_role=NarrativeRole.BRIDGE,
+            reason="fixture",
+            narration_goal="fixture",
+        )
+        return _ResolvedChapter(
+            chapter=plan,
+            writer_chapter=plan,
+            track=track,
+            music_index=index,
+        )
+
+    deduped = _dedupe_progressive_song_route(
+        [
+            item(0, opening),
+            item(1, locked),
+            item(2, repeated),
+            item(3, later),
+        ],
+        protected_prefix=2,
+    )
+
+    assert [entry.track.track_ref for entry in deduped if entry.track] == [
+        "netease:opening",
+        "netease:locked",
+        "netease:later",
+    ]
 
 
 def test_locked_successor_is_inserted_when_curator_route_does_not_contain_it() -> None:
@@ -405,6 +487,58 @@ def test_progressive_preparation_counts_application_opening_as_first_resolved_tr
     assert [chapter.resolved_track.canonical_title for chapter in session.chapters if chapter.resolved_track] == [
         "Midnight Transfer"
     ]
+
+
+def test_progressive_resolution_uses_alternate_when_primary_repeats_opening_song(
+    tmp_path,
+) -> None:
+    class DuplicatePrimaryLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                repeated = self._tracks[1]
+                alternate = self._tracks[2]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(repeated),
+                            track_alternates=[self._proposal(alternate)],
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="avoid repeating the opening song",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="move to a distinct next song",
+                        )
+                    ],
+                    estimated_duration_seconds=900,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, DuplicatePrimaryLLM())
+    opening = ResolvedTrack(
+        track_ref="external:opening-version",
+        canonical_artist="Signal Garden Trio",
+        canonical_title="Midnight Transfer",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3),
+            opening_track=opening,
+        )
+    )
+
+    assert len(session.chapters) == 1
+    chapter = session.chapters[0]
+    assert chapter.resolved_track is not None
+    assert chapter.resolved_track.canonical_title == "Daybreak in Stereo"
+    assert chapter.chapter.track is not None
+    assert chapter.chapter.track.title == "Daybreak in Stereo"
 
 
 def test_progressive_preparation_uses_ranked_alternate_before_skipping_slot(tmp_path) -> None:
