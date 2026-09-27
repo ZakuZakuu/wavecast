@@ -145,7 +145,11 @@ export class MixEngine {
       entry.gainNode.gain.value = evaluateGain(entry.clip, this.positionSeconds);
       const drift = Math.abs(entry.audio.currentTime - item.sourceTimeSeconds);
       if (drift > 0.2 || entry.audio.paused) entry.audio.currentTime = item.sourceTimeSeconds;
-      if (this.playing) void entry.audio.play().catch(() => undefined);
+      if (this.playing) {
+        void entry.audio.play().catch(() => undefined);
+      } else {
+        entry.audio.pause();
+      }
     }
   }
 }

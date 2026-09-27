@@ -35,6 +35,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const episodeIdRef = useRef<string | null>(null);
   const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
+  const seekPreviewRef = useRef<number | null>(null);
   const playbackAnchorRef = useRef<ReturnType<typeof playbackAnchor>>(null);
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
   const mixPlanRef = useRef<MixPlan | null>(null);
@@ -164,8 +165,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     const position = localEpisode && mixPlanRef.current
       ? linearPositionToMixPosition(localEpisode, mixPlanRef.current, linearPosition).mixPositionSeconds
       : linearPosition;
-    if (seekPreview === null) setBrowserPosition(position);
-    browserPositionRef.current = position;
+    if (seekPreviewRef.current === null) {
+      setBrowserPosition(position);
+      browserPositionRef.current = position;
+    }
     playbackAnchorRef.current = playbackAnchor(localEpisode);
   }, [localEpisode?.current_segment_id, localEpisode?.playback_position_seconds, mixPlanKey]);
 
@@ -298,7 +301,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [current?.title, localEpisode, saveState, saved, setEpisode]);
 
   const handleMixPosition = useCallback((positionSeconds: number) => {
-    if (!localEpisode || !mixPlanRef.current) return;
+    if (!localEpisode || !mixPlanRef.current || seekPreviewRef.current !== null) return;
     const transport = mixPositionToLinearPosition(localEpisode, mixPlanRef.current, positionSeconds);
     const linearPosition = Math.floor(transport.linearPositionSeconds);
     setBrowserPosition(positionSeconds);
@@ -320,7 +323,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [localEpisode]);
 
   const handleAudioPosition = useCallback((segmentPosition: number) => {
-    if (!localEpisode || !current) return;
+    if (!localEpisode || !current || seekPreviewRef.current !== null) return;
     const position = Math.floor(segmentStart(localEpisode, current.id) + Math.max(0, segmentPosition));
     setBrowserPosition(position);
     browserPositionRef.current = position;
@@ -335,8 +338,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     const linearValue = mixPlanRef.current
       ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, value).linearPositionSeconds
       : value;
-    if (!isSeekAllowed(localEpisode, linearValue)) return;
-    setSeekPreview(null);
+    if (!isSeekAllowed(localEpisode, linearValue)) {
+      seekPreviewRef.current = null;
+      setSeekPreview(null);
+      return;
+    }
     const runSeek = async () => {
       const response = await api.seek(localEpisode.id, Math.floor(linearValue));
       mixCommitQueueRef.current?.acknowledge(response.current_segment_id);
@@ -347,17 +353,22 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       browserPositionRef.current = mixValue;
       playbackAnchorRef.current = playbackAnchor(response);
       setEpisode(response);
+      seekPreviewRef.current = null;
+      setSeekPreview(null);
       setError(null);
     };
     void (mixCommitQueueRef.current ? mixCommitQueueRef.current.runExclusive(runSeek) : runSeek())
       .catch((reason: unknown) => {
+        seekPreviewRef.current = null;
+        setSeekPreview(null);
         setError(reason instanceof Error ? reason.message : "跳转暂时没有完成");
       });
   }, [localEpisode, setEpisode]);
 
   const commitSeekPreview = useCallback(() => {
-    if (seekPreview !== null) commitSeek(seekPreview);
-  }, [commitSeek, seekPreview]);
+    const preview = seekPreviewRef.current;
+    if (preview !== null) commitSeek(preview);
+  }, [commitSeek]);
 
   const pausePlayback = useCallback(async () => {
     if (!localEpisode) return;
@@ -522,7 +533,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
             const linearValue = mixPlanRef.current
               ? mixPositionToLinearPosition(localEpisode, mixPlanRef.current, value).linearPositionSeconds
               : value;
-            if (isSeekAllowed(localEpisode, linearValue)) setSeekPreview(value);
+            if (isSeekAllowed(localEpisode, linearValue)) {
+              seekPreviewRef.current = value;
+              setSeekPreview(value);
+            }
           }}
           onPointerUp={commitSeekPreview}
           onKeyUp={commitSeekPreview}
