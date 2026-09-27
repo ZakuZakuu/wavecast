@@ -143,22 +143,19 @@ class StagedProgressiveRuntimeAdapter:
                 canonical_artist=locked_artist,
                 canonical_title=locked_title,
             )
+        # Local import avoids a module-load cycle while keeping the
+        # degradable boundary typed: programmer errors must still escape.
+        from wavecast.assembly import EpisodeAssemblyError
+
         try:
             return await self.assembly.prepare_progressive_session(
                 request,
                 opening_track=opening_track,
                 locked_successor=locked_successor,
             )
-        except Exception as error:
-            # The assembly layer exposes a typed EpisodeAssemblyError, but importing
-            # it at module load time would create a runtime cycle. Only that known
-            # planning failure is degradable, and only while progressive listening
-            # already owns a durable successor. FULL generation remains strict.
-            from wavecast.assembly import EpisodeAssemblyError
-
+        except EpisodeAssemblyError as error:
             if (
-                isinstance(error, EpisodeAssemblyError)
-                and locked_successor is not None
+                locked_successor is not None
                 and episode.generation_mode is GenerationMode.PROGRESSIVE
             ):
                 raise ProgressivePlanningDeferred(
