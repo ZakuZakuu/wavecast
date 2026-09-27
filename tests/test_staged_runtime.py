@@ -18,7 +18,10 @@ from wavecast.orchestration.episode import (
     InMemoryEpisodeRepository,
 )
 from wavecast.orchestration.generation import GeneratedChapter
-from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
+from wavecast.orchestration.runtime import (
+    ProgressivePlanningDeferred,
+    StagedProgressiveRuntimeAdapter,
+)
 from wavecast.providers.config import ProviderSettings
 
 from tests.test_staged_intelligence import _session
@@ -311,6 +314,68 @@ def test_existing_ready_successor_skips_duplicate_fast_bootstrap() -> None:
         for segment in buffered.ordered_segments
         if segment.chapter_id == "chapter-2"
     ] == ["chapter-2:music:0"]
+
+
+class _DeferredPlanningRuntime(_BootstrapRuntime):
+    async def prepare_session(self, episode):
+        del episode
+        self.prepare_calls += 1
+        raise ProgressivePlanningDeferred(
+            "synthetic full planning deferral behind ready successor"
+        )
+
+
+def test_planning_deferral_keeps_ready_successor_and_allows_later_retry() -> None:
+    staged = _DeferredPlanningRuntime()
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
+    episode = runtime.start(_seed())
+
+    first = asyncio.run(
+        runtime.ensure_buffer_async(
+            episode.id,
+            target_chapters=2,
+            target_ahead_seconds=300,
+        )
+    )
+
+    assert first.progressive_session is None
+    assert first.segment("chapter-2:music:0").is_audio_ready
+    assert first.has_ready_successor is True
+    assert staged.fast_calls == 1
+    assert staged.prepare_calls == 1
+
+    playing_successor = runtime.complete_current_segment(episode.id)
+    assert playing_successor.current_segment_id == "chapter-2:music:0"
+    assert playing_successor.segment("chapter-2:music:0").is_committed
+
+    retried = asyncio.run(
+        runtime.ensure_buffer_async(
+            episode.id,
+            target_chapters=1,
+            target_ahead_seconds=300,
+        )
+    )
+
+    assert retried.progressive_session is None
+    assert staged.fast_calls == 1
+    assert staged.prepare_calls == 2
+    assert [
+        segment.id
+        for segment in retried.ordered_segments
+        if segment.chapter_id == "chapter-2"
+    ] == ["chapter-2:music:0"]
+
+
+def test_full_generation_never_accepts_progressive_planning_deferral() -> None:
+    staged = _DeferredPlanningRuntime()
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
+    episode = runtime.start(_seed())
+    runtime.request_full_generation(episode.id)
+
+    with pytest.raises(EpisodeRuntimeError, match="cannot defer"):
+        asyncio.run(runtime.materialize_all_async(episode.id))
 
 def test_heartbeat_during_staged_preparation_does_not_stale_attach() -> None:
     staged = _FakeRuntime(gated=True)
