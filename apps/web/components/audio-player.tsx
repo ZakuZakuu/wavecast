@@ -36,6 +36,11 @@ export function AudioPlayer({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastSeekTokenRef = useRef(seekToken);
   const completedRef = useRef(false);
+  const hasArrangement = arrangement !== null && arrangement !== undefined;
+  const arrangementSourceOffsetSeconds = arrangement?.sourceOffsetSeconds ?? 0;
+  const arrangementPlayableDurationSeconds = arrangement?.playableDurationSeconds ?? 0;
+  const arrangementFadeInSeconds = arrangement?.fadeInSeconds ?? 0;
+  const arrangementFadeOutSeconds = arrangement?.fadeOutSeconds ?? 0;
 
   useEffect(() => {
     completedRef.current = false;
@@ -44,10 +49,9 @@ export function AudioPlayer({
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    const sourceOffsetSeconds = arrangement?.sourceOffsetSeconds ?? 0;
     return attachAudioLifecycle(audio, {
       onTimeUpdate: (sourcePosition) => {
-        const position = Math.max(0, sourcePosition - sourceOffsetSeconds);
+        const position = Math.max(0, sourcePosition - arrangementSourceOffsetSeconds);
         if (
           maxDurationSeconds !== null
           && maxDurationSeconds !== undefined
@@ -71,7 +75,7 @@ export function AudioPlayer({
       onError,
     });
   }, [
-    arrangement?.sourceOffsetSeconds,
+    arrangementSourceOffsetSeconds,
     maxDurationSeconds,
     onEnded,
     onError,
@@ -83,15 +87,14 @@ export function AudioPlayer({
     if (!audio) return;
     const syncPosition = lastSeekTokenRef.current !== seekToken;
     lastSeekTokenRef.current = seekToken;
-    const sourceOffsetSeconds = arrangement?.sourceOffsetSeconds ?? 0;
     syncAudioPlayback(audio, {
       sourceUrl: segment?.audio_source_url ?? null,
-      positionSeconds: sourceOffsetSeconds + positionSeconds,
+      positionSeconds: arrangementSourceOffsetSeconds + positionSeconds,
       playing,
       syncPosition,
     });
   }, [
-    arrangement?.sourceOffsetSeconds,
+    arrangementSourceOffsetSeconds,
     playing,
     positionSeconds,
     seekToken,
@@ -104,8 +107,17 @@ export function AudioPlayer({
     if (!audio) return;
     let frame: number | null = null;
 
+    const gainArrangement = hasArrangement
+      ? {
+          sourceOffsetSeconds: arrangementSourceOffsetSeconds,
+          playableDurationSeconds: arrangementPlayableDurationSeconds,
+          fadeInSeconds: arrangementFadeInSeconds,
+          fadeOutSeconds: arrangementFadeOutSeconds,
+        }
+      : null;
+
     const applyGain = () => {
-      audio.volume = transportSafeGain(arrangement, audio.currentTime);
+      audio.volume = transportSafeGain(gainArrangement, audio.currentTime);
       if (playing) {
         frame = window.requestAnimationFrame(applyGain);
       }
@@ -117,10 +129,11 @@ export function AudioPlayer({
       audio.volume = 1;
     };
   }, [
-    arrangement?.fadeInSeconds,
-    arrangement?.fadeOutSeconds,
-    arrangement?.playableDurationSeconds,
-    arrangement?.sourceOffsetSeconds,
+    arrangementFadeInSeconds,
+    arrangementFadeOutSeconds,
+    arrangementPlayableDurationSeconds,
+    arrangementSourceOffsetSeconds,
+    hasArrangement,
     playing,
     segment?.id,
   ]);
