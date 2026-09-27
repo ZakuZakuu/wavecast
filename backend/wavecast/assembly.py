@@ -338,7 +338,11 @@ class LiveEpisodeAssemblyService:
         before Writer, composition, TTS, and playback-asset preparation.
         """
 
-        prepared = await self._prepare_intelligence(request, request_id=request_id)
+        prepared = await self._prepare_intelligence(
+            request,
+            request_id=request_id,
+            locked_successor=locked_successor,
+        )
         return _build_progressive_session(
             request=request,
             prepared=prepared,
@@ -364,6 +368,7 @@ class LiveEpisodeAssemblyService:
         request: LiveEpisodeAssemblyRequest,
         *,
         request_id: str | None = None,
+        locked_successor: ResolvedTrack | None = None,
     ) -> _PreparedIntelligence:
         """Run the bounded intelligence and catalog-identity stages only."""
 
@@ -383,6 +388,39 @@ class LiveEpisodeAssemblyService:
             raise EpisodeAssemblyError(str(error), stage="fast_start") from error
         fast_path_ms = _elapsed_ms(fast_started)
         trace = fast_result.trace
+        if locked_successor is not None:
+            locked_proposal = TrackProposal(
+                artist=locked_successor.canonical_artist,
+                title=locked_successor.canonical_title,
+                reasons=["FastStart successor already persisted by the runtime."],
+                confidence=1.0,
+            )
+            deduped_candidates = [
+                candidate
+                for candidate in fast_result.plan.next_candidates
+                if (
+                    candidate.artist.casefold(),
+                    candidate.title.casefold(),
+                )
+                != (
+                    locked_proposal.artist.casefold(),
+                    locked_proposal.title.casefold(),
+                )
+            ]
+            fast_result.plan = fast_result.plan.model_copy(
+                update={
+                    "selected_next_track": locked_proposal,
+                    "next_candidates": [
+                        locked_proposal,
+                        *deduped_candidates,
+                    ],
+                }
+            )
+            trace.mark(
+                "fast_successor_locked",
+                track_artist=locked_successor.canonical_artist,
+                track_title=locked_successor.canonical_title,
+            )
 
         background_started = perf_counter()
         trace.mark("assembly_background_started", max_tracks=request.max_tracks)
