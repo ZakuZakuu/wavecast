@@ -50,6 +50,21 @@ def wait_for_health(base_url: str) -> None:
     raise RuntimeError("deployment smoke health check timed out")
 
 
+def wait_for_generated_future(base_url: str, episode_id: str) -> dict[str, Any]:
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        episode, _, status = call(base_url, f"/api/episodes/{episode_id}")
+        if (
+            status == 200
+            and isinstance(episode, dict)
+            and isinstance(episode.get("segments"), list)
+            and len(episode["segments"]) > 1
+        ):
+            return episode
+        time.sleep(0.5)
+    raise RuntimeError("background generation did not prepare a future segment")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Credential-free production Compose smoke.")
     parser.add_argument("--base-url", default="http://127.0.0.1:3000")
@@ -79,14 +94,7 @@ def main() -> None:
     if len(opening_segments) != 1:
         raise RuntimeError("progressive episode did not start with opening-only timeline")
 
-    expanded, _, _ = call(
-        base_url,
-        f"/api/episodes/{episode_id}/ensure-buffer",
-        method="POST",
-        payload={"target_chapters": 1},
-    )
-    if not isinstance(expanded, dict):
-        raise RuntimeError("deployment smoke buffer response is invalid")
+    expanded = wait_for_generated_future(base_url, episode_id)
     if "progressive_session" in expanded:
         raise RuntimeError("internal progressive session leaked through public API")
     timeline = expanded.get("segments")

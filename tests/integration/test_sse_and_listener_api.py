@@ -1,7 +1,10 @@
+import asyncio
 import json
 
 from fastapi.testclient import TestClient
+from wavecast.orchestration.worker import GenerationWorker
 from wavecast.storage import EpisodeConcurrencyError
+from wavecast.storage.generation_jobs import InMemoryGenerationJobRepository
 
 import services.api.main as api_module
 
@@ -22,13 +25,15 @@ def test_anonymous_listener_header_isolates_episode_access() -> None:
     assert denied.status_code == 404
 
 
-def test_sse_delivers_the_persisted_episode_snapshot() -> None:
+def test_sse_delivers_the_persisted_episode_snapshot(monkeypatch) -> None:
+    jobs = InMemoryGenerationJobRepository()
+    worker = GenerationWorker(jobs, api_module.orchestrator, worker_id="sse-test")
+    monkeypatch.setattr(api_module, "generation_job_repository", jobs)
+    monkeypatch.setattr(api_module, "generation_worker", worker)
     client = TestClient(app)
     headers = {"X-Wavecast-Listener": "sse-listener"}
     created = client.post("/api/episodes/from-seed/synthpop-return", headers=headers).json()
-    client.post(
-        f"/api/episodes/{created['id']}/ensure-buffer", headers=headers, json={"target_chapters": 1}
-    )
+    assert asyncio.run(api_module.generation_worker.run_once()) is True
 
     with client.stream(
         "GET", f"/api/episodes/{created['id']}/events?once=true", headers=headers
