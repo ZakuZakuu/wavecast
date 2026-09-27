@@ -19,6 +19,7 @@ from wavecast.orchestration.runtime import ProgressivePlanningDeferred
 from wavecast.orchestration.worker import GenerationWorker
 from wavecast.providers.errors import ProviderConfigurationError
 from wavecast.storage.generation_jobs import (
+    GenerationJobLeaseError,
     GenerationJobMode,
     GenerationJobStatus,
     InMemoryGenerationJobRepository,
@@ -352,5 +353,61 @@ def test_external_worker_cancellation_does_not_leave_generation_running() -> Non
             pass
         await asyncio.sleep(0)
         assert runtime.cancelled.is_set()
+
+    asyncio.run(run())
+
+
+def test_completion_lease_loss_does_not_start_duplicate_narration_enrichment() -> None:
+    class CompletionLeaseLostRepository(InMemoryGenerationJobRepository):
+        def complete(
+            self,
+            job_id: str,
+            worker_id: str,
+            request_version: int,
+        ):
+            del job_id, worker_id, request_version
+            raise GenerationJobLeaseError("lease moved to another worker")
+
+    class CountingRuntime(EpisodeOrchestrator):
+        def __init__(self) -> None:
+            super().__init__(
+                InMemoryEpisodeRepository(),
+                progressive_generator=DeterministicMockProgressiveGenerator(),
+            )
+            self.author_calls = 0
+            self.materialize_calls = 0
+
+        async def author_pending_narration_async(
+            self,
+            episode_id: str,
+            *,
+            max_chapters: int = 2,
+        ):
+            del max_chapters
+            self.author_calls += 1
+            return self.get(episode_id)
+
+        async def materialize_pending_narration_async(
+            self,
+            episode_id: str,
+            *,
+            max_segments: int = 2,
+        ):
+            del max_segments
+            self.materialize_calls += 1
+            return self.get(episode_id)
+
+    runtime = CountingRuntime()
+    episode = runtime.start(_seed())
+    jobs = CompletionLeaseLostRepository()
+    jobs.request(episode.id)
+    worker = GenerationWorker(jobs, runtime, worker_id="worker-complete-race")
+
+    async def run() -> None:
+        assert await worker.run_once() is True
+        await asyncio.sleep(0)
+        assert runtime.author_calls == 0
+        assert runtime.materialize_calls == 0
+        await worker.stop_enrichment()
 
     asyncio.run(run())
