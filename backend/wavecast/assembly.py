@@ -27,6 +27,7 @@ from wavecast.intelligence.models import (
     EditorialConnection,
     Evidence,
     FastResearchInput,
+    FastResearchResult,
     FastStartPlan,
     NarrationScript,
     NarrationSlotContext,
@@ -381,46 +382,24 @@ class LiveEpisodeAssemblyService:
             output_language=request.output_language,
         )
 
-        fast_started = perf_counter()
-        try:
-            fast_result = await self.fast_path.run(intelligence_input, request_id=request_id)
-        except ProviderError as error:
-            raise EpisodeAssemblyError(str(error), stage="fast_start") from error
-        fast_path_ms = _elapsed_ms(fast_started)
-        trace = fast_result.trace
         if locked_successor is not None:
-            locked_proposal = TrackProposal(
-                artist=locked_successor.canonical_artist,
-                title=locked_successor.canonical_title,
-                reasons=["FastStart successor already persisted by the runtime."],
-                confidence=1.0,
+            fast_result = _locked_successor_fast_result(
+                intelligence_input,
+                locked_successor,
+                request_id=request_id,
             )
-            deduped_candidates = [
-                candidate
-                for candidate in fast_result.plan.next_candidates
-                if (
-                    candidate.artist.casefold(),
-                    candidate.title.casefold(),
+            fast_path_ms = 0
+        else:
+            fast_started = perf_counter()
+            try:
+                fast_result = await self.fast_path.run(
+                    intelligence_input,
+                    request_id=request_id,
                 )
-                != (
-                    locked_proposal.artist.casefold(),
-                    locked_proposal.title.casefold(),
-                )
-            ]
-            fast_result.plan = fast_result.plan.model_copy(
-                update={
-                    "selected_next_track": locked_proposal,
-                    "next_candidates": [
-                        locked_proposal,
-                        *deduped_candidates,
-                    ],
-                }
-            )
-            trace.mark(
-                "fast_successor_locked",
-                track_artist=locked_successor.canonical_artist,
-                track_title=locked_successor.canonical_title,
-            )
+            except ProviderError as error:
+                raise EpisodeAssemblyError(str(error), stage="fast_start") from error
+            fast_path_ms = _elapsed_ms(fast_started)
+        trace = fast_result.trace
 
         background_started = perf_counter()
         trace.mark("assembly_background_started", max_tracks=request.max_tracks)
@@ -941,6 +920,81 @@ def _research_failure_snapshot(
     }
 
 
+
+
+def _locked_successor_fast_result(
+    request: FastResearchInput,
+    locked_successor: ResolvedTrack,
+    *,
+    request_id: str,
+) -> FastPathResult:
+    """Reconstruct deterministic FastStart context from durable successor identity.
+
+    The actual FastStart provider already chose and resolved this track before it
+    entered the Episode. Re-running that paid/model stage would add latency and
+    could disagree with the promise already made to playback.
+    """
+
+    proposal = TrackProposal(
+        artist=locked_successor.canonical_artist,
+        title=locked_successor.canonical_title,
+        reasons=["FastStart successor already persisted by the runtime."],
+        confidence=1.0,
+    )
+    language = resolve_output_language(request.output_language, request.topic)
+    if language is OutputLanguage.ZH_CN:
+        narration_text = "下一首已经准备好，我们会在播放过程中继续完善后面的节目路线。"
+    elif language is OutputLanguage.JA_JP:
+        narration_text = "次の曲は準備できています。再生中に、この先の番組構成を整えていきます。"
+    else:
+        narration_text = (
+            "The next track is already prepared while the rest of the route is refined."
+        )
+    research_plan = generic_research_plan(request)
+    plan = FastStartPlan(
+        anchor_understanding=[
+            (
+                "Continue from the opening through the already prepared successor: "
+                f"{locked_successor.canonical_artist} - "
+                f"{locked_successor.canonical_title}"
+            )
+        ],
+        immediate_taste_hypotheses=[],
+        next_candidates=[proposal],
+        selected_next_track=proposal,
+        first_narration=NarrationScript(
+            text=narration_text,
+            intended_duration_seconds=8,
+        ),
+        research_plan=research_plan,
+    )
+    bundle = ResearchBundle(
+        anchors=[
+            *request.anchor_tracks,
+            f"{locked_successor.canonical_artist} - {locked_successor.canonical_title}",
+        ],
+        taste_hypotheses=[],
+        evidence=[],
+        candidates=[proposal],
+        research_plan=research_plan,
+        uncertainties=[],
+    )
+    trace = GenerationTrace(request_id=request_id)
+    trace.mark(
+        "fast_successor_reused",
+        track_artist=locked_successor.canonical_artist,
+        track_title=locked_successor.canonical_title,
+    )
+    return FastPathResult(
+        research=FastResearchResult(
+            bundle=bundle,
+            elapsed_ms=0,
+            queries=[],
+        ),
+        plan=plan,
+        trace=trace,
+        elapsed_ms=0,
+    )
 
 
 def _same_resolved_track(left: ResolvedTrack | None, right: ResolvedTrack) -> bool:
