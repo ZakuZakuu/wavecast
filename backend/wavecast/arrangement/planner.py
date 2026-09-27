@@ -264,6 +264,8 @@ def plan_episode_mix(
                     timeline_start_seconds=start,
                     source_offset_seconds=0,
                     playable_duration_seconds=duration,
+                    fade_in_seconds=min(config.voice_fade_seconds, duration),
+                    fade_out_seconds=min(config.voice_fade_seconds, duration),
                     gain_automation=(
                         GainPoint(offset_seconds=0, gain=0),
                         GainPoint(offset_seconds=min(config.voice_fade_seconds, duration), gain=1),
