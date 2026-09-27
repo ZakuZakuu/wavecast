@@ -18,6 +18,8 @@ import { ProgramArtwork } from "./program-artwork";
 import { WaveIcon } from "./wave-icon";
 
 const CHAPTER_TITLES = ["开场", "夜色开始变暖", "从旋律走进城市", "另一面的节奏", "慢慢收回来"];
+const HANDOFF_ARM_SECONDS = 2;
+const PLAYBACK_READY_STATES = new Set(["AUDIO_READY", "COMMITTED", "PLAYED"]);
 
 export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeId?: string }) {
   const { episode, setEpisode } = usePlayerStore();
@@ -25,6 +27,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const [browserPosition, setBrowserPosition] = useState(0);
   const [browserPlaying, setBrowserPlaying] = useState(false);
   const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
+  const [transportSegmentId, setTransportSegmentId] = useState<string | null>(null);
   const [seekToken, setSeekToken] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [chaptersOpen, setChaptersOpen] = useState(false);
@@ -38,6 +41,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const browserPositionRef = useRef(0);
   const seekPreviewRef = useRef<number | null>(null);
   const awaitingSuccessorRef = useRef(false);
+  const armedSuccessorIdRef = useRef<string | null>(null);
+  const armedEpisodeRef = useRef<LiveEpisode | null>(null);
+  const handoffAttemptRef = useRef<string | null>(null);
   const materializationRequestVersionRef = useRef<number | null>(null);
   const playbackAnchorRef = useRef<ReturnType<typeof playbackAnchor>>(null);
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
@@ -48,9 +54,26 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
     ? episode
     : null;
-  const current = useMemo(
+  const serverCurrent = useMemo(
     () => localEpisode?.segments.find((segment) => segment.id === localEpisode.current_segment_id),
     [localEpisode],
+  );
+  const current = useMemo(
+    () => {
+      if (!localEpisode) return undefined;
+      if (transportSegmentId) {
+        const optimistic = localEpisode.segments.find(
+          (segment) => segment.id === transportSegmentId,
+        );
+        if (optimistic) return optimistic;
+      }
+      return serverCurrent;
+    },
+    [localEpisode, serverCurrent, transportSegmentId],
+  );
+  const upcoming = useMemo(
+    () => localEpisode && current ? nextVisibleSegment(localEpisode) : undefined,
+    [current, localEpisode],
   );
   const arrangementEpisodeId = localEpisode?.id ?? null;
   const arrangementSignature = useMemo(
@@ -62,6 +85,25 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     [current?.id, mixPlan],
   );
   localEpisodeRef.current = localEpisode;
+
+  useEffect(() => {
+    setTransportSegmentId(null);
+    armedSuccessorIdRef.current = null;
+    armedEpisodeRef.current = null;
+    handoffAttemptRef.current = null;
+  }, [localEpisode?.id]);
+
+  useEffect(() => {
+    if (
+      transportSegmentId
+      && localEpisode?.current_segment_id === transportSegmentId
+    ) {
+      setTransportSegmentId(null);
+      armedSuccessorIdRef.current = null;
+      armedEpisodeRef.current = null;
+      handoffAttemptRef.current = null;
+    }
+  }, [localEpisode?.current_segment_id, transportSegmentId]);
 
   useEffect(() => {
     if (!arrangementEpisodeId || !arrangementSignature) {
@@ -230,20 +272,44 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, []);
 
   const completeBrowserSegment = useCallback(() => {
-    if (!localEpisode || !browserPlaying) return;
+    if (!localEpisode || !browserPlaying || !current) return;
 
-    // The source file may be much longer than the generated WaveCast segment.
-    // Stop locally at the generated frontier first; never let the raw music file
-    // continue while the next progressive chapter is still being prepared.
-    setBrowserPlaying(false);
+    const armedId = armedSuccessorIdRef.current;
+    const armedEpisode = armedEpisodeRef.current;
+    const armedSegment = armedId
+      ? (armedEpisode ?? localEpisode).segments.find((segment) => segment.id === armedId)
+      : undefined;
+    const canHandoffOptimistically = Boolean(
+      armedSegment
+      && PLAYBACK_READY_STATES.has(armedSegment.state)
+      && current.id === localEpisode.current_segment_id,
+    );
 
-    void api.completed(localEpisode.id)
+    if (canHandoffOptimistically && armedSegment && armedEpisode) {
+      const nextPosition = segmentStart(armedEpisode, armedSegment.id);
+      setTransportSegmentId(armedSegment.id);
+      setBrowserPosition(nextPosition);
+      browserPositionRef.current = nextPosition;
+      setBrowserPlaying(true);
+    } else {
+      // Without a durable armed successor, retain the conservative server-gated
+      // completion behavior.
+      setBrowserPlaying(false);
+    }
+
+    const completion = canHandoffOptimistically && armedSegment
+      ? api.completeHandoff(localEpisode.id, current.id, armedSegment.id)
+      : api.completed(localEpisode.id);
+
+    void completion
       .then((completed) => {
+        playbackAnchorRef.current = playbackAnchor(completed);
         setEpisode(completed);
         setError(null);
 
         if (isProgramPlaybackComplete(completed)) {
           awaitingSuccessorRef.current = false;
+          setTransportSegmentId(null);
           void api.recordUserEvent({
             event_type: "PLAY_COMPLETE",
             program_id: completed.seed_id,
@@ -257,13 +323,19 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           setBrowserPlaying(true);
         } else {
           awaitingSuccessorRef.current = true;
+          setBrowserPlaying(false);
         }
       })
       .catch((reason: unknown) => {
         awaitingSuccessorRef.current = false;
-        setError(reason instanceof Error ? reason.message : "操作暂时没有完成");
+        // An armed successor is already durable, so a lost persistence response
+        // must not interrupt audio that has successfully handed off locally.
+        if (!canHandoffOptimistically) {
+          setBrowserPlaying(false);
+        }
+        setError(reason instanceof Error ? reason.message : "播放状态暂时没有同步");
       });
-  }, [browserPlaying, localEpisode, setEpisode]);
+  }, [browserPlaying, current, localEpisode, setEpisode]);
 
   const exportEpisode = useCallback(async () => {
     if (!localEpisode || localEpisode.state !== "MATERIALIZED" || exportState === "preparing") return;
@@ -359,14 +431,54 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   const handleAudioPosition = useCallback((segmentPosition: number) => {
     if (!localEpisode || !current || seekPreviewRef.current !== null) return;
-    const position = Math.floor(segmentStart(localEpisode, current.id) + Math.max(0, segmentPosition));
+    const position = Math.floor(
+      segmentStart(localEpisode, current.id) + Math.max(0, segmentPosition),
+    );
     setBrowserPosition(position);
     browserPositionRef.current = position;
-    if (position > localEpisode.playback_position_seconds && position % 5 === 0 && checkpointRef.current !== position) {
-      checkpointRef.current = position;
-      void api.checkpoint(localEpisode.id, position);
+
+    const currentDuration = current.duration_seconds
+      ?? current.actual_duration_seconds
+      ?? current.planned_duration_seconds;
+    const remainingSeconds = Math.max(0, currentDuration - segmentPosition);
+    const canArm = (
+      transportSegmentId === null
+      && localEpisode.current_segment_id === current.id
+      && remainingSeconds <= HANDOFF_ARM_SECONDS
+      && upcoming?.audio_source_url
+      && PLAYBACK_READY_STATES.has(upcoming.state)
+    );
+    if (canArm && upcoming) {
+      const handoffKey = `${current.id}->${upcoming.id}`;
+      if (handoffAttemptRef.current !== handoffKey) {
+        handoffAttemptRef.current = handoffKey;
+        void api.armHandoff(localEpisode.id, upcoming.id)
+          .then((armed) => {
+            const latest = localEpisodeRef.current;
+            if (
+              latest?.id !== localEpisode.id
+              || latest.current_segment_id !== current.id
+            ) return;
+            armedSuccessorIdRef.current = upcoming.id;
+            armedEpisodeRef.current = armed;
+            setEpisode(armed);
+          })
+          .catch(() => {
+            // Handoff arming is an optimization. Fall back to the conservative
+            // completed->next path without surfacing a playback error.
+          });
+      }
     }
-  }, [current, localEpisode]);
+
+    if (
+      position > localEpisode.playback_position_seconds
+      && position % 5 === 0
+      && checkpointRef.current !== position
+    ) {
+      checkpointRef.current = position;
+      void api.checkpoint(localEpisode.id, position).catch(() => undefined);
+    }
+  }, [current, localEpisode, setEpisode, transportSegmentId, upcoming]);
 
   const commitSeek = useCallback((value: number) => {
     if (!localEpisode) return;
@@ -478,7 +590,6 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const currentOffset = current
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
-  const upcoming = current ? nextVisibleSegment(localEpisode) : undefined;
   const preloadSourceUrl = upcoming
     && ["AUDIO_READY", "COMMITTED", "PLAYED"].includes(upcoming.state)
     ? upcoming.audio_source_url
