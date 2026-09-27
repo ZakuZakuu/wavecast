@@ -387,6 +387,7 @@ class EpisodeOrchestrator:
         episode = await asyncio.to_thread(self._active_episode, episode_id)
         if episode.state is EpisodeState.MATERIALIZED:
             return episode
+        episode = await self._ensure_fast_successor(episode_id, episode)
         episode = await self._ensure_progressive_session(episode_id, episode)
         while True:
             partial_chapter_id = self._next_partial_chapter_id(episode)
@@ -798,6 +799,54 @@ class EpisodeOrchestrator:
             candidate.audio_source_url = source.source_url
             candidate.actual_duration_seconds = None
         return self.repository.save(episode)
+
+    async def _ensure_fast_successor(
+        self, episode_id: str, episode: LiveEpisode
+    ) -> LiveEpisode:
+        """Persist one FastStart music successor before full route planning."""
+
+        runtime = self.progressive_runtime
+        prepare = getattr(runtime, "prepare_fast_successor", None)
+        if (
+            runtime is None
+            or episode.progressive_session is not None
+            or not callable(prepare)
+        ):
+            return episode
+
+        current = self._current_segment(episode)
+        if current is not None and any(
+            segment.kind is SegmentKind.MUSIC
+            and segment.order > current.order
+            and segment.is_audio_ready
+            for segment in episode.timeline_segments
+        ):
+            return episode
+
+        snapshot = await asyncio.to_thread(
+            self.capture_generation_snapshot,
+            episode_id,
+        )
+        chapter = await prepare(snapshot.episode)
+        if chapter is None:
+            return await asyncio.to_thread(self.repository.get, episode_id)
+
+        latest = await asyncio.to_thread(self.repository.get, episode_id)
+        current = self._current_segment(latest)
+        if current is not None and any(
+            segment.kind is SegmentKind.MUSIC
+            and segment.order > current.order
+            and segment.is_audio_ready
+            for segment in latest.timeline_segments
+        ):
+            return latest
+
+        return await asyncio.to_thread(
+            self.append_generated_chapter,
+            episode_id,
+            chapter,
+            snapshot,
+        )
 
     async def _ensure_progressive_session(
         self, episode_id: str, episode: LiveEpisode
