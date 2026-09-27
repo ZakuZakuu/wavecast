@@ -96,8 +96,14 @@ declarative DJ arrangement layered on the stable browser transport.
 - Arrangement/DJ v2 now begins with a transport-safe realtime renderer: the
   canonical MixPlan may skip unfinished optional narration to retain later ready
   music, EpisodePlayer can preload the next source, and short edge fades sample
-  the authoritative media element currentTime. This first slice deliberately
-  does not enable source-window seeks, dual-source overlap, or ducking in realtime.
+  the authoritative media element currentTime.
+- The armed-handoff slice removes API round-trip dead air at serial segment
+  boundaries. A ready successor is durably committed shortly before the current
+  media ends without changing current_segment_id; the browser may then switch to
+  that preloaded source immediately on ended while an explicit idempotent handoff
+  completion advances durable playback state. Failed arming falls back to the
+  conservative server-gated path, and manual next/seek invalidates stale arms.
+  Dual-source overlap, realtime ducking, and source-window seeks remain deferred.
 - The legacy Web `MixEngine` is not the active EpisodePlayer transport and must
   not be revived as a synthetic playback clock. Arrangement/DJ v2 remains
   deferred until continuity no longer depends on slow narration/intelligence
