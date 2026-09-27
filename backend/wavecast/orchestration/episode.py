@@ -33,7 +33,7 @@ from .generation import (
     ProgressiveChapterGenerator,
 )
 from .narration_enrichment import author_pending_narration
-from .runtime import StagedProgressiveRuntime
+from .runtime import ProgressivePlanningDeferred, StagedProgressiveRuntime
 
 SESSION_TTL = timedelta(seconds=30)
 DEFAULT_BUFFER_CHAPTERS = 2
@@ -389,6 +389,17 @@ class EpisodeOrchestrator:
             return episode
         episode = await self._ensure_fast_successor(episode_id, episode)
         episode = await self._ensure_progressive_session(episode_id, episode)
+        if (
+            self.progressive_runtime is not None
+            and episode.progressive_session is None
+            and self._has_fast_successor(episode)
+        ):
+            # A real successor is already durable, so a recoverable full-route
+            # planning failure must not poison the generation job. Playback can
+            # consume this latency budget and cheap low-buffer signals will
+            # schedule another planning attempt later.
+            episode.last_activity_at = self.now()
+            return await asyncio.to_thread(self.repository.save, episode)
         while True:
             partial_chapter_id = self._next_partial_chapter_id(episode)
             if partial_chapter_id is not None:
@@ -814,6 +825,9 @@ class EpisodeOrchestrator:
         ):
             return episode
 
+        if self._has_fast_successor(episode):
+            return episode
+
         current = self._current_segment(episode)
         if current is not None and any(
             segment.kind is SegmentKind.MUSIC
@@ -832,6 +846,8 @@ class EpisodeOrchestrator:
             return await asyncio.to_thread(self.repository.get, episode_id)
 
         latest = await asyncio.to_thread(self.repository.get, episode_id)
+        if self._has_fast_successor(latest):
+            return latest
         current = self._current_segment(latest)
         if current is not None and any(
             segment.kind is SegmentKind.MUSIC
@@ -854,7 +870,22 @@ class EpisodeOrchestrator:
         if self.progressive_runtime is None or episode.progressive_session is not None:
             return episode
         snapshot = await asyncio.to_thread(self.capture_generation_snapshot, episode_id)
-        prepared = await self.progressive_runtime.prepare_session(snapshot.episode)
+        try:
+            prepared = await self.progressive_runtime.prepare_session(snapshot.episode)
+        except ProgressivePlanningDeferred:
+            latest = await asyncio.to_thread(self.repository.get, episode_id)
+            if (
+                not latest.is_listener_active
+                and latest.generation_mode is not GenerationMode.FULL
+            ):
+                raise EpisodeRuntimeError(
+                    "listener session is inactive; discard deferred planning"
+                )
+            if self._has_fast_successor(latest):
+                return latest
+            raise EpisodeRuntimeError(
+                "full route planning deferred without a ready successor"
+            )
         latest = await asyncio.to_thread(self.repository.get, episode_id)
         if (
             not latest.is_listener_active
@@ -995,6 +1026,17 @@ class EpisodeOrchestrator:
                 return segment
             start = end
         return None
+
+    @staticmethod
+    def _has_fast_successor(episode: LiveEpisode) -> bool:
+        """Whether the durable FastStart chapter-2 music identity already exists."""
+
+        return any(
+            segment.chapter_id == "chapter-2"
+            and segment.kind is SegmentKind.MUSIC
+            and segment.is_audio_ready
+            for segment in episode.timeline_segments
+        )
 
     @staticmethod
     def _chapter_ready_for_continuity(segments: list[Segment]) -> bool:
