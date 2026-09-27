@@ -101,6 +101,39 @@ def test_browser_completion_transitions_segments_without_server_clock(
     assert completed.is_playing is True
 
 
+def test_armed_handoff_locks_successor_without_changing_current_segment(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    episode = runtime.start(seed)
+    runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
+    staged = runtime.get(episode.id)
+    staged.segment("segment-narration-1").state = SegmentState.SCRIPT_READY
+    runtime.repository.save(staged)
+
+    armed = runtime.arm_handoff(episode.id, "segment-bridge")
+
+    assert armed.current_segment_id == "segment-opening"
+    assert armed.segment("segment-opening").state is SegmentState.COMMITTED
+    assert armed.segment("segment-narration-1").state is SegmentState.SKIPPED
+    assert armed.segment("segment-bridge").state is SegmentState.COMMITTED
+    assert armed.playback_position_seconds == 0
+
+    completed = runtime.complete_current_segment(episode.id)
+    assert completed.segment("segment-opening").state is SegmentState.PLAYED
+    assert completed.current_segment_id == "segment-bridge"
+    assert completed.segment("segment-bridge").state is SegmentState.COMMITTED
+
+
+def test_armed_handoff_rejects_a_stale_successor_identity(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    episode = runtime.start(seed)
+    runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
+
+    with pytest.raises(EpisodeRuntimeError, match="successor changed"):
+        runtime.arm_handoff(episode.id, "segment-bridge")
+
+
 def test_seek_cannot_cross_generated_frontier(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
