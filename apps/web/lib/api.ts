@@ -97,6 +97,7 @@ export const api = {
   completed: (id: string) => request<LiveEpisode>(`/episodes/${id}/completed`, { method: "POST" }),
   heartbeat: (id: string) => request<LiveEpisode>(`/episodes/${id}/heartbeat`, { method: "POST" }),
   commit: (id: string, segmentId: string) => request<LiveEpisode>(`/episodes/${id}/commit/${segmentId}`, { method: "POST" }),
+  armHandoff: (id: string, segmentId: string) => request<LiveEpisode>(`/episodes/${id}/arm-handoff/${segmentId}`, { method: "POST" }),
   next: (id: string) => request<LiveEpisode>(`/episodes/${id}/next`, { method: "POST" }),
   seek: (id: string, position: number) => request<LiveEpisode>(`/episodes/${id}/seek`, { method: "POST", body: JSON.stringify({ position_seconds: position }) }),
   checkpoint: (id: string, position: number) => request<LiveEpisode>(`/episodes/${id}/playback-checkpoint`, { method: "POST", body: JSON.stringify({ position_seconds: position }) }),
