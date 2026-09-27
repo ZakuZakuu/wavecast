@@ -258,6 +258,23 @@ whichever is more useful for the current program.
 
 Do not keep generating indefinitely if the user leaves.
 
+### Runtime v2 implementation contract
+
+The product intent above remains authoritative, but the earlier browser-driven
+`ensure-buffer` implementation and fixed generated-frontier stopping behavior
+are superseded by [ADR 0020](adr/0020-buffered-streaming-runtime-v2.md).
+
+In particular:
+
+- there is no product-level 30-second opening boundary;
+- normal music playback is itself the latency budget for background generation;
+- backend generation owns a durable ready queue and recovery policy;
+- recoverable Research/Curator/resolution/Writer/TTS failures must degrade
+  without avoidable dead air;
+- PROGRESSIVE and FULL are policies of the same durable Episode;
+- the browser owns playback time, while deterministic DJ arrangement is layered
+  above that transport rather than replacing its clock.
+
 ---
 
 # 6. Chapters and segments
