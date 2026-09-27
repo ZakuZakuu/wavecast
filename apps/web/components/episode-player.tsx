@@ -514,7 +514,14 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         playing={browserPlaying && localEpisode.is_listener_active}
         positionSeconds={currentOffset}
         seekToken={seekToken}
-        arrangement={arrangementClip}
+        arrangement={arrangementClip
+          ? {
+              sourceOffsetSeconds: 0,
+              playableDurationSeconds: arrangementClip.playableDurationSeconds,
+              fadeInSeconds: arrangementClip.fadeInSeconds,
+              fadeOutSeconds: arrangementClip.fadeOutSeconds,
+            }
+          : null}
         preloadSourceUrl={upcoming?.audio_source_url ?? null}
         maxDurationSeconds={arrangementClip?.playableDurationSeconds ?? (current
           ? current.duration_seconds ?? current.actual_duration_seconds ?? current.planned_duration_seconds
