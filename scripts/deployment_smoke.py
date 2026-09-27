@@ -79,19 +79,31 @@ def main() -> None:
     if len(opening_segments) != 1:
         raise RuntimeError("progressive episode did not start with opening-only timeline")
 
-    expanded, _, _ = call(
+    queued, _, _ = call(
         base_url,
         f"/api/episodes/{episode_id}/ensure-buffer",
         method="POST",
         payload={"target_chapters": 1},
     )
-    if not isinstance(expanded, dict):
+    if not isinstance(queued, dict):
         raise RuntimeError("deployment smoke buffer response is invalid")
-    if "progressive_session" in expanded:
+    if "progressive_session" in queued:
         raise RuntimeError("internal progressive session leaked through public API")
+
+    deadline = time.monotonic() + 30
+    expanded = queued
     timeline = expanded.get("segments")
+    while (
+        (not isinstance(timeline, list) or len(timeline) <= 1)
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.25)
+        expanded, _, _ = call(base_url, f"/api/episodes/{episode_id}")
+        if not isinstance(expanded, dict):
+            raise RuntimeError("deployment smoke episode polling returned invalid data")
+        timeline = expanded.get("segments")
     if not isinstance(timeline, list) or len(timeline) <= 1:
-        raise RuntimeError("deployment smoke did not materialize a staged future")
+        raise RuntimeError("deployment smoke worker did not materialize a staged future")
 
     asset_urls = [
         segment.get("audio_source_url")
