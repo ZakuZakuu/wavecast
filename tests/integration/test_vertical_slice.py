@@ -1,6 +1,8 @@
 import asyncio
 
 from fastapi.testclient import TestClient
+from wavecast.orchestration.worker import GenerationWorker
+from wavecast.storage.generation_jobs import InMemoryGenerationJobRepository
 
 import services.api.main as api_module
 
@@ -45,7 +47,11 @@ def test_materialized_import_rejects_external_audio_url() -> None:
     assert response.json()["detail"] == "materialized episode contains an external audio URL"
 
 
-def test_mock_vertical_slice_from_seed_to_materialized_resumeable_episode() -> None:
+def test_mock_vertical_slice_from_seed_to_materialized_resumeable_episode(monkeypatch) -> None:
+    jobs = InMemoryGenerationJobRepository()
+    worker = GenerationWorker(jobs, api_module.orchestrator, worker_id="vertical-slice")
+    monkeypatch.setattr(api_module, "generation_job_repository", jobs)
+    monkeypatch.setattr(api_module, "generation_worker", worker)
     client = TestClient(app)
     seeds = client.get("/api/seeds").json()
     assert seeds
