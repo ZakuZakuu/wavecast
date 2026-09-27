@@ -71,6 +71,10 @@ class GenerationJobRepository(Protocol):
 
     def claim(self, worker_id: str, *, lease_seconds: int = 120) -> GenerationJob | None: ...
 
+    def renew_lease(
+        self, job_id: str, worker_id: str, *, lease_seconds: int = 120
+    ) -> GenerationJob: ...
+
     def complete(
         self, job_id: str, worker_id: str, request_version: int
     ) -> GenerationJob: ...
@@ -238,6 +242,24 @@ class InMemoryGenerationJobRepository:
             self._store(claimed)
             return claimed.model_copy(deep=True)
 
+    def renew_lease(
+        self, job_id: str, worker_id: str, *, lease_seconds: int = 120
+    ) -> GenerationJob:
+        worker_id = _validate_worker(worker_id)
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        with self._lock:
+            current = self._running_owned(job_id, worker_id)
+            now = self._now()
+            updated = current.model_copy(
+                update={
+                    "lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "updated_at": now,
+                }
+            )
+            self._store(updated)
+            return updated.model_copy(deep=True)
+
     def complete(
         self, job_id: str, worker_id: str, request_version: int
     ) -> GenerationJob:
@@ -382,6 +404,17 @@ class PostgresGenerationJobRepository:
         return cast(
             GenerationJob | None,
             self._run(self._claim(worker_id, lease_seconds=lease_seconds)),
+        )
+
+    def renew_lease(
+        self, job_id: str, worker_id: str, *, lease_seconds: int = 120
+    ) -> GenerationJob:
+        worker_id = _validate_worker(worker_id)
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        return cast(
+            GenerationJob,
+            self._run(self._renew_lease(job_id, worker_id, lease_seconds=lease_seconds)),
         )
 
     def complete(
@@ -575,6 +608,25 @@ class PostgresGenerationJobRepository:
                 )
             ).mappings().one()
             return _job_from_mapping(claimed)
+
+    async def _renew_lease(
+        self, job_id: str, worker_id: str, *, lease_seconds: int
+    ) -> GenerationJob:
+        now = _utc_now()
+        async with self.engine.begin() as connection:
+            current = await self._locked_owned(connection, job_id, worker_id)
+            row = (
+                await connection.execute(
+                    update(generation_jobs_table)
+                    .where(generation_jobs_table.c.id == current.id)
+                    .values(
+                        lease_expires_at=now + timedelta(seconds=lease_seconds),
+                        updated_at=now,
+                    )
+                    .returning(generation_jobs_table)
+                )
+            ).mappings().one()
+            return _job_from_mapping(row)
 
     async def _complete(
         self, job_id: str, worker_id: str, request_version: int
