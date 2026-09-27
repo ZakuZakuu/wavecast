@@ -487,6 +487,43 @@ class EpisodeOrchestrator:
         episode.last_activity_at = self.now()
         return self.repository.save(episode)
 
+    def complete_handoff(
+        self,
+        episode_id: str,
+        completed_segment_id: str,
+        successor_segment_id: str,
+    ) -> LiveEpisode:
+        """Persist an already-armed browser handoff idempotently."""
+
+        episode = self._active_episode(episode_id)
+        completed = episode.segment(completed_segment_id)
+        successor = episode.segment(successor_segment_id)
+        if completed.order >= successor.order:
+            raise EpisodeRuntimeError("handoff successor must follow completed segment")
+        if not successor.is_committed:
+            raise EpisodeRuntimeError("handoff successor is not armed")
+        if episode.current_segment_id not in {
+            completed_segment_id,
+            successor_segment_id,
+        }:
+            raise EpisodeRuntimeError("handoff anchor is stale")
+
+        if completed.state is not SegmentState.PLAYED:
+            if not completed.is_audio_ready:
+                raise EpisodeRuntimeError("cannot complete audio that is not ready")
+            completed.state = SegmentState.PLAYED
+            completed.played_at = self.now()
+
+        if episode.current_segment_id == completed_segment_id:
+            episode.current_segment_id = successor_segment_id
+            episode.playback_position_seconds = self._timeline_start(
+                episode,
+                successor_segment_id,
+            )
+        episode.is_playing = True
+        episode.last_activity_at = self.now()
+        return self.repository.save(episode)
+
     def complete_current_segment(self, episode_id: str) -> LiveEpisode:
         """Apply a browser ``ended`` event without running a server playback clock."""
         episode = self._active_episode(episode_id)
