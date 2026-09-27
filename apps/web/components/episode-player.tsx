@@ -35,6 +35,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
   const seekPreviewRef = useRef<number | null>(null);
+  const awaitingSuccessorRef = useRef(false);
   const playbackAnchorRef = useRef<ReturnType<typeof playbackAnchor>>(null);
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
   const startEffectGuardRef = useRef(createEffectGenerationGuard());
@@ -129,9 +130,26 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   useEffect(() => {
     if (localEpisode && !localEpisode.is_listener_active) {
+      awaitingSuccessorRef.current = false;
       setBrowserPlaying(false);
     }
   }, [localEpisode?.id, localEpisode?.is_listener_active]);
+
+  useEffect(() => {
+    if (
+      awaitingSuccessorRef.current
+      && localEpisode?.is_listener_active
+      && localEpisode.is_playing
+    ) {
+      awaitingSuccessorRef.current = false;
+      setBrowserPlaying(true);
+      setError(null);
+    }
+  }, [
+    localEpisode?.current_segment_id,
+    localEpisode?.is_listener_active,
+    localEpisode?.is_playing,
+  ]);
 
   useEffect(() => {
     if (!localEpisode?.is_listener_active) return;
@@ -193,6 +211,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const leaveEpisode = useCallback(() => {
     const currentEpisode = localEpisodeRef.current;
     if (!currentEpisode) return;
+    awaitingSuccessorRef.current = false;
     setBrowserPlaying(false);
     synchronizationGuardRef.current.invalidate();
     void update(api.leave(currentEpisode.id));
@@ -200,20 +219,36 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   const completeBrowserSegment = useCallback(() => {
     if (!localEpisode || !browserPlaying) return;
+
+    // The source file may be much longer than the generated WaveCast segment.
+    // Stop locally at the generated frontier first; never let the raw music file
+    // continue while the next progressive chapter is still being prepared.
+    setBrowserPlaying(false);
+
     void api.completed(localEpisode.id)
       .then((completed) => {
         setEpisode(completed);
         setError(null);
+
         if (isProgramPlaybackComplete(completed)) {
-          setBrowserPlaying(false);
+          awaitingSuccessorRef.current = false;
           void api.recordUserEvent({
             event_type: "PLAY_COMPLETE",
             program_id: completed.seed_id,
             episode_id: completed.id,
           }).catch(() => undefined);
+          return;
+        }
+
+        if (completed.is_playing && completed.is_listener_active) {
+          awaitingSuccessorRef.current = false;
+          setBrowserPlaying(true);
+        } else {
+          awaitingSuccessorRef.current = true;
         }
       })
       .catch((reason: unknown) => {
+        awaitingSuccessorRef.current = false;
         setError(reason instanceof Error ? reason.message : "操作暂时没有完成");
       });
   }, [browserPlaying, localEpisode, setEpisode]);
@@ -327,6 +362,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   const pausePlayback = useCallback(() => {
     if (!localEpisode) return;
+    awaitingSuccessorRef.current = false;
     setBrowserPlaying(false);
     const position = Math.floor(browserPositionRef.current);
     void api.checkpoint(localEpisode.id, position)
@@ -343,6 +379,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   const resumePlayback = useCallback(() => {
     if (!localEpisode) return;
+    awaitingSuccessorRef.current = false;
     setBrowserPlaying(true);
     void api.resume(localEpisode.id)
       .then((resumed) => {
