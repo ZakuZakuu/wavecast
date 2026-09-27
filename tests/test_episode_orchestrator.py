@@ -175,6 +175,27 @@ def test_next_uses_known_music_when_narration_is_not_ready(
     assert updated.segment("segment-narration-1").state is SegmentState.SKIPPED
 
 
+def test_unready_narration_does_not_hide_ready_music_or_create_dead_air(
+    runtime: EpisodeOrchestrator, seed: EpisodeSeed
+) -> None:
+    episode = runtime.start(seed)
+    runtime.ensure_buffer(episode.id, target_chapters=1, target_ahead_seconds=300)
+    staged = runtime.get(episode.id)
+    staged.segment("segment-narration-1").state = SegmentState.SCRIPT_READY
+    staged = runtime.repository.save(staged)
+
+    assert staged.generated_frontier_seconds == 22
+    assert staged.buffer_ahead_seconds == 22
+    assert staged.has_ready_successor is True
+    assert staged.ready_audio_seconds_ahead > staged.buffer_ahead_seconds
+
+    continued = runtime.complete_current_segment(episode.id)
+
+    assert continued.segment("segment-narration-1").state is SegmentState.SKIPPED
+    assert continued.current_segment_id == "segment-bridge"
+    assert continued.is_playing is True
+
+
 def test_exit_cancels_future_progress_and_resume_restarts_it(
     runtime: EpisodeOrchestrator, seed: EpisodeSeed
 ) -> None:
