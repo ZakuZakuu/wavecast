@@ -97,6 +97,22 @@ def test_expired_lease_is_reclaimed_by_another_worker() -> None:
     assert second.attempts == 2
 
 
+def test_renewed_lease_prevents_duplicate_claim() -> None:
+    clock = Clock()
+    repository = InMemoryGenerationJobRepository(now=clock.now)
+    repository.request("episode-1")
+    claimed = repository.claim("worker-a", lease_seconds=10)
+
+    assert claimed is not None
+    clock.advance(8)
+    renewed = repository.renew_lease(claimed.id, "worker-a", lease_seconds=10)
+
+    assert renewed.lease_expires_at == clock.now() + timedelta(seconds=10)
+
+    clock.advance(3)
+    assert repository.claim("worker-b", lease_seconds=10) is None
+
+
 def test_retry_delays_same_request_and_records_only_safe_error_code() -> None:
     clock = Clock()
     repository = InMemoryGenerationJobRepository(now=clock.now)
