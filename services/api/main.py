@@ -39,6 +39,7 @@ from wavecast.models.episode import (
     MusicSegment,
     NarrationSegment,
     PlayableEpisode,
+    SegmentKind,
 )
 from wavecast.orchestration import (
     EpisodeOrchestrator,
@@ -1340,9 +1341,14 @@ def canonical_mix_plan_for_episode(episode_id: str, actor: AuthPrincipal) -> Mix
     current = orchestrator.get(episode_id)
     ready_segments: list[MusicSegment | NarrationSegment] = []
     for segment in current.timeline_segments:
-        if not segment.is_audio_ready:
-            break
-        ready_segments.append(cast(MusicSegment | NarrationSegment, segment))
+        if segment.is_audio_ready:
+            ready_segments.append(cast(MusicSegment | NarrationSegment, segment))
+            continue
+        if segment.kind is SegmentKind.NARRATION:
+            # Narration is optional for continuity. Keep the arrangement usable
+            # when a later music source is already ready.
+            continue
+        break
     if not ready_segments:
         raise ValueError("mix plan is not ready")
     return plan_episode_mix(PlayableEpisode(id=current.id, segments=ready_segments))
