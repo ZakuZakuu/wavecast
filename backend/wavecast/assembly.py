@@ -937,7 +937,14 @@ def _build_progressive_session(
     runtime_future_pairs = [
         (item, contexts)
         for item, contexts in zip(normalized[1:], all_slot_contexts[1:], strict=True)
-        if item.track is not None or contexts
+        if (
+            # A selected music slot that failed catalog resolution is speculative
+            # and should disappear from the live route rather than survive as a
+            # narration-only chapter about music that will never play. Genuine
+            # narrative-only Curator chapters remain valid.
+            (item.chapter.track is None or item.track is not None)
+            and (item.track is not None or contexts)
+        )
     ]
     future = [item for item, _ in runtime_future_pairs]
     future_slots = [contexts for _, contexts in runtime_future_pairs]
