@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from fastapi.testclient import TestClient
@@ -26,9 +27,7 @@ def test_sse_delivers_the_persisted_episode_snapshot() -> None:
     client = TestClient(app)
     headers = {"X-Wavecast-Listener": "sse-listener"}
     created = client.post("/api/episodes/from-seed/synthpop-return", headers=headers).json()
-    client.post(
-        f"/api/episodes/{created['id']}/ensure-buffer", headers=headers, json={"target_chapters": 1}
-    )
+    assert asyncio.run(api_module.generation_worker.run_once()) is True
 
     with client.stream(
         "GET", f"/api/episodes/{created['id']}/events?once=true", headers=headers
