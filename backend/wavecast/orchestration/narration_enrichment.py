@@ -60,14 +60,15 @@ async def author_pending_narration(
             episode.current_segment_id in {segment.id for segment in chapter_segments}
             or any(segment.is_committed for segment in chapter_segments)
         )
+        if (
+            not episode.is_listener_active
+            and episode.generation_mode is not GenerationMode.FULL
+        ):
+            break
         should_degrade = (
             exposed
             or not session_chapter.slot_contexts
             or session_chapter.resolved_track is None
-            or (
-                not episode.is_listener_active
-                and episode.generation_mode is not GenerationMode.FULL
-            )
         )
 
         generated: GeneratedChapter | None = None
