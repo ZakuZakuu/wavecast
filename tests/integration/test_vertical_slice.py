@@ -1,6 +1,12 @@
-from fastapi.testclient import TestClient
+import asyncio
 
-from services.api.main import app
+from fastapi.testclient import TestClient
+from wavecast.orchestration.worker import GenerationWorker
+from wavecast.storage.generation_jobs import InMemoryGenerationJobRepository
+
+import services.api.main as api_module
+
+app = api_module.app
 
 
 def _materialized_payload(audio_url: str) -> dict[str, object]:
@@ -41,7 +47,11 @@ def test_materialized_import_rejects_external_audio_url() -> None:
     assert response.json()["detail"] == "materialized episode contains an external audio URL"
 
 
-def test_mock_vertical_slice_from_seed_to_materialized_resumeable_episode() -> None:
+def test_mock_vertical_slice_from_seed_to_materialized_resumeable_episode(monkeypatch) -> None:
+    jobs = InMemoryGenerationJobRepository()
+    worker = GenerationWorker(jobs, api_module.orchestrator, worker_id="vertical-slice")
+    monkeypatch.setattr(api_module, "generation_job_repository", jobs)
+    monkeypatch.setattr(api_module, "generation_worker", worker)
     client = TestClient(app)
     seeds = client.get("/api/seeds").json()
     assert seeds
@@ -64,10 +74,10 @@ def test_mock_vertical_slice_from_seed_to_materialized_resumeable_episode() -> N
     too_far = client.post(f"/api/episodes/{episode_id}/seek", json={"position_seconds": 23})
     assert too_far.status_code == 409
 
-    buffered = client.post(
-        f"/api/episodes/{episode_id}/ensure-buffer", json={"target_chapters": 1}
-    )
+    assert asyncio.run(api_module.generation_worker.run_once()) is True
+    buffered = client.get(f"/api/episodes/{episode_id}")
     assert buffered.status_code == 200
+    assert len(buffered.json()["segments"]) > 1
 
     next_response = client.post(f"/api/episodes/{episode_id}/next")
     assert next_response.status_code == 200
@@ -75,7 +85,7 @@ def test_mock_vertical_slice_from_seed_to_materialized_resumeable_episode() -> N
     assert "progressive_session" not in buffered.json()
 
     assert client.post(f"/api/episodes/{episode_id}/leave").json()["is_listener_active"] is False
-    assert client.post(f"/api/episodes/{episode_id}/advance").status_code == 409
+    assert client.post(f"/api/episodes/{episode_id}/advance").status_code == 200
     assert client.post(f"/api/episodes/{episode_id}/resume").json()["is_listener_active"] is True
 
     materialized = client.post(f"/api/episodes/{episode_id}/materialize")

@@ -55,6 +55,27 @@ def test_start_is_opening_only_and_does_not_call_generator() -> None:
     assert generator.calls == 0
 
 
+def test_long_opening_still_prepares_a_future_chapter() -> None:
+    generator = DeterministicMockProgressiveGenerator()
+    runtime, scheduler = make_runtime(generator)
+    long_opening = make_seed().model_copy(
+        update={"opening_track_duration_seconds": 300}
+    )
+    episode = runtime.start(long_opening)
+
+    buffered = asyncio.run(
+        scheduler.ensure_buffer(
+            episode.id,
+            target_chapters=2,
+            target_ahead_seconds=180,
+        )
+    )
+
+    assert generator.calls == 1
+    assert buffered.segment("segment-narration-1").is_audio_ready
+    assert buffered.segment("segment-bridge").is_audio_ready
+
+
 def test_scheduler_appends_complete_ready_chapters_within_bound() -> None:
     generator = DeterministicMockProgressiveGenerator()
     runtime, scheduler = make_runtime(generator)
