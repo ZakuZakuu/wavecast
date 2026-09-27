@@ -479,6 +479,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
   const upcoming = current ? nextVisibleSegment(localEpisode) : undefined;
+  const preloadSourceUrl = upcoming
+    && ["AUDIO_READY", "COMMITTED", "PLAYED"].includes(upcoming.state)
+    ? upcoming.audio_source_url
+    : null;
   const chapterIds = Array.from(new Set(localEpisode.segments.map((segment) => segment.chapter_id)));
   const currentChapterIndex = Math.max(0, chapterIds.indexOf(current?.chapter_id ?? chapterIds[0]));
   const chapterTitle = CHAPTER_TITLES[currentChapterIndex] ?? "Chapter " + (currentChapterIndex + 1);
@@ -522,7 +526,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
               fadeOutSeconds: arrangementClip.fadeOutSeconds,
             }
           : null}
-        preloadSourceUrl={upcoming?.audio_source_url ?? null}
+        preloadSourceUrl={preloadSourceUrl}
         maxDurationSeconds={arrangementClip?.playableDurationSeconds ?? (current
           ? current.duration_seconds ?? current.actual_duration_seconds ?? current.planned_duration_seconds
           : null)}
