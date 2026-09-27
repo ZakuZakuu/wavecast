@@ -1,8 +1,10 @@
 import asyncio
 import json
+import logging
 import os
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -41,6 +43,7 @@ from wavecast.models.episode import (
 )
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
+from wavecast.orchestration.worker import GenerationWorker, GenerationWorkerAction
 from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
 from wavecast.proposals import (
     DeterministicMockProgramProposalGenerator,
@@ -89,11 +92,15 @@ from wavecast.rendering import (
 from wavecast.rendering.fingerprint import mix_plan_fingerprint
 from wavecast.storage import (
     EpisodeConcurrencyError,
+    GenerationJobMode,
+    GenerationJobRepository,
     GenerationQuotaRepository,
+    InMemoryGenerationJobRepository,
     InMemoryGenerationQuotaRepository,
     InMemoryUserLibraryRepository,
     LocalObjectStorageProvider,
     PostgresEpisodeRepository,
+    PostgresGenerationJobRepository,
     PostgresGenerationQuotaRepository,
     PostgresUserLibraryRepository,
     QuotaExceededError,
@@ -117,6 +124,8 @@ from wavecast.user_context import (
     UserPreferencesUpdate,
 )
 
+logger = logging.getLogger(__name__)
+
 LISTENER_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 DATABASE_URL = os.getenv("WAVECAST_DATABASE_URL")
 if DATABASE_URL:
@@ -127,12 +136,18 @@ _provider_settings = ProviderSettings.from_env()
 proposal_repository: ProgramProposalRepository = InMemoryProgramProposalRepository()
 user_library_repository: UserLibraryRepository = InMemoryUserLibraryRepository()
 generation_quota_repository: GenerationQuotaRepository = InMemoryGenerationQuotaRepository()
+generation_job_repository: GenerationJobRepository = InMemoryGenerationJobRepository()
 if DATABASE_URL:
     from wavecast.storage import PostgresProgramProposalRepository
 
     proposal_repository = PostgresProgramProposalRepository(DATABASE_URL)
     user_library_repository = PostgresUserLibraryRepository(DATABASE_URL)
     generation_quota_repository = PostgresGenerationQuotaRepository(DATABASE_URL)
+    generation_job_repository = PostgresGenerationJobRepository(DATABASE_URL)
+
+BACKGROUND_GENERATION_ENABLED = bool(DATABASE_URL) and os.getenv(
+    "WAVECAST_BACKGROUND_GENERATION", "1"
+).strip().lower() not in {"0", "false", "off", "no"}
 
 GUEST_PROGRAM_LIMIT = int(os.getenv("WAVECAST_GUEST_PROGRAM_LIMIT", "3"))
 AUTH_DAILY_PROGRAM_LIMIT = int(os.getenv("WAVECAST_AUTH_DAILY_PROGRAM_LIMIT", "20"))
@@ -366,7 +381,50 @@ def configure_narration_materializer(materializer: NarrationMaterializer) -> Non
     )
     scheduler = InlineGenerationScheduler(orchestrator)
 
-app = FastAPI(title="Wavecast API", version="0.2.0")
+async def _generation_worker_loop() -> None:
+    worker = GenerationWorker(
+        generation_job_repository,
+        orchestrator,
+        worker_id=f"api-{uuid4().hex[:12]}",
+        lease_seconds=60,
+        lease_renew_interval_seconds=15,
+        max_attempts=2,
+        base_retry_delay_seconds=5,
+    )
+    while True:
+        try:
+            action = await worker.run_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # The durable queue remains the source of truth. A transient polling
+            # failure must not take down the API process or expose exception text.
+            logger.warning("generation worker poll failed")
+            await asyncio.sleep(2)
+            continue
+        if action is GenerationWorkerAction.IDLE:
+            await asyncio.sleep(0.5)
+        else:
+            await asyncio.sleep(0)
+
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    worker_task: asyncio.Task[None] | None = None
+    if BACKGROUND_GENERATION_ENABLED:
+        worker_task = asyncio.create_task(_generation_worker_loop())
+    try:
+        yield
+    finally:
+        if worker_task is not None:
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
+
+
+app = FastAPI(title="Wavecast API", version="0.2.0", lifespan=_app_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
