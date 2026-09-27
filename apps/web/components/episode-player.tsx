@@ -42,6 +42,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const seekPreviewRef = useRef<number | null>(null);
   const awaitingSuccessorRef = useRef(false);
   const armedSuccessorIdRef = useRef<string | null>(null);
+  const armedFromSegmentIdRef = useRef<string | null>(null);
   const armedEpisodeRef = useRef<LiveEpisode | null>(null);
   const handoffAttemptRef = useRef<string | null>(null);
   const materializationRequestVersionRef = useRef<number | null>(null);
@@ -89,6 +90,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   useEffect(() => {
     setTransportSegmentId(null);
     armedSuccessorIdRef.current = null;
+    armedFromSegmentIdRef.current = null;
     armedEpisodeRef.current = null;
     handoffAttemptRef.current = null;
   }, [localEpisode?.id]);
@@ -99,7 +101,15 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       && localEpisode?.current_segment_id === transportSegmentId
     ) {
       setTransportSegmentId(null);
+    }
+    const armedFrom = armedFromSegmentIdRef.current;
+    if (
+      armedFrom
+      && localEpisode?.current_segment_id
+      && localEpisode.current_segment_id !== armedFrom
+    ) {
       armedSuccessorIdRef.current = null;
+      armedFromSegmentIdRef.current = null;
       armedEpisodeRef.current = null;
       handoffAttemptRef.current = null;
     }
@@ -282,6 +292,8 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     const canHandoffOptimistically = Boolean(
       armedSegment
       && PLAYBACK_READY_STATES.has(armedSegment.state)
+      && armedFromSegmentIdRef.current === current.id
+      && armedSegment.id !== current.id
       && current.id === localEpisode.current_segment_id,
     );
 
@@ -473,6 +485,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
               || latest.current_segment_id !== current.id
             ) return;
             armedSuccessorIdRef.current = upcoming.id;
+            armedFromSegmentIdRef.current = current.id;
             const effectiveEpisode = latest.version > armed.version ? latest : armed;
             armedEpisodeRef.current = effectiveEpisode;
             if (armed.version >= latest.version) {
