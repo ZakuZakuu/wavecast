@@ -70,7 +70,7 @@ async def author_pending_narration(
             )
         )
 
-        generated = None
+        generated: GeneratedChapter | None = None
         if not should_degrade:
             generated = await runtime.author_narration(
                 episode.model_copy(deep=True),
