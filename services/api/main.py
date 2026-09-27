@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import monotonic
 from typing import Any, cast
 from urllib.parse import quote
 from uuid import uuid4
@@ -910,23 +911,60 @@ def _build_sidecar_provider(provider_name: str) -> SidecarMusicProvider:
     return provider_type(settings)
 
 
+_PLAYBACK_REQUEST_CACHE_TTL_SECONDS = 30.0
+_PLAYBACK_REQUEST_CACHE_MAX_ENTRIES = 128
+_playback_request_cache: dict[
+    tuple[str, str],
+    tuple[float, ResolvedPlaybackRequest],
+] = {}
+
+
 async def _resolve_sidecar_playback_request(
     provider_name: str, track_id: str
 ) -> ResolvedPlaybackRequest:
+    key = (provider_name, track_id)
+    now = monotonic()
+    cached = _playback_request_cache.get(key)
+    if cached is not None:
+        expires_at, request = cached
+        if expires_at > now:
+            return request
+        _playback_request_cache.pop(key, None)
+
     provider = _build_sidecar_provider(provider_name)
     try:
         if hasattr(provider, "resolve_upstream_playback_request"):
-            return await provider.resolve_upstream_playback_request(
+            resolved = await provider.resolve_upstream_playback_request(
                 f"{provider_name}:{track_id}"
             )
-        return ResolvedPlaybackRequest(
-            provider=provider_name,
-            url=await provider.resolve_upstream_playback_url(
-                f"{provider_name}:{track_id}"
-            ),
-        )
+        else:
+            resolved = ResolvedPlaybackRequest(
+                provider=provider_name,
+                url=await provider.resolve_upstream_playback_url(
+                    f"{provider_name}:{track_id}"
+                ),
+            )
     finally:
         await provider.aclose()
+
+    # Provider URLs are server-only and may be signed/ephemeral. Keep only a
+    # small, short-lived in-memory cache so preload + Range requests for the
+    # same source do not repeat catalog/playback resolution.
+    if len(_playback_request_cache) >= _PLAYBACK_REQUEST_CACHE_MAX_ENTRIES:
+        expired = [
+            cache_key
+            for cache_key, (expires_at, _) in _playback_request_cache.items()
+            if expires_at <= now
+        ]
+        for cache_key in expired:
+            _playback_request_cache.pop(cache_key, None)
+        if len(_playback_request_cache) >= _PLAYBACK_REQUEST_CACHE_MAX_ENTRIES:
+            _playback_request_cache.pop(next(iter(_playback_request_cache)))
+    _playback_request_cache[key] = (
+        now + _PLAYBACK_REQUEST_CACHE_TTL_SECONDS,
+        resolved,
+    )
+    return resolved
 
 
 async def _resolve_sidecar_playback_url(provider_name: str, track_id: str) -> str:
