@@ -931,13 +931,9 @@ class EpisodeOrchestrator:
 
     @staticmethod
     def _chapter_ready_for_continuity(segments: list[Segment]) -> bool:
-        """A chapter is continuity-ready when optional narration cannot block it."""
-        if not any(segment.is_audio_ready for segment in segments):
-            return False
-        return not any(
-            segment.kind is SegmentKind.MUSIC and not segment.is_audio_ready
-            for segment in segments
-        )
+        """A chapter is continuity-ready only when its music is playable."""
+        music = [segment for segment in segments if segment.kind is SegmentKind.MUSIC]
+        return bool(music) and all(segment.is_audio_ready for segment in music)
 
     @staticmethod
     def _ready_future_chapter_count(episode: LiveEpisode) -> int:
@@ -1010,7 +1006,11 @@ class EpisodeOrchestrator:
         return None
 
     def _materialize_chapter(self, episode: LiveEpisode, chapter_id: str) -> None:
-        """Make every segment in one chapter ready before checking the buffer."""
+        """Materialize music only; narration readiness is owned by enrichment."""
         for segment in episode.timeline_segments:
-            if segment.chapter_id == chapter_id and not segment.is_audio_ready:
+            if (
+                segment.chapter_id == chapter_id
+                and segment.kind is SegmentKind.MUSIC
+                and not segment.is_audio_ready
+            ):
                 self._make_ready(segment)
