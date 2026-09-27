@@ -419,6 +419,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         playing={browserPlaying && localEpisode.is_listener_active}
         positionSeconds={currentOffset}
         seekToken={seekToken}
+        maxDurationSeconds={current
+          ? current.duration_seconds ?? current.actual_duration_seconds ?? current.planned_duration_seconds
+          : null}
         onPositionChange={handleAudioPosition}
         onEnded={completeBrowserSegment}
         onError={() => setError("音频暂时无法播放")}
