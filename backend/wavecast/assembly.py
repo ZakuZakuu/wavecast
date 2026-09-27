@@ -1573,7 +1573,7 @@ def _assert_narration_blocks_materialized(
 
 
 class StagedProgressiveChapterGenerator:
-    """Materialize one session chapter while keeping narration degradable."""
+    """Prepare one session chapter without putting TTS on music readiness."""
 
     def __init__(
         self,
@@ -1681,23 +1681,15 @@ class StagedProgressiveChapterGenerator:
         except (UnresolvedTrackError, ValueError) as error:
             raise EpisodeAssemblyError(str(error), stage="progressive_chunk") from error
 
-        ready_segments = []
-        for segment in playable.segments:
-            if isinstance(segment, NarrationSegment):
-                try:
-                    await self.materializer.materialize(segment)
-                except ProviderError:
-                    # A TTS failure must never block already prepared music.
-                    # Failed narration is omitted from this speculative chapter;
-                    # committed history is untouched.
-                    continue
-            ready_segments.append(segment)
-
-        if not ready_segments:
+        # Music preparation is the continuity-critical boundary. Narration
+        # remains SCRIPT_READY here and is materialized by the durable worker
+        # only after the ready music buffer has been published.
+        prepared_segments = list(playable.segments)
+        if not prepared_segments:
             raise EpisodeAssemblyError(
-                "progressive chapter has no playable audio after narration degradation",
-                stage="narration_materialization",
-                reason_code="no_playable_audio_after_narration_degradation",
+                "progressive chapter has no planned playback resources",
+                stage="progressive_chunk",
+                reason_code="empty_progressive_chapter",
             )
 
         base_order = episode.ordered_segments[-1].order + 1 if episode.ordered_segments else 0
@@ -1706,7 +1698,7 @@ class StagedProgressiveChapterGenerator:
             SegmentKind.NARRATION: 0,
         }
         segments = []
-        for offset, segment in enumerate(ready_segments):
+        for offset, segment in enumerate(prepared_segments):
             kind_index = kind_counts[segment.kind]
             kind_counts[segment.kind] += 1
             segments.append(
