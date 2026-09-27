@@ -146,11 +146,15 @@ class GenerationWorker:
         task.add_done_callback(self._enrichment_tasks.discard)
 
     async def _enrich_narration(self, episode_id: str) -> None:
-        # SCRIPT_READY state is durable, so this task is never authoritative.
-        # Process loss may omit optional narration but cannot lose music or
-        # corrupt Episode identity; FULL generation materializes narration
-        # synchronously before freezing.
+        # Music readiness is already durable before this optional task starts.
+        # Writer creates SCRIPT_READY narration first; TTS enriches it only if
+        # the chapter is still speculative. Process loss may omit narration but
+        # cannot lose music or rewrite exposed playback history.
         with suppress(Exception):
+            await self.orchestrator.author_pending_narration_async(
+                episode_id,
+                max_chapters=self.policy.target_chapters,
+            )
             await self.orchestrator.materialize_pending_narration_async(
                 episode_id,
                 max_segments=self.policy.target_chapters,
