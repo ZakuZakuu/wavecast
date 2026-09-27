@@ -68,8 +68,6 @@ from wavecast.models.episode import (
     SegmentState,
 )
 from wavecast.orchestration.generation import GeneratedChapter
-
-logger = logging.getLogger(__name__)
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
     ProgressiveAssemblySession,
@@ -107,6 +105,8 @@ from wavecast.timing import (
     build_program_timing_plan,
     summarize_program_timing,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class EpisodeAssemblyError(RuntimeError):
