@@ -411,3 +411,41 @@ def test_completion_lease_loss_does_not_start_duplicate_narration_enrichment() -
         await worker.stop_enrichment()
 
     asyncio.run(run())
+
+
+def test_worker_serve_stop_cancels_inflight_generation() -> None:
+    class SlowRuntime(EpisodeOrchestrator):
+        def __init__(self) -> None:
+            super().__init__(InMemoryEpisodeRepository())
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def ensure_buffer_async(
+            self,
+            episode_id: str,
+            *,
+            target_chapters: int = 2,
+            target_ahead_seconds: int = 300,
+        ):
+            del episode_id, target_chapters, target_ahead_seconds
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    runtime = SlowRuntime()
+    jobs = InMemoryGenerationJobRepository()
+    jobs.request("episode-serve-stop")
+    worker = GenerationWorker(jobs, runtime, worker_id="worker-serve-stop")
+
+    async def run() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker.serve(stop))
+        await runtime.started.wait()
+        stop.set()
+        await asyncio.wait_for(task, timeout=1)
+        assert runtime.cancelled.is_set()
+
+    asyncio.run(run())
