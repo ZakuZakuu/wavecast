@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 import json
 
 from fastapi.testclient import TestClient
@@ -139,6 +140,57 @@ def test_heartbeat_does_not_requeue_when_ready_audio_ahead_is_healthy(monkeypatc
     unchanged = jobs.get_for_episode(created["id"])
     assert unchanged is not None
     assert unchanged.status is GenerationJobStatus.COMPLETED
+
+
+def test_healthy_heartbeat_throttles_recent_program_catchup(monkeypatch) -> None:
+    jobs = InMemoryGenerationJobRepository()
+    monkeypatch.setattr(api_module, "generation_job_repository", jobs)
+    monkeypatch.setattr(
+        api_module.orchestrator,
+        "needs_progressive_catchup",
+        lambda _episode: True,
+    )
+    episode = api_module.orchestrator.start(
+        api_module.SEEDS[0],
+        listener_id="catchup-throttle-listener",
+    )
+    job = jobs.request(episode.id)
+    claimed = jobs.claim("catchup-complete", lease_seconds=60)
+    assert claimed is not None
+    jobs.complete(claimed.id, "catchup-complete", claimed.request_version)
+
+    api_module._queue_progressive_generation(episode)
+
+    unchanged = jobs.get_for_episode(episode.id)
+    assert unchanged is not None
+    assert unchanged.status is GenerationJobStatus.COMPLETED
+    assert unchanged.request_version == job.request_version
+
+
+def test_healthy_heartbeat_requeues_stale_program_catchup(monkeypatch) -> None:
+    old_now = datetime.now(UTC) - timedelta(seconds=180)
+    jobs = InMemoryGenerationJobRepository(now=lambda: old_now)
+    monkeypatch.setattr(api_module, "generation_job_repository", jobs)
+    monkeypatch.setattr(
+        api_module.orchestrator,
+        "needs_progressive_catchup",
+        lambda _episode: True,
+    )
+    episode = api_module.orchestrator.start(
+        api_module.SEEDS[1],
+        listener_id="catchup-retry-listener",
+    )
+    jobs.request(episode.id)
+    claimed = jobs.claim("catchup-old", lease_seconds=60)
+    assert claimed is not None
+    jobs.complete(claimed.id, "catchup-old", claimed.request_version)
+
+    api_module._queue_progressive_generation(episode)
+
+    queued = jobs.get_for_episode(episode.id)
+    assert queued is not None
+    assert queued.status is GenerationJobStatus.PENDING
+    assert queued.request_version == claimed.request_version + 1
 
 
 def test_heartbeat_refills_earlier_after_slow_generation(monkeypatch) -> None:
