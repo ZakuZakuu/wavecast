@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api } from "../lib/api";
+import { api, ApiRequestError } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
 import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
-import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentOffset, segmentStart, shouldArmHandoff } from "../lib/playback";
+import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff } from "../lib/playback";
 import { mixPlanSignature, type MixPlan } from "../lib/mix-timeline";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
@@ -309,7 +309,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
     const completion = canHandoffOptimistically && armedSegment
       ? api.completeHandoff(localEpisode.id, current.id, armedSegment.id)
-      : api.completed(localEpisode.id);
+      : api.completedSegment(localEpisode.id, current.id);
 
     void completion
       .then((completed) => {
@@ -338,6 +338,16 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       })
       .catch((reason: unknown) => {
         awaitingSuccessorRef.current = false;
+        // A completion event can race with an explicit seek/manual transport
+        // change. The backend rejects the stale segment identity; never let
+        // that old ended event pause the newly selected source.
+        if (
+          reason instanceof ApiRequestError
+          && reason.status === 409
+          && reason.message === "completed segment is stale"
+        ) {
+          return;
+        }
         // An armed successor is already durable, so a lost persistence response
         // must not interrupt audio that has successfully handed off locally.
         if (canHandoffOptimistically && armedSegment) {
@@ -618,8 +628,18 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const currentOffset = current
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
-  const preloadSourceUrl = isPlaybackReadySegment(upcoming)
-    ? upcoming?.audio_source_url ?? null
+  const seekPreviewTarget = seekPreview !== null
+    ? segmentAtPosition(localEpisode, seekPreview)
+    : undefined;
+  const preloadTarget = (
+    seekPreviewTarget
+    && seekPreviewTarget.id !== current?.id
+    && isPlaybackReadySegment(seekPreviewTarget)
+  )
+    ? seekPreviewTarget
+    : upcoming;
+  const preloadSourceUrl = isPlaybackReadySegment(preloadTarget)
+    ? preloadTarget?.audio_source_url ?? null
     : null;
   const chapterIds = Array.from(new Set(localEpisode.segments.map((segment) => segment.chapter_id)));
   const currentChapterIndex = Math.max(0, chapterIds.indexOf(current?.chapter_id ?? chapterIds[0]));

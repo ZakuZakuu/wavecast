@@ -95,6 +95,25 @@ export function segmentStart(episode: LiveEpisode, segmentId: string): number {
   return total;
 }
 
+export function segmentAtPosition(
+  episode: LiveEpisode,
+  positionSeconds: number,
+): Segment | undefined {
+  let start = 0;
+  for (const segment of [...episode.segments].sort((a, b) => a.order - b.order)) {
+    if (segment.state === "SKIPPED") continue;
+    const duration = segment.duration_seconds
+      ?? segment.actual_duration_seconds
+      ?? segment.planned_duration_seconds;
+    const end = start + duration;
+    if (start <= positionSeconds && positionSeconds < end) {
+      return segment;
+    }
+    start = end;
+  }
+  return undefined;
+}
+
 export function segmentOffset(episode: LiveEpisode, segmentId: string, timelinePosition: number): number {
   return Math.max(0, timelinePosition - segmentStart(episode, segmentId));
 }
