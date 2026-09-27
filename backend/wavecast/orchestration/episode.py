@@ -857,18 +857,38 @@ class EpisodeOrchestrator:
         ):
             return latest
 
-        appended = await asyncio.to_thread(
+        await asyncio.to_thread(
             self.append_generated_chapter,
             episode_id,
             chapter,
             snapshot,
         )
-        # If the browser already reported the opening as ended while FastStart
-        # was running, do not wait for full route planning before resuming the
-        # newly durable successor.
-        self._start_ready_successor(appended)
-        appended.last_activity_at = self.now()
-        return await asyncio.to_thread(self.repository.save, appended)
+        # Browser completion and background generation may race. Re-read durable
+        # state before deciding whether playback needs to resume rather than
+        # saving the pre-ended snapshot over a newer browser transition.
+        return await asyncio.to_thread(
+            self._resume_ready_successor_if_waiting,
+            episode_id,
+        )
+
+    def _resume_ready_successor_if_waiting(self, episode_id: str) -> LiveEpisode:
+        for attempt in range(2):
+            latest = self.repository.get(episode_id)
+            current = self._current_segment(latest)
+            if current is None or current.state is not SegmentState.PLAYED:
+                return latest
+            before = latest.current_segment_id
+            self._start_ready_successor(latest)
+            if latest.current_segment_id == before:
+                return latest
+            latest.last_activity_at = self.now()
+            try:
+                return self.repository.save(latest)
+            except EpisodeConcurrencyError:
+                if attempt == 0:
+                    continue
+                raise
+        return self.repository.get(episode_id)
 
     async def _ensure_progressive_session(
         self, episode_id: str, episode: LiveEpisode
