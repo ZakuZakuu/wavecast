@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentOffset } from "../lib/playback";
+import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentOffset, shouldArmHandoff } from "../lib/playback";
 import type { LiveEpisode } from "../lib/types";
 
 const episode: LiveEpisode = {
@@ -115,5 +115,68 @@ describe("generated-frontier player behavior", () => {
     expect(isProgramPlaybackComplete(completed)).toBe(true);
     expect(isProgramPlaybackComplete({ ...completed, state: "STREAMING", generated_frontier_seconds: 22 })).toBe(false);
     expect(isProgramPlaybackComplete({ ...completed, segments: [{ ...completed.segments[0], state: "COMMITTED" }] })).toBe(false);
+  });
+});
+
+
+describe("armed browser handoff", () => {
+  const current = episode.segments[0];
+  const readySuccessor = {
+    ...episode.segments[2],
+    state: "AUDIO_READY" as const,
+  };
+
+  it("arms only an immediate playback-ready future near the media boundary", () => {
+    expect(shouldArmHandoff({
+      current,
+      upcoming: readySuccessor,
+      serverCurrentId: current.id,
+      transportSegmentId: null,
+      remainingSeconds: 1.5,
+      armThresholdSeconds: 2,
+    })).toBe(true);
+
+    expect(shouldArmHandoff({
+      current,
+      upcoming: readySuccessor,
+      serverCurrentId: current.id,
+      transportSegmentId: null,
+      remainingSeconds: 5,
+      armThresholdSeconds: 2,
+    })).toBe(false);
+
+    expect(shouldArmHandoff({
+      current,
+      upcoming: episode.segments[2],
+      serverCurrentId: current.id,
+      transportSegmentId: null,
+      remainingSeconds: 1,
+      armThresholdSeconds: 2,
+    })).toBe(false);
+  });
+
+  it("invalidates an armed handoff after manual server transport moves", () => {
+    expect(canUseArmedHandoff({
+      current,
+      armedSegment: readySuccessor,
+      serverCurrentId: current.id,
+      armedFromSegmentId: current.id,
+    })).toBe(true);
+
+    expect(canUseArmedHandoff({
+      current: readySuccessor,
+      armedSegment: readySuccessor,
+      serverCurrentId: readySuccessor.id,
+      armedFromSegmentId: current.id,
+    })).toBe(false);
+  });
+
+  it("treats source availability and durable readiness as one preload boundary", () => {
+    expect(isPlaybackReadySegment(readySuccessor)).toBe(true);
+    expect(isPlaybackReadySegment(episode.segments[2])).toBe(false);
+    expect(isPlaybackReadySegment({
+      ...readySuccessor,
+      audio_source_url: null,
+    })).toBe(false);
   });
 });

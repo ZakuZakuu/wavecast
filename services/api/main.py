@@ -1540,6 +1540,28 @@ def commit_segment(episode_id: str, segment_id: str, request: Request) -> LiveEp
     )
 
 
+@app.post(
+    "/api/episodes/{episode_id}/complete-handoff/{completed_segment_id}/{successor_segment_id}",
+    response_model=LiveEpisode,
+)
+def complete_handoff(
+    episode_id: str,
+    completed_segment_id: str,
+    successor_segment_id: str,
+    request: Request,
+) -> LiveEpisode:
+    episode = operate(
+        episode_id,
+        principal(request),
+        lambda: orchestrator.complete_handoff(
+            episode_id,
+            completed_segment_id,
+            successor_segment_id,
+        ),
+    )
+    return _queue_progressive_generation(episode)
+
+
 @app.post("/api/episodes/{episode_id}/completed", response_model=LiveEpisode)
 def completed(episode_id: str, request: Request) -> LiveEpisode:
     episode = operate(
@@ -1566,6 +1588,18 @@ def playback_checkpoint(
         lambda: orchestrator.checkpoint_playback(episode_id, body.position_seconds),
     )
     return _queue_progressive_generation(episode)
+
+
+@app.post(
+    "/api/episodes/{episode_id}/arm-handoff/{segment_id}",
+    response_model=LiveEpisode,
+)
+def arm_handoff(episode_id: str, segment_id: str, request: Request) -> LiveEpisode:
+    return operate(
+        episode_id,
+        principal(request),
+        lambda: orchestrator.arm_handoff(episode_id, segment_id),
+    )
 
 
 @app.post("/api/episodes/{episode_id}/next", response_model=LiveEpisode)

@@ -1,5 +1,65 @@
 import type { LiveEpisode, Segment } from "./types";
 
+
+const PLAYBACK_READY_STATES = new Set(["AUDIO_READY", "COMMITTED", "PLAYED"]);
+
+export function isPlaybackReadySegment(segment: Segment | undefined): boolean {
+  return Boolean(
+    segment
+    && segment.audio_source_url
+    && PLAYBACK_READY_STATES.has(segment.state),
+  );
+}
+
+export function shouldArmHandoff(options: {
+  current: Segment | undefined;
+  upcoming: Segment | undefined;
+  serverCurrentId: string | null;
+  transportSegmentId: string | null;
+  remainingSeconds: number;
+  armThresholdSeconds: number;
+}): boolean {
+  const {
+    current,
+    upcoming,
+    serverCurrentId,
+    transportSegmentId,
+    remainingSeconds,
+    armThresholdSeconds,
+  } = options;
+  return Boolean(
+    current
+    && upcoming
+    && current.id !== upcoming.id
+    && transportSegmentId === null
+    && serverCurrentId === current.id
+    && remainingSeconds <= armThresholdSeconds
+    && isPlaybackReadySegment(upcoming),
+  );
+}
+
+export function canUseArmedHandoff(options: {
+  current: Segment | undefined;
+  armedSegment: Segment | undefined;
+  serverCurrentId: string | null;
+  armedFromSegmentId: string | null;
+}): boolean {
+  const {
+    current,
+    armedSegment,
+    serverCurrentId,
+    armedFromSegmentId,
+  } = options;
+  return Boolean(
+    current
+    && armedSegment
+    && current.id !== armedSegment.id
+    && serverCurrentId === current.id
+    && armedFromSegmentId === current.id
+    && isPlaybackReadySegment(armedSegment),
+  );
+}
+
 export type PlaybackAnchor = Pick<LiveEpisode, "current_segment_id" | "playback_position_seconds">;
 
 export function playbackAnchor(episode: LiveEpisode | null): PlaybackAnchor | null {
