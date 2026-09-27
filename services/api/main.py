@@ -601,6 +601,21 @@ async def operate_async(
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
+def _queue_progressive_generation(episode: LiveEpisode) -> LiveEpisode:
+    if (
+        BACKGROUND_GENERATION_ENABLED
+        and episode.is_listener_active
+        and episode.state not in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
+    ):
+        generation_job_repository.request(episode.id, GenerationJobMode.PROGRESSIVE)
+    return episode
+
+
+def _cancel_generation(episode_id: str) -> None:
+    if BACKGROUND_GENERATION_ENABLED:
+        generation_job_repository.cancel_for_episode(episode_id)
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "mode": "postgres" if DATABASE_URL else "mock"}
@@ -1077,7 +1092,8 @@ def create_episode(seed_id: str, request: Request) -> LiveEpisode:
     if seed is None:
         raise HTTPException(status_code=404, detail="Episode seed not found")
     try:
-        return orchestrator.start_or_resume(seed, actor.listener_id, actor.user_id)
+        episode = orchestrator.start_or_resume(seed, actor.listener_id, actor.user_id)
+        return _queue_progressive_generation(episode)
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode creation raced; retry") from error
 
@@ -1417,17 +1433,35 @@ async def episode_mixdown(episode_id: str, request: Request) -> MixdownArtifact:
 
 @app.post("/api/episodes/{episode_id}/ensure-buffer", response_model=LiveEpisode)
 async def ensure_buffer(episode_id: str, request: Request, body: BufferRequest) -> LiveEpisode:
+    actor = principal(request)
+    if BACKGROUND_GENERATION_ENABLED:
+        await to_thread.run_sync(owned, episode_id, actor)
+        await to_thread.run_sync(
+            generation_job_repository.request,
+            episode_id,
+            GenerationJobMode.PROGRESSIVE,
+        )
+        return await to_thread.run_sync(orchestrator.get, episode_id)
     return await operate_async(
         episode_id,
-        principal(request),
+        actor,
         lambda: scheduler.ensure_buffer(episode_id, target_chapters=body.target_chapters),
     )
 
 
 @app.post("/api/episodes/{episode_id}/advance", response_model=LiveEpisode)
 async def advance_compatibility(episode_id: str, request: Request) -> LiveEpisode:
+    actor = principal(request)
+    if BACKGROUND_GENERATION_ENABLED:
+        await to_thread.run_sync(owned, episode_id, actor)
+        await to_thread.run_sync(
+            generation_job_repository.request,
+            episode_id,
+            GenerationJobMode.PROGRESSIVE,
+        )
+        return await to_thread.run_sync(orchestrator.get, episode_id)
     return await operate_async(
-        episode_id, principal(request), lambda: scheduler.ensure_buffer(episode_id)
+        episode_id, actor, lambda: scheduler.ensure_buffer(episode_id)
     )
 
 
@@ -1447,9 +1481,10 @@ def commit_segment(episode_id: str, segment_id: str, request: Request) -> LiveEp
 
 @app.post("/api/episodes/{episode_id}/completed", response_model=LiveEpisode)
 def completed(episode_id: str, request: Request) -> LiveEpisode:
-    return operate(
+    updated = operate(
         episode_id, principal(request), lambda: orchestrator.complete_current_segment(episode_id)
     )
+    return _queue_progressive_generation(updated)
 
 
 @app.post("/api/episodes/{episode_id}/seek", response_model=LiveEpisode)
@@ -1472,12 +1507,17 @@ def playback_checkpoint(
 
 @app.post("/api/episodes/{episode_id}/next", response_model=LiveEpisode)
 def next_playable(episode_id: str, request: Request) -> LiveEpisode:
-    return operate(episode_id, principal(request), lambda: orchestrator.next_playable(episode_id))
+    updated = operate(
+        episode_id, principal(request), lambda: orchestrator.next_playable(episode_id)
+    )
+    return _queue_progressive_generation(updated)
 
 
 @app.post("/api/episodes/{episode_id}/leave", response_model=LiveEpisode)
 def leave(episode_id: str, request: Request) -> LiveEpisode:
-    return operate(episode_id, principal(request), lambda: orchestrator.leave(episode_id))
+    updated = operate(episode_id, principal(request), lambda: orchestrator.leave(episode_id))
+    _cancel_generation(episode_id)
+    return updated
 
 
 @app.post("/api/episodes/{episode_id}/pause", response_model=LiveEpisode)
@@ -1487,7 +1527,8 @@ def pause(episode_id: str, request: Request) -> LiveEpisode:
 
 @app.post("/api/episodes/{episode_id}/resume", response_model=LiveEpisode)
 def resume(episode_id: str, request: Request) -> LiveEpisode:
-    return operate(episode_id, principal(request), lambda: orchestrator.resume(episode_id))
+    updated = operate(episode_id, principal(request), lambda: orchestrator.resume(episode_id))
+    return _queue_progressive_generation(updated)
 
 
 @app.post(
