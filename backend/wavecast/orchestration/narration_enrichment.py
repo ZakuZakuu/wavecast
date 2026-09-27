@@ -65,11 +65,7 @@ async def author_pending_narration(
             and episode.generation_mode is not GenerationMode.FULL
         ):
             break
-        should_degrade = (
-            exposed
-            or not session_chapter.slot_contexts
-            or session_chapter.resolved_track is None
-        )
+        should_degrade = exposed or not session_chapter.slot_contexts
 
         generated: GeneratedChapter | None = None
         if not should_degrade:
@@ -148,11 +144,14 @@ def _finish_authoring(
                 for segment in generated.segments
                 if isinstance(segment, MusicSegment)
             ]
-            if len(existing_music) != 1 or len(generated_music) != 1:
-                raise ValueError("narration authoring must preserve exactly one music source")
-            current_music = existing_music[0]
-            proposed_music = generated_music[0]
             if (
+                len(existing_music) != len(generated_music)
+                or len(existing_music) > 1
+            ):
+                raise ValueError("narration authoring changed chapter music cardinality")
+            current_music = existing_music[0] if existing_music else None
+            proposed_music = generated_music[0] if generated_music else None
+            if current_music is not None and proposed_music is not None and (
                 current_music.track_ref != proposed_music.track_ref
                 or current_music.artist != proposed_music.artist
                 or current_music.title != proposed_music.title
@@ -162,6 +161,8 @@ def _finish_authoring(
             replacement = []
             for segment in generated.segments:
                 if isinstance(segment, MusicSegment):
+                    if current_music is None:
+                        raise ValueError("narration authoring introduced unexpected music")
                     replacement.append(
                         current_music.model_copy(update={"order": segment.order})
                     )
