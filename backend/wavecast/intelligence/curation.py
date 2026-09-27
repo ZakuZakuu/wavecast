@@ -15,6 +15,7 @@ from .models import (
     OutputLanguage,
     ProgramSkeleton,
     ResearchBundle,
+    TrackProposal,
     resolve_output_language,
 )
 from .trace import GenerationTrace
@@ -66,8 +67,10 @@ class CuratorService:
             "A chapter is a narrative beat and may intentionally have no TrackProposal; do not "
             "invent a track to fill a story beat. "
             f"Return no more than {max_chapters} chapters total and no more than "
-            f"{max_tracks} chapters with a TrackProposal. Do not generate alternate or "
-            "unused TrackProposals. Narrative-only beats must serve the actual topic "
+            f"{max_tracks} chapters with a TrackProposal. A track-bearing chapter may "
+            "include up to two ranked track_alternates only when they satisfy the same editorial "
+            "role and transition intent as the primary; alternates are playback recovery options, "
+            "not extra chapters or unrelated backup artists. Narrative-only beats must serve the actual topic "
             "rather than expanding the episode just to fill duration. "
             "For explicit music-discovery or artist-to-artist, scene, genre, or lineage "
             "route requests, when grounded candidates support it and max_tracks is at least "
@@ -216,6 +219,7 @@ def normalize_curator_skeleton(
             if support_ids:
                 supports.append(support.model_copy(update={"evidence_ids": support_ids}))
         track = chapter.track
+        alternates: list[TrackProposal] = []
         if track is not None:
             track_ids, dropped, remaining = _retain_evidence_ids(track.evidence_ids, available)
             if dropped:
@@ -228,6 +232,48 @@ def normalize_curator_skeleton(
                     )
                 )
             track = track.model_copy(update={"evidence_ids": track_ids})
+            seen_track_keys = {(track.artist.casefold().strip(), track.title.casefold().strip())}
+            for alternate in chapter.track_alternates:
+                alternate_ids, dropped, remaining = _retain_evidence_ids(
+                    alternate.evidence_ids, available
+                )
+                if dropped:
+                    diagnostics.append(
+                        _normalization_diagnostic(
+                            chapter.index,
+                            "track_alternate_evidence",
+                            dropped,
+                            remaining,
+                        )
+                    )
+                normalized_alternate = alternate.model_copy(
+                    update={"evidence_ids": alternate_ids}
+                )
+                key = (
+                    normalized_alternate.artist.casefold().strip(),
+                    normalized_alternate.title.casefold().strip(),
+                )
+                if key in seen_track_keys:
+                    diagnostics.append(
+                        _normalization_diagnostic(
+                            chapter.index,
+                            "duplicate_track_alternate",
+                            1,
+                            len(alternates),
+                        )
+                    )
+                    continue
+                seen_track_keys.add(key)
+                alternates.append(normalized_alternate)
+        elif chapter.track_alternates:
+            diagnostics.append(
+                _normalization_diagnostic(
+                    chapter.index,
+                    "track_alternates_without_primary",
+                    len(chapter.track_alternates),
+                    0,
+                )
+            )
         connection = chapter.connection_from_previous_track
         if connection is not None:
             connection_ids, dropped, remaining = _retain_evidence_ids(
@@ -259,6 +305,7 @@ def normalize_curator_skeleton(
                     "evidence_ids": chapter_ids,
                     "claim_support": supports,
                     "track": track,
+                    "track_alternates": alternates,
                     "connection_from_previous_track": connection,
                 }
             )
@@ -313,6 +360,17 @@ def _validate_curator_contract(skeleton: ProgramSkeleton, bundle: ResearchBundle
                 "curator track evidence scope is invalid",
                 reason_code="curator_track_evidence_scope_invalid",
             )
+        if chapter.track is None and chapter.track_alternates:
+            raise CuratorContractError(
+                "curator track alternates require a primary track",
+                reason_code="curator_track_alternates_require_primary",
+            )
+        for alternate in chapter.track_alternates:
+            if not set(alternate.evidence_ids) <= available:
+                raise CuratorContractError(
+                    "curator alternate track evidence scope is invalid",
+                    reason_code="curator_track_alternate_evidence_scope_invalid",
+                )
         connection = chapter.connection_from_previous_track
         if connection is not None:
             if chapter.track is None:
