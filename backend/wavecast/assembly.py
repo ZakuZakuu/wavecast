@@ -1106,7 +1106,30 @@ def _lock_successor_after_opening(
         if index != successor_index
         and not _same_resolved_track(item.track, locked_successor)
     ]
-    return [chapters[0], successor, *remainder]
+    locked_route = [chapters[0], successor, *remainder]
+    if successor_index == 1:
+        return locked_route
+
+    # Inserting or moving the persisted successor changes route adjacency.
+    # Curator connection metadata described the old neighbors, so retaining it
+    # would invite Writer to explain a relation that no longer exists.
+    cleared: list[_ResolvedChapter] = [locked_route[0]]
+    for item in locked_route[1:]:
+        chapter = item.chapter.model_copy(
+            update={"connection_from_previous_track": None}
+        )
+        writer_chapter = item.writer_chapter.model_copy(
+            update={"connection_from_previous_track": None}
+        )
+        cleared.append(
+            _ResolvedChapter(
+                chapter=chapter,
+                writer_chapter=writer_chapter,
+                track=item.track,
+                music_index=item.music_index,
+            )
+        )
+    return cleared
 
 
 def _bound_progressive_resolved_route(
