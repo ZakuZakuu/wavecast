@@ -155,3 +155,27 @@ def test_commit_route_commits_owned_segment_and_preserves_ownership_mapping(
         headers={"X-Wavecast-Listener": "listener-b"},
     )
     assert other_listener.status_code == 404
+
+
+def test_mix_plan_skips_unready_optional_narration_but_keeps_ready_music(
+    canonical_episode: LiveEpisode,
+) -> None:
+    pending = canonical_episode.model_copy(deep=True)
+    pending.segments[1] = pending.segments[1].model_copy(
+        update={"state": SegmentState.SCRIPT_READY, "audio_source_url": None}
+    )
+    pending.segments[2] = pending.segments[2].model_copy(
+        update={"state": SegmentState.AUDIO_READY}
+    )
+    api_module.repository.save(pending)
+
+    response = TestClient(api_module.app).get(
+        f"/api/episodes/{canonical_episode.id}/mix-plan",
+        headers={"X-Wavecast-Listener": "listener-a"},
+    )
+
+    assert response.status_code == 200
+    assert [clip["segmentId"] for clip in response.json()["clips"]] == [
+        "music-a",
+        "music-b",
+    ]
