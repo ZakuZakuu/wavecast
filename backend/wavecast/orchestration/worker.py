@@ -97,6 +97,12 @@ class GenerationWorker:
                     target_chapters=self.policy.target_chapters,
                     target_ahead_seconds=self.policy.target_ahead_seconds,
                 )
+                # Publish ready music first; TTS enrichment is best-effort and
+                # cannot turn a healthy music buffer back into a failed job.
+                await self.orchestrator.materialize_pending_narration_async(
+                    job.episode_id,
+                    max_segments=self.policy.target_chapters,
+                )
         except EpisodeRuntimeError as error:
             if (
                 job.mode is GenerationJobMode.PROGRESSIVE
