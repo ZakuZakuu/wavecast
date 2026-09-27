@@ -872,8 +872,12 @@ class EpisodeOrchestrator:
         snapshot = await asyncio.to_thread(self.capture_generation_snapshot, episode_id)
         try:
             prepared = await self.progressive_runtime.prepare_session(snapshot.episode)
-        except ProgressivePlanningDeferred:
+        except ProgressivePlanningDeferred as error:
             latest = await asyncio.to_thread(self.repository.get, episode_id)
+            if latest.generation_mode is GenerationMode.FULL:
+                raise EpisodeRuntimeError(
+                    "full generation cannot defer route planning"
+                ) from error
             if (
                 not latest.is_listener_active
                 and latest.generation_mode is not GenerationMode.FULL
