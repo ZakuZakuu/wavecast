@@ -304,7 +304,7 @@ class _RejectBootstrapRuntime(_FakeRuntime):
         )
 
 
-def test_existing_ready_successor_skips_duplicate_fast_bootstrap() -> None:
+def test_existing_ready_successor_recovers_missing_session_without_duplicate_fast_bootstrap() -> None:
     staged = _RejectBootstrapRuntime()
     repository = InMemoryEpisodeRepository()
     runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
@@ -340,20 +340,24 @@ def test_existing_ready_successor_skips_duplicate_fast_bootstrap() -> None:
         )
     )
 
-    assert staged.fast_calls == 0
-    assert staged.prepare_calls == 0
-    assert buffered.progressive_session is None
-    # Healthy buffers defer expensive planning; a larger unmet target must
-    # still prepare the route without duplicating the known exact successor.
-    buffered = asyncio.run(
-        runtime.ensure_buffer_async(
-            episode.id, target_chapters=2, target_ahead_seconds=1000
-        )
-    )
+    # Music health must not permanently hide a process-loss gap between the
+    # durable FastStart successor and full route/session persistence.
     assert staged.fast_calls == 0
     assert staged.prepare_calls == 1
     assert buffered.progressive_session is not None
     assert buffered.progressive_session.chapters[0].resolved_track == staged.fast_track
+    assert runtime.needs_progressive_catchup(buffered) is True
+
+    # Re-entering the healthy buffer must reconstruct nothing again.
+    buffered = asyncio.run(
+        runtime.ensure_buffer_async(
+            episode.id,
+            target_chapters=1,
+            target_ahead_seconds=300,
+        )
+    )
+    assert staged.fast_calls == 0
+    assert staged.prepare_calls == 1
     assert [
         segment.id
         for segment in buffered.ordered_segments
