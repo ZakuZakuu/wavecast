@@ -379,6 +379,7 @@ class RadioScript(BaseModel):
 class ChapterPlan(BaseModel):
     index: int = Field(ge=0)
     track: TrackProposal | None = None
+    track_alternates: list[TrackProposal] = Field(default_factory=list, max_length=2)
     connection_from_previous_track: EditorialConnection | None = None
     narrative_role: NarrativeRole
     reason: str = Field(min_length=1, max_length=500)

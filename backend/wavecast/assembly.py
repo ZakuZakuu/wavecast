@@ -376,23 +376,43 @@ class LiveEpisodeAssemblyService:
         unresolved: list[UnresolvedAssemblyProposal] = []
         for chapter in chapters:
             resolved: ResolvedTrack | None = None
-            resolution_reason: str | None = None
+            selected_proposal: TrackProposal | None = None
             if chapter.track is not None:
-                try:
-                    resolved = await resolve_track_proposal_across_providers(
-                        self.retrieval, chapter.track
-                    )
-                except ProviderError as error:
-                    resolution_reason = f"resolution provider failed: {type(error).__name__}"
-                if resolved is None and resolution_reason is None:
-                    resolution_reason = "no exact playable catalog match"
-                if resolution_reason is not None:
+                candidates = [chapter.track, *chapter.track_alternates]
+                last_resolution_reason = "no exact playable catalog match"
+                for candidate_rank, proposal in enumerate(candidates):
+                    try:
+                        resolved = await resolve_track_proposal_across_providers(
+                            self.retrieval, proposal
+                        )
+                    except ProviderError as error:
+                        resolved = None
+                        last_resolution_reason = (
+                            f"resolution provider failed: {type(error).__name__}"
+                        )
+                    if resolved is None:
+                        continue
+                    selected_proposal = proposal
+                    if candidate_rank > 0:
+                        trace.mark(
+                            "track_alternate_resolved",
+                            chapter_index=chapter.index,
+                            candidate_rank=candidate_rank + 1,
+                            candidate_count=len(candidates),
+                        )
+                    break
+                if resolved is None:
                     unresolved.append(
                         UnresolvedAssemblyProposal(
                             chapter_index=chapter.index,
                             proposal=chapter.track,
-                            reason=resolution_reason,
+                            reason=last_resolution_reason,
                         )
+                    )
+                    trace.mark(
+                        "track_slot_unresolved",
+                        chapter_index=chapter.index,
+                        candidate_count=len(candidates),
                     )
             resolved_chapters.append(
                 _ResolvedChapter(
@@ -400,7 +420,8 @@ class LiveEpisodeAssemblyService:
                     writer_chapter=chapter.model_copy(
                         update={
                             "index": len(resolved_chapters),
-                            "track": chapter.track if resolved is not None else None,
+                            "track": selected_proposal,
+                            "track_alternates": [],
                         }
                     ),
                     track=resolved,
@@ -994,7 +1015,12 @@ def _build_progressive_session(
         fast_plan=prepared.fast_result.plan,
         research=prepared.bundle,
         skeleton=prepared.skeleton.model_copy(
-            update={"chapters": [normalized[0].chapter, *[item.chapter for item in future]]}
+            update={
+                "chapters": [
+                    normalized[0].writer_chapter,
+                    *[item.writer_chapter for item in future],
+                ]
+            }
         ),
         chapters=session_chapters,
         timing_plan=timing_plan,
