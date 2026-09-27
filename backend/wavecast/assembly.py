@@ -1001,7 +1001,12 @@ def _build_progressive_session(
         fast_plan=prepared.fast_result.plan,
         research=prepared.bundle,
         skeleton=prepared.skeleton.model_copy(
-            update={"chapters": [normalized[0].chapter, *[item.chapter for item in future]]}
+            update={
+                "chapters": [
+                    normalized[0].writer_chapter,
+                    *[item.writer_chapter for item in future],
+                ]
+            }
         ),
         chapters=session_chapters,
         timing_plan=timing_plan,
