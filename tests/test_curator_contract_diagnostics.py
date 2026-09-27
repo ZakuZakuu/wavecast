@@ -137,6 +137,113 @@ def test_curator_normalizes_unknown_references_and_records_safe_diagnostics() ->
     }
 
 
+def test_curator_normalizes_track_alternates_without_changing_primary_identity() -> None:
+    primary = TrackProposal(
+        artist="Artist",
+        title="Primary",
+        evidence_ids=["e1"],
+        confidence=0.9,
+    )
+    skeleton = ProgramSkeleton(
+        thesis="fixture",
+        estimated_duration_seconds=60,
+        chapters=[
+            ChapterPlan(
+                index=0,
+                track=primary,
+                track_alternates=[
+                    primary.model_copy(),
+                    TrackProposal(
+                        artist="Backup Artist",
+                        title="Backup",
+                        evidence_ids=["ghost", "e2"],
+                        confidence=0.8,
+                    ),
+                ],
+                narrative_role=NarrativeRole.BRIDGE,
+                reason="fixture",
+                novelty_distance=NoveltyDistance.CLOSE,
+                evidence_ids=["e1", "e2"],
+                narration_goal="connect",
+            )
+        ],
+    )
+    trace = GenerationTrace(request_id="fixture")
+
+    result = asyncio.run(
+        CuratorService(CuratorFixture(skeleton)).curate(
+            ResearchBundle(
+                anchors=[],
+                taste_hypotheses=[],
+                evidence=[evidence("e1"), evidence("e2")],
+                candidates=[],
+            ),
+            fast_plan(),
+            desired_duration_seconds=60,
+            trace=trace,
+        )
+    )
+
+    chapter = result.chapters[0]
+    assert chapter.track == primary
+    assert len(chapter.track_alternates) == 1
+    assert chapter.track_alternates[0].title == "Backup"
+    assert chapter.track_alternates[0].evidence_ids == ["e2"]
+    kinds = {
+        event.metadata.get("reference_kind")
+        for event in trace.events
+        if event.name == "curator_reference_normalized"
+    }
+    assert "duplicate_track_alternate" in kinds
+    assert "track_alternate_evidence" in kinds
+
+
+def test_curator_drops_track_alternates_without_primary() -> None:
+    skeleton = ProgramSkeleton(
+        thesis="fixture",
+        estimated_duration_seconds=60,
+        chapters=[
+            ChapterPlan(
+                index=0,
+                track=None,
+                track_alternates=[
+                    TrackProposal(
+                        artist="Backup Artist",
+                        title="Backup",
+                        confidence=0.8,
+                    )
+                ],
+                narrative_role=NarrativeRole.BRIDGE,
+                reason="narrative beat",
+                novelty_distance=NoveltyDistance.CLOSE,
+                narration_goal="connect",
+            )
+        ],
+    )
+    trace = GenerationTrace(request_id="fixture")
+
+    result = asyncio.run(
+        CuratorService(CuratorFixture(skeleton)).curate(
+            ResearchBundle(
+                anchors=[],
+                taste_hypotheses=[],
+                evidence=[],
+                candidates=[],
+            ),
+            fast_plan(),
+            desired_duration_seconds=60,
+            trace=trace,
+        )
+    )
+
+    assert result.chapters[0].track_alternates == []
+    assert any(
+        event.name == "curator_reference_normalized"
+        and event.metadata.get("reference_kind") == "track_alternates_without_primary"
+        for event in trace.events
+    )
+
+
 def test_curator_drops_connection_from_narrative_only_chapter() -> None:
     skeleton = ProgramSkeleton(
         thesis="fixture",
