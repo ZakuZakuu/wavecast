@@ -248,20 +248,23 @@ class GenerationWorker:
         if job.mode is GenerationJobMode.FULL:
             await self.orchestrator.materialize_all_async(job.episode_id)
             return None
+        fast_start = getattr(self.orchestrator, "ensure_fast_start_async", None)
+        if callable(fast_start):
+            await fast_start(job.episode_id)
+
         first_buffer = await self.orchestrator.ensure_buffer_async(
             job.episode_id,
             target_chapters=1,
             target_ahead_seconds=self.policy.target_ahead_seconds,
         )
 
-        # The first real successor is the continuity floor. Once it and the
-        # staged route are durable, spend the opening-track latency budget on the
-        # first Writer/TTS bridge before filling a deeper music buffer.
-        if getattr(first_buffer, "progressive_session", None) is not None:
-            await self._enrich_narration(job.episode_id, max_chapters=1)
-        elif getattr(self.orchestrator, "progressive_runtime", None) is not None:
-            # Full route planning was safely deferred behind FastStart music.
-            # Do not immediately repeat the same expensive planning attempt.
+        if (
+            getattr(first_buffer, "progressive_session", None) is None
+            and getattr(self.orchestrator, "progressive_runtime", None) is not None
+        ):
+            # A ready FastStart successor/bridge may outlive a recoverable full
+            # route planning miss. Do not immediately repeat the same expensive
+            # intelligence work in this job.
             return job.episode_id
 
         if self.policy.target_chapters > 1:
@@ -270,8 +273,8 @@ class GenerationWorker:
                 target_chapters=self.policy.target_chapters,
                 target_ahead_seconds=self.policy.target_ahead_seconds,
             )
-        # Residual narration remains detached after completion; only the first
-        # bridge is prioritized while the opening song is still masking latency.
+        # Later Writer/TTS work remains detached after completion. The opening
+        # latency mask already owns chapter-2 narration.
         return job.episode_id
 
     def _schedule_narration_enrichment(self, episode_id: str) -> None:
