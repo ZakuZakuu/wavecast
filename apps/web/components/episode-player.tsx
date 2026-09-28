@@ -67,6 +67,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const masterPositionRef = useRef(0);
   const masterActiveRef = useRef(false);
   const masterPreparationEpisodeRef = useRef<string | null>(null);
+  const autoMaterializeEpisodeRef = useRef<string | null>(null);
   const mixPlanRef = useRef<MixPlan | null>(null);
 
   const localEpisode = episode
@@ -127,6 +128,15 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     seekIntentCounterRef.current += 1;
     pendingSeekIntentRef.current = null;
     resumeAfterSeekRef.current = false;
+    setMasterArtifact(null);
+    setMasterActive(false);
+    masterActiveRef.current = false;
+    setMasterPosition(0);
+    masterPositionRef.current = 0;
+    setMasterSeekToken(0);
+    setMasterBuffering(false);
+    masterPreparationEpisodeRef.current = null;
+    autoMaterializeEpisodeRef.current = null;
   }, [localEpisode?.id]);
 
   useEffect(() => {
@@ -172,6 +182,92 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       cancelled = true;
     };
   }, [arrangementEpisodeId, arrangementSignature]);
+
+  useEffect(() => {
+    if (
+      !localEpisode
+      || !localEpisode.is_listener_active
+      || localEpisode.state === "MATERIALIZING"
+      || localEpisode.state === "MATERIALIZED"
+      || autoMaterializeEpisodeRef.current === localEpisode.id
+    ) return;
+
+    autoMaterializeEpisodeRef.current = localEpisode.id;
+    void api.materialize(localEpisode.id)
+      .then((requested) => {
+        const latest = localEpisodeRef.current;
+        if (latest?.id === requested.id && requested.version >= latest.version) {
+          setEpisode(requested);
+        }
+      })
+      .catch(() => {
+        // Full-program preparation is the preferred stable transport path, but
+        // legacy progressive playback remains available if the queue is busy.
+      });
+  }, [
+    localEpisode?.id,
+    localEpisode?.is_listener_active,
+    localEpisode?.state,
+    setEpisode,
+  ]);
+
+  useEffect(() => {
+    if (
+      !localEpisode
+      || localEpisode.state !== "MATERIALIZED"
+      || masterArtifact
+      || masterPreparationEpisodeRef.current === localEpisode.id
+    ) return;
+
+    const episodeIdAtRequest = localEpisode.id;
+    masterPreparationEpisodeRef.current = episodeIdAtRequest;
+    void prepareEpisodeExport(
+      episodeIdAtRequest,
+      {
+        prepareMixdown: api.prepareMixdown,
+        mixdown: api.mixdown,
+      },
+    )
+      .then((artifact) => {
+        const latest = localEpisodeRef.current;
+        if (latest?.id !== episodeIdAtRequest) return;
+        setMasterArtifact(artifact);
+        setExportArtifact(artifact);
+        setExportState("ready");
+
+        const plan = mixPlanRef.current;
+        const legacyPosition = browserPositionRef.current;
+        const target = plan?.episodeId === latest.id
+          ? linearPositionToMixPosition(
+              latest,
+              plan,
+              legacyPosition,
+            ).mixPositionSeconds
+          : legacyPosition;
+        const bounded = Math.min(
+          Math.max(0, target),
+          Math.max(0, artifact.durationSeconds - 0.05),
+        );
+        masterPositionRef.current = bounded;
+        setMasterPosition(bounded);
+        setMasterSeekToken((token) => token + 1);
+      })
+      .catch((reason: unknown) => {
+        masterPreparationEpisodeRef.current = null;
+        setExportState("error");
+        setExportError(
+          reason instanceof ExportBlockedError
+            ? "完整节目音源还没有全部准备好，稍后会继续尝试。"
+            : reason instanceof Error
+              ? reason.message
+              : "完整节目音频准备失败",
+        );
+      });
+  }, [
+    localEpisode?.id,
+    localEpisode?.state,
+    masterArtifact,
+  ]);
 
   useEffect(() => {
     let mounted = true;
