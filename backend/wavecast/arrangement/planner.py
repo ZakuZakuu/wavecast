@@ -4,7 +4,18 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from wavecast.arrangement.models import AudioClip, GainPoint, MixPlan
-from wavecast.models.episode import NarrationRole, PlayableEpisode, Segment, SegmentKind
+from wavecast.audio_timing import (
+    TrackTimingProfile,
+    safe_incoming_music_overlap_seconds,
+    safe_outgoing_narration_overlap_seconds,
+)
+from wavecast.models.episode import (
+    MusicSegment,
+    NarrationRole,
+    PlayableEpisode,
+    Segment,
+    SegmentKind,
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +38,8 @@ class ArrangementDefaults:
     duck_gain: float = 0.30
     duck_attack_seconds: float = 1.5
     duck_release_seconds: float = 1.5
+    lyric_aware_outgoing_overlap_seconds: float = 12.0
+    lyric_guard_seconds: float = 0.75
 
 
 def _active_segments(episode: PlayableEpisode) -> list[Segment]:
@@ -61,6 +74,21 @@ def _music_after(segments: list[Segment], index: int) -> int | None:
 
 def _narration_role(segment: Segment) -> NarrationRole:
     return getattr(segment, "narration_role", NarrationRole.GENERAL)
+
+
+def _timing_profile(segment: Segment) -> TrackTimingProfile | None:
+    return segment.timing_profile if isinstance(segment, MusicSegment) else None
+
+
+def _incoming_voice_overlap_seconds(
+    segment: Segment,
+    config: ArrangementDefaults,
+) -> float:
+    return safe_incoming_music_overlap_seconds(
+        _timing_profile(segment),
+        fallback_seconds=config.bridge_incoming_fade_seconds,
+        guard_seconds=config.lyric_guard_seconds,
+    )
 
 
 def _narration_run_before(segments: list[Segment], index: int) -> list[int]:
@@ -109,6 +137,7 @@ def _semantic_incoming_music_start(
     starts_by_index: dict[int, float],
     config: ArrangementDefaults,
     fallback: float,
+    timing_profile: TrackTimingProfile | None,
 ) -> float:
     """Placement for narration that is not bridging out of a previous song."""
 
@@ -125,7 +154,14 @@ def _semantic_incoming_music_start(
         None,
     )
     if track_intro_index is not None:
-        return starts_by_index[track_intro_index]
+        narration_start = starts_by_index[track_intro_index]
+        narration_end = narration_start + _duration(segments[track_intro_index])
+        allowed_overlap = safe_incoming_music_overlap_seconds(
+            timing_profile,
+            fallback_seconds=max(0.0, narration_end - narration_start),
+            guard_seconds=config.lyric_guard_seconds,
+        )
+        return max(narration_start, narration_end - allowed_overlap)
 
     if any(
         _narration_role(segments[candidate])
@@ -134,10 +170,18 @@ def _semantic_incoming_music_start(
     ):
         last = run[-1]
         duration = _duration(segments[last])
-        return starts_by_index[last] + min(
-            config.incoming_narration_offset_seconds,
-            duration / 2,
+        narration_start = starts_by_index[last]
+        narration_end = narration_start + duration
+        fallback_overlap = max(
+            0.0,
+            duration - min(config.incoming_narration_offset_seconds, duration / 2),
         )
+        allowed_overlap = safe_incoming_music_overlap_seconds(
+            timing_profile,
+            fallback_seconds=fallback_overlap,
+            guard_seconds=config.lyric_guard_seconds,
+        )
+        return max(narration_start, narration_end - allowed_overlap)
 
     return fallback
 
@@ -395,9 +439,13 @@ def plan_episode_mix(
                     starts_by_index[bridge_run[-1]]
                     + _duration(segments[bridge_run[-1]])
                 )
+                allowed_incoming_overlap = _incoming_voice_overlap_seconds(
+                    segment,
+                    config,
+                )
                 start = max(
                     prior_end,
-                    narration_end - config.bridge_incoming_fade_seconds,
+                    narration_end - allowed_incoming_overlap,
                 )
             elif previous and previous.kind is SegmentKind.MUSIC:
                 previous_start = starts_by_index[index - 1]
@@ -415,16 +463,31 @@ def plan_episode_mix(
                     starts_by_index=starts_by_index,
                     config=config,
                     fallback=cursor,
+                    timing_profile=_timing_profile(segment),
                 )
             else:
                 start = cursor
         elif previous and previous.kind is SegmentKind.MUSIC:
             previous_end = starts_by_index[index - 1] + _duration(previous)
-            overlap = min(
+            fallback_overlap = min(
                 config.outgoing_voice_overlap_seconds,
                 duration / 2,
                 _duration(previous),
             )
+            timing_profile = _timing_profile(previous)
+            if timing_profile is None:
+                overlap = fallback_overlap
+            else:
+                overlap = safe_outgoing_narration_overlap_seconds(
+                    timing_profile,
+                    fallback_seconds=fallback_overlap,
+                    max_seconds=min(
+                        config.lyric_aware_outgoing_overlap_seconds,
+                        duration,
+                        _duration(previous),
+                    ),
+                    guard_seconds=config.lyric_guard_seconds,
+                )
             start = max(0.0, previous_end - overlap)
         else:
             start = cursor
@@ -517,11 +580,13 @@ def plan_episode_mix(
             if narration_index not in excluded_narration
         ]
 
+        bridge_incoming_fade = _incoming_voice_overlap_seconds(segment, config)
+
         metadata_fade_in = fade_in
         if incoming_bridge is not None:
             metadata_fade_in = min(
                 duration,
-                config.bridge_incoming_fade_seconds,
+                bridge_incoming_fade,
                 max(0.0, incoming_bridge[1] - start),
             )
 
@@ -554,7 +619,7 @@ def plan_episode_mix(
                     duck_release=config.duck_release_seconds,
                     outgoing_bridge=outgoing_bridge,
                     incoming_bridge=incoming_bridge,
-                    bridge_incoming_fade=config.bridge_incoming_fade_seconds,
+                    bridge_incoming_fade=bridge_incoming_fade,
                 ),
             )
         )
