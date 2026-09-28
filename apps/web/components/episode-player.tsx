@@ -31,6 +31,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
   const [programRender, setProgramRender] = useState<ProgramRenderManifest | null>(null);
   const [nativeHlsSupported, setNativeHlsSupported] = useState(false);
+  const [programStreamActive, setProgramStreamActive] = useState(false);
+  const [programBuffering, setProgramBuffering] = useState(false);
+  const [programRenderRetryNonce, setProgramRenderRetryNonce] = useState(0);
   const [armedSuccessorId, setArmedSuccessorId] = useState<string | null>(null);
   const [transportSegmentId, setTransportSegmentId] = useState<string | null>(null);
   const [seekToken, setSeekToken] = useState(0);
@@ -66,7 +69,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const programRenderBusyRef = useRef(false);
   const programRefillAtRef = useRef(0);
   const usingProgramStreamRef = useRef(false);
-  const programStreamActivatedRef = useRef(false);
+  const programRenderRetryTimerRef = useRef<number | null>(null);
+  const programRenderRetryStateRef = useRef<{ signature: string | null; count: number }>({
+    signature: null,
+    count: 0,
+  });
 
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
@@ -74,6 +81,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     : null;
   const usingProgramStream = Boolean(
     nativeHlsSupported
+    && programStreamActive
     && programRender
     && programRender.chunks.length > 0
   );
@@ -131,11 +139,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   useEffect(() => {
     if (
-      !usingProgramStream
+      !nativeHlsSupported
+      || programStreamActive
       || !programRender
+      || !programRender.chunks.length
       || !mixPlan
       || !localEpisode
-      || programStreamActivatedRef.current
     ) {
       return;
     }
@@ -145,19 +154,36 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       mixPlan,
       browserPositionRef.current,
     ).mixPositionSeconds;
-    const target = clampProgramPosition(programRender, programmePosition);
-    programStreamActivatedRef.current = true;
+    const activationCeiling = Math.max(
+      0,
+      programRender.renderedFrontierSeconds - 0.25,
+    );
+
+    // Never enter the immutable feed by clamping the listener backwards. If
+    // legacy playback is ahead, leave it running until publication catches up.
+    if (programmePosition > activationCeiling) return;
+
+    const target = Math.max(0, programmePosition);
     setTransportSegmentId(null);
     setArmedSuccessorId(null);
     armedSuccessorIdRef.current = null;
     armedFromSegmentIdRef.current = null;
     armedEpisodeRef.current = null;
     handoffAttemptRef.current = null;
+    handoffRequestGuardRef.current.start();
+    completionRequestGuardRef.current.start();
     setBrowserPosition(target);
     browserPositionRef.current = target;
     listenerPositionRef.current = target;
     setSeekToken((token) => token + 1);
-  }, [localEpisode, mixPlan, programRender, usingProgramStream]);
+    setProgramStreamActive(true);
+  }, [
+    localEpisode,
+    mixPlan,
+    nativeHlsSupported,
+    programRender,
+    programStreamActive,
+  ]);
 
   useEffect(() => {
     setNativeHlsSupported(supportsNativeHls());
@@ -167,7 +193,14 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     setProgramRender(null);
     programRenderSignatureRef.current = null;
     programRenderBusyRef.current = false;
-    programStreamActivatedRef.current = false;
+    setProgramStreamActive(false);
+    setProgramBuffering(false);
+    setProgramRenderRetryNonce(0);
+    if (programRenderRetryTimerRef.current !== null) {
+      window.clearTimeout(programRenderRetryTimerRef.current);
+      programRenderRetryTimerRef.current = null;
+    }
+    programRenderRetryStateRef.current = { signature: null, count: 0 };
     setTransportSegmentId(null);
     setArmedSuccessorId(null);
     armedSuccessorIdRef.current = null;
@@ -242,7 +275,13 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     programRenderSignatureRef.current = signature;
     void api.programRender(latest.id)
       .then((manifest) => {
+        if (localEpisodeRef.current?.id !== latest.id) return;
         setProgramRender(manifest);
+        programRenderRetryStateRef.current = { signature, count: 0 };
+        if (programRenderRetryTimerRef.current !== null) {
+          window.clearTimeout(programRenderRetryTimerRef.current);
+          programRenderRetryTimerRef.current = null;
+        }
         setError((currentError) => (
           currentError === "节目音频流暂时还没有准备好" ? null : currentError
         ));
@@ -253,7 +292,29 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         }
         if (
           reason instanceof ApiRequestError
-          && [404, 409].includes(reason.status)
+          && reason.status === 409
+        ) {
+          const retry = programRenderRetryStateRef.current;
+          if (retry.signature !== signature) {
+            retry.signature = signature;
+            retry.count = 0;
+          }
+          if (
+            retry.count < 4
+            && programRenderRetryTimerRef.current === null
+          ) {
+            retry.count += 1;
+            const delayMs = retry.count * 750;
+            programRenderRetryTimerRef.current = window.setTimeout(() => {
+              programRenderRetryTimerRef.current = null;
+              setProgramRenderRetryNonce((value) => value + 1);
+            }, delayMs);
+          }
+          return;
+        }
+        if (
+          reason instanceof ApiRequestError
+          && reason.status === 404
         ) {
           return;
         }
@@ -273,6 +334,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     arrangementEpisodeId,
     arrangementSignature,
     nativeHlsSupported,
+    programRenderRetryNonce,
     requestProgramRender,
   ]);
 
@@ -921,6 +983,29 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     }
   }, [programRender, requestProgramRefill]);
 
+  const fallbackFromProgramStream = useCallback(() => {
+    const latest = localEpisodeRef.current;
+    const plan = mixPlan;
+    const programmePosition = browserPositionRef.current;
+
+    if (latest && plan?.episodeId === latest.id) {
+      const mapped = mixPositionToLinearPosition(
+        latest,
+        plan,
+        programmePosition,
+      );
+      setTransportSegmentId(mapped.segmentId ?? null);
+      setBrowserPosition(mapped.linearPositionSeconds);
+      browserPositionRef.current = mapped.linearPositionSeconds;
+      listenerPositionRef.current = programmePosition;
+      setSeekToken((token) => token + 1);
+    }
+
+    setProgramBuffering(false);
+    setProgramStreamActive(false);
+    setError("单流节目暂时无法继续，已切回兼容播放");
+  }, [mixPlan]);
+
   const completeProgrammePlayback = useCallback(() => {
     if (!localEpisode) return;
     if (!programRender?.complete) {
@@ -1123,8 +1208,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           onPauseRequest={pausePlayback}
           onSeekRequest={commitSeek}
           onNeedMore={requestProgramRefill}
+          onBufferingChange={setProgramBuffering}
           onEnded={completeProgrammePlayback}
-          onError={() => setError("节目音频流暂时无法播放")}
+          onError={fallbackFromProgramStream}
         />
       ) : (
         <MixAudioPlayer
@@ -1259,7 +1345,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         </button>
       </section>
 
-      {preparingAhead ? (
+      {usingProgramStream && programBuffering ? (
+        <div className="preparing-hint"><i />正在缓冲节目音频</div>
+      ) : preparingAhead ? (
         <div className="preparing-hint"><i />正在准备接下来的章节</div>
       ) : upcoming ? (
         <div className="up-next">接下来：<strong>{upcoming.title}</strong>{upcoming.artist ? " · " + upcoming.artist : ""}</div>
