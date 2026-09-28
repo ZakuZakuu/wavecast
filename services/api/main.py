@@ -622,6 +622,10 @@ class PlaybackCheckpointRequest(BaseModel):
     position_seconds: int = Field(ge=0)
 
 
+class ProgramPlaybackCheckpointRequest(BaseModel):
+    position_seconds: float = Field(ge=0)
+
+
 class LibraryMergeRequest(BaseModel):
     library: dict[str, Any]
 
@@ -1822,6 +1826,26 @@ def playback_checkpoint(
         episode_id,
         principal(request),
         lambda: orchestrator.checkpoint_playback(episode_id, body.position_seconds),
+    )
+    return _queue_progressive_generation(episode)
+
+
+@app.post(
+    "/api/episodes/{episode_id}/program-playback-checkpoint",
+    response_model=LiveEpisode,
+)
+def program_playback_checkpoint(
+    episode_id: str,
+    request: Request,
+    body: ProgramPlaybackCheckpointRequest,
+) -> LiveEpisode:
+    episode = operate(
+        episode_id,
+        principal(request),
+        lambda: orchestrator.checkpoint_program_playback(
+            episode_id,
+            body.position_seconds,
+        ),
     )
     return _queue_progressive_generation(episode)
 
