@@ -6,8 +6,10 @@ from collections.abc import Mapping, Sequence
 from inspect import isawaitable
 from typing import TYPE_CHECKING
 
+from wavecast.audio_timing import TrackTimingProfile, track_timing_profile_from_payload
+
 from .contracts import AudioAsset, MusicProvider, TrackMetadata
-from .errors import ProviderConfigurationError
+from .errors import ProviderConfigurationError, ProviderError
 
 if TYPE_CHECKING:
     from wavecast.intelligence.models import ResolvedTrack
@@ -54,10 +56,32 @@ class MusicProviderRegistry:
             resolved_track.track_ref
         )
 
+    async def get_timing_profile(
+        self, resolved_track: ResolvedTrack
+    ) -> TrackTimingProfile | None:
+        provider = self.provider_for_track_ref(resolved_track.track_ref)
+        getter = getattr(provider, "get_timing_profile", None)
+        if not callable(getter):
+            return None
+        try:
+            result = getter(resolved_track.track_ref)
+            if isawaitable(result):
+                result = await result
+        except (ProviderError, ValueError):
+            return None
+        if isinstance(result, TrackTimingProfile):
+            return result
+        return track_timing_profile_from_payload(result)
+
     async def get_playback_asset(self, resolved_track: ResolvedTrack) -> AudioAsset:
-        return await self.provider_for_track_ref(resolved_track.track_ref).get_playback_asset(
-            resolved_track
-        )
+        provider = self.provider_for_track_ref(resolved_track.track_ref)
+        asset = await provider.get_playback_asset(resolved_track)
+        timing = await self.get_timing_profile(resolved_track)
+        if timing is None:
+            return asset
+        metadata = dict(asset.metadata)
+        metadata["timing_profile"] = timing.model_dump(mode="json")
+        return asset.model_copy(update={"metadata": metadata})
 
     async def aclose(self) -> None:
         """Close each unique configured provider client at most once."""
