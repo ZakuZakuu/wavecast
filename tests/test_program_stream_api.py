@@ -149,6 +149,67 @@ def test_program_stream_renders_idempotent_single_feed_without_mutating_episode(
     assert repository.get(episode.id).model_dump(mode="json") == before
 
 
+def test_render_plan_can_freeze_past_explicitly_skipped_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = InMemoryEpisodeRepository()
+    orchestrator = EpisodeOrchestrator(repository)
+    monkeypatch.setattr(api_module, "repository", repository)
+    monkeypatch.setattr(api_module, "orchestrator", orchestrator)
+
+    episode = LiveEpisode(
+        id="program-render-skipped-host",
+        seed_id="seed",
+        title="Skipped host",
+        topic="Persisted editorial skip",
+        listener_id="listener-a",
+        state=EpisodeState.STREAMING,
+        generation_mode=GenerationMode.PROGRESSIVE,
+        program_estimated_duration_seconds=240,
+        segments=[
+            MusicSegment(
+                id="music-a",
+                chapter_id="chapter-a",
+                order=0,
+                state=SegmentState.AUDIO_READY,
+                planned_duration_seconds=120,
+                actual_duration_seconds=120,
+                track_ref="track-a",
+                audio_source_url="/api/assets/audio/music-a.wav",
+                title="A",
+                artist="Artist A",
+            ),
+            NarrationSegment(
+                id="voice-a",
+                chapter_id="chapter-b",
+                order=1,
+                state=SegmentState.SKIPPED,
+                planned_duration_seconds=8,
+                title="Skipped host",
+                narration_text="Skipped",
+            ),
+            MusicSegment(
+                id="music-b",
+                chapter_id="chapter-b",
+                order=2,
+                state=SegmentState.AUDIO_READY,
+                planned_duration_seconds=120,
+                actual_duration_seconds=120,
+                track_ref="track-b",
+                audio_source_url="/api/assets/audio/music-b.wav",
+                title="B",
+                artist="Artist B",
+            ),
+        ],
+        current_segment_id="music-a",
+    )
+    repository.save(episode)
+
+    plan = api_module.canonical_render_plan_for_episode(episode.id)
+
+    assert {clip.segment_id for clip in plan.clips} == {"music-a", "music-b"}
+
+
 def test_render_plan_waits_for_unready_host_instead_of_skipping_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
