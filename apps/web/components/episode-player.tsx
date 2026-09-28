@@ -46,6 +46,7 @@ const CHAPTER_TITLES = [
 ];
 const PROGRAM_CHECKPOINT_SECONDS = 5;
 const PROGRAM_PROGRESS_PREFIX = "wavecast-program-progress:";
+const PROGRAM_MANIFEST_PREFIX = "wavecast-program-manifest:";
 
 type StoredProgramProgress = {
   positionSeconds: number;
@@ -93,6 +94,38 @@ function storeProgramPosition(
   window.localStorage.setItem(
     PROGRAM_PROGRESS_PREFIX + episodeId,
     JSON.stringify(value),
+  );
+}
+
+function storedProgramManifest(
+  episodeId: string | null,
+): ProgramRenderManifest | null {
+  if (typeof window === "undefined" || !episodeId) return null;
+  const raw = window.sessionStorage.getItem(PROGRAM_MANIFEST_PREFIX + episodeId);
+  if (!raw) return null;
+  try {
+    const manifest = JSON.parse(raw) as ProgramRenderManifest;
+    if (
+      manifest?.schemaVersion !== 1
+      || manifest.episodeId !== episodeId
+      || !manifest.streamUrl
+      || !Array.isArray(manifest.chunks)
+      || manifest.chunks.length === 0
+      || !(manifest.renderedFrontierSeconds > 0)
+    ) {
+      return null;
+    }
+    return manifest;
+  } catch {
+    return null;
+  }
+}
+
+function storeProgramManifest(manifest: ProgramRenderManifest): void {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(
+    PROGRAM_MANIFEST_PREFIX + manifest.episodeId,
+    JSON.stringify(manifest),
   );
 }
 
@@ -146,14 +179,35 @@ export function EpisodePlayer({
   episodeId?: string;
 }) {
   const { episode, setEpisode } = usePlayerStore();
+  const bootstrapEpisodeId = (
+    episodeId
+    ?? (
+      episode
+      && (!seedId || episode.seed_id === seedId)
+        ? episode.id
+        : null
+    )
+  );
+  const bootstrapPosition = bootstrapEpisodeId
+    ? storedProgramPosition(bootstrapEpisodeId) ?? 0
+    : 0;
+  const bootstrapManifest = storedProgramManifest(bootstrapEpisodeId);
+  const bootstrapPlaying = Boolean(
+    episode
+    && episode.id === bootstrapEpisodeId
+    && episode.is_listener_active,
+  );
+
   const [error, setError] = useState<string | null>(null);
-  const [browserPosition, setBrowserPosition] = useState(0);
-  const [browserPlaying, setBrowserPlaying] = useState(false);
+  const [browserPosition, setBrowserPosition] = useState(bootstrapPosition);
+  const [browserPlaying, setBrowserPlaying] = useState(bootstrapPlaying);
   const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
   const [programManifest, setProgramManifest] =
-    useState<ProgramRenderManifest | null>(null);
+    useState<ProgramRenderManifest | null>(bootstrapManifest);
   const [renderState, setRenderState] =
-    useState<"idle" | "preparing" | "ready" | "error">("idle");
+    useState<"idle" | "preparing" | "ready" | "error">(
+      bootstrapManifest ? "ready" : "idle",
+    );
   const [renderStatusChecked, setRenderStatusChecked] = useState(false);
   const [programBuffering, setProgramBuffering] = useState(false);
   const [renderRetryNonce, setRenderRetryNonce] = useState(0);
@@ -169,9 +223,9 @@ export function EpisodePlayer({
   const [saveState, setSaveState] =
     useState<"idle" | "requesting" | "preparing">("idle");
 
-  const episodeIdRef = useRef<string | null>(null);
-  const browserPositionRef = useRef(0);
-  const browserPlayingRef = useRef(false);
+  const episodeIdRef = useRef<string | null>(bootstrapEpisodeId);
+  const browserPositionRef = useRef(bootstrapPosition);
+  const browserPlayingRef = useRef(bootstrapPlaying);
   const seekPreviewRef = useRef<number | null>(null);
   const checkpointBucketRef = useRef(-1);
   const materializationRequestVersionRef = useRef<number | null>(null);
@@ -233,6 +287,7 @@ export function EpisodePlayer({
     void api.programRender(episodeIdAtRequest)
       .then((manifest) => {
         if (localEpisodeRef.current?.id !== episodeIdAtRequest) return;
+        storeProgramManifest(manifest);
         setProgramManifest(manifest);
         renderedSignatureRef.current = signatureAtRequest;
         renderRetryStateRef.current = { signature: signatureAtRequest, count: 0 };
@@ -292,8 +347,9 @@ export function EpisodePlayer({
   }, []);
 
   useEffect(() => {
-    setProgramManifest(null);
-    setRenderState("idle");
+    const cachedManifest = storedProgramManifest(localEpisode?.id ?? null);
+    setProgramManifest(cachedManifest);
+    setRenderState(cachedManifest ? "ready" : "idle");
     setProgramBuffering(false);
     setRenderRetryNonce(0);
     setRenderStatusChecked(false);
@@ -326,6 +382,7 @@ export function EpisodePlayer({
     void api.programRenderStatus(episodeIdAtLookup)
       .then((manifest) => {
         if (cancelled || localEpisodeRef.current?.id !== episodeIdAtLookup) return;
+        storeProgramManifest(manifest);
         setProgramManifest(manifest);
         setRenderState("ready");
         setError(null);
@@ -457,12 +514,17 @@ export function EpisodePlayer({
     return () => {
       document.removeEventListener("visibilitychange", persistForLifecycle);
       window.removeEventListener("pagehide", persistForLifecycle);
-      // A React unmount caused by ordinary in-app navigation means the route-
-      // local audio element is gone, so wall-clock continuation must stop.
+      // Safari may tear down the route while the page is backgrounded. Preserve
+      // the wall-clock resume anchor in that case; only a visible in-app
+      // navigation means the route-local audio transport has actually stopped.
+      const continuing = (
+        document.visibilityState === "hidden"
+        && browserPlayingRef.current
+      );
       storeProgramPosition(
         localEpisode.id,
         browserPositionRef.current,
-        false,
+        continuing,
       );
     };
   }, [localEpisode?.id]);
