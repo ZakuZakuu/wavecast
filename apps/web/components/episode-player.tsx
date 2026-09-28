@@ -1146,24 +1146,49 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   listenerPositionRef.current = displayedPosition;
 
   const nudgeSeek = (seconds: number) => {
-    commitSeek(Math.max(0, listenerPositionRef.current + seconds));
+    const target = Math.max(0, listenerPositionRef.current + seconds);
+    if (streamMode) {
+      commitProgramSeek(target);
+      return;
+    }
+    commitSeek(target);
   };
 
   return (
     <main className="now-playing-page page-enter">
-      <MixAudioPlayer
-        segment={current}
-        upcomingSegment={upcoming}
-        plan={mixPlan}
-        playing={browserPlaying && localEpisode.is_listener_active}
-        positionSeconds={currentOffset}
-        seekToken={seekToken}
-        armedSuccessorId={armedSuccessorId}
-        preloadSourceUrl={preloadSourceUrl}
-        onPositionChange={handleAudioPosition}
-        onEnded={completeBrowserSegment}
-        onError={() => setError("音频暂时无法播放")}
-      />
+      {streamMode ? (
+        <ProgramStreamPlayer
+          streamUrl={programManifest.streamUrl}
+          playing={browserPlaying && localEpisode.is_listener_active}
+          positionSeconds={programPosition}
+          seekToken={programSeekToken}
+          title={localEpisode.title ?? "WaveCast"}
+          subtitle={displayCurrent?.kind === "MUSIC"
+            ? [displayCurrent.artist, displayCurrent.title].filter(Boolean).join(" — ")
+            : displayCurrent?.title ?? "WaveCast"}
+          onPositionChange={handleProgramPosition}
+          onPlayRequest={requestProgramPlay}
+          onPauseRequest={requestProgramPause}
+          onSeekRequest={commitProgramSeek}
+          onBufferingChange={setProgramBuffering}
+          onEnded={handleProgramEnded}
+          onError={fallbackFromProgramStream}
+        />
+      ) : (
+        <MixAudioPlayer
+          segment={current}
+          upcomingSegment={upcoming}
+          plan={mixPlan}
+          playing={browserPlaying && localEpisode.is_listener_active}
+          positionSeconds={currentOffset}
+          seekToken={seekToken}
+          armedSuccessorId={armedSuccessorId}
+          preloadSourceUrl={preloadSourceUrl}
+          onPositionChange={handleAudioPosition}
+          onEnded={completeBrowserSegment}
+          onError={() => setError("音频暂时无法播放")}
+        />
+      )}
 
       <div className="player-topbar">
         <Link href="/" className="icon-button glass-button" aria-label="返回节目"><WaveIcon name="back" /></Link>
@@ -1214,9 +1239,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         <h1>{localEpisode.title ?? "正在播放"}</h1>
         <p className="chapter-line">Chapter {currentChapterIndex + 1} · {chapterTitle}</p>
         <p className="track-line">
-          {current?.kind === "MUSIC"
-            ? [current.artist, current.title].filter(Boolean).join(" — ")
-            : current?.title ?? "主持人正在串联"}
+          {displayCurrent?.kind === "MUSIC"
+            ? [displayCurrent.artist, displayCurrent.title].filter(Boolean).join(" — ")
+            : displayCurrent?.title ?? "主持人正在串联"}
         </p>
       </section>
 
@@ -1229,6 +1254,13 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           value={Math.min(displayedPosition, Math.max(1, maxSeekPosition))}
           onChange={(event) => {
             const value = Number(event.target.value);
+            if (streamMode) {
+              if (value <= maxSeekPosition) {
+                seekPreviewRef.current = value;
+                setSeekPreview(value);
+              }
+              return;
+            }
             const linearValue = transportMixPlan
               ? mixPositionToLinearPosition(
                   localEpisode,
@@ -1277,7 +1309,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         </button>
       </section>
 
-      {preparingAhead ? (
+      {streamMode && programBuffering ? (
+        <div className="preparing-hint"><i />正在缓冲节目音频</div>
+      ) : preparingAhead ? (
         <div className="preparing-hint"><i />正在准备接下来的章节</div>
       ) : upcoming ? (
         <div className="up-next">接下来：<strong>{upcoming.title}</strong>{upcoming.artist ? " · " + upcoming.artist : ""}</div>
