@@ -5,114 +5,177 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, ApiRequestError } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
-import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
-import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
-import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff } from "../lib/playback";
-import { activeMixClipsAt, linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, overlapLeadSeconds, segmentIdAt, type MixPlan } from "../lib/mix-timeline";
+import {
+  createEffectGenerationGuard,
+  createSynchronizationGuard,
+} from "../lib/episode-synchronization";
+import {
+  downloadFilename,
+  ExportBlockedError,
+  prepareEpisodeExport,
+  triggerMixdownDownload,
+  type MixdownArtifact,
+} from "../lib/episode-export";
+import { formatSeconds, nextVisibleSegment } from "../lib/playback";
+import {
+  activeMixClipsAt,
+  mixPlanSignature,
+  type MixPlan,
+} from "../lib/mix-timeline";
 import { usePlayerStore } from "../lib/player-store";
-import { clampProgramPosition, supportsNativeHls, type ProgramRenderManifest } from "../lib/program-stream";
-import type { LiveEpisode } from "../lib/types";
-import { isEpisodeSaved, recordRecentEpisode, saveMaterializedEpisode } from "../lib/user-library";
+import type {
+  LiveEpisode,
+  ProgramRenderManifest,
+  Segment,
+} from "../lib/types";
+import {
+  isEpisodeSaved,
+  recordRecentEpisode,
+  saveMaterializedEpisode,
+} from "../lib/user-library";
 import { ChaptersSheet } from "./chapters-sheet";
-import { MixAudioPlayer } from "./mix-audio-player";
 import { ProgrammeAudioPlayer } from "./programme-audio-player";
 import { ProgramArtwork } from "./program-artwork";
 import { WaveIcon } from "./wave-icon";
 
-const CHAPTER_TITLES = ["开场", "夜色开始变暖", "从旋律走进城市", "另一面的节奏", "慢慢收回来"];
-const HANDOFF_ARM_SECONDS = 2;
-const ARRANGEMENT_ARM_SAFETY_SECONDS = 1.5;
+const CHAPTER_TITLES = [
+  "开场",
+  "夜色开始变暖",
+  "从旋律走进城市",
+  "另一面的节奏",
+  "慢慢收回来",
+];
+const PROGRAM_CHECKPOINT_SECONDS = 5;
+const PROGRAM_PROGRESS_PREFIX = "wavecast-program-progress:";
 
-export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeId?: string }) {
+function storedProgramPosition(episodeId: string): number | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(PROGRAM_PROGRESS_PREFIX + episodeId);
+  if (raw === null) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function storeProgramPosition(episodeId: string, position: number): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    PROGRAM_PROGRESS_PREFIX + episodeId,
+    String(Math.max(0, position)),
+  );
+}
+
+function renderSignature(episode: LiveEpisode): string {
+  return JSON.stringify({
+    id: episode.id,
+    state: episode.state,
+    host: episode.presentation_intent?.host_mode ?? "LIGHT",
+    segments: episode.segments.map((segment) => [
+      segment.id,
+      segment.order,
+      segment.state,
+      segment.audio_source_url,
+      segment.actual_duration_seconds,
+      segment.planned_duration_seconds,
+    ]),
+  });
+}
+
+function segmentAtProgramPosition(
+  episode: LiveEpisode,
+  plan: MixPlan | null,
+  positionSeconds: number,
+): Segment | undefined {
+  if (plan) {
+    const active = activeMixClipsAt(plan, positionSeconds);
+    const preferred = (
+      active.find((clip) => clip.lane === "VOICE")
+      ?? [...active].reverse().find((clip) => clip.lane === "MUSIC")
+      ?? [...plan.clips]
+        .filter((clip) => clip.timelineStartSeconds <= positionSeconds)
+        .sort((left, right) => right.timelineStartSeconds - left.timelineStartSeconds)[0]
+    );
+    if (preferred) {
+      const segment = episode.segments.find(
+        (candidate) => candidate.id === preferred.segmentId,
+      );
+      if (segment) return segment;
+    }
+  }
+  return episode.segments.find(
+    (segment) => segment.id === episode.current_segment_id,
+  ) ?? episode.segments.find((segment) => segment.state !== "SKIPPED");
+}
+
+export function EpisodePlayer({
+  seedId,
+  episodeId,
+}: {
+  seedId?: string;
+  episodeId?: string;
+}) {
   const { episode, setEpisode } = usePlayerStore();
   const [error, setError] = useState<string | null>(null);
   const [browserPosition, setBrowserPosition] = useState(0);
   const [browserPlaying, setBrowserPlaying] = useState(false);
   const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
-  const [programRender, setProgramRender] = useState<ProgramRenderManifest | null>(null);
-  const [nativeHlsSupported, setNativeHlsSupported] = useState(false);
-  const [programStreamActive, setProgramStreamActive] = useState(false);
+  const [programManifest, setProgramManifest] =
+    useState<ProgramRenderManifest | null>(null);
+  const [renderState, setRenderState] =
+    useState<"idle" | "preparing" | "ready" | "error">("idle");
   const [programBuffering, setProgramBuffering] = useState(false);
-  const [programRenderRetryNonce, setProgramRenderRetryNonce] = useState(0);
-  const [armedSuccessorId, setArmedSuccessorId] = useState<string | null>(null);
-  const [transportSegmentId, setTransportSegmentId] = useState<string | null>(null);
+  const [renderRetryNonce, setRenderRetryNonce] = useState(0);
   const [seekToken, setSeekToken] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [chaptersOpen, setChaptersOpen] = useState(false);
-  const [exportState, setExportState] = useState<"idle" | "preparing" | "ready" | "error">("idle");
-  const [exportArtifact, setExportArtifact] = useState<MixdownArtifact | null>(null);
+  const [exportState, setExportState] =
+    useState<"idle" | "preparing" | "ready" | "error">("idle");
+  const [exportArtifact, setExportArtifact] =
+    useState<MixdownArtifact | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [saveState, setSaveState] = useState<"idle" | "requesting" | "preparing">("idle");
+  const [saveState, setSaveState] =
+    useState<"idle" | "requesting" | "preparing">("idle");
+
   const episodeIdRef = useRef<string | null>(null);
-  const checkpointRef = useRef<number>(-1);
   const browserPositionRef = useRef(0);
   const seekPreviewRef = useRef<number | null>(null);
-  const awaitingSuccessorRef = useRef(false);
-  const armedSuccessorIdRef = useRef<string | null>(null);
-  const armedFromSegmentIdRef = useRef<string | null>(null);
-  const armedEpisodeRef = useRef<LiveEpisode | null>(null);
-  const handoffAttemptRef = useRef<string | null>(null);
+  const checkpointBucketRef = useRef(-1);
   const materializationRequestVersionRef = useRef<number | null>(null);
-  const playbackAnchorRef = useRef<ReturnType<typeof playbackAnchor>>(null);
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
   const startEffectGuardRef = useRef(createEffectGenerationGuard());
   const synchronizationGuardRef = useRef(createSynchronizationGuard());
-  const handoffRequestGuardRef = useRef(createEffectGenerationGuard());
-  const completionRequestGuardRef = useRef(createEffectGenerationGuard());
-  const seekIntentCounterRef = useRef(0);
-  const pendingSeekIntentRef = useRef<number | null>(null);
-  const seekQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const resumeAfterSeekRef = useRef(false);
-  const listenerPositionRef = useRef(0);
-  const programRenderSignatureRef = useRef<string | null>(null);
-  const programRenderBusyRef = useRef(false);
-  const programRefillAtRef = useRef(0);
-  const usingProgramStreamRef = useRef(false);
-  const programRenderRetryTimerRef = useRef<number | null>(null);
-  const programRenderRetryStateRef = useRef<{ signature: string | null; count: number }>({
+  const renderInFlightRef = useRef(false);
+  const renderQueuedRef = useRef(false);
+  const renderSignatureRef = useRef<string | null>(null);
+  const renderedSignatureRef = useRef<string | null>(null);
+  const renderRetryTimerRef = useRef<number | null>(null);
+  const renderRetryStateRef = useRef<{ signature: string | null; count: number }>({
     signature: null,
     count: 0,
   });
+  const frontierWakeAtRef = useRef(0);
 
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
     ? episode
     : null;
-  const usingProgramStream = Boolean(
-    nativeHlsSupported
-    && programStreamActive
-    && programRender
-    && programRender.chunks.length > 0
-  );
-  const programmeSegmentId = useMemo(
-    () => usingProgramStream && mixPlan
-      ? segmentIdAt(mixPlan, browserPosition)
-      : undefined,
-    [browserPosition, mixPlan, usingProgramStream],
-  );
-  const serverCurrent = useMemo(
-    () => localEpisode?.segments.find((segment) => segment.id === localEpisode.current_segment_id),
+  localEpisodeRef.current = localEpisode;
+
+  const arrangementSignature = useMemo(
+    () => localEpisode ? mixPlanSignature(localEpisode) : null,
     [localEpisode],
   );
+  const currentRenderSignature = useMemo(
+    () => localEpisode ? renderSignature(localEpisode) : null,
+    [localEpisode],
+  );
+  renderSignatureRef.current = currentRenderSignature;
+
   const current = useMemo(
-    () => {
-      if (!localEpisode) return undefined;
-      if (programmeSegmentId) {
-        const rendered = localEpisode.segments.find(
-          (segment) => segment.id === programmeSegmentId,
-        );
-        if (rendered) return rendered;
-      }
-      if (transportSegmentId) {
-        const optimistic = localEpisode.segments.find(
-          (segment) => segment.id === transportSegmentId,
-        );
-        if (optimistic) return optimistic;
-      }
-      return serverCurrent;
-    },
-    [localEpisode, programmeSegmentId, serverCurrent, transportSegmentId],
+    () => localEpisode
+      ? segmentAtProgramPosition(localEpisode, mixPlan, browserPosition)
+      : undefined,
+    [browserPosition, localEpisode, mixPlan],
   );
   const upcoming = useMemo(
     () => localEpisode && current
@@ -120,269 +183,138 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       : undefined,
     [current, localEpisode],
   );
-  const arrangementEpisodeId = localEpisode?.id ?? null;
-  const arrangementSignature = useMemo(
-    () => localEpisode ? mixPlanSignature(localEpisode) : null,
-    [localEpisode],
-  );
-  const arrangementClip = useMemo(
-    () => mixPlan?.clips.find((clip) => clip.segmentId === current?.id) ?? null,
-    [current?.id, mixPlan],
-  );
-  const upcomingArrangementClip = useMemo(
-    () => mixPlan?.clips.find((clip) => clip.segmentId === upcoming?.id) ?? null,
-    [mixPlan, upcoming?.id],
-  );
-  const transportMixPlan = usingProgramStream ? mixPlan : arrangementClip ? mixPlan : null;
-  localEpisodeRef.current = localEpisode;
-  usingProgramStreamRef.current = usingProgramStream;
 
-  useEffect(() => {
-    if (
-      !nativeHlsSupported
-      || programStreamActive
-      || !programRender
-      || !programRender.chunks.length
-      || !mixPlan
-      || !localEpisode
-    ) {
+  const requestProgramRender = useCallback(() => {
+    if (renderInFlightRef.current) {
+      renderQueuedRef.current = true;
       return;
     }
+    const targetEpisode = localEpisodeRef.current;
+    if (!targetEpisode) return;
 
-    const programmePosition = linearPositionToMixPosition(
-      localEpisode,
-      mixPlan,
-      browserPositionRef.current,
-    ).mixPositionSeconds;
-    const activationCeiling = Math.max(
-      0,
-      programRender.renderedFrontierSeconds - 0.25,
-    );
+    renderInFlightRef.current = true;
+    setRenderState((state) => state === "ready" ? state : "preparing");
+    const episodeIdAtRequest = targetEpisode.id;
+    const signatureAtRequest = renderSignatureRef.current;
 
-    // Never enter the immutable feed by clamping the listener backwards. If
-    // legacy playback is ahead, leave it running until publication catches up.
-    if (programmePosition > activationCeiling) return;
-
-    const target = Math.max(0, programmePosition);
-    setTransportSegmentId(null);
-    setArmedSuccessorId(null);
-    armedSuccessorIdRef.current = null;
-    armedFromSegmentIdRef.current = null;
-    armedEpisodeRef.current = null;
-    handoffAttemptRef.current = null;
-    handoffRequestGuardRef.current.start();
-    completionRequestGuardRef.current.start();
-    setBrowserPosition(target);
-    browserPositionRef.current = target;
-    listenerPositionRef.current = target;
-    setSeekToken((token) => token + 1);
-    setProgramStreamActive(true);
-  }, [
-    localEpisode,
-    mixPlan,
-    nativeHlsSupported,
-    programRender,
-    programStreamActive,
-  ]);
-
-  useEffect(() => {
-    setNativeHlsSupported(supportsNativeHls());
-  }, []);
-
-  useEffect(() => {
-    setProgramRender(null);
-    programRenderSignatureRef.current = null;
-    programRenderBusyRef.current = false;
-    setProgramStreamActive(false);
-    setProgramBuffering(false);
-    setProgramRenderRetryNonce(0);
-    if (programRenderRetryTimerRef.current !== null) {
-      window.clearTimeout(programRenderRetryTimerRef.current);
-      programRenderRetryTimerRef.current = null;
-    }
-    programRenderRetryStateRef.current = { signature: null, count: 0 };
-    setTransportSegmentId(null);
-    setArmedSuccessorId(null);
-    armedSuccessorIdRef.current = null;
-    armedFromSegmentIdRef.current = null;
-    armedEpisodeRef.current = null;
-    handoffAttemptRef.current = null;
-    handoffRequestGuardRef.current.start();
-    completionRequestGuardRef.current.start();
-    seekIntentCounterRef.current += 1;
-    pendingSeekIntentRef.current = null;
-    resumeAfterSeekRef.current = false;
-  }, [localEpisode?.id]);
-
-  useEffect(() => {
-    if (
-      transportSegmentId
-      && localEpisode?.current_segment_id === transportSegmentId
-    ) {
-      setTransportSegmentId(null);
-    }
-    const armedFrom = armedFromSegmentIdRef.current;
-    if (
-      armedFrom
-      && localEpisode?.current_segment_id
-      && localEpisode.current_segment_id !== armedFrom
-    ) {
-      setArmedSuccessorId(null);
-      armedSuccessorIdRef.current = null;
-      armedFromSegmentIdRef.current = null;
-      armedEpisodeRef.current = null;
-      handoffAttemptRef.current = null;
-    }
-  }, [localEpisode?.current_segment_id, transportSegmentId]);
-
-  useEffect(() => {
-    if (!arrangementEpisodeId || !arrangementSignature) {
-      setMixPlan(null);
-      return;
-    }
-    let cancelled = false;
-    setMixPlan((currentPlan) => (
-      currentPlan?.episodeId === arrangementEpisodeId ? currentPlan : null
-    ));
-    void api.mixPlan(arrangementEpisodeId)
-      .then((plan) => {
-        if (!cancelled) setMixPlan(plan);
-      })
-      .catch(() => {
-        // Keep the previous same-Episode plan while a refreshed ready-prefix
-        // arrangement is temporarily unavailable. Serial playback remains the
-        // fallback when the current segment is not present in that plan.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [arrangementEpisodeId, arrangementSignature]);
-
-  const requestProgramRender = useCallback((force = false) => {
-    const latest = localEpisodeRef.current;
-    if (!latest || !nativeHlsSupported) return;
-
-    const signature = mixPlanSignature(latest);
-    if (
-      !force
-      && programRenderSignatureRef.current === signature
-    ) {
-      return;
-    }
-    if (programRenderBusyRef.current) return;
-
-    programRenderBusyRef.current = true;
-    programRenderSignatureRef.current = signature;
-    void api.programRender(latest.id)
+    void api.programRender(episodeIdAtRequest)
       .then((manifest) => {
-        if (localEpisodeRef.current?.id !== latest.id) return;
-        setProgramRender(manifest);
-        programRenderRetryStateRef.current = { signature, count: 0 };
-        if (programRenderRetryTimerRef.current !== null) {
-          window.clearTimeout(programRenderRetryTimerRef.current);
-          programRenderRetryTimerRef.current = null;
+        if (localEpisodeRef.current?.id !== episodeIdAtRequest) return;
+        setProgramManifest(manifest);
+        renderedSignatureRef.current = signatureAtRequest;
+        renderRetryStateRef.current = { signature: signatureAtRequest, count: 0 };
+        if (renderRetryTimerRef.current !== null) {
+          window.clearTimeout(renderRetryTimerRef.current);
+          renderRetryTimerRef.current = null;
         }
-        setError((currentError) => (
-          currentError === "节目音频流暂时还没有准备好" ? null : currentError
-        ));
+        setRenderState("ready");
+        setError(null);
       })
       .catch((reason: unknown) => {
-        if (programRenderSignatureRef.current === signature) {
-          programRenderSignatureRef.current = null;
-        }
-        if (
-          reason instanceof ApiRequestError
-          && reason.status === 409
-        ) {
-          const retry = programRenderRetryStateRef.current;
-          if (retry.signature !== signature) {
-            retry.signature = signature;
+        if (localEpisodeRef.current?.id !== episodeIdAtRequest) return;
+        if (reason instanceof ApiRequestError && reason.status === 409) {
+          // Rendering can race a concurrent generation update. Preserve the
+          // immutable prefix and retry the same structural signature a bounded
+          // number of times instead of declaring the programme stream broken.
+          setRenderState((state) => state === "ready" ? state : "preparing");
+          const retry = renderRetryStateRef.current;
+          if (retry.signature !== signatureAtRequest) {
+            retry.signature = signatureAtRequest;
             retry.count = 0;
           }
-          if (
-            retry.count < 4
-            && programRenderRetryTimerRef.current === null
-          ) {
+          if (retry.count < 4 && renderRetryTimerRef.current === null) {
             retry.count += 1;
             const delayMs = retry.count * 750;
-            programRenderRetryTimerRef.current = window.setTimeout(() => {
-              programRenderRetryTimerRef.current = null;
-              setProgramRenderRetryNonce((value) => value + 1);
+            renderRetryTimerRef.current = window.setTimeout(() => {
+              renderRetryTimerRef.current = null;
+              setRenderRetryNonce((value) => value + 1);
             }, delayMs);
           }
           return;
         }
-        if (
-          reason instanceof ApiRequestError
-          && reason.status === 404
-        ) {
-          return;
-        }
-        setError("节目音频流暂时还没有准备好");
+        setRenderState("error");
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "节目音频暂时没有准备好",
+        );
       })
       .finally(() => {
-        programRenderBusyRef.current = false;
+        renderInFlightRef.current = false;
+        if (renderQueuedRef.current) {
+          renderQueuedRef.current = false;
+          queueMicrotask(requestProgramRender);
+        }
       });
-  }, [nativeHlsSupported]);
+  }, []);
 
   useEffect(() => {
-    if (!arrangementEpisodeId || !arrangementSignature || !nativeHlsSupported) {
+    setProgramManifest(null);
+    setRenderState("idle");
+    setProgramBuffering(false);
+    setRenderRetryNonce(0);
+    renderedSignatureRef.current = null;
+    renderQueuedRef.current = false;
+    checkpointBucketRef.current = -1;
+    frontierWakeAtRef.current = 0;
+    renderRetryStateRef.current = { signature: null, count: 0 };
+    if (renderRetryTimerRef.current !== null) {
+      window.clearTimeout(renderRetryTimerRef.current);
+      renderRetryTimerRef.current = null;
+    }
+    return () => {
+      if (renderRetryTimerRef.current !== null) {
+        window.clearTimeout(renderRetryTimerRef.current);
+        renderRetryTimerRef.current = null;
+      }
+    };
+  }, [localEpisode?.id]);
+
+  useEffect(() => {
+    if (!localEpisode?.id || !arrangementSignature) {
+      setMixPlan(null);
       return;
     }
-    requestProgramRender(false);
-  }, [
-    arrangementEpisodeId,
-    arrangementSignature,
-    nativeHlsSupported,
-    programRenderRetryNonce,
-    requestProgramRender,
-  ]);
-
-  const requestProgramRefill = useCallback(() => {
-    const latest = localEpisodeRef.current;
-    if (!latest || !nativeHlsSupported) return;
-
-    const now = Date.now();
-    if (now - programRefillAtRef.current < 5_000) return;
-    programRefillAtRef.current = now;
-
-    // First try to append anything already renderable, then ask the durable
-    // generation worker for more future content. SSE will trigger another
-    // programme render as soon as new audio-ready segments appear.
-    requestProgramRender(true);
-    void api.ensureBuffer(latest.id)
-      .then((buffered) => {
-        if (localEpisodeRef.current?.id === buffered.id) {
-          setEpisode(buffered);
-        }
+    let cancelled = false;
+    void api.mixPlan(localEpisode.id)
+      .then((plan) => {
+        if (!cancelled) setMixPlan(plan);
       })
       .catch(() => {
-        // Refill is resource scheduling, not playback semantics.
+        // The programme stream remains authoritative. MixPlan is used here only
+        // to label the current rendered position in the UI.
       });
-  }, [nativeHlsSupported, requestProgramRender, setEpisode]);
+    return () => {
+      cancelled = true;
+    };
+  }, [arrangementSignature, localEpisode?.id]);
+
+  useEffect(() => {
+    if (
+      currentRenderSignature
+      && (
+        currentRenderSignature !== renderedSignatureRef.current
+        || renderRetryNonce > 0
+      )
+    ) {
+      requestProgramRender();
+    }
+  }, [currentRenderSignature, renderRetryNonce, requestProgramRender]);
 
   useEffect(() => {
     let mounted = true;
     const startGeneration = startEffectGuardRef.current.start();
     const deferLeave = (id: string) => {
       queueMicrotask(() => {
-        if (startEffectGuardRef.current.isCurrent(startGeneration)) {
-          void api.leave(id).then((left) => {
-            if (startEffectGuardRef.current.isCurrent(startGeneration)) setEpisode(left);
-          });
-        }
+        if (!startEffectGuardRef.current.isCurrent(startGeneration)) return;
+        void api.leave(id).then((left) => {
+          if (startEffectGuardRef.current.isCurrent(startGeneration)) {
+            setEpisode(left);
+          }
+        }).catch(() => undefined);
       });
     };
-    const leaveOnPageExit = () => {
-      const currentEpisode = localEpisodeRef.current;
-      if (episodeIdRef.current && currentEpisode) {
-        if (!usingProgramStreamRef.current) {
-          void api.checkpoint(episodeIdRef.current, Math.floor(browserPositionRef.current));
-        }
-        navigator.sendBeacon(`/api/episodes/${episodeIdRef.current}/leave`);
-      }
-    };
-    window.addEventListener("pagehide", leaveOnPageExit);
+
     const load = episodeId ? api.get(episodeId) : api.start(seedId!);
     load.then((started) => {
       episodeIdRef.current = started.id;
@@ -391,28 +323,35 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         program_id: started.seed_id,
         episode_id: started.id,
       }).catch(() => undefined);
-      if (mounted) {
-        setEpisode(started);
-        setBrowserPlaying(started.is_playing && started.is_listener_active);
-        setBrowserPosition(started.playback_position_seconds);
-        browserPositionRef.current = started.playback_position_seconds;
-        playbackAnchorRef.current = playbackAnchor(started);
-      } else {
+      if (!mounted) {
         deferLeave(started.id);
+        return;
       }
-    }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "节目暂时无法开始"));
+
+      const stored = storedProgramPosition(started.id);
+      const initialPosition = stored
+        ?? started.program_playback_position_seconds
+        ?? 0;
+      setEpisode(started);
+      setBrowserPlaying(started.is_listener_active);
+      setBrowserPosition(initialPosition);
+      browserPositionRef.current = initialPosition;
+      setSeekToken((token) => token + 1);
+    }).catch((reason: unknown) => {
+      setError(
+        reason instanceof Error ? reason.message : "节目暂时无法开始",
+      );
+    });
+
     return () => {
       mounted = false;
-      window.removeEventListener("pagehide", leaveOnPageExit);
       if (episodeIdRef.current) deferLeave(episodeIdRef.current);
     };
   }, [episodeId, seedId, setEpisode]);
 
   useEffect(() => {
     if (!localEpisode) return;
-    return subscribeToEpisodeEvents(localEpisode.id, (incoming) => {
-      setEpisode(incoming);
-    });
+    return subscribeToEpisodeEvents(localEpisode.id, setEpisode);
   }, [localEpisode?.id, setEpisode]);
 
   useEffect(() => {
@@ -425,51 +364,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (!localEpisode) return;
     recordRecentEpisode(localEpisode, current?.title ?? null);
     setSaved(isEpisodeSaved(localEpisode.id));
-  }, [localEpisode?.id, current?.id, current?.title]);
-
-  useEffect(() => {
-    if (usingProgramStream) {
-      playbackAnchorRef.current = playbackAnchor(localEpisode);
-      return;
-    }
-    if (pendingSeekIntentRef.current !== null) {
-      playbackAnchorRef.current = playbackAnchor(localEpisode);
-      return;
-    }
-    const linearPosition = reconcileBrowserPosition(
-      browserPositionRef.current,
-      playbackAnchorRef.current,
-      localEpisode,
-    );
-    if (seekPreviewRef.current === null) {
-      setBrowserPosition(linearPosition);
-      browserPositionRef.current = linearPosition;
-    }
-    playbackAnchorRef.current = playbackAnchor(localEpisode);
-  }, [localEpisode?.current_segment_id, localEpisode?.playback_position_seconds, usingProgramStream]);
-
-  useEffect(() => {
-    if (localEpisode && !localEpisode.is_listener_active) {
-      awaitingSuccessorRef.current = false;
-      setBrowserPlaying(false);
-    }
-  }, [localEpisode?.id, localEpisode?.is_listener_active]);
-
-  useEffect(() => {
-    if (
-      awaitingSuccessorRef.current
-      && localEpisode?.is_listener_active
-      && localEpisode.is_playing
-    ) {
-      awaitingSuccessorRef.current = false;
-      setBrowserPlaying(true);
-      setError(null);
-    }
-  }, [
-    localEpisode?.current_segment_id,
-    localEpisode?.is_listener_active,
-    localEpisode?.is_playing,
-  ]);
+  }, [current?.id, current?.title, localEpisode?.id]);
 
   useEffect(() => {
     if (!localEpisode?.is_listener_active) return;
@@ -483,158 +378,62 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       try {
         await api.heartbeat(localEpisode.id);
       } catch {
-        // Heartbeat is only listener-liveness metadata. Background generation is
-        // backend-owned and must not interrupt browser-authoritative playback.
+        // Heartbeat only owns listener liveness and generation scheduling.
       }
     };
-
     void heartbeat();
-    const heartbeatInterval = window.setInterval(() => void heartbeat(), 10_000);
+    const interval = window.setInterval(() => void heartbeat(), 10_000);
     return () => {
       synchronizationGuard.invalidate();
-      window.clearInterval(heartbeatInterval);
+      window.clearInterval(interval);
     };
   }, [localEpisode?.id, localEpisode?.is_listener_active]);
 
-  async function update(operation: Promise<LiveEpisode>): Promise<boolean> {
-    try {
-      setEpisode(await operation);
-      setError(null);
-      return true;
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "操作暂时没有完成");
-      return false;
-    }
-  }
-
   const leaveEpisode = useCallback(() => {
-    const currentEpisode = localEpisodeRef.current;
-    if (!currentEpisode) return;
-    awaitingSuccessorRef.current = false;
+    const target = localEpisodeRef.current;
+    if (!target) return;
     setBrowserPlaying(false);
     synchronizationGuardRef.current.invalidate();
-    void update(api.leave(currentEpisode.id));
-  }, []);
-
-  const completeBrowserSegment = useCallback(() => {
-    if (!localEpisode || !browserPlaying || !current) return;
-
-    const completionGeneration = completionRequestGuardRef.current.start();
-    const armedId = armedSuccessorIdRef.current;
-    const armedEpisode = armedEpisodeRef.current;
-    const armedSegment = armedId
-      ? (armedEpisode ?? localEpisode).segments.find((segment) => segment.id === armedId)
-      : undefined;
-    const canHandoffOptimistically = canUseArmedHandoff({
-      current,
-      armedSegment,
-      serverCurrentId: localEpisode.current_segment_id,
-      armedFromSegmentId: armedFromSegmentIdRef.current,
-    });
-
-    if (canHandoffOptimistically && armedSegment && armedEpisode) {
-      const currentMixEnd = arrangementClip
-        ? arrangementClip.timelineStartSeconds + arrangementClip.playableDurationSeconds
-        : null;
-      const nextPosition = (
-        currentMixEnd !== null
-        && transportMixPlan
-        && upcomingArrangementClip
-      )
-        ? mixPositionToLinearPosition(
-            armedEpisode,
-            transportMixPlan,
-            currentMixEnd,
-          ).linearPositionSeconds
-        : segmentStart(armedEpisode, armedSegment.id);
-      setTransportSegmentId(armedSegment.id);
-      setBrowserPosition(nextPosition);
-      browserPositionRef.current = nextPosition;
-      setBrowserPlaying(true);
-    }
-
-    const completion = canHandoffOptimistically && armedSegment
-      ? api.completeHandoff(localEpisode.id, current.id, armedSegment.id)
-      : api.completedSegment(localEpisode.id, current.id);
-
-    void completion
-      .then((completed) => {
-        if (!completionRequestGuardRef.current.isCurrent(completionGeneration)) return;
-        playbackAnchorRef.current = playbackAnchor(completed);
-        setEpisode(completed);
-        setError(null);
-
-        if (isProgramPlaybackComplete(completed)) {
-          awaitingSuccessorRef.current = false;
-          setTransportSegmentId(null);
-          void api.recordUserEvent({
-            event_type: "PLAY_COMPLETE",
-            program_id: completed.seed_id,
-            episode_id: completed.id,
-          }).catch(() => undefined);
-          return;
-        }
-
-        if (completed.is_playing && completed.is_listener_active) {
-          awaitingSuccessorRef.current = false;
-          setBrowserPlaying(true);
-        } else {
-          awaitingSuccessorRef.current = true;
-          setBrowserPlaying(false);
-        }
-      })
+    void api.programCheckpoint(target.id, browserPositionRef.current)
+      .catch(() => undefined);
+    void api.leave(target.id)
+      .then(setEpisode)
       .catch((reason: unknown) => {
-        if (!completionRequestGuardRef.current.isCurrent(completionGeneration)) return;
-        awaitingSuccessorRef.current = false;
-        // A completion event can race with an explicit seek/manual transport
-        // change. The backend rejects the stale segment identity; never let
-        // that old ended event pause the newly selected source.
-        if (
-          reason instanceof ApiRequestError
-          && reason.status === 409
-          && reason.message === "completed segment is stale"
-        ) {
-          return;
-        }
-        // An armed successor is already durable, so a lost persistence response
-        // must not interrupt audio that has successfully handed off locally.
-        if (canHandoffOptimistically && armedSegment) {
-          void api.completeHandoff(localEpisode.id, current.id, armedSegment.id)
-            .then((reconciled) => {
-              playbackAnchorRef.current = playbackAnchor(reconciled);
-              setEpisode(reconciled);
-              setBrowserPlaying(
-                reconciled.is_playing && reconciled.is_listener_active,
-              );
-              setError(null);
-            })
-            .catch(() => {
-              setError("播放继续中，但状态暂时没有同步");
-            });
-          return;
-        }
-        setBrowserPlaying(false);
-        setError(reason instanceof Error ? reason.message : "播放状态暂时没有同步");
+        setError(
+          reason instanceof Error ? reason.message : "停止后台准备失败",
+        );
       });
-  }, [arrangementClip, browserPlaying, current, localEpisode, setEpisode, transportMixPlan, upcomingArrangementClip]);
+  }, [setEpisode]);
 
   const exportEpisode = useCallback(async () => {
-    if (!localEpisode || localEpisode.state !== "MATERIALIZED" || exportState === "preparing") return;
+    if (
+      !localEpisode
+      || localEpisode.state !== "MATERIALIZED"
+      || exportState === "preparing"
+    ) return;
     setExportState("preparing");
     setExportError(null);
     try {
-      const artifact = await prepareEpisodeExport(localEpisode.id, {
-        prepareMixdown: api.prepareMixdown,
-        mixdown: api.mixdown,
-      }, exportArtifact);
+      const artifact = await prepareEpisodeExport(
+        localEpisode.id,
+        {
+          prepareMixdown: api.prepareMixdown,
+          mixdown: api.mixdown,
+        },
+        exportArtifact,
+      );
       setExportArtifact(artifact);
       setExportState("ready");
       triggerMixdownDownload(artifact, localEpisode.id);
     } catch (reason: unknown) {
       setExportState("error");
-      setExportError(reason instanceof ExportBlockedError
-        ? "部分音源暂时无法准备导出，请稍后重试。"
-        : reason instanceof Error ? reason.message : "导出失败，请稍后重试。");
+      setExportError(
+        reason instanceof ExportBlockedError
+          ? "部分音源暂时无法准备导出，请稍后重试。"
+          : reason instanceof Error
+            ? reason.message
+            : "导出失败，请稍后重试。",
+      );
     }
   }, [exportArtifact, exportState, localEpisode]);
 
@@ -658,7 +457,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       try {
         persistMaterializedEpisode(localEpisode);
       } catch (reason: unknown) {
-        setError(reason instanceof Error ? reason.message : "保存节目失败，请稍后重试");
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "保存节目失败，请稍后重试",
+        );
       }
       return;
     }
@@ -677,7 +480,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     } catch (reason: unknown) {
       materializationRequestVersionRef.current = null;
       setSaveState("idle");
-      setError(reason instanceof Error ? reason.message : "完整节目生成请求失败，请稍后重试");
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "完整节目生成请求失败，请稍后重试",
+      );
     }
   }, [
     localEpisode,
@@ -692,8 +499,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (localEpisode.state === "MATERIALIZED") {
       try {
         persistMaterializedEpisode(localEpisode);
+        requestProgramRender();
       } catch (reason: unknown) {
-        setError(reason instanceof Error ? reason.message : "保存节目失败，请稍后重试");
+        setError(
+          reason instanceof Error ? reason.message : "保存节目失败，请稍后重试",
+        );
       } finally {
         materializationRequestVersionRef.current = null;
         setSaveState("idle");
@@ -703,536 +513,272 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (localEpisode.state === "MATERIALIZING") return;
 
     const requestedVersion = materializationRequestVersionRef.current;
-    if (requestedVersion !== null && localEpisode.version > requestedVersion) {
+    if (
+      requestedVersion !== null
+      && localEpisode.version > requestedVersion
+    ) {
       materializationRequestVersionRef.current = null;
       setSaveState("idle");
       setError("完整节目生成失败，可以稍后重试");
     }
-  }, [localEpisode, persistMaterializedEpisode, saveState]);
-
-  const handleAudioPosition = useCallback((segmentPosition: number) => {
-    if (!localEpisode || !current || seekPreviewRef.current !== null) return;
-    const position = Math.floor(
-      segmentStart(localEpisode, current.id) + Math.max(0, segmentPosition),
-    );
-    setBrowserPosition(position);
-    browserPositionRef.current = position;
-
-    const currentDuration = current.duration_seconds
-      ?? current.actual_duration_seconds
-      ?? current.planned_duration_seconds;
-    const remainingSeconds = Math.max(0, currentDuration - segmentPosition);
-    const plannedOverlapSeconds = overlapLeadSeconds(
-      arrangementClip,
-      upcomingArrangementClip,
-    );
-    const armThresholdSeconds = Math.max(
-      HANDOFF_ARM_SECONDS,
-      plannedOverlapSeconds > 0
-        ? plannedOverlapSeconds + ARRANGEMENT_ARM_SAFETY_SECONDS
-        : HANDOFF_ARM_SECONDS,
-    );
-    const canArm = shouldArmHandoff({
-      current,
-      upcoming,
-      serverCurrentId: localEpisode.current_segment_id,
-      transportSegmentId,
-      remainingSeconds,
-      armThresholdSeconds,
-    });
-    if (canArm && upcoming) {
-      const handoffKey = `${current.id}->${upcoming.id}`;
-      if (handoffAttemptRef.current !== handoffKey) {
-        handoffAttemptRef.current = handoffKey;
-        const handoffGeneration = handoffRequestGuardRef.current.start();
-        void api.armHandoff(localEpisode.id, upcoming.id)
-          .then((armed) => {
-            if (!handoffRequestGuardRef.current.isCurrent(handoffGeneration)) return;
-            const latest = localEpisodeRef.current;
-            if (
-              latest?.id !== localEpisode.id
-              || latest.current_segment_id !== current.id
-            ) return;
-            setArmedSuccessorId(upcoming.id);
-            armedSuccessorIdRef.current = upcoming.id;
-            armedFromSegmentIdRef.current = current.id;
-            const effectiveEpisode = latest.version > armed.version ? latest : armed;
-            armedEpisodeRef.current = effectiveEpisode;
-            if (armed.version >= latest.version) {
-              setEpisode(armed);
-            }
-          })
-          .catch(() => {
-            // Handoff arming is an optimization. Fall back to the conservative
-            // completed->next path without surfacing a playback error.
-          });
-      }
-    }
-
-    if (
-      position > localEpisode.playback_position_seconds
-      && position % 5 === 0
-      && checkpointRef.current !== position
-    ) {
-      checkpointRef.current = position;
-      void api.checkpoint(localEpisode.id, position).catch(() => undefined);
-    }
   }, [
-    arrangementClip,
-    current,
     localEpisode,
-    setEpisode,
-    transportSegmentId,
-    upcoming,
-    upcomingArrangementClip,
+    persistMaterializedEpisode,
+    requestProgramRender,
+    saveState,
   ]);
+
+  const handleProgramPosition = useCallback((position: number) => {
+    const target = localEpisodeRef.current;
+    if (!target || seekPreviewRef.current !== null) return;
+    const nextPosition = Math.max(0, position);
+    setBrowserPosition(nextPosition);
+    browserPositionRef.current = nextPosition;
+    storeProgramPosition(target.id, nextPosition);
+
+    const bucket = Math.floor(nextPosition / PROGRAM_CHECKPOINT_SECONDS);
+    if (bucket !== checkpointBucketRef.current) {
+      checkpointBucketRef.current = bucket;
+      void api.programCheckpoint(target.id, nextPosition)
+        .catch(() => undefined);
+    }
+  }, []);
 
   const commitSeek = useCallback((value: number) => {
-    if (!localEpisode) return;
-
-    if (usingProgramStream && programRender) {
-      const target = clampProgramPosition(programRender, value);
-      setBrowserPosition(target);
-      browserPositionRef.current = target;
-      listenerPositionRef.current = target;
-      setSeekToken((token) => token + 1);
-      seekPreviewRef.current = null;
-      setSeekPreview(null);
-      setError(null);
-      if (
-        !programRender.complete
-        && programRender.renderedFrontierSeconds - target <= 45
-      ) {
-        requestProgramRefill();
-      }
-      return;
-    }
-
-    const mapped = transportMixPlan
-      ? mixPositionToLinearPosition(
-          localEpisode,
-          transportMixPlan,
-          value,
-        )
-      : null;
-    const linearValue = mapped?.linearPositionSeconds ?? value;
-    const targetSegment = (
-      mapped?.segmentId
-        ? localEpisode.segments.find((segment) => segment.id === mapped.segmentId)
-        : segmentAtPosition(localEpisode, linearValue)
-    );
-    if (!isSeekAllowed(localEpisode, linearValue) || !targetSegment) {
-      seekPreviewRef.current = null;
-      setSeekPreview(null);
-      return;
-    }
-
-    const intentId = seekIntentCounterRef.current + 1;
-    seekIntentCounterRef.current = intentId;
-    if (pendingSeekIntentRef.current === null) {
-      resumeAfterSeekRef.current = browserPlaying;
-    }
-    pendingSeekIntentRef.current = intentId;
-
-    handoffRequestGuardRef.current.start();
-    completionRequestGuardRef.current.start();
-
-    setArmedSuccessorId(null);
-    armedSuccessorIdRef.current = null;
-    armedFromSegmentIdRef.current = null;
-    armedEpisodeRef.current = null;
-    handoffAttemptRef.current = null;
-    awaitingSuccessorRef.current = false;
-
-    const activeSegmentIds = transportMixPlan
-      ? new Set(
-          activeMixClipsAt(transportMixPlan, value).map(
-            (clip) => clip.segmentId,
-          ),
-        )
-      : new Set<string>();
-    const transitionSuccessor = nextVisibleSegment(
-      localEpisode,
-      targetSegment.id,
-    );
-    const overlapSuccessorId = (
-      transitionSuccessor
-      && activeSegmentIds.has(transitionSuccessor.id)
-      && isPlaybackReadySegment(transitionSuccessor)
-    )
-      ? transitionSuccessor.id
-      : null;
-
-    setBrowserPlaying(false);
-    setTransportSegmentId(targetSegment.id);
-    setBrowserPosition(linearValue);
-    browserPositionRef.current = linearValue;
-    listenerPositionRef.current = value;
-    setSeekToken((token) => token + 1);
+    const manifest = programManifest;
+    if (!manifest) return;
+    const max = Math.max(0, manifest.renderedFrontierSeconds);
+    const target = Math.max(0, Math.min(value, max));
+    setBrowserPosition(target);
+    browserPositionRef.current = target;
     seekPreviewRef.current = null;
     setSeekPreview(null);
-
-    const episodeIdAtIntent = localEpisode.id;
-    const targetSegmentId = targetSegment.id;
-    seekQueueRef.current = seekQueueRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        if (intentId !== seekIntentCounterRef.current) return;
-
-        let response: LiveEpisode;
-        try {
-          response = await api.seek(
-            episodeIdAtIntent,
-            Math.floor(linearValue),
-          );
-        } catch (reason: unknown) {
-          if (intentId !== seekIntentCounterRef.current) return;
-          pendingSeekIntentRef.current = null;
-          const latest = localEpisodeRef.current;
-          if (latest?.id === episodeIdAtIntent) {
-            setTransportSegmentId(null);
-            setBrowserPosition(latest.playback_position_seconds);
-            browserPositionRef.current = latest.playback_position_seconds;
-            setSeekToken((token) => token + 1);
-            setBrowserPlaying(
-              resumeAfterSeekRef.current
-              && latest.is_playing
-              && latest.is_listener_active,
-            );
-          }
-          resumeAfterSeekRef.current = false;
-          setError(
-            reason instanceof Error ? reason.message : "跳转暂时没有完成",
-          );
-          return;
-        }
-
-        if (intentId !== seekIntentCounterRef.current) return;
-        playbackAnchorRef.current = playbackAnchor(response);
-        setEpisode(response);
-
-        let effectiveEpisode = response;
-        if (
-          overlapSuccessorId
-          && response.current_segment_id === targetSegmentId
-        ) {
-          try {
-            const armed = await api.armHandoff(
-              episodeIdAtIntent,
-              overlapSuccessorId,
-            );
-            if (intentId !== seekIntentCounterRef.current) return;
-            effectiveEpisode = armed;
-            setArmedSuccessorId(overlapSuccessorId);
-            armedSuccessorIdRef.current = overlapSuccessorId;
-            armedFromSegmentIdRef.current = targetSegmentId;
-            armedEpisodeRef.current = armed;
-            setEpisode(armed);
-          } catch {
-            // Serial playback from the requested source is still valid.
-          }
-        }
-
-        if (intentId !== seekIntentCounterRef.current) return;
-        pendingSeekIntentRef.current = null;
-        setBrowserPosition(linearValue);
-        browserPositionRef.current = linearValue;
-        setError(null);
-        setBrowserPlaying(
-          resumeAfterSeekRef.current
-          && effectiveEpisode.is_playing
-          && effectiveEpisode.is_listener_active,
-        );
-        resumeAfterSeekRef.current = false;
-      });
-  }, [
-    browserPlaying,
-    localEpisode,
-    programRender,
-    requestProgramRefill,
-    setEpisode,
-    transportMixPlan,
-    usingProgramStream,
-  ]);
+    setSeekToken((token) => token + 1);
+    const targetEpisode = localEpisodeRef.current;
+    if (targetEpisode) {
+      storeProgramPosition(targetEpisode.id, target);
+      void api.programCheckpoint(targetEpisode.id, target)
+        .catch(() => undefined);
+    }
+  }, [programManifest]);
 
   const commitSeekPreview = useCallback(() => {
     const preview = seekPreviewRef.current;
     if (preview === null) return;
-    // Pointer-up is commonly followed by blur. Clear synchronously so one drag
-    // cannot accidentally issue two seek requests.
     seekPreviewRef.current = null;
     setSeekPreview(null);
     commitSeek(preview);
   }, [commitSeek]);
 
-  const handleProgrammePosition = useCallback((position: number) => {
-    if (seekPreviewRef.current !== null) return;
-    const bounded = programRender
-      ? clampProgramPosition(programRender, position)
-      : Math.max(0, position);
-    setBrowserPosition(bounded);
-    browserPositionRef.current = bounded;
-    listenerPositionRef.current = bounded;
-
-    if (
-      programRender
-      && !programRender.complete
-      && programRender.renderedFrontierSeconds - bounded <= 45
-    ) {
-      requestProgramRefill();
-    }
-  }, [programRender, requestProgramRefill]);
-
-  const fallbackFromProgramStream = useCallback(() => {
-    const latest = localEpisodeRef.current;
-    const plan = mixPlan;
-    const programmePosition = browserPositionRef.current;
-
-    if (latest && plan?.episodeId === latest.id) {
-      const mapped = mixPositionToLinearPosition(
-        latest,
-        plan,
-        programmePosition,
-      );
-      setTransportSegmentId(mapped.segmentId ?? null);
-      setBrowserPosition(mapped.linearPositionSeconds);
-      browserPositionRef.current = mapped.linearPositionSeconds;
-      listenerPositionRef.current = programmePosition;
-      setSeekToken((token) => token + 1);
-    }
-
-    setProgramBuffering(false);
-    setProgramStreamActive(false);
-    setError("单流节目暂时无法继续，已切回兼容播放");
-  }, [mixPlan]);
-
-  const completeProgrammePlayback = useCallback(() => {
-    if (!localEpisode) return;
-    if (!programRender?.complete) {
-      requestProgramRefill();
-      return;
-    }
-    setBrowserPlaying(false);
-    void api.recordUserEvent({
-      event_type: "PLAY_COMPLETE",
-      program_id: localEpisode.seed_id,
-      episode_id: localEpisode.id,
-    }).catch(() => undefined);
-  }, [localEpisode, programRender?.complete, requestProgramRefill]);
-
   const pausePlayback = useCallback(() => {
-    if (!localEpisode) return;
-    awaitingSuccessorRef.current = false;
     setBrowserPlaying(false);
-
-    const persistPause = usingProgramStream
-      ? api.pause(localEpisode.id)
-      : api.checkpoint(localEpisode.id, Math.floor(browserPositionRef.current))
-          .then(() => api.pause(localEpisode.id));
-
-    void persistPause
-      .then((paused) => {
-        playbackAnchorRef.current = playbackAnchor(paused);
-        setEpisode(paused);
-        setError(null);
-      })
-      .catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : "暂停状态暂时没有同步");
-      });
-  }, [localEpisode, setEpisode, usingProgramStream]);
+    const target = localEpisodeRef.current;
+    if (target) {
+      void api.programCheckpoint(target.id, browserPositionRef.current)
+        .catch(() => undefined);
+    }
+  }, []);
 
   const resumePlayback = useCallback(() => {
-    if (!localEpisode) return;
-    awaitingSuccessorRef.current = false;
+    const target = localEpisodeRef.current;
+    if (!target) return;
     setBrowserPlaying(true);
-    void api.resume(localEpisode.id)
+    if (target.is_listener_active) return;
+    void api.resume(target.id)
       .then((resumed) => {
-        playbackAnchorRef.current = playbackAnchor(resumed);
         setEpisode(resumed);
         setError(null);
       })
       .catch((reason: unknown) => {
-        // Browser playback is deliberately authoritative. A persistence race
-        // must not make the play button feel broken.
-        setError(reason instanceof Error ? reason.message : "播放状态暂时没有同步");
+        setBrowserPlaying(false);
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "节目暂时无法恢复",
+        );
       });
-  }, [localEpisode, setEpisode]);
+  }, [setEpisode]);
+
+  const handleProgrammeEnded = useCallback(() => {
+    const target = localEpisodeRef.current;
+    setBrowserPlaying(false);
+    if (!target) return;
+    void api.programCheckpoint(target.id, browserPositionRef.current)
+      .catch(() => undefined);
+    void api.recordUserEvent({
+      event_type: "PLAY_COMPLETE",
+      program_id: target.seed_id,
+      episode_id: target.id,
+    }).catch(() => undefined);
+  }, []);
+
+  const handleFrontierReached = useCallback(() => {
+    const now = Date.now();
+    if (now - frontierWakeAtRef.current < 5_000) return;
+    frontierWakeAtRef.current = now;
+
+    const target = localEpisodeRef.current;
+    if (target) {
+      // This cursor is scheduling metadata only. The endpoint queues generation
+      // without advancing lifecycle segments or rewriting programme content.
+      void api.programCheckpoint(target.id, browserPositionRef.current)
+        .catch(() => undefined);
+    }
+    // Re-rendering the same structural signature is safe: the renderer verifies
+    // the frozen prefix byte-for-byte and can append newly available HLS chunks.
+    requestProgramRender();
+  }, [requestProgramRender]);
 
   if (error && !localEpisode) {
     return (
       <main className="player-state">
-        <Link href="/" className="round-back"><WaveIcon name="back" /></Link>
+        <Link href="/" className="round-back">
+          <WaveIcon name="back" />
+        </Link>
         <p>{error}</p>
       </main>
     );
   }
+
   if (!localEpisode) {
     return (
       <main className="player-state">
         <div className="tuning-orb"><i /><i /><i /></div>
         <h1>正在接入节目…</h1>
-        <p>音乐会先开始，接下来的内容在路上。</p>
+        <p>节目会先生成一段稳定的单一音频流。</p>
       </main>
     );
   }
 
-  const displayedLinearPosition = browserPosition;
-  const listenerPosition = usingProgramStream
-    ? browserPosition
-    : transportMixPlan
-      ? linearPositionToMixPosition(
-          localEpisode,
-          transportMixPlan,
-          displayedLinearPosition,
-        ).mixPositionSeconds
-      : displayedLinearPosition;
-  const maxSeekPosition = usingProgramStream && programRender
-    ? programRender.renderedFrontierSeconds
-    : transportMixPlan?.durationSeconds
-      ?? localEpisode.generated_frontier_seconds;
-  const arrangementCompression = !usingProgramStream && transportMixPlan
-    ? Math.max(
-        0,
-        localEpisode.generated_frontier_seconds
-          - transportMixPlan.durationSeconds,
-      )
-    : 0;
-  const fullDuration = usingProgramStream
-    ? Math.max(
-        maxSeekPosition,
-        programRender?.complete
-          ? maxSeekPosition
-          : localEpisode.program_estimated_duration_seconds,
-      )
+  if (
+    !programManifest
+    || programManifest.chunks.length === 0
+    || programManifest.renderedFrontierSeconds <= 0
+  ) {
+    return (
+      <main className="player-state">
+        <Link href="/" className="round-back">
+          <WaveIcon name="back" />
+        </Link>
+        <div className="tuning-orb"><i /><i /><i /></div>
+        <h1>正在准备节目音频…</h1>
+        <p>
+          {renderState === "error"
+            ? "节目渲染暂时遇到问题，可以稍后重试。"
+            : "正在把音乐、主持和转场渲染成一条稳定的节目流。"}
+        </p>
+        {error ? <p className="player-error">{error}</p> : null}
+        <button type="button" onClick={requestProgramRender}>
+          重试准备
+        </button>
+      </main>
+    );
+  }
+
+  const maxSeekPosition = programManifest.renderedFrontierSeconds;
+  const displayedPosition = Math.min(
+    seekPreview ?? browserPosition,
+    maxSeekPosition,
+  );
+  const fullDuration = programManifest.complete
+    ? maxSeekPosition
     : Math.max(
         maxSeekPosition,
-        localEpisode.timeline_duration_seconds - arrangementCompression,
+        localEpisode.program_estimated_duration_seconds,
       );
   const generatedPercent = Math.min(
     100,
     Math.round((maxSeekPosition / Math.max(1, fullDuration)) * 100),
   );
-  const displayedPosition = seekPreview ?? listenerPosition;
-  const currentOffset = !usingProgramStream && current
-    ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
-    : 0;
-  const seekPreviewLinearPosition = usingProgramStream
-    ? seekPreview
-    : seekPreview !== null && transportMixPlan
-      ? mixPositionToLinearPosition(
-          localEpisode,
-          transportMixPlan,
-          seekPreview,
-        ).linearPositionSeconds
-      : seekPreview;
-  const seekPreviewTarget = seekPreviewLinearPosition !== null
-    ? segmentAtPosition(localEpisode, seekPreviewLinearPosition)
-    : undefined;
-  const preloadTarget = (
-    seekPreviewTarget
-    && seekPreviewTarget.id !== current?.id
-    && isPlaybackReadySegment(seekPreviewTarget)
-  )
-    ? seekPreviewTarget
-    : upcoming;
-  const preloadSourceUrl = isPlaybackReadySegment(preloadTarget)
-    ? preloadTarget?.audio_source_url ?? null
-    : null;
-  const chapterIds = Array.from(new Set(localEpisode.segments.map((segment) => segment.chapter_id)));
-  const currentChapterIndex = Math.max(0, chapterIds.indexOf(current?.chapter_id ?? chapterIds[0]));
-  const chapterTitle = CHAPTER_TITLES[currentChapterIndex] ?? "Chapter " + (currentChapterIndex + 1);
   const remaining = Math.max(0, fullDuration - displayedPosition);
-  const preparingAhead = localEpisode.state !== "MATERIALIZED" && (
-    usingProgramStream && programRender
-      ? programRender.renderedFrontierSeconds - displayedPosition < 45
-      : localEpisode.buffer_ahead_seconds < 45
+  const chapterIds = Array.from(
+    new Set(localEpisode.segments.map((segment) => segment.chapter_id)),
+  );
+  const currentChapterIndex = Math.max(
+    0,
+    chapterIds.indexOf(current?.chapter_id ?? chapterIds[0]),
+  );
+  const chapterTitle = CHAPTER_TITLES[currentChapterIndex]
+    ?? "Chapter " + (currentChapterIndex + 1);
+  const preparingAhead = (
+    !programManifest.complete
+    && maxSeekPosition - browserPosition < 45
   );
 
-  const nextPlayback = async () => {
-    if (usingProgramStream) {
-      const nextStart = upcoming && mixPlan?.segmentStarts[upcoming.id];
-      if (
-        typeof nextStart === "number"
-        && nextStart <= maxSeekPosition
-      ) {
-        commitSeek(nextStart);
-        void api.recordUserEvent({
-          event_type: "SKIP",
-          program_id: localEpisode.seed_id,
-          episode_id: localEpisode.id,
-        }).catch(() => undefined);
-        return;
-      }
-      requestProgramRefill();
+  const nudgeSeek = (seconds: number) => {
+    commitSeek(browserPositionRef.current + seconds);
+  };
+
+  const nextPlayback = () => {
+    if (!mixPlan || currentChapterIndex + 1 >= chapterIds.length) {
+      setError("下一章节还没有准备好");
+      return;
+    }
+    const nextChapterId = chapterIds[currentChapterIndex + 1];
+    const starts = localEpisode.segments
+      .filter((segment) => (
+        segment.chapter_id === nextChapterId
+        && segment.state !== "SKIPPED"
+      ))
+      .map((segment) => mixPlan.segmentStarts[segment.id])
+      .filter((value): value is number => typeof value === "number")
+      .sort((left, right) => left - right);
+    const target = starts[0];
+    if (target === undefined || target > maxSeekPosition) {
       setError("下一章节还在准备中");
       return;
     }
-
-    const runNext = async () => {
-      const response = await api.next(localEpisode.id);
-      setEpisode(response);
-      setError(null);
-      void api.recordUserEvent({
-        event_type: "SKIP",
-        program_id: response.seed_id,
-        episode_id: response.id,
-      }).catch(() => undefined);
-    };
-    try {
-      await runNext();
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "下一章节还没有准备好");
-    }
+    commitSeek(target);
+    void api.recordUserEvent({
+      event_type: "SKIP",
+      program_id: localEpisode.seed_id,
+      episode_id: localEpisode.id,
+    }).catch(() => undefined);
   };
 
-  listenerPositionRef.current = displayedPosition;
-
-  const nudgeSeek = (seconds: number) => {
-    commitSeek(Math.max(0, listenerPositionRef.current + seconds));
-  };
+  const mediaTitle = current?.kind === "MUSIC"
+    ? current.title
+    : localEpisode.title ?? "WaveCast";
+  const mediaArtist = current?.kind === "MUSIC"
+    ? current.artist
+    : "WaveCast";
 
   return (
     <main className="now-playing-page page-enter">
-      {usingProgramStream && programRender ? (
-        <ProgrammeAudioPlayer
-          manifest={programRender}
-          playing={browserPlaying && localEpisode.is_listener_active}
-          positionSeconds={listenerPosition}
-          seekToken={seekToken}
-          title={localEpisode.title ?? "WaveCast"}
-          subtitle={current?.kind === "MUSIC"
-            ? [current.artist, current.title].filter(Boolean).join(" — ")
-            : current?.title ?? "WaveCast"}
-          onPositionChange={handleProgrammePosition}
-          onPlayRequest={resumePlayback}
-          onPauseRequest={pausePlayback}
-          onSeekRequest={commitSeek}
-          onNeedMore={requestProgramRefill}
-          onBufferingChange={setProgramBuffering}
-          onEnded={completeProgrammePlayback}
-          onError={fallbackFromProgramStream}
-        />
-      ) : (
-        <MixAudioPlayer
-          segment={current}
-          upcomingSegment={upcoming}
-          plan={mixPlan}
-          playing={browserPlaying && localEpisode.is_listener_active}
-          positionSeconds={currentOffset}
-          seekToken={seekToken}
-          armedSuccessorId={armedSuccessorId}
-          preloadSourceUrl={preloadSourceUrl}
-          onPositionChange={handleAudioPosition}
-          onEnded={completeBrowserSegment}
-          onError={() => setError("音频暂时无法播放")}
-        />
-      )}
+      <ProgrammeAudioPlayer
+        streamUrl={programManifest.streamUrl}
+        playing={browserPlaying && localEpisode.is_listener_active}
+        positionSeconds={browserPosition}
+        seekToken={seekToken}
+        renderedFrontierSeconds={maxSeekPosition}
+        complete={programManifest.complete}
+        title={mediaTitle || localEpisode.title || "WaveCast"}
+        artist={mediaArtist}
+        onPositionChange={handleProgramPosition}
+        onPlayingChange={(playing) => {
+          if (playing) {
+            setProgramBuffering(false);
+            setBrowserPlaying(true);
+          }
+        }}
+        onBufferingChange={setProgramBuffering}
+        onEnded={handleProgrammeEnded}
+        onFrontierReached={handleFrontierReached}
+        onPlayRequest={resumePlayback}
+        onPauseRequest={pausePlayback}
+        onSeekRequest={commitSeek}
+        onError={(message) => setError(message)}
+      />
 
       <div className="player-topbar">
-        <Link href="/" className="icon-button glass-button" aria-label="返回节目"><WaveIcon name="back" /></Link>
+        <Link href="/" className="icon-button glass-button" aria-label="返回节目">
+          <WaveIcon name="back" />
+        </Link>
         <div className="player-grabber" />
         <details className="player-more-menu">
-          <summary className="icon-button glass-button" aria-label="更多"><WaveIcon name="more" /></summary>
+          <summary className="icon-button glass-button" aria-label="更多">
+            <WaveIcon name="more" />
+          </summary>
           <div className="player-more-popover">
             <button
               type="button"
@@ -1247,7 +793,14 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
                     ? "保存到节目库"
                     : "准备并保存完整节目"}
             </button>
-            <button type="button" onClick={() => void exportEpisode()} disabled={localEpisode.state !== "MATERIALIZED" || exportState === "preparing"}>
+            <button
+              type="button"
+              onClick={() => void exportEpisode()}
+              disabled={
+                localEpisode.state !== "MATERIALIZED"
+                || exportState === "preparing"
+              }
+            >
               {exportState === "preparing" ? "正在准备导出…" : "导出 MP3"}
             </button>
             {localEpisode.is_listener_active
@@ -1258,7 +811,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
                       : "停止后台准备"}
                   </button>
                 )
-              : <button type="button" onClick={resumePlayback}>恢复节目</button>}
+              : (
+                  <button type="button" onClick={resumePlayback}>
+                    恢复节目
+                  </button>
+                )}
           </div>
         </details>
       </div>
@@ -1275,7 +832,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       <section className="player-copy">
         <p className="program-kicker">WAVECAST PROGRAM</p>
         <h1>{localEpisode.title ?? "正在播放"}</h1>
-        <p className="chapter-line">Chapter {currentChapterIndex + 1} · {chapterTitle}</p>
+        <p className="chapter-line">
+          Chapter {currentChapterIndex + 1} · {chapterTitle}
+        </p>
         <p className="track-line">
           {current?.kind === "MUSIC"
             ? [current.artist, current.title].filter(Boolean).join(" — ")
@@ -1292,33 +851,27 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           value={Math.min(displayedPosition, Math.max(1, maxSeekPosition))}
           onChange={(event) => {
             const value = Number(event.target.value);
-            if (usingProgramStream && programRender) {
-              seekPreviewRef.current = clampProgramPosition(programRender, value);
-              setSeekPreview(clampProgramPosition(programRender, value));
-              return;
-            }
-            const linearValue = transportMixPlan
-              ? mixPositionToLinearPosition(
-                  localEpisode,
-                  transportMixPlan,
-                  value,
-                ).linearPositionSeconds
-              : value;
-            if (isSeekAllowed(localEpisode, linearValue)) {
-              seekPreviewRef.current = value;
-              setSeekPreview(value);
-            }
+            seekPreviewRef.current = value;
+            setSeekPreview(value);
           }}
           onPointerUp={commitSeekPreview}
           onKeyUp={commitSeekPreview}
           onBlur={commitSeekPreview}
           style={{ "--generated": generatedPercent + "%" } as React.CSSProperties}
         />
-        <div><span>{formatSeconds(displayedPosition)}</span><span>-{formatSeconds(remaining)}</span></div>
+        <div>
+          <span>{formatSeconds(displayedPosition)}</span>
+          <span>-{formatSeconds(remaining)}</span>
+        </div>
       </section>
 
       <section className="transport-controls" aria-label="播放控制">
-        <button type="button" className="transport-secondary" aria-label="后退 15 秒" onClick={() => nudgeSeek(-15)}>
+        <button
+          type="button"
+          className="transport-secondary"
+          aria-label="后退 15 秒"
+          onClick={() => nudgeSeek(-15)}
+        >
           <WaveIcon name="skipBack" size={27} />
         </button>
         <button
@@ -1329,35 +882,68 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         >
           <WaveIcon name={browserPlaying ? "pause" : "play"} size={30} />
         </button>
-        <button type="button" className="transport-secondary" aria-label="前进 30 秒" onClick={() => nudgeSeek(30)}>
+        <button
+          type="button"
+          className="transport-secondary"
+          aria-label="前进 30 秒"
+          onClick={() => nudgeSeek(30)}
+        >
           <WaveIcon name="skipForward" size={27} />
         </button>
       </section>
 
       <section className="player-utilities">
-        <button type="button" className="utility-button" onClick={() => setChaptersOpen(true)}>
+        <button
+          type="button"
+          className="utility-button"
+          onClick={() => setChaptersOpen(true)}
+        >
           <WaveIcon name="list" size={21} />
           <span>节目时间轴</span>
         </button>
-        <button type="button" className="utility-button" onClick={() => void nextPlayback()}>
+        <button
+          type="button"
+          className="utility-button"
+          onClick={nextPlayback}
+        >
           <WaveIcon name="chevron" size={21} />
           <span>下一章节</span>
         </button>
       </section>
 
-      {usingProgramStream && programBuffering ? (
-        <div className="preparing-hint"><i />正在缓冲节目音频</div>
+      {programBuffering ? (
+        <div className="preparing-hint">
+          <i />正在缓冲节目音频
+        </div>
       ) : preparingAhead ? (
-        <div className="preparing-hint"><i />正在准备接下来的章节</div>
+        <div className="preparing-hint">
+          <i />正在准备接下来的节目音频
+        </div>
       ) : upcoming ? (
-        <div className="up-next">接下来：<strong>{upcoming.title}</strong>{upcoming.artist ? " · " + upcoming.artist : ""}</div>
+        <div className="up-next">
+          接下来：<strong>{upcoming.title}</strong>
+          {upcoming.artist ? " · " + upcoming.artist : ""}
+        </div>
       ) : null}
 
       {error ? <p className="player-error">{error}</p> : null}
       {exportError ? <p className="player-error">{exportError}</p> : null}
-      {exportArtifact ? <a className="export-download" href={exportArtifact.audioUrl} download={downloadFilename(exportArtifact.episodeId)}>再次下载 MP3</a> : null}
+      {exportArtifact ? (
+        <a
+          className="export-download"
+          href={exportArtifact.audioUrl}
+          download={downloadFilename(exportArtifact.episodeId)}
+        >
+          再次下载 MP3
+        </a>
+      ) : null}
 
-      <ChaptersSheet episode={localEpisode} open={chaptersOpen} onClose={() => setChaptersOpen(false)} />
+      <ChaptersSheet
+        episode={localEpisode}
+        currentSegmentId={current?.id ?? null}
+        open={chaptersOpen}
+        onClose={() => setChaptersOpen(false)}
+      />
     </main>
   );
 }

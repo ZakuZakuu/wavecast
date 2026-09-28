@@ -106,6 +106,22 @@ def test_checkpoint_persists_partial_current_segment_without_entering_future() -
         runtime.checkpoint_playback(episode.id, 23)
 
 
+def test_programme_checkpoint_never_mutates_lifecycle_timeline() -> None:
+    runtime = make_runtime()
+    episode = runtime.start(make_seed())
+    before_current = episode.current_segment_id
+    before_position = episode.playback_position_seconds
+    before_states = [segment.state for segment in episode.ordered_segments]
+
+    checkpointed = runtime.checkpoint_program_playback(episode.id, 17.5)
+
+    assert checkpointed.program_transport_active is True
+    assert checkpointed.program_playback_position_seconds == 17.5
+    assert checkpointed.current_segment_id == before_current
+    assert checkpointed.playback_position_seconds == before_position
+    assert [segment.state for segment in checkpointed.ordered_segments] == before_states
+
+
 def test_heartbeat_ttl_stops_a_stale_listener_before_more_generation() -> None:
     now = datetime(2026, 1, 1, tzinfo=UTC)
     runtime = EpisodeOrchestrator(InMemoryEpisodeRepository(), now=lambda: now)

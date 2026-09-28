@@ -8,11 +8,11 @@ import type {
   LiveEpisode,
   ProgramProposal,
   ProgramProposalBatch,
+  ProgramRenderManifest,
   ProposalGenerationRequest,
   Seed,
 } from "./types";
 import type { MixdownArtifact, MixdownPreparationResult } from "./episode-export";
-import type { ProgramRenderManifest } from "./program-stream";
 import { getApiAuthToken, getApiAuthTokenForUser, getApiAuthUserId } from "./auth-client";
 
 export class ApiRequestError extends Error {
@@ -108,6 +108,17 @@ export const api = {
   start: (seedId: string) => request<LiveEpisode>(`/episodes/from-seed/${seedId}`, { method: "POST" }),
   get: (id: string) => request<LiveEpisode>(`/episodes/${id}`),
   mixPlan: async (id: string): Promise<MixPlan> => parseMixPlan(await request<unknown>(`/episodes/${id}/mix-plan`)),
+  programRender: (id: string) => request<ProgramRenderManifest>(
+    `/episodes/${id}/program-render`,
+    { method: "POST" },
+  ),
+  programRenderStatus: (id: string) => request<ProgramRenderManifest>(
+    `/episodes/${id}/program-render`,
+  ),
+  ensureBuffer: (id: string) => request<LiveEpisode>(
+    `/episodes/${id}/ensure-buffer`,
+    { method: "POST", body: JSON.stringify({ target_chapters: 2 }) },
+  ),
   completed: (id: string) => request<LiveEpisode>(`/episodes/${id}/completed`, { method: "POST" }),
   completedSegment: (id: string, segmentId: string) =>
     request<LiveEpisode>(`/episodes/${id}/completed/${segmentId}`, { method: "POST" }),
@@ -122,15 +133,16 @@ export const api = {
   next: (id: string) => request<LiveEpisode>(`/episodes/${id}/next`, { method: "POST" }),
   seek: (id: string, position: number) => request<LiveEpisode>(`/episodes/${id}/seek`, { method: "POST", body: JSON.stringify({ position_seconds: position }) }),
   checkpoint: (id: string, position: number) => request<LiveEpisode>(`/episodes/${id}/playback-checkpoint`, { method: "POST", body: JSON.stringify({ position_seconds: position }) }),
+  programCheckpoint: (id: string, position: number) => request<LiveEpisode>(
+    `/episodes/${id}/program-playback-checkpoint`,
+    { method: "POST", body: JSON.stringify({ position_seconds: position }) },
+  ),
   leave: (id: string) => request<LiveEpisode>(`/episodes/${id}/leave`, { method: "POST" }),
   pause: (id: string) => request<LiveEpisode>(`/episodes/${id}/pause`, { method: "POST" }),
   resume: (id: string) => request<LiveEpisode>(`/episodes/${id}/resume`, { method: "POST" }),
   materialize: (id: string) => request<LiveEpisode>(`/episodes/${id}/materialize`, { method: "POST" }),
   prepareMixdown: (id: string) => request<MixdownPreparationResult>(`/episodes/${id}/prepare-mixdown`, { method: "POST" }),
   mixdown: (id: string) => request<MixdownArtifact>(`/episodes/${id}/mixdown`, { method: "POST" }),
-  programRender: (id: string) => request<ProgramRenderManifest>(`/episodes/${id}/program-render`, { method: "POST" }),
-  programRenderStatus: (id: string) => request<ProgramRenderManifest>(`/episodes/${id}/program-render`),
-  ensureBuffer: (id: string) => request<LiveEpisode>(`/episodes/${id}/ensure-buffer`, { method: "POST", body: JSON.stringify({ target_chapters: 2 }) }),
   myLibrary: (expectedUserId: string) => request<unknown>("/me/library", undefined, expectedUserId),
   mergeMyLibrary: (library: unknown, expectedUserId: string) => request<unknown>("/me/library/merge", {
     method: "POST",

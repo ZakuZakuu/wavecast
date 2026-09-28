@@ -29,16 +29,19 @@ function chapterTitle(chapter: Chapter, index: number): string {
 export function ChaptersSheet({
   episode,
   open,
+  currentSegmentId,
   onClose,
 }: {
   episode: LiveEpisode;
+  currentSegmentId?: string | null;
   open: boolean;
   onClose: () => void;
 }) {
   if (!open) return null;
   const chapters = chaptersForEpisode(episode);
+  const activeSegmentId = currentSegmentId ?? episode.current_segment_id;
   const currentIndex = chapters.findIndex((chapter) =>
-    chapter.segments.some((segment) => segment.id === episode.current_segment_id),
+    chapter.segments.some((segment) => segment.id === activeSegmentId),
   );
 
   return (

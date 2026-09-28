@@ -24,6 +24,26 @@ def buffer_decision(
     # A bounded latency estimate plus margin, not an LLM deadline. The chapter
     # cap remains enforced by the orchestrator even at the maximum target.
     target = max(baseline_seconds, min(600, ceil(episode.generation_latency_seconds * 1.5 + 30)))
+    terminal = episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
+    if episode.program_transport_active:
+        remaining = max(
+            0,
+            int(
+                episode.generated_frontier_seconds
+                - episode.program_playback_position_seconds
+            ),
+        )
+        needs = not terminal and (
+            episode.generation_mode is GenerationMode.FULL
+            or (episode.is_listener_active and remaining < target)
+        )
+        return BufferDecision(
+            needs_generation=needs,
+            urgent=needs and remaining <= 30,
+            target_seconds=target,
+            current_remaining_seconds=remaining,
+        )
+
     remaining = 0
     offset = 0
     ready_chapters: set[str] = set()
@@ -46,7 +66,6 @@ def buffer_decision(
                 )
             continue
         offset += segment.duration_seconds
-    terminal = episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
     needs = not terminal and (
         episode.generation_mode is GenerationMode.FULL
         or (

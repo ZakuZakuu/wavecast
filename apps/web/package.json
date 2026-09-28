@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "better-auth": "1.7.6",
+    "hls.js": "1.7.3",
     "kysely": "^0.29.6",
     "next": "15.1.11",
     "pg": "^8.23.0",

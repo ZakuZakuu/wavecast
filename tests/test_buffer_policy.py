@@ -134,3 +134,27 @@ def test_chapter_cap_prevents_unproductive_refill_requests() -> None:
     value = episode(successor=True)
     value.generation_latency_seconds = 600
     assert not buffer_decision(value, max_chapters=1).needs_generation
+
+
+def test_programme_cursor_drives_refill_without_lifecycle_handoff() -> None:
+    value = episode(successor=True)
+    value.program_transport_active = True
+    value.program_playback_position_seconds = 280
+
+    decision = buffer_decision(value)
+
+    assert decision.needs_generation
+    assert decision.urgent
+    assert decision.current_remaining_seconds == 20
+
+
+def test_programme_cursor_does_not_require_current_segment_to_advance() -> None:
+    value = episode(successor=True)
+    value.program_transport_active = True
+    value.program_playback_position_seconds = 60
+    current_id = value.current_segment_id
+
+    decision = buffer_decision(value)
+
+    assert current_id == "opening"
+    assert decision.current_remaining_seconds == 240

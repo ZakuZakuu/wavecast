@@ -181,6 +181,11 @@ class LiveEpisode(BaseModel):
     segments: list[MusicSegment | NarrationSegment]
     current_segment_id: str | None = None
     playback_position_seconds: int = Field(default=0, ge=0)
+    # Single-source programme playback owns a separate cursor. It is listener
+    # scheduling metadata only: updating it must never commit/skip/reorder
+    # segments or rewrite the immutable rendered programme.
+    program_playback_position_seconds: float = Field(default=0, ge=0)
+    program_transport_active: bool = False
     generation_latency_seconds: float = Field(default=0, ge=0, le=600)
     is_listener_active: bool = True
     is_playing: bool = True
@@ -209,18 +214,32 @@ class LiveEpisode(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def buffer_ahead_seconds(self) -> int:
-        """Return the contiguous seekable audio ahead of the browser position."""
-        return max(0, self.generated_frontier_seconds - self.playback_position_seconds)
+        """Return contiguous generated audio ahead of the active listener cursor."""
+        position = (
+            self.program_playback_position_seconds
+            if self.program_transport_active
+            else self.playback_position_seconds
+        )
+        return max(0, int(self.generated_frontier_seconds - position))
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def ready_audio_seconds_ahead(self) -> int:
-        """Return playable audio ahead, treating unfinished narration as optional.
+        """Return playable audio ahead for the active transport.
 
-        This is a readiness/buffer metric rather than a seek boundary. A future
-        ready music source may protect continuity even when an optional
-        narration segment before it has not reached AUDIO_READY yet.
+        The immutable programme transport deliberately uses its own cursor and
+        does not mutate lifecycle segment identity. Its conservative generated
+        frontier stops at unfinished transition inputs, which is exactly the
+        boundary the server-side renderer may safely publish.
         """
+        if self.program_transport_active:
+            return max(
+                0,
+                int(
+                    self.generated_frontier_seconds
+                    - self.program_playback_position_seconds
+                ),
+            )
         if self.current_segment_id is None:
             return 0
         try:

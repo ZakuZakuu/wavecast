@@ -13,6 +13,9 @@ importers:
       better-auth:
         specifier: 1.7.6
         version: 1.7.6(next@15.1.11(@babel/core@7.29.7)(react-dom@19.0.0(react@19.0.0))(react@19.0.0))(pg@8.23.0)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)(vitest@2.1.8(@types/node@22.10.2)(jsdom@25.0.1))
+      hls.js:
+        specifier: 1.7.3
+        version: 1.7.3
       kysely:
         specifier: ^0.29.6
         version: 0.29.6
@@ -1791,6 +1794,9 @@ packages:
   html-encoding-sniffer@4.0.0:
     resolution: {integrity: sha512-Y22oTqIU4uuPgEemfz7NDJz6OeKf12Lsu+QC+s3BVpda64lTiMYCyGwg5ki4vFxkMwQdeZDl2adZoqUgdFuTgQ==}
     engines: {node: '>=18'}
+
+  hls.js@1.7.3:
+    resolution: {integrity: sha512-MsPlx6yVW4Qv4C7mEVou4/gk/5cN2dVxOTnrNjPSmyH2f0Ln+/UkG10Ax1PE6OvrmTVPKgQYozTtBaPOuCzq7A==}
 
   http-proxy-agent@7.0.2:
     resolution: {integrity: sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==}
@@ -4530,6 +4536,8 @@ snapshots:
   html-encoding-sniffer@4.0.0:
     dependencies:
       whatwg-encoding: 3.1.1
+
+  hls.js@1.7.3: {}
 
   http-proxy-agent@7.0.2:
     dependencies:
