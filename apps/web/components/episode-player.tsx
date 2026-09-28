@@ -14,6 +14,7 @@ import type { LiveEpisode } from "../lib/types";
 import { isEpisodeSaved, recordRecentEpisode, saveMaterializedEpisode } from "../lib/user-library";
 import { ChaptersSheet } from "./chapters-sheet";
 import { MixAudioPlayer } from "./mix-audio-player";
+import { SingleSourceAudioPlayer } from "./single-source-audio-player";
 import { ProgramArtwork } from "./program-artwork";
 import { WaveIcon } from "./wave-icon";
 
@@ -27,6 +28,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const [browserPosition, setBrowserPosition] = useState(0);
   const [browserPlaying, setBrowserPlaying] = useState(false);
   const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
+  const [masterArtifact, setMasterArtifact] = useState<MixdownArtifact | null>(null);
+  const [masterActive, setMasterActive] = useState(false);
+  const [masterPosition, setMasterPosition] = useState(0);
+  const [masterSeekToken, setMasterSeekToken] = useState(0);
+  const [masterBuffering, setMasterBuffering] = useState(false);
   const [armedSuccessorId, setArmedSuccessorId] = useState<string | null>(null);
   const [transportSegmentId, setTransportSegmentId] = useState<string | null>(null);
   const [seekToken, setSeekToken] = useState(0);
@@ -58,6 +64,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const seekQueueRef = useRef<Promise<void>>(Promise.resolve());
   const resumeAfterSeekRef = useRef(false);
   const listenerPositionRef = useRef(0);
+  const masterPositionRef = useRef(0);
+  const masterActiveRef = useRef(false);
+  const masterPreparationEpisodeRef = useRef<string | null>(null);
+  const mixPlanRef = useRef<MixPlan | null>(null);
 
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
@@ -101,6 +111,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   );
   const transportMixPlan = arrangementClip ? mixPlan : null;
   localEpisodeRef.current = localEpisode;
+  mixPlanRef.current = mixPlan;
+  masterActiveRef.current = masterActive;
+  masterPositionRef.current = masterPosition;
 
   useEffect(() => {
     setTransportSegmentId(null);
