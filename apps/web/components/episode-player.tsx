@@ -983,6 +983,29 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     }
   }, [programRender, requestProgramRefill]);
 
+  const fallbackFromProgramStream = useCallback(() => {
+    const latest = localEpisodeRef.current;
+    const plan = mixPlan;
+    const programmePosition = browserPositionRef.current;
+
+    if (latest && plan?.episodeId === latest.id) {
+      const mapped = mixPositionToLinearPosition(
+        latest,
+        plan,
+        programmePosition,
+      );
+      setTransportSegmentId(mapped.segmentId ?? null);
+      setBrowserPosition(mapped.linearPositionSeconds);
+      browserPositionRef.current = mapped.linearPositionSeconds;
+      listenerPositionRef.current = programmePosition;
+      setSeekToken((token) => token + 1);
+    }
+
+    setProgramBuffering(false);
+    setProgramStreamActive(false);
+    setError("单流节目暂时无法继续，已切回兼容播放");
+  }, [mixPlan]);
+
   const completeProgrammePlayback = useCallback(() => {
     if (!localEpisode) return;
     if (!programRender?.complete) {
@@ -1185,8 +1208,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           onPauseRequest={pausePlayback}
           onSeekRequest={commitSeek}
           onNeedMore={requestProgramRefill}
+          onBufferingChange={setProgramBuffering}
           onEnded={completeProgrammePlayback}
-          onError={() => setError("节目音频流暂时无法播放")}
+          onError={fallbackFromProgramStream}
         />
       ) : (
         <MixAudioPlayer
@@ -1321,7 +1345,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         </button>
       </section>
 
-      {preparingAhead ? (
+      {usingProgramStream && programBuffering ? (
+        <div className="preparing-hint"><i />正在缓冲节目音频</div>
+      ) : preparingAhead ? (
         <div className="preparing-hint"><i />正在准备接下来的章节</div>
       ) : upcoming ? (
         <div className="up-next">接下来：<strong>{upcoming.title}</strong>{upcoming.artist ? " · " + upcoming.artist : ""}</div>
