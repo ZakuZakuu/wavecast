@@ -248,14 +248,30 @@ class GenerationWorker:
         if job.mode is GenerationJobMode.FULL:
             await self.orchestrator.materialize_all_async(job.episode_id)
             return None
-        await self.orchestrator.ensure_buffer_async(
+        first_buffer = await self.orchestrator.ensure_buffer_async(
             job.episode_id,
-            target_chapters=self.policy.target_chapters,
+            target_chapters=1,
             target_ahead_seconds=self.policy.target_ahead_seconds,
         )
-        # Music readiness is the durable success boundary. Narration enrichment
-        # is scheduled only after the generation job is completed, so slow TTS
-        # cannot hold the refill channel RUNNING.
+
+        # The first real successor is the continuity floor. Once it and the
+        # staged route are durable, spend the opening-track latency budget on the
+        # first Writer/TTS bridge before filling a deeper music buffer.
+        if getattr(first_buffer, "progressive_session", None) is not None:
+            await self._enrich_narration(job.episode_id, max_chapters=1)
+        elif getattr(self.orchestrator, "progressive_runtime", None) is not None:
+            # Full route planning was safely deferred behind FastStart music.
+            # Do not immediately repeat the same expensive planning attempt.
+            return job.episode_id
+
+        if self.policy.target_chapters > 1:
+            await self.orchestrator.ensure_buffer_async(
+                job.episode_id,
+                target_chapters=self.policy.target_chapters,
+                target_ahead_seconds=self.policy.target_ahead_seconds,
+            )
+        # Residual narration remains detached after completion; only the first
+        # bridge is prioritized while the opening song is still masking latency.
         return job.episode_id
 
     def _schedule_narration_enrichment(self, episode_id: str) -> None:
@@ -271,15 +287,20 @@ class GenerationWorker:
 
         task.add_done_callback(_done)
 
-    async def _enrich_narration(self, episode_id: str) -> None:
-        # Music readiness is already durable before this optional task starts.
-        # Writer creates SCRIPT_READY narration first; TTS enriches it only if
-        # the chapter is still speculative. Log only safe stage/state metadata:
-        # never prompts, model output, provider URLs, or exception text.
+    async def _enrich_narration(
+        self,
+        episode_id: str,
+        *,
+        max_chapters: int | None = None,
+    ) -> None:
+        # Music readiness remains the continuity floor. The first invocation may
+        # run inline immediately after one successor is durable; residual
+        # enrichment still runs detached after job completion.
+        limit = self.policy.target_chapters if max_chapters is None else max_chapters
         try:
             authored = await self.orchestrator.author_pending_narration_async(
                 episode_id,
-                max_chapters=self.policy.target_chapters,
+                max_chapters=limit,
             )
         except Exception as error:
             logger.warning(
@@ -307,7 +328,7 @@ class GenerationWorker:
         try:
             materialized = await self.orchestrator.materialize_pending_narration_async(
                 episode_id,
-                max_segments=self.policy.target_chapters,
+                max_segments=limit,
             )
         except Exception as error:
             logger.warning(

@@ -66,6 +66,67 @@ def test_worker_logs_safe_generation_lifecycle(caplog) -> None:
     )
 
 
+def test_worker_prioritizes_first_narration_after_one_successor() -> None:
+    class _Session:
+        narration_authored_chapter_ids: list[str] = []
+
+    class _Episode:
+        progressive_session = _Session()
+        timeline_segments: list[object] = []
+
+    class RecordingRuntime:
+        progressive_runtime = object()
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self.episode = _Episode()
+
+        async def ensure_buffer_async(
+            self,
+            episode_id: str,
+            *,
+            target_chapters: int = 2,
+            target_ahead_seconds: int = 300,
+        ):
+            del episode_id, target_ahead_seconds
+            self.calls.append(f"ensure:{target_chapters}")
+            return self.episode
+
+        async def author_pending_narration_async(
+            self,
+            episode_id: str,
+            *,
+            max_chapters: int = 2,
+        ):
+            del episode_id
+            self.calls.append(f"author:{max_chapters}")
+            return self.episode
+
+        async def materialize_pending_narration_async(
+            self,
+            episode_id: str,
+            *,
+            max_segments: int = 2,
+        ):
+            del episode_id
+            self.calls.append(f"tts:{max_segments}")
+            return self.episode
+
+    runtime = RecordingRuntime()
+    jobs = InMemoryGenerationJobRepository()
+    job = jobs.request("episode-priority")
+    worker = GenerationWorker(jobs, runtime, worker_id="worker-priority")  # type: ignore[arg-type]
+
+    assert asyncio.run(worker._execute_claimed_job(job)) == "episode-priority"
+
+    assert runtime.calls == [
+        "ensure:1",
+        "author:1",
+        "tts:1",
+        "ensure:2",
+    ]
+
+
 def test_worker_prepares_successor_behind_long_opening() -> None:
     generator = DeterministicMockProgressiveGenerator()
     runtime = EpisodeOrchestrator(

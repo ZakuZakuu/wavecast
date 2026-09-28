@@ -1958,6 +1958,116 @@ def _assert_narration_blocks_materialized(
         )
 
 
+def _fallback_narration_kind(slot: NarrationSlotContext) -> RadioScriptBlockKind:
+    if slot.is_final and RadioScriptBlockKind.OUTRO in slot.allowed_block_kinds:
+        return RadioScriptBlockKind.OUTRO
+    if (
+        slot.placement is NarrationSlotPlacement.BEFORE_TRACK
+        and RadioScriptBlockKind.TRACK_INTRO in slot.allowed_block_kinds
+    ):
+        return RadioScriptBlockKind.TRACK_INTRO
+    if slot.is_opening and RadioScriptBlockKind.INTRO in slot.allowed_block_kinds:
+        return RadioScriptBlockKind.INTRO
+    if RadioScriptBlockKind.TRANSITION in slot.allowed_block_kinds:
+        return RadioScriptBlockKind.TRANSITION
+    return slot.allowed_block_kinds[0]
+
+
+def _fallback_narration_text(
+    slot: NarrationSlotContext,
+    language: OutputLanguage,
+) -> str:
+    previous = slot.just_played_track
+    upcoming = slot.upcoming_track or slot.chapter_track
+
+    if language is OutputLanguage.ZH_CN:
+        previous_label = (
+            f"{previous.canonical_artist} 的《{previous.canonical_title}》"
+            if previous is not None
+            else None
+        )
+        upcoming_label = (
+            f"{upcoming.canonical_artist} 的《{upcoming.canonical_title}》"
+            if upcoming is not None
+            else None
+        )
+        if slot.is_final and previous_label:
+            return f"刚才听到的是 {previous_label}。这段节目先到这里，我们下次继续。"
+        if previous_label and upcoming_label:
+            return f"刚才听到的是 {previous_label}。欢迎继续收听，接下来是 {upcoming_label}。"
+        if upcoming_label:
+            return f"欢迎继续收听，接下来是 {upcoming_label}。"
+        if previous_label:
+            return f"刚才听到的是 {previous_label}，我们继续听下去。"
+        return "欢迎继续收听，我们继续听下去。"
+
+    if language is OutputLanguage.JA_JP:
+        previous_label = (
+            f"{previous.canonical_artist}の「{previous.canonical_title}」"
+            if previous is not None
+            else None
+        )
+        upcoming_label = (
+            f"{upcoming.canonical_artist}の「{upcoming.canonical_title}」"
+            if upcoming is not None
+            else None
+        )
+        if slot.is_final and previous_label:
+            return f"今聴いたのは{previous_label}でした。この番組はここまでです。"
+        if previous_label and upcoming_label:
+            return f"今聴いたのは{previous_label}でした。続いては{upcoming_label}です。"
+        if upcoming_label:
+            return f"続いては{upcoming_label}です。"
+        return "引き続きお楽しみください。"
+
+    previous_label = (
+        f'{previous.canonical_artist} — "{previous.canonical_title}"'
+        if previous is not None
+        else None
+    )
+    upcoming_label = (
+        f'{upcoming.canonical_artist} — "{upcoming.canonical_title}"'
+        if upcoming is not None
+        else None
+    )
+    if slot.is_final and previous_label:
+        return f"That was {previous_label}. That closes this part of the program."
+    if previous_label and upcoming_label:
+        return f"That was {previous_label}. Up next is {upcoming_label}."
+    if upcoming_label:
+        return f"Up next is {upcoming_label}."
+    if previous_label:
+        return f"That was {previous_label}. Let's keep listening."
+    return "Let's keep listening."
+
+
+def _deterministic_narration_fallback(
+    chapter: ProgressiveAssemblyChapter,
+    language: OutputLanguage,
+) -> RadioScript:
+    slots = chapter.slot_contexts
+    if not slots:
+        return RadioScript(blocks=[], intended_duration_seconds=1)
+    total = max(chapter.target_narration_seconds, len(slots))
+    remaining = total
+    blocks: list[RadioScriptBlock] = []
+    for index, slot in enumerate(slots):
+        slots_left = len(slots) - index
+        duration = max(1, remaining // slots_left)
+        remaining -= duration
+        blocks.append(
+            RadioScriptBlock(
+                kind=_fallback_narration_kind(slot),
+                text=_fallback_narration_text(slot, language),
+                duration_seconds=duration,
+            )
+        )
+    return RadioScript(
+        blocks=blocks,
+        intended_duration_seconds=max(1, sum(block.duration_seconds for block in blocks)),
+    )
+
+
 class StagedProgressiveChapterGenerator:
     """Publish continuity-critical music before optional narration authoring."""
 
@@ -2155,17 +2265,49 @@ class StagedProgressiveChapterGenerator:
             EpisodeAssemblyError,
             ValueError,
         ) as error:
-            # Narration is optional for continuity and FULL generation. Keep
-            # diagnostics safe: record only the typed failure boundary, never
-            # prompt/model/provider payloads or exception text.
+            # Writer is the quality layer, not the existence guarantee. Fall
+            # back to a short script using only authoritative adjacent catalog
+            # metadata, so one provider/format failure does not erase the host.
             logger.warning(
                 "narration_authoring_failed chapter_id=%s error_type=%s",
                 chapter.chapter_id,
                 type(error).__name__,
             )
-            # The caller records this chapter as authored/degraded so ordinary
-            # playback never retries the same paid Writer work blindly.
-            return None
+            try:
+                fallback_script = _deterministic_narration_fallback(
+                    chapter,
+                    self.session.output_language,
+                )
+                radio_script, _ = _assemble_writer_scripts(
+                    [fallback_script],
+                    len(prepared_tracks),
+                    chapter_music_indices=[chapter_music_index],
+                    slot_contexts=[chapter.slot_contexts],
+                    chapter_connections=[chapter.chapter.connection_from_previous_track],
+                    previous_music_indices=[0 if has_previous_music else None],
+                    require_final_slot=(
+                        bool(self.session.chapters)
+                        and chapter.chapter_id == self.session.chapters[-1].chapter_id
+                    ),
+                )
+                playable = self.composer.compose_prepared(prepared_tracks, radio_script)
+                _assert_narration_blocks_materialized(radio_script, playable)
+            except (
+                NarrationPlacementError,
+                EpisodeAssemblyError,
+                ValueError,
+            ) as fallback_error:
+                logger.warning(
+                    "narration_fallback_failed chapter_id=%s error_type=%s",
+                    chapter.chapter_id,
+                    type(fallback_error).__name__,
+                )
+                return None
+            logger.info(
+                "narration_authoring_fallback chapter_id=%s narration_blocks=%s",
+                chapter.chapter_id,
+                len(radio_script.blocks),
+            )
         return _generated_runtime_chapter(
             chapter.chapter_id,
             list(playable.segments),
