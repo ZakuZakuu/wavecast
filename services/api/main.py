@@ -78,6 +78,7 @@ from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.usage import UsageLedger
+from wavecast.presentation import HostMode
 from wavecast.recommendations import (
     DeterministicRecommendationPlanner,
     InMemoryProgramIdeaRepository,
@@ -93,7 +94,12 @@ from wavecast.rendering import (
     MixRenderError,
     MixRendererUnavailableError,
     MixSourceUnavailableError,
+    ProgramImmutabilityError,
+    ProgramRenderManifest,
+    hls_playlist,
+    load_program_manifest,
     render_mix,
+    render_program_prefix,
     resolve_mix_sources,
 )
 from wavecast.rendering.fingerprint import mix_plan_fingerprint
@@ -1429,6 +1435,115 @@ def canonical_mix_plan_for_episode(episode_id: str, actor: AuthPrincipal) -> Mix
     return plan_episode_mix(PlayableEpisode(id=current.id, segments=ready_segments))
 
 
+def canonical_render_plan_for_episode(episode_id: str) -> MixPlan:
+    """Build only the prefix whose editorial inputs are safe to freeze.
+
+    Unlike realtime fallback playback, the immutable programme renderer must not
+    skip an unfinished host segment and then publish later music. A pending
+    narration therefore closes the renderable prefix unless the programme is
+    explicitly music-only.
+    """
+
+    current = orchestrator.get(episode_id)
+    ready_segments: list[MusicSegment | NarrationSegment] = []
+    for segment in current.timeline_segments:
+        if segment.is_audio_ready:
+            ready_segments.append(cast(MusicSegment | NarrationSegment, segment))
+            continue
+        if (
+            segment.kind is SegmentKind.NARRATION
+            and current.presentation_intent.host_mode is HostMode.NONE
+        ):
+            continue
+        break
+    if not ready_segments:
+        raise ValueError("program render plan is not ready")
+    return plan_episode_mix(PlayableEpisode(id=current.id, segments=ready_segments))
+
+
+async def _prepare_owned_music_assets(episode_id: str) -> MixdownPreparationResult:
+    """Snapshot provider-backed music before any deterministic server render."""
+
+    for attempt in range(2):
+        current = orchestrator.get(episode_id)
+        working = current.model_copy(deep=True)
+        updates: list[tuple[MusicSegment, str, str, int]] = []
+        blocked: list[BlockedMusicSource] = []
+        owned_count = 0
+        snapshotted_count = 0
+        reused_count = 0
+
+        for segment in working.timeline_segments:
+            if not isinstance(segment, MusicSegment):
+                continue
+            classification = classify_music_source(segment.audio_source_url or "")
+            if classification.kind is MusicSourceKind.OWNED_ASSET:
+                owned_count += 1
+                continue
+            if classification.kind is MusicSourceKind.UNSUPPORTED:
+                blocked.append(
+                    BlockedMusicSource(
+                        segmentId=segment.id,
+                        sourceKind=classification.kind,
+                        reasonCode=classification.reason_code or "unsupported_music_source",
+                    )
+                )
+                continue
+            try:
+                snapshot = await music_snapshot_store.snapshot(
+                    classification,
+                    track_ref=segment.track_ref,
+                    duration_seconds=segment.duration_seconds,
+                )
+            except MusicSnapshotError as error:
+                blocked.append(
+                    BlockedMusicSource(
+                        segmentId=segment.id,
+                        sourceKind=classification.kind,
+                        reasonCode=error.reason_code,
+                    )
+                )
+                continue
+            updates.append(
+                (
+                    segment,
+                    snapshot.playback_url,
+                    snapshot.asset_ref,
+                    snapshot.duration_seconds,
+                )
+            )
+            owned_count += 1
+            if snapshot.reused:
+                reused_count += 1
+            else:
+                snapshotted_count += 1
+
+        result = MixdownPreparationResult(
+            episodeId=episode_id,
+            ready=not blocked,
+            ownedMusicCount=owned_count,
+            snapshottedMusicCount=snapshotted_count,
+            reusedMusicCount=reused_count,
+            blockedSources=blocked,
+        )
+        if blocked or not updates:
+            return result
+
+        for segment, playback_url, asset_ref, duration_seconds in updates:
+            segment.audio_source_url = playback_url
+            segment.asset_ref = asset_ref
+            segment.actual_duration_seconds = duration_seconds
+        try:
+            repository.save(working)
+            return result
+        except EpisodeConcurrencyError:
+            if attempt == 0:
+                continue
+            raise
+
+    raise EpisodeConcurrencyError(f"could not snapshot episode after retry: {episode_id}")
+
+
 @app.get("/api/episodes/{episode_id}/mix-plan", response_model=MixPlan)
 def episode_mix_plan(episode_id: str, request: Request) -> MixPlan:
     """Return the deterministic server-owned arrangement for the ready prefix."""
@@ -1448,81 +1563,101 @@ async def prepare_mixdown(episode_id: str, request: Request) -> MixdownPreparati
     """Snapshot provider-backed music into owned assets without rendering."""
     actor = principal(request)
     owned(episode_id, actor)
-    current = orchestrator.get(episode_id)
-    working = current.model_copy(deep=True)
-    updates: list[tuple[MusicSegment, str, str, int]] = []
-    blocked: list[BlockedMusicSource] = []
-    owned_count = 0
-    snapshotted_count = 0
-    reused_count = 0
+    try:
+        return await _prepare_owned_music_assets(episode_id)
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
 
-    for segment in working.timeline_segments:
-        if not isinstance(segment, MusicSegment):
-            continue
-        classification = classify_music_source(segment.audio_source_url or "")
-        if classification.kind is MusicSourceKind.OWNED_ASSET:
-            owned_count += 1
-            continue
-        if classification.kind is MusicSourceKind.UNSUPPORTED:
-            blocked.append(
-                BlockedMusicSource(
-                    segmentId=segment.id,
-                    sourceKind=classification.kind,
-                    reasonCode=classification.reason_code or "unsupported_music_source",
-                )
+
+@app.post(
+    "/api/episodes/{episode_id}/program-render",
+    response_model=ProgramRenderManifest,
+)
+async def render_program_stream(
+    episode_id: str,
+    request: Request,
+) -> ProgramRenderManifest:
+    """Append the current safe canonical prefix to the immutable programme feed."""
+
+    actor = principal(request)
+    owned(episode_id, actor)
+    try:
+        preparation = await _prepare_owned_music_assets(episode_id)
+        if not preparation.ready:
+            raise HTTPException(
+                status_code=409,
+                detail="Program render music source is unavailable",
             )
-            continue
-        try:
-            snapshot = await music_snapshot_store.snapshot(
-                classification,
-                track_ref=segment.track_ref,
-                duration_seconds=segment.duration_seconds,
-            )
-        except MusicSnapshotError as error:
-            blocked.append(
-                BlockedMusicSource(
-                    segmentId=segment.id,
-                    sourceKind=classification.kind,
-                    reasonCode=error.reason_code,
-                )
-            )
-            continue
-        updates.append(
-            (segment, snapshot.playback_url, snapshot.asset_ref, snapshot.duration_seconds)
+        current = orchestrator.get(episode_id)
+        plan = canonical_render_plan_for_episode(episode_id)
+        complete = current.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
+        return await render_program_prefix(
+            plan,
+            audio_storage,
+            complete=complete,
         )
-        owned_count += 1
-        if snapshot.reused:
-            reused_count += 1
-        else:
-            snapshotted_count += 1
-
-    if blocked:
-        return MixdownPreparationResult(
-            episodeId=episode_id,
-            ready=False,
-            ownedMusicCount=owned_count,
-            snapshottedMusicCount=snapshotted_count,
-            reusedMusicCount=reused_count,
-            blockedSources=blocked,
+    except HTTPException:
+        raise
+    except EpisodeConcurrencyError as error:
+        raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail="Program render plan is not ready") from error
+    except ProgramImmutabilityError as error:
+        logger.error(
+            "program_render_immutability_violation episode_id=%s error=%s",
+            episode_id,
+            str(error),
         )
+        raise HTTPException(
+            status_code=409,
+            detail="Program render prefix is immutable",
+        ) from error
+    except MixRendererUnavailableError as error:
+        raise HTTPException(status_code=503, detail="Program renderer is unavailable") from error
+    except MixSourceUnavailableError as error:
+        raise HTTPException(status_code=409, detail="Program render source is unavailable") from error
+    except MixRenderError as error:
+        raise HTTPException(status_code=502, detail="Program renderer failed") from error
+    except OSError as error:
+        raise HTTPException(status_code=500, detail="Program render storage failed") from error
 
-    for segment, playback_url, asset_ref, duration_seconds in updates:
-        segment.audio_source_url = playback_url
-        segment.asset_ref = asset_ref
-        segment.actual_duration_seconds = duration_seconds
-    if updates:
-        try:
-            repository.save(working)
-        except EpisodeConcurrencyError as error:
-            raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error
 
-    return MixdownPreparationResult(
-        episodeId=episode_id,
-        ready=True,
-        ownedMusicCount=owned_count,
-        snapshottedMusicCount=snapshotted_count,
-        reusedMusicCount=reused_count,
-        blockedSources=[],
+@app.get(
+    "/api/episodes/{episode_id}/program-render",
+    response_model=ProgramRenderManifest,
+)
+async def program_render_status(
+    episode_id: str,
+    request: Request,
+) -> ProgramRenderManifest:
+    actor = principal(request)
+    owned(episode_id, actor)
+    try:
+        manifest = await load_program_manifest(audio_storage, episode_id)
+    except ProgramImmutabilityError as error:
+        raise HTTPException(status_code=500, detail="Program render manifest is invalid") from error
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Program render has not started")
+    return manifest
+
+
+@app.get("/api/program-streams/{episode_id}.m3u8")
+async def program_stream_playlist(episode_id: str) -> Response:
+    """Serve the mutable EVENT playlist; referenced transport chunks are immutable."""
+
+    try:
+        manifest = await load_program_manifest(audio_storage, episode_id)
+    except ProgramImmutabilityError as error:
+        raise HTTPException(status_code=500, detail="Program render manifest is invalid") from error
+    if manifest is None or not manifest.chunks:
+        raise HTTPException(status_code=404, detail="Program stream is not ready")
+    return Response(
+        content=hls_playlist(manifest),
+        media_type="application/vnd.apple.mpegurl",
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Access-Control-Allow-Origin": "*",
+        },
     )
 
 
