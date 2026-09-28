@@ -97,6 +97,16 @@ def test_worker_prioritizes_first_narration_after_one_successor() -> None:
             self.calls.append(f"ensure:{target_chapters}")
             return self.episode
 
+        async def author_pending_narration_async(
+            self,
+            episode_id: str,
+            *,
+            max_chapters: int = 2,
+        ):
+            del episode_id
+            self.calls.append(f"author:{max_chapters}")
+            return self.episode
+
     runtime = RecordingRuntime()
     jobs = InMemoryGenerationJobRepository()
     job = jobs.request("episode-priority")
@@ -107,6 +117,7 @@ def test_worker_prioritizes_first_narration_after_one_successor() -> None:
     assert runtime.calls == [
         "fast-start",
         "ensure:1",
+        "author:1",
         "ensure:2",
     ]
 
@@ -476,7 +487,9 @@ def test_completion_lease_loss_does_not_start_duplicate_narration_enrichment() -
     async def run() -> None:
         assert await worker.run_once() is True
         await asyncio.sleep(0)
-        assert runtime.author_calls == 0
+        # Writer ran once while this worker still held the lease; the lost
+        # completion prevents detached TTS/duplicate enrichment from starting.
+        assert runtime.author_calls == 1
         assert runtime.materialize_calls == 0
         await worker.stop_enrichment()
 
