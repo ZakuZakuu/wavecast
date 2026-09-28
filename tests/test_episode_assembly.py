@@ -13,6 +13,7 @@ from wavecast.assembly import (
     MockEpisodeAssemblyLLM,
     NarrationPlacementError,
     _assemble_radio_script,
+    _apply_host_mode_to_slot_contexts,
     _assemble_writer_scripts,
     _bound_progressive_resolved_route,
     _build_narration_slot_contexts,
@@ -226,6 +227,32 @@ def test_music_only_fast_successor_has_no_narration_segment(tmp_path, monkeypatc
     bootstrap = asyncio.run(
         assembly.prepare_fast_successor(
             request,
+            opening_track=opening,
+        )
+    )
+
+    assert bootstrap is not None
+    assert len(bootstrap.segments) == 1
+    assert isinstance(bootstrap.segments[0], MusicSegment)
+    assert bootstrap.segments[0].is_audio_ready
+
+
+
+def test_default_light_fast_successor_is_music_only(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assembly = service(tmp_path)
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    bootstrap = asyncio.run(
+        assembly.prepare_fast_successor(
+            LiveEpisodeAssemblyRequest(
+                topic="guided listening",
+                anchor_tracks=["Neon First Light"],
+            ),
             opening_track=opening,
         )
     )
@@ -1104,6 +1131,33 @@ def test_duplicate_before_track_intro_blocks_collapse_into_final_slots() -> None
         RadioScriptBlockKind.OUTRO,
     ]
     assert script.blocks[1].text == "duplicate intro final outro"
+
+
+
+def test_host_mode_filters_narration_density_after_gap_ownership() -> None:
+    full = _build_narration_slot_contexts(
+        [
+            _resolved_chapter(0, 0),
+            _resolved_chapter(1, 1),
+            _resolved_chapter(2, 2),
+            _resolved_chapter(3, 3),
+        ]
+    )
+
+    light = _apply_host_mode_to_slot_contexts(full, HostMode.LIGHT)
+    none = _apply_host_mode_to_slot_contexts(full, HostMode.NONE)
+    kept_light_slots = [
+        context.slot_id for contexts in light for context in contexts
+    ]
+
+    assert "chapter-1:before-track" in kept_light_slots
+    assert "chapter-2:before-track" not in kept_light_slots
+    assert "chapter-3:before-track" in kept_light_slots
+    assert "chapter-3:after-final" in kept_light_slots
+    assert all(not contexts for contexts in none)
+    assert sum(len(contexts) for contexts in light) < sum(
+        len(contexts) for contexts in full
+    )
 
 
 def test_direct_music_gap_has_one_slot_owner() -> None:
