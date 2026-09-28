@@ -7,7 +7,7 @@ import { api, ApiRequestError } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
 import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
-import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
+import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff } from "../lib/playback";
 import { activeMixClipsAt, linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, overlapLeadSeconds, type MixPlan } from "../lib/mix-timeline";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
@@ -51,7 +51,6 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
   const startEffectGuardRef = useRef(createEffectGenerationGuard());
   const synchronizationGuardRef = useRef(createSynchronizationGuard());
-  const seekRequestGuardRef = useRef(createEffectGenerationGuard());
   const handoffRequestGuardRef = useRef(createEffectGenerationGuard());
   const completionRequestGuardRef = useRef(createEffectGenerationGuard());
   const seekIntentCounterRef = useRef(0);
@@ -110,7 +109,6 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     armedFromSegmentIdRef.current = null;
     armedEpisodeRef.current = null;
     handoffAttemptRef.current = null;
-    seekRequestGuardRef.current.start();
     handoffRequestGuardRef.current.start();
     completionRequestGuardRef.current.start();
     seekIntentCounterRef.current += 1;
@@ -611,7 +609,6 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     }
     pendingSeekIntentRef.current = intentId;
 
-    seekRequestGuardRef.current.start();
     handoffRequestGuardRef.current.start();
     completionRequestGuardRef.current.start();
 
