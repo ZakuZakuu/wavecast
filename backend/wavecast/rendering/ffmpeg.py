@@ -114,6 +114,93 @@ def _command(
     return command
 
 
+def _transport_command(
+    plan: MixPlan,
+    inputs: Mapping[str, Path],
+    output_path: Path,
+    binary: str,
+    *,
+    timeline_offset_seconds: float,
+) -> list[str]:
+    command = [_ffmpeg_binary(binary), "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
+    for clip in plan.clips:
+        source = inputs.get(clip.id)
+        if source is None or not source.is_file():
+            raise MixRenderError("resolved mix input is missing")
+        command.extend(["-i", str(source)])
+    command.extend(
+        [
+            "-filter_complex",
+            build_filter_graph(plan),
+            "-map",
+            "[mixout]",
+            "-map_metadata",
+            "-1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-f",
+            "mpegts",
+            "-mpegts_flags",
+            "+resend_headers",
+            "-muxdelay",
+            "0",
+            "-muxpreload",
+            "0",
+            "-output_ts_offset",
+            _number(timeline_offset_seconds),
+            "-t",
+            _number(plan.duration_seconds),
+            str(output_path),
+        ]
+    )
+    return command
+
+
+def render_mix_transport_segment(
+    plan: MixPlan,
+    inputs: Mapping[str, Path],
+    output_path: Path,
+    *,
+    timeline_offset_seconds: float,
+    ffmpeg_binary: str = "ffmpeg",
+    timeout_seconds: float | None = None,
+) -> RenderResult:
+    """Render one immutable HLS transport segment from a sliced canonical plan."""
+
+    if timeline_offset_seconds < 0:
+        raise ValueError("timeline offset cannot be negative")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    command = _transport_command(
+        plan,
+        inputs,
+        output_path,
+        ffmpeg_binary,
+        timeline_offset_seconds=timeline_offset_seconds,
+    )
+    timeout = timeout_seconds or max(30.0, plan.duration_seconds * 2)
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            shell=False,
+            capture_output=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise MixRenderError("ffmpeg transport render timed out") from error
+    except OSError as error:
+        raise MixRenderError("ffmpeg could not be started") from error
+    if completed.returncode != 0 or not output_path.is_file() or output_path.stat().st_size == 0:
+        raise MixRenderError("ffmpeg did not produce a valid transport segment")
+    return RenderResult(output_path=output_path, duration_seconds=plan.duration_seconds)
+
+
 def render_mix(
     plan: MixPlan,
     inputs: Mapping[str, Path],
@@ -142,4 +229,4 @@ def render_mix(
     return RenderResult(output_path=output_path, duration_seconds=plan.duration_seconds)
 
 
-__all__ = ["RenderResult", "build_filter_graph", "render_mix"]
+__all__ = ["RenderResult", "build_filter_graph", "render_mix", "render_mix_transport_segment"]
