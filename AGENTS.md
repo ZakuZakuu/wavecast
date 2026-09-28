@@ -344,3 +344,32 @@ A milestone is not done merely because code was written. It is done when:
 - a PR summary explains what changed, what remains mocked, and what should be reviewed.
 
 When uncertain, optimize for maintainability, observable state, bounded cost, and a convincing listening experience.
+
+
+---
+
+## Hosted deployment discipline
+
+WaveCast has constrained hosted deployment budgets. Treat deployments as explicit
+human-test checkpoints, not as a side effect of every code commit.
+
+- `main` is the release branch. Do not advance or deploy it for routine iteration.
+- `integration` is the single hosted integration branch used when a human needs
+  to test the current frontend/backend together.
+- During implementation, prefer local commits without pushing. When GitHub-side
+  editing is required, detached commits are acceptable; advance `integration`
+  only when a coherent testable checkpoint is ready.
+- Batch related fixes into one `integration` update. Do not push one hosted
+  deployment per small edit.
+- Vercel should deploy only `main` and `integration`, and should ignore commits
+  that do not affect the Web app or its root workspace dependencies.
+- During active hackathon development, the Railway API service may track
+  `integration` so one `integration` update deploys the matching backend
+  without Railway Agent. Before a public release, switch Railway back to `main`
+  and deploy the accepted release SHA.
+- Do not use Railway Agent for routine logs, metrics, variables, health checks, or
+  redeploys. Reserve it for operations that cannot be expressed with ordinary
+  Railway APIs/CLI.
+- A hosted checkpoint is complete only after the relevant deployment reaches a
+  successful state and its health/build signal is observed. Never claim tests
+  passed unless their output was actually observed.
