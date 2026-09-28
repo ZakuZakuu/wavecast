@@ -149,6 +149,63 @@ def test_program_stream_renders_idempotent_single_feed_without_mutating_episode(
     assert repository.get(episode.id).model_dump(mode="json") == before
 
 
+def test_progressive_render_snapshot_ignores_unready_future_music(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = InMemoryEpisodeRepository()
+    orchestrator = EpisodeOrchestrator(repository)
+    monkeypatch.setattr(api_module, "repository", repository)
+    monkeypatch.setattr(api_module, "orchestrator", orchestrator)
+
+    episode = LiveEpisode(
+        id="program-render-ready-only",
+        seed_id="seed",
+        title="Ready prefix",
+        topic="Future music must not block",
+        listener_id="listener-a",
+        state=EpisodeState.STREAMING,
+        generation_mode=GenerationMode.PROGRESSIVE,
+        program_estimated_duration_seconds=240,
+        segments=[
+            MusicSegment(
+                id="music-a",
+                chapter_id="chapter-a",
+                order=0,
+                state=SegmentState.AUDIO_READY,
+                planned_duration_seconds=120,
+                actual_duration_seconds=120,
+                track_ref="track-a",
+                audio_source_url="/api/assets/audio/music/a.wav",
+                title="A",
+                artist="Artist A",
+            ),
+            MusicSegment(
+                id="music-b",
+                chapter_id="chapter-b",
+                order=1,
+                state=SegmentState.PLANNED,
+                planned_duration_seconds=120,
+                track_ref="track-b",
+                title="B",
+                artist="Artist B",
+            ),
+        ],
+        current_segment_id="music-a",
+    )
+    repository.save(episode)
+
+    result = asyncio.run(
+        api_module._prepare_owned_music_assets(
+            episode.id,
+            ready_only=True,
+        )
+    )
+
+    assert result.ready is True
+    assert result.owned_music_count == 1
+    assert result.blocked_sources == []
+
+
 def test_render_plan_can_freeze_past_explicitly_skipped_host(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

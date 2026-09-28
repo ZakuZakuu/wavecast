@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 const HLS_MIME = "application/vnd.apple.mpegurl";
 const FRONTIER_WAKE_SECONDS = 12;
 const FRONTIER_SEEK_EPSILON_SECONDS = 0.05;
+const POSITION_EMIT_INTERVAL_MS = 200;
 
 type ProgrammeAudioPlayerProps = {
   streamUrl: string;
@@ -17,6 +18,7 @@ type ProgrammeAudioPlayerProps = {
   artist?: string | null;
   onPositionChange: (positionSeconds: number) => void;
   onPlayingChange?: (playing: boolean) => void;
+  onBufferingChange?: (buffering: boolean) => void;
   onEnded: () => void;
   onFrontierReached: () => void;
   onPlayRequest: () => void;
@@ -24,21 +26,6 @@ type ProgrammeAudioPlayerProps = {
   onSeekRequest: (positionSeconds: number) => void;
   onError: (message: string) => void;
 };
-
-function boundedSeekTarget(
-  target: number,
-  frontier: number,
-  complete: boolean,
-): number {
-  const max = complete
-    ? Math.max(0, frontier)
-    : Math.max(0, frontier - FRONTIER_SEEK_EPSILON_SECONDS);
-  return Math.max(0, Math.min(target, max));
-}
-
-function safePlay(audio: HTMLAudioElement): void {
-  void audio.play().catch(() => undefined);
-}
 
 export function ProgrammeAudioPlayer({
   streamUrl,
@@ -51,6 +38,7 @@ export function ProgrammeAudioPlayer({
   artist,
   onPositionChange,
   onPlayingChange,
+  onBufferingChange,
   onEnded,
   onFrontierReached,
   onPlayRequest,
@@ -60,15 +48,98 @@ export function ProgrammeAudioPlayer({
 }: ProgrammeAudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const hlsRef = useRef<import("hls.js").default | null>(null);
-  const pendingSeekRef = useRef<number | null>(positionSeconds);
+  const pendingSeekRef = useRef<number | null>(Math.max(0, positionSeconds));
   const desiredPlayingRef = useRef(playing);
   const frontierRef = useRef(renderedFrontierSeconds);
   const completeRef = useRef(complete);
   const lastSeekTokenRef = useRef(seekToken);
+  const lastEmitMsRef = useRef(0);
+  const playGenerationRef = useRef(0);
+
+  const onPositionChangeRef = useRef(onPositionChange);
+  const onPlayingChangeRef = useRef(onPlayingChange);
+  const onBufferingChangeRef = useRef(onBufferingChange);
+  const onEndedRef = useRef(onEnded);
+  const onFrontierReachedRef = useRef(onFrontierReached);
+  const onPlayRequestRef = useRef(onPlayRequest);
+  const onPauseRequestRef = useRef(onPauseRequest);
+  const onSeekRequestRef = useRef(onSeekRequest);
+  const onErrorRef = useRef(onError);
 
   desiredPlayingRef.current = playing;
   frontierRef.current = renderedFrontierSeconds;
   completeRef.current = complete;
+  onPositionChangeRef.current = onPositionChange;
+  onPlayingChangeRef.current = onPlayingChange;
+  onBufferingChangeRef.current = onBufferingChange;
+  onEndedRef.current = onEnded;
+  onFrontierReachedRef.current = onFrontierReached;
+  onPlayRequestRef.current = onPlayRequest;
+  onPauseRequestRef.current = onPauseRequest;
+  onSeekRequestRef.current = onSeekRequest;
+  onErrorRef.current = onError;
+
+  const applyPendingSeek = useCallback(() => {
+    const audio = audioRef.current;
+    const pending = pendingSeekRef.current;
+    if (!audio || pending === null || audio.readyState === 0) return;
+
+    let target = Math.max(0, pending);
+    const frontier = Math.max(0, frontierRef.current);
+
+    // A restored listener position may be ahead of the currently published
+    // immutable prefix. Never "solve" that by rewinding the listener. Keep one
+    // pending target while generation/rendering catches the programme up.
+    if (
+      !completeRef.current
+      && target > Math.max(0, frontier - FRONTIER_SEEK_EPSILON_SECONDS)
+    ) {
+      onFrontierReachedRef.current();
+      return;
+    }
+    if (completeRef.current) {
+      target = Math.min(target, frontier);
+    }
+
+    if (audio.seekable.length > 0) {
+      const first = audio.seekable.start(0);
+      const last = audio.seekable.end(audio.seekable.length - 1);
+      if (target > last + FRONTIER_SEEK_EPSILON_SECONDS) {
+        onFrontierReachedRef.current();
+        return;
+      }
+      if (target < first - FRONTIER_SEEK_EPSILON_SECONDS) {
+        target = first;
+      }
+    }
+
+    try {
+      if (Math.abs(audio.currentTime - target) > FRONTIER_SEEK_EPSILON_SECONDS) {
+        audio.currentTime = target;
+      }
+      pendingSeekRef.current = null;
+      onPositionChangeRef.current(target);
+    } catch {
+      // loadedmetadata/canplay/progress/durationchange will retry this target.
+    }
+  }, []);
+
+  const playIfDesired = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio || !desiredPlayingRef.current || !audio.paused) return;
+
+    const generation = playGenerationRef.current + 1;
+    playGenerationRef.current = generation;
+    void audio.play().catch((reason: unknown) => {
+      if (playGenerationRef.current !== generation) return;
+      if (reason instanceof DOMException && reason.name === "NotAllowedError") {
+        // iOS autoplay policy is a normal paused state, not a broken source.
+        onPauseRequestRef.current();
+        return;
+      }
+      onErrorRef.current("节目音频暂时无法播放");
+    });
+  }, []);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -76,36 +147,32 @@ export function ProgrammeAudioPlayer({
 
     let cancelled = false;
     let detachNativeListeners: (() => void) | null = null;
+    let networkRecoveryUsed = false;
+    let mediaRecoveryUsed = false;
 
-    const applyPendingSeek = () => {
-      if (cancelled || pendingSeekRef.current === null) return;
-      const target = boundedSeekTarget(
-        pendingSeekRef.current,
-        frontierRef.current,
-        completeRef.current,
-      );
-      try {
-        audio.currentTime = target;
-        pendingSeekRef.current = null;
-      } catch {
-        // Metadata/seekable ranges may not be ready yet. Keep the target and
-        // retry on the next media readiness event.
-      }
-    };
+    playGenerationRef.current += 1;
+    audio.pause();
+    pendingSeekRef.current = Math.max(0, positionSeconds);
+    onBufferingChangeRef.current?.(true);
 
     const wakeIfDesired = () => {
+      if (cancelled) return;
       applyPendingSeek();
-      if (desiredPlayingRef.current && audio.paused) safePlay(audio);
+      playIfDesired();
     };
 
     const attachNative = () => {
       audio.src = streamUrl;
-      audio.load();
+      audio.preload = "auto";
       const events = ["loadedmetadata", "durationchange", "canplay", "progress"];
       for (const event of events) audio.addEventListener(event, wakeIfDesired);
       detachNativeListeners = () => {
-        for (const event of events) audio.removeEventListener(event, wakeIfDesired);
+        for (const event of events) {
+          audio.removeEventListener(event, wakeIfDesired);
+        }
       };
+      audio.load();
+      wakeIfDesired();
     };
 
     if (audio.canPlayType(HLS_MIME)) {
@@ -115,9 +182,10 @@ export function ProgrammeAudioPlayer({
         .then(({ default: Hls }) => {
           if (cancelled) return;
           if (!Hls.isSupported()) {
-            onError("当前浏览器暂时不支持节目流播放");
+            onErrorRef.current("当前浏览器暂时不支持节目流播放");
             return;
           }
+
           const hls = new Hls({
             enableWorker: true,
             lowLatencyMode: false,
@@ -133,19 +201,27 @@ export function ProgrammeAudioPlayer({
           hls.on(Hls.Events.LEVEL_UPDATED, wakeIfDesired);
           hls.on(Hls.Events.ERROR, (_event, data) => {
             if (cancelled || !data.fatal) return;
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            if (
+              data.type === Hls.ErrorTypes.NETWORK_ERROR
+              && !networkRecoveryUsed
+            ) {
+              networkRecoveryUsed = true;
               hls.startLoad();
               return;
             }
-            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            if (
+              data.type === Hls.ErrorTypes.MEDIA_ERROR
+              && !mediaRecoveryUsed
+            ) {
+              mediaRecoveryUsed = true;
               hls.recoverMediaError();
               return;
             }
-            onError("节目流暂时无法继续播放");
+            onErrorRef.current("节目流暂时无法继续播放");
           });
         })
         .catch(() => {
-          if (!cancelled) onError("节目播放器加载失败");
+          if (!cancelled) onErrorRef.current("节目播放器加载失败");
         });
     }
 
@@ -154,152 +230,216 @@ export function ProgrammeAudioPlayer({
       detachNativeListeners?.();
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      playGenerationRef.current += 1;
       audio.pause();
       audio.removeAttribute("src");
       audio.load();
     };
-  }, [streamUrl, onError]);
+    // streamUrl is the source identity. Callback props deliberately live in
+    // refs so progress renders never tear down the persistent HLS session.
+  }, [applyPendingSeek, playIfDesired, streamUrl]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
     if (lastSeekTokenRef.current === seekToken) return;
+
     lastSeekTokenRef.current = seekToken;
-    const target = boundedSeekTarget(
-      positionSeconds,
-      renderedFrontierSeconds,
-      complete,
-    );
-    pendingSeekRef.current = target;
-    try {
-      audio.currentTime = target;
-      pendingSeekRef.current = null;
-    } catch {
-      // Retried by readiness listeners installed with the HLS source.
-    }
-  }, [
-    complete,
-    positionSeconds,
-    renderedFrontierSeconds,
-    seekToken,
-  ]);
+    pendingSeekRef.current = Math.max(0, positionSeconds);
+    applyPendingSeek();
+  }, [applyPendingSeek, positionSeconds, seekToken]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
+
+    playGenerationRef.current += 1;
     if (playing) {
-      safePlay(audio);
+      playIfDesired();
     } else {
       audio.pause();
     }
     if ("mediaSession" in navigator) {
       navigator.mediaSession.playbackState = playing ? "playing" : "paused";
     }
-  }, [playing]);
+  }, [playIfDesired, playing]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const markBuffering = () => {
+      onBufferingChangeRef.current?.(true);
+      onFrontierReachedRef.current();
+    };
+    const markPlaying = () => {
+      onBufferingChangeRef.current?.(false);
+      onPlayingChangeRef.current?.(true);
+      if ("mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = "playing";
+      }
+    };
+    const markPaused = () => {
+      if ("mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = "paused";
+      }
+    };
+    const ready = () => {
+      applyPendingSeek();
+      onBufferingChangeRef.current?.(false);
+    };
+    const progress = () => applyPendingSeek();
+    const ended = () => {
+      markPaused();
+      if (completeRef.current) {
+        onEndedRef.current();
+      } else {
+        onFrontierReachedRef.current();
+      }
+    };
+    const failed = () => {
+      onBufferingChangeRef.current?.(false);
+      onErrorRef.current("节目音频暂时无法播放");
+    };
+
+    audio.addEventListener("loadedmetadata", ready);
+    audio.addEventListener("canplay", ready);
+    audio.addEventListener("progress", progress);
+    audio.addEventListener("durationchange", progress);
+    audio.addEventListener("playing", markPlaying);
+    audio.addEventListener("waiting", markBuffering);
+    audio.addEventListener("stalled", markBuffering);
+    audio.addEventListener("pause", markPaused);
+    audio.addEventListener("ended", ended);
+    audio.addEventListener("error", failed);
+
+    let frame = 0;
+    const tick = (now: number) => {
+      if (
+        !audio.paused
+        && now - lastEmitMsRef.current >= POSITION_EMIT_INTERVAL_MS
+      ) {
+        lastEmitMsRef.current = now;
+        const position = Math.max(0, audio.currentTime || 0);
+        onPositionChangeRef.current(position);
+
+        if (
+          !completeRef.current
+          && frontierRef.current - position <= FRONTIER_WAKE_SECONDS
+        ) {
+          onFrontierReachedRef.current();
+        }
+
+        if ("mediaSession" in navigator) {
+          const duration = frontierRef.current;
+          if (
+            Number.isFinite(duration)
+            && duration > 0
+            && Number.isFinite(position)
+          ) {
+            try {
+              navigator.mediaSession.setPositionState({
+                duration,
+                playbackRate: audio.playbackRate || 1,
+                position: Math.min(position, duration),
+              });
+            } catch {
+              // System media state is best-effort.
+            }
+          }
+        }
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      audio.removeEventListener("loadedmetadata", ready);
+      audio.removeEventListener("canplay", ready);
+      audio.removeEventListener("progress", progress);
+      audio.removeEventListener("durationchange", progress);
+      audio.removeEventListener("playing", markPlaying);
+      audio.removeEventListener("waiting", markBuffering);
+      audio.removeEventListener("stalled", markBuffering);
+      audio.removeEventListener("pause", markPaused);
+      audio.removeEventListener("ended", ended);
+      audio.removeEventListener("error", failed);
+    };
+  }, [applyPendingSeek]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title,
-      artist: artist || "WaveCast",
-      album: "WaveCast",
-    });
+
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title,
+        artist: artist || "WaveCast",
+        album: "WaveCast",
+      });
+    } catch {
+      // Older WebKit builds may expose mediaSession without MediaMetadata.
+    }
   }, [artist, title]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
     const mediaSession = navigator.mediaSession;
-    mediaSession.setActionHandler("play", onPlayRequest);
-    mediaSession.setActionHandler("pause", onPauseRequest);
-    mediaSession.setActionHandler("seekbackward", (details) => {
-      const audio = audioRef.current;
-      if (!audio) return;
-      onSeekRequest(Math.max(0, audio.currentTime - (details.seekOffset ?? 15)));
-    });
-    mediaSession.setActionHandler("seekforward", (details) => {
-      const audio = audioRef.current;
-      if (!audio) return;
-      onSeekRequest(
-        Math.min(
-          frontierRef.current,
-          audio.currentTime + (details.seekOffset ?? 30),
-        ),
+    const seekTo = (position: number) => {
+      onSeekRequestRef.current(
+        Math.max(0, Math.min(frontierRef.current, position)),
       );
-    });
-    mediaSession.setActionHandler("seekto", (details) => {
-      if (details.seekTime === undefined) return;
-      onSeekRequest(details.seekTime);
-    });
+    };
+    const handlers: Array<
+      [
+        MediaSessionAction,
+        ((details: MediaSessionActionDetails) => void) | null,
+      ]
+    > = [
+      ["play", () => onPlayRequestRef.current()],
+      ["pause", () => onPauseRequestRef.current()],
+      ["stop", () => onPauseRequestRef.current()],
+      ["seekbackward", (details) => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        seekTo(audio.currentTime - (details.seekOffset ?? 15));
+      }],
+      ["seekforward", (details) => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        seekTo(audio.currentTime + (details.seekOffset ?? 30));
+      }],
+      ["seekto", (details) => {
+        if (typeof details.seekTime === "number") seekTo(details.seekTime);
+      }],
+    ];
+
+    for (const [action, handler] of handlers) {
+      try {
+        mediaSession.setActionHandler(action, handler);
+      } catch {
+        // Unsupported system actions are optional.
+      }
+    }
+
     return () => {
-      for (const action of [
-        "play",
-        "pause",
-        "seekbackward",
-        "seekforward",
-        "seekto",
-      ] as MediaSessionAction[]) {
+      for (const [action] of handlers) {
         try {
           mediaSession.setActionHandler(action, null);
         } catch {
-          // Some browsers expose Media Session with a smaller action set.
+          // Unsupported action cleanup is optional.
         }
       }
     };
-  }, [onPauseRequest, onPlayRequest, onSeekRequest]);
-
-  const publishPositionState = (audio: HTMLAudioElement) => {
-    if (!("mediaSession" in navigator)) return;
-    const duration = frontierRef.current;
-    if (!Number.isFinite(duration) || duration <= 0) return;
-    try {
-      navigator.mediaSession.setPositionState({
-        duration,
-        playbackRate: audio.playbackRate || 1,
-        position: Math.min(Math.max(0, audio.currentTime), duration),
-      });
-    } catch {
-      // System media controls are an enhancement; audio playback stays primary.
-    }
-  };
+  }, []);
 
   return (
     <audio
       ref={audioRef}
       preload="auto"
       playsInline
-      onTimeUpdate={(event) => {
-        const audio = event.currentTarget;
-        onPositionChange(audio.currentTime);
-        publishPositionState(audio);
-        if (
-          !completeRef.current
-          && frontierRef.current - audio.currentTime <= FRONTIER_WAKE_SECONDS
-        ) {
-          onFrontierReached();
-        }
-      }}
-      onPlaying={() => onPlayingChange?.(true)}
-      onPause={() => onPlayingChange?.(false)}
-      onWaiting={() => {
-        const audio = audioRef.current;
-        if (
-          audio
-          && !completeRef.current
-          && frontierRef.current - audio.currentTime <= FRONTIER_WAKE_SECONDS
-        ) {
-          onFrontierReached();
-        }
-      }}
-      onStalled={onFrontierReached}
-      onEnded={() => {
-        if (completeRef.current) {
-          onEnded();
-        } else {
-          onFrontierReached();
-        }
-      }}
-      onError={() => onError("节目音频暂时无法播放")}
       aria-hidden="true"
+      data-testid="programme-audio"
     />
   );
 }

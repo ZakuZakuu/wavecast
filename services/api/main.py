@@ -1468,8 +1468,18 @@ def canonical_render_plan_for_episode(episode_id: str) -> MixPlan:
     return plan_episode_mix(PlayableEpisode(id=current.id, segments=ready_segments))
 
 
-async def _prepare_owned_music_assets(episode_id: str) -> MixdownPreparationResult:
-    """Snapshot provider-backed music before any deterministic server render."""
+async def _prepare_owned_music_assets(
+    episode_id: str,
+    *,
+    ready_only: bool = False,
+) -> MixdownPreparationResult:
+    """Snapshot provider-backed music before any deterministic server render.
+
+    Progressive programme rendering must ignore music that is not audio-ready
+    yet; otherwise speculative future slots with no playback URL would block the
+    already-renderable prefix. Full mixdown keeps the previous all-music
+    behavior.
+    """
 
     for attempt in range(2):
         current = orchestrator.get(episode_id)
@@ -1481,10 +1491,9 @@ async def _prepare_owned_music_assets(episode_id: str) -> MixdownPreparationResu
         reused_count = 0
 
         for segment in working.timeline_segments:
-            if not isinstance(segment, MusicSegment) or not segment.is_audio_ready:
-                # Future/speculative tracks are not render inputs yet. Snapshotting
-                # them would make an unfinished chapter block publication of the
-                # already-ready immutable prefix.
+            if not isinstance(segment, MusicSegment):
+                continue
+            if ready_only and not segment.is_audio_ready:
                 continue
             classification = classify_music_source(segment.audio_source_url or "")
             if classification.kind is MusicSourceKind.OWNED_ASSET:
@@ -1592,7 +1601,10 @@ async def render_program_stream(
     actor = principal(request)
     owned(episode_id, actor)
     try:
-        preparation = await _prepare_owned_music_assets(episode_id)
+        preparation = await _prepare_owned_music_assets(
+            episode_id,
+            ready_only=True,
+        )
         if not preparation.ready:
             raise HTTPException(
                 status_code=409,

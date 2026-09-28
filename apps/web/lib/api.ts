@@ -115,6 +115,10 @@ export const api = {
   programRenderStatus: (id: string) => request<ProgramRenderManifest>(
     `/episodes/${id}/program-render`,
   ),
+  ensureBuffer: (id: string) => request<LiveEpisode>(
+    `/episodes/${id}/ensure-buffer`,
+    { method: "POST", body: JSON.stringify({ target_chapters: 2 }) },
+  ),
   completed: (id: string) => request<LiveEpisode>(`/episodes/${id}/completed`, { method: "POST" }),
   completedSegment: (id: string, segmentId: string) =>
     request<LiveEpisode>(`/episodes/${id}/completed/${segmentId}`, { method: "POST" }),

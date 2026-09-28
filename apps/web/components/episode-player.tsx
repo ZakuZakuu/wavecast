@@ -122,6 +122,8 @@ export function EpisodePlayer({
     useState<ProgramRenderManifest | null>(null);
   const [renderState, setRenderState] =
     useState<"idle" | "preparing" | "ready" | "error">("idle");
+  const [programBuffering, setProgramBuffering] = useState(false);
+  const [renderRetryNonce, setRenderRetryNonce] = useState(0);
   const [seekToken, setSeekToken] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [chaptersOpen, setChaptersOpen] = useState(false);
@@ -146,6 +148,12 @@ export function EpisodePlayer({
   const renderQueuedRef = useRef(false);
   const renderSignatureRef = useRef<string | null>(null);
   const renderedSignatureRef = useRef<string | null>(null);
+  const renderRetryTimerRef = useRef<number | null>(null);
+  const renderRetryStateRef = useRef<{ signature: string | null; count: number }>({
+    signature: null,
+    count: 0,
+  });
+  const frontierWakeAtRef = useRef(0);
 
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
@@ -194,16 +202,34 @@ export function EpisodePlayer({
         if (localEpisodeRef.current?.id !== episodeIdAtRequest) return;
         setProgramManifest(manifest);
         renderedSignatureRef.current = signatureAtRequest;
+        renderRetryStateRef.current = { signature: signatureAtRequest, count: 0 };
+        if (renderRetryTimerRef.current !== null) {
+          window.clearTimeout(renderRetryTimerRef.current);
+          renderRetryTimerRef.current = null;
+        }
         setRenderState("ready");
         setError(null);
       })
       .catch((reason: unknown) => {
         if (localEpisodeRef.current?.id !== episodeIdAtRequest) return;
         if (reason instanceof ApiRequestError && reason.status === 409) {
-          // The editorial tail may still be waiting for narration/music. Keep
-          // the already-published immutable prefix and wait for the next
-          // structural Episode update rather than interrupting playback.
-          if (!programManifest) setRenderState("preparing");
+          // Rendering can race a concurrent generation update. Preserve the
+          // immutable prefix and retry the same structural signature a bounded
+          // number of times instead of declaring the programme stream broken.
+          setRenderState((state) => state === "ready" ? state : "preparing");
+          const retry = renderRetryStateRef.current;
+          if (retry.signature !== signatureAtRequest) {
+            retry.signature = signatureAtRequest;
+            retry.count = 0;
+          }
+          if (retry.count < 4 && renderRetryTimerRef.current === null) {
+            retry.count += 1;
+            const delayMs = retry.count * 750;
+            renderRetryTimerRef.current = window.setTimeout(() => {
+              renderRetryTimerRef.current = null;
+              setRenderRetryNonce((value) => value + 1);
+            }, delayMs);
+          }
           return;
         }
         setRenderState("error");
@@ -220,14 +246,28 @@ export function EpisodePlayer({
           queueMicrotask(requestProgramRender);
         }
       });
-  }, [programManifest]);
+  }, []);
 
   useEffect(() => {
     setProgramManifest(null);
     setRenderState("idle");
+    setProgramBuffering(false);
+    setRenderRetryNonce(0);
     renderedSignatureRef.current = null;
     renderQueuedRef.current = false;
     checkpointBucketRef.current = -1;
+    frontierWakeAtRef.current = 0;
+    renderRetryStateRef.current = { signature: null, count: 0 };
+    if (renderRetryTimerRef.current !== null) {
+      window.clearTimeout(renderRetryTimerRef.current);
+      renderRetryTimerRef.current = null;
+    }
+    return () => {
+      if (renderRetryTimerRef.current !== null) {
+        window.clearTimeout(renderRetryTimerRef.current);
+        renderRetryTimerRef.current = null;
+      }
+    };
   }, [localEpisode?.id]);
 
   useEffect(() => {
@@ -252,11 +292,14 @@ export function EpisodePlayer({
   useEffect(() => {
     if (
       currentRenderSignature
-      && currentRenderSignature !== renderedSignatureRef.current
+      && (
+        currentRenderSignature !== renderedSignatureRef.current
+        || renderRetryNonce > 0
+      )
     ) {
       requestProgramRender();
     }
-  }, [currentRenderSignature, requestProgramRender]);
+  }, [currentRenderSignature, renderRetryNonce, requestProgramRender]);
 
   useEffect(() => {
     let mounted = true;
@@ -570,14 +613,20 @@ export function EpisodePlayer({
   }, []);
 
   const handleFrontierReached = useCallback(() => {
+    const now = Date.now();
+    if (now - frontierWakeAtRef.current < 5_000) return;
+    frontierWakeAtRef.current = now;
+
     const target = localEpisodeRef.current;
     if (target) {
+      // This cursor is scheduling metadata only. The endpoint queues generation
+      // without advancing lifecycle segments or rewriting programme content.
       void api.programCheckpoint(target.id, browserPositionRef.current)
         .catch(() => undefined);
     }
-    if (renderSignatureRef.current !== renderedSignatureRef.current) {
-      requestProgramRender();
-    }
+    // Re-rendering the same structural signature is safe: the renderer verifies
+    // the frozen prefix byte-for-byte and can append newly available HLS chunks.
+    requestProgramRender();
   }, [requestProgramRender]);
 
   if (error && !localEpisode) {
@@ -707,9 +756,12 @@ export function EpisodePlayer({
         artist={mediaArtist}
         onPositionChange={handleProgramPosition}
         onPlayingChange={(playing) => {
-          if (playing) setBrowserPlaying(true);
-          else if (programManifest.complete) setBrowserPlaying(false);
+          if (playing) {
+            setProgramBuffering(false);
+            setBrowserPlaying(true);
+          }
         }}
+        onBufferingChange={setProgramBuffering}
         onEnded={handleProgrammeEnded}
         onFrontierReached={handleFrontierReached}
         onPlayRequest={resumePlayback}
@@ -859,7 +911,11 @@ export function EpisodePlayer({
         </button>
       </section>
 
-      {preparingAhead ? (
+      {programBuffering ? (
+        <div className="preparing-hint">
+          <i />正在缓冲节目音频
+        </div>
+      ) : preparingAhead ? (
         <div className="preparing-hint">
           <i />正在准备接下来的节目音频
         </div>
