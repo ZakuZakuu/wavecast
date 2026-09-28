@@ -661,3 +661,56 @@ Worker ownership/lease hardening and queue prioritization are separate concerns.
 An already healthy queue skips expensive planning but still permits the existing
 browser-ended recovery to start its ready successor. No transport, timeline
 immutability, catalog identity, or seek-frontier contract changes.
+
+
+## Immutable programme feed decision — September 28, 2026
+
+Production listening on iOS exposed a boundary the realtime two-deck browser
+renderer cannot make reliable enough: independent media elements may buffer,
+seek, resume, and surface system-media state independently even when they share
+one canonical MixPlan. Gain automation also belongs in the rendered audio, not
+in best-effort per-element browser volume updates.
+
+The primary listener transport therefore becomes one logical rendered programme
+feed. MixPlan remains the canonical editorial/arrangement contract; ffmpeg (or a
+future equivalent deterministic renderer) executes it before the bytes reach the
+listener. The Web client consumes one media source and no longer owns mixing.
+
+The programme feed has five invariants:
+
+1. Rendered audio is immutable.
+2. Generation may only append beyond the render frontier.
+3. Play, pause, seek, replay, and device/system-media actions never mutate
+   programme content or already-rendered bytes.
+4. Live playback and the final cached/exported programme consume the same
+   rendered timeline rather than independently re-rendering editorial history.
+5. A transition is committed only after every input required for that transition
+   is ready. Unfinished narration cannot be silently skipped by the immutable
+   renderer and inserted later behind the frontier.
+
+Publication is chunked. Each immutable transport chunk stores its absolute
+programme interval, the fingerprint of the exact sliced MixPlan that produced
+it, and a content hash. Before appending new chunks, the renderer recomputes the
+fingerprint for every frozen interval against the newest MixPlan. Any difference
+is an immutability violation rather than permission to rewrite history.
+
+A render holdback keeps the unresolved tail speculative. The initial policy
+holds back 30 seconds and publishes complete six-second chunks. This is longer
+than the current deterministic crossfade/host transition lookback, so a later
+successor can still change the outgoing song's tail without touching published
+audio. When timing profiles introduce earlier lyric/section-aware transition
+points, the commit-horizon policy must be extended explicitly rather than
+silently shortening this guarantee.
+
+The live transport is an HLS EVENT playlist over immutable AAC/MPEG-TS chunks.
+The playlist itself is mutable and append-only; referenced chunks are immutable.
+A MATERIALIZED/PUBLISHED Episode may close the feed with ENDLIST. Final M4A/MP3
+export should be derived from the already-published programme timeline, ideally
+by remuxing rather than regenerating arrangement decisions.
+
+This supersedes the two-HTMLAudioElement realtime mixer as the target production
+transport. The existing browser renderer remains a temporary compatibility
+fallback while the single-source player is migrated. The investment being kept
+is substantial: provider selection, progressive generation, narration assets,
+Arrangement primitives, canonical MixPlan, gain envelopes, source snapshots,
+and ffmpeg rendering all remain valid and move one layer earlier in the stack.
