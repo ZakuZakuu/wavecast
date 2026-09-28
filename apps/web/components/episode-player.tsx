@@ -74,7 +74,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     [localEpisode, serverCurrent, transportSegmentId],
   );
   const upcoming = useMemo(
-    () => localEpisode && current ? nextVisibleSegment(localEpisode) : undefined,
+    () => localEpisode && current
+      ? nextVisibleSegment(localEpisode, current.id)
+      : undefined,
     [current, localEpisode],
   );
   const arrangementEpisodeId = localEpisode?.id ?? null;
