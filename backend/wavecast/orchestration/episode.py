@@ -655,6 +655,22 @@ class EpisodeOrchestrator:
         episode.last_activity_at = self.now()
         return self.repository.save(episode)
 
+    def checkpoint_program_playback(
+        self,
+        episode_id: str,
+        position_seconds: float,
+    ) -> LiveEpisode:
+        """Persist single-source listener progress without changing programme content."""
+
+        episode = self._active_episode(episode_id)
+        if position_seconds < 0:
+            raise EpisodeRuntimeError("programme playback checkpoint cannot be negative")
+        episode.program_transport_active = True
+        episode.program_playback_position_seconds = position_seconds
+        episode.last_activity_at = self.now()
+        return self.repository.save(episode)
+
+
     def arm_handoff(self, episode_id: str, segment_id: str) -> LiveEpisode:
         """Lock the next ready source without changing the active browser segment."""
 
