@@ -111,7 +111,7 @@ export function ProgrammeAudioPlayer({
       }
     }
 
-    // MSE/hls.js applies currentTime asynchronously. Keep the seek intent
+    // MSE/hls.js can apply currentTime asynchronously. Keep the seek intent
     // pending until the media element confirms the target instead of allowing
     // one stale frame to overwrite the requested position.
     if (
