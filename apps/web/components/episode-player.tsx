@@ -696,6 +696,24 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const commitSeek = useCallback((value: number) => {
     if (!localEpisode) return;
 
+    if (usingProgramStream && programRender) {
+      const target = clampProgramPosition(programRender, value);
+      setBrowserPosition(target);
+      browserPositionRef.current = target;
+      listenerPositionRef.current = target;
+      setSeekToken((token) => token + 1);
+      seekPreviewRef.current = null;
+      setSeekPreview(null);
+      setError(null);
+      if (
+        !programRender.complete
+        && programRender.renderedFrontierSeconds - target <= 45
+      ) {
+        requestProgramRefill();
+      }
+      return;
+    }
+
     const mapped = transportMixPlan
       ? mixPositionToLinearPosition(
           localEpisode,
@@ -836,8 +854,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [
     browserPlaying,
     localEpisode,
+    programRender,
+    requestProgramRefill,
     setEpisode,
     transportMixPlan,
+    usingProgramStream,
   ]);
 
   const commitSeekPreview = useCallback(() => {
@@ -854,9 +875,13 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (!localEpisode) return;
     awaitingSuccessorRef.current = false;
     setBrowserPlaying(false);
-    const position = Math.floor(browserPositionRef.current);
-    void api.checkpoint(localEpisode.id, position)
-      .then(() => api.pause(localEpisode.id))
+
+    const persistPause = usingProgramStream
+      ? api.pause(localEpisode.id)
+      : api.checkpoint(localEpisode.id, Math.floor(browserPositionRef.current))
+          .then(() => api.pause(localEpisode.id));
+
+    void persistPause
       .then((paused) => {
         playbackAnchorRef.current = playbackAnchor(paused);
         setEpisode(paused);
@@ -865,7 +890,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       .catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : "暂停状态暂时没有同步");
       });
-  }, [localEpisode, setEpisode]);
+  }, [localEpisode, setEpisode, usingProgramStream]);
 
   const resumePlayback = useCallback(() => {
     if (!localEpisode) return;
@@ -903,41 +928,54 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }
 
   const displayedLinearPosition = browserPosition;
-  const listenerPosition = transportMixPlan
-    ? linearPositionToMixPosition(
-        localEpisode,
-        transportMixPlan,
-        displayedLinearPosition,
-      ).mixPositionSeconds
-    : displayedLinearPosition;
-  const maxSeekPosition = transportMixPlan?.durationSeconds
-    ?? localEpisode.generated_frontier_seconds;
-  const arrangementCompression = transportMixPlan
+  const listenerPosition = usingProgramStream
+    ? browserPosition
+    : transportMixPlan
+      ? linearPositionToMixPosition(
+          localEpisode,
+          transportMixPlan,
+          displayedLinearPosition,
+        ).mixPositionSeconds
+      : displayedLinearPosition;
+  const maxSeekPosition = usingProgramStream && programRender
+    ? programRender.renderedFrontierSeconds
+    : transportMixPlan?.durationSeconds
+      ?? localEpisode.generated_frontier_seconds;
+  const arrangementCompression = !usingProgramStream && transportMixPlan
     ? Math.max(
         0,
         localEpisode.generated_frontier_seconds
           - transportMixPlan.durationSeconds,
       )
     : 0;
-  const fullDuration = Math.max(
-    maxSeekPosition,
-    localEpisode.timeline_duration_seconds - arrangementCompression,
-  );
+  const fullDuration = usingProgramStream
+    ? Math.max(
+        maxSeekPosition,
+        programRender?.complete
+          ? maxSeekPosition
+          : localEpisode.program_estimated_duration_seconds,
+      )
+    : Math.max(
+        maxSeekPosition,
+        localEpisode.timeline_duration_seconds - arrangementCompression,
+      );
   const generatedPercent = Math.min(
     100,
     Math.round((maxSeekPosition / Math.max(1, fullDuration)) * 100),
   );
   const displayedPosition = seekPreview ?? listenerPosition;
-  const currentOffset = current
+  const currentOffset = !usingProgramStream && current
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
-  const seekPreviewLinearPosition = seekPreview !== null && transportMixPlan
-    ? mixPositionToLinearPosition(
-        localEpisode,
-        transportMixPlan,
-        seekPreview,
-      ).linearPositionSeconds
-    : seekPreview;
+  const seekPreviewLinearPosition = usingProgramStream
+    ? seekPreview
+    : seekPreview !== null && transportMixPlan
+      ? mixPositionToLinearPosition(
+          localEpisode,
+          transportMixPlan,
+          seekPreview,
+        ).linearPositionSeconds
+      : seekPreview;
   const seekPreviewTarget = seekPreviewLinearPosition !== null
     ? segmentAtPosition(localEpisode, seekPreviewLinearPosition)
     : undefined;
@@ -955,7 +993,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const currentChapterIndex = Math.max(0, chapterIds.indexOf(current?.chapter_id ?? chapterIds[0]));
   const chapterTitle = CHAPTER_TITLES[currentChapterIndex] ?? "Chapter " + (currentChapterIndex + 1);
   const remaining = Math.max(0, fullDuration - displayedPosition);
-  const preparingAhead = localEpisode.state !== "MATERIALIZED" && localEpisode.buffer_ahead_seconds < 45;
+  const preparingAhead = localEpisode.state !== "MATERIALIZED" && (
+    usingProgramStream && programRender
+      ? programRender.renderedFrontierSeconds - displayedPosition < 45
+      : localEpisode.buffer_ahead_seconds < 45
+  );
 
   const nextPlayback = async () => {
     const runNext = async () => {
