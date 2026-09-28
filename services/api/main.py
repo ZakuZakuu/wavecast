@@ -1662,7 +1662,7 @@ async def program_render_status(
     request: Request,
 ) -> ProgramRenderManifest:
     actor = principal(request)
-    owned(episode_id, actor)
+    await to_thread.run_sync(owned, episode_id, actor)
     try:
         manifest = await load_program_manifest(audio_storage, episode_id)
     except ProgramImmutabilityError as error:

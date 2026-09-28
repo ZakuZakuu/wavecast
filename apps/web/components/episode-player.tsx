@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiRequestError } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import {
-  createEffectGenerationGuard,
   createSynchronizationGuard,
 } from "../lib/episode-synchronization";
 import {
@@ -122,6 +121,7 @@ export function EpisodePlayer({
     useState<ProgramRenderManifest | null>(null);
   const [renderState, setRenderState] =
     useState<"idle" | "preparing" | "ready" | "error">("idle");
+  const [renderStatusChecked, setRenderStatusChecked] = useState(false);
   const [programBuffering, setProgramBuffering] = useState(false);
   const [renderRetryNonce, setRenderRetryNonce] = useState(0);
   const [seekToken, setSeekToken] = useState(0);
@@ -142,7 +142,6 @@ export function EpisodePlayer({
   const checkpointBucketRef = useRef(-1);
   const materializationRequestVersionRef = useRef<number | null>(null);
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
-  const startEffectGuardRef = useRef(createEffectGenerationGuard());
   const synchronizationGuardRef = useRef(createSynchronizationGuard());
   const renderInFlightRef = useRef(false);
   const renderQueuedRef = useRef(false);
@@ -263,6 +262,7 @@ export function EpisodePlayer({
     setRenderState("idle");
     setProgramBuffering(false);
     setRenderRetryNonce(0);
+    setRenderStatusChecked(false);
     renderedSignatureRef.current = null;
     renderQueuedRef.current = false;
     checkpointBucketRef.current = -1;
@@ -277,6 +277,41 @@ export function EpisodePlayer({
         window.clearTimeout(renderRetryTimerRef.current);
         renderRetryTimerRef.current = null;
       }
+    };
+  }, [localEpisode?.id]);
+
+  useEffect(() => {
+    if (!localEpisode?.id) return;
+    let cancelled = false;
+    const episodeIdAtLookup = localEpisode.id;
+
+    // Re-entering the player should reuse the already-published immutable
+    // manifest immediately. A POST render can still extend it in the
+    // background, but must not gate the UI on an expensive full-prefix render.
+    setRenderState((state) => state === "ready" ? state : "preparing");
+    void api.programRenderStatus(episodeIdAtLookup)
+      .then((manifest) => {
+        if (cancelled || localEpisodeRef.current?.id !== episodeIdAtLookup) return;
+        setProgramManifest(manifest);
+        setRenderState("ready");
+        setError(null);
+      })
+      .catch((reason: unknown) => {
+        if (cancelled || localEpisodeRef.current?.id !== episodeIdAtLookup) return;
+        if (!(reason instanceof ApiRequestError && reason.status === 404)) {
+          // Status lookup is only an optimization. The normal POST render path
+          // below remains the source of truth if the lookup is unavailable.
+          setRenderState((state) => state === "ready" ? state : "preparing");
+        }
+      })
+      .finally(() => {
+        if (!cancelled && localEpisodeRef.current?.id === episodeIdAtLookup) {
+          setRenderStatusChecked(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
     };
   }, [localEpisode?.id]);
 
@@ -301,7 +336,8 @@ export function EpisodePlayer({
 
   useEffect(() => {
     if (
-      currentRenderSignature
+      renderStatusChecked
+      && currentRenderSignature
       && (
         currentRenderSignature !== renderedSignatureRef.current
         || renderRetryNonce > 0
@@ -309,21 +345,15 @@ export function EpisodePlayer({
     ) {
       requestProgramRender();
     }
-  }, [currentRenderSignature, renderRetryNonce, requestProgramRender]);
+  }, [
+    currentRenderSignature,
+    renderRetryNonce,
+    renderStatusChecked,
+    requestProgramRender,
+  ]);
 
   useEffect(() => {
     let mounted = true;
-    const startGeneration = startEffectGuardRef.current.start();
-    const deferLeave = (id: string) => {
-      queueMicrotask(() => {
-        if (!startEffectGuardRef.current.isCurrent(startGeneration)) return;
-        void api.leave(id).then((left) => {
-          if (startEffectGuardRef.current.isCurrent(startGeneration)) {
-            setEpisode(left);
-          }
-        }).catch(() => undefined);
-      });
-    };
 
     const load = episodeId ? api.get(episodeId) : api.start(seedId!);
     load.then((started) => {
@@ -333,10 +363,7 @@ export function EpisodePlayer({
         program_id: started.seed_id,
         episode_id: started.id,
       }).catch(() => undefined);
-      if (!mounted) {
-        deferLeave(started.id);
-        return;
-      }
+      if (!mounted) return;
 
       const stored = storedProgramPosition(started.id);
       // Only listener-owned playback state may restore <audio>.currentTime.
@@ -349,14 +376,17 @@ export function EpisodePlayer({
       browserPositionRef.current = initialPosition;
       setSeekToken((token) => token + 1);
     }).catch((reason: unknown) => {
+      if (!mounted) return;
       setError(
         reason instanceof Error ? reason.message : "节目暂时无法开始",
       );
     });
 
     return () => {
+      // Route changes, Safari background suspension and component remounts are
+      // not listener intent. Only the explicit "停止后台准备" action may call
+      // /leave; otherwise MINI-player re-entry must resume the same session.
       mounted = false;
-      if (episodeIdRef.current) deferLeave(episodeIdRef.current);
     };
   }, [episodeId, seedId, setEpisode]);
 
