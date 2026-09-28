@@ -168,6 +168,31 @@ def test_program_render_appends_immutable_chunks_and_reuses_frozen_prefix(
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_program_render_pads_short_source_to_canonical_duration(
+    tmp_path: Path,
+) -> None:
+    async def run() -> None:
+        storage = LocalObjectStorageProvider(tmp_path / "audio")
+        # Provider duration metadata is integer-second today, while encoded
+        # media may end several AAC frames earlier. The programme renderer must
+        # preserve the canonical timeline by padding only that missing tail.
+        await storage.put("source.wav", _wav_bytes(5.55), "audio/wav")
+
+        rendered = await render_program_prefix(
+            _plan(6),
+            storage,
+            complete=True,
+            holdback_seconds=0,
+        )
+
+        assert rendered.complete is True
+        assert rendered.rendered_frontier_seconds == pytest.approx(6, abs=0.15)
+        assert rendered.chunks
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
 def test_future_mix_inputs_do_not_change_frozen_transport_bytes(tmp_path: Path) -> None:
     async def run() -> None:
         storage = LocalObjectStorageProvider(tmp_path / "audio")

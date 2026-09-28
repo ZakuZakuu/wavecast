@@ -78,6 +78,11 @@ def build_filter_graph(plan: MixPlan) -> str:
         "".join(labels)
         + f"amix=inputs={len(plan.clips)}:duration=longest:normalize=0:"
         + "dropout_transition=0,"
+        # Source metadata is integer-second today and some provider assets end
+        # a few AAC frames before that declared duration. The canonical
+        # programme timeline is authoritative, so fill only a missing tail with
+        # deterministic silence instead of letting the mixed stream end early.
+        + f"apad=whole_dur={_number(plan.duration_seconds)},"
         + f"atrim=duration={_number(plan.duration_seconds)},"
         + "asetpts=PTS-STARTPTS[mixout]"
     )
@@ -333,7 +338,10 @@ def render_mix_hls_prefix(
     segments = _parse_hls_segments(playlist_path)
     duration = sum(segment.duration_seconds for segment in segments)
     if abs(duration - plan.duration_seconds) > 0.15:
-        raise MixRenderError("ffmpeg HLS duration diverges from the canonical plan")
+        raise MixRenderError(
+            "ffmpeg HLS duration diverges from the canonical plan: "
+            f"rendered={duration:.3f}s plan={plan.duration_seconds:.3f}s"
+        )
     return HlsRenderResult(
         playlist_path=playlist_path,
         segments=segments,
