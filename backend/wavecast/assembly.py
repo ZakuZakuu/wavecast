@@ -357,7 +357,6 @@ class LiveEpisodeAssemblyService:
 
         # Prefer the actual FastStart route when it produced a usable exact
         # catalog identity.
-        selected = fast_result.plan.selected_next_track
         for proposal in proposals:
             prepared = await prepare_candidate(proposal)
             if prepared is not None:
