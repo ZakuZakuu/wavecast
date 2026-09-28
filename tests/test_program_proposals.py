@@ -183,6 +183,37 @@ def test_llm_generator_resolves_opening_track_before_creating_proposal() -> None
     assert "track_ref" not in opening_schema
 
 
+def test_llm_generator_falls_back_to_playable_song_by_same_artist() -> None:
+    generator, _llm = _live_generator(
+        ProgramProposalDraftBatch(
+            proposals=[
+                ProgramProposalDraft(
+                    title="同艺人开场兜底",
+                    short_description="精确歌名不可用时仍然从同一艺人的真实目录开始。",
+                    editorial_route=["从艺人气质出发", "再向相邻声音展开"],
+                    opening_track_candidates=[
+                        OpeningTrackCandidate(
+                            artist="Signal Garden",
+                            title="Definitely Not In Catalog",
+                        )
+                    ],
+                )
+            ]
+        )
+    )
+
+    proposal = asyncio.run(
+        generator.generate(
+            ProposalGenerationRequest(prompt="想听 Signal Garden 风格的夜间电子乐")
+        )
+    )[0]
+
+    assert proposal.opening_track_ref == "mock:bridge"
+    assert proposal.opening_track_artist == "Signal Garden"
+    assert proposal.opening_track_title == "Midnight Transfer"
+    assert proposal.opening_track_duration_seconds == 24
+
+
 def test_llm_generator_fails_closed_when_no_opening_candidate_resolves() -> None:
     generator, _llm = _live_generator(
         ProgramProposalDraftBatch(

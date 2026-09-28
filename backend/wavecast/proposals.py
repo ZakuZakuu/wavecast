@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from wavecast.intelligence.models import TrackProposal
+from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.models.episode import CoverParams, EpisodeSeed, utc_now
 from wavecast.providers.contracts import ProgressiveLLMProvider
@@ -331,6 +331,9 @@ def _prompt_excerpt(prompt: str, *, limit: int = 26) -> str:
     return compact if len(compact) <= limit else compact[: limit - 1] + "…"
 
 
+def _proposal_catalog_name(value: str) -> str:
+    return " ".join(value.casefold().split())
+
 
 def _cover_for(proposal_id: str, title: str) -> CoverParams:
     digest = sha1(f"{proposal_id}|{title}".encode()).hexdigest()
@@ -376,26 +379,7 @@ class LLMProgramProposalGenerator:
 
         proposals: list[ProgramProposal] = []
         for draft in raw.proposals:
-            resolved = None
-            opening_duration_seconds: int | None = None
-            for candidate in draft.opening_track_candidates[: self.max_opening_candidates]:
-                resolved = await resolve_track_proposal_across_providers(
-                    self.retrieval,
-                    candidate.to_track_proposal(),
-                    limit=5,
-                )
-                if resolved is None:
-                    continue
-                try:
-                    metadata = await self.retrieval.registry.resolve_track(resolved)
-                except ProviderError:
-                    resolved = None
-                    continue
-                if not metadata.playable or metadata.duration_seconds <= 0:
-                    resolved = None
-                    continue
-                opening_duration_seconds = metadata.duration_seconds
-                break
+            resolved, opening_duration_seconds = await self._resolve_opening_track(draft)
             if resolved is None or opening_duration_seconds is None:
                 raise ProgramProposalGenerationError("opening_track_unresolved")
 
@@ -420,6 +404,78 @@ class LLMProgramProposalGenerator:
                 )
             )
         return proposals
+
+    async def _resolve_opening_track(
+        self,
+        draft: ProgramProposalDraft,
+    ) -> tuple[ResolvedTrack | None, int | None]:
+        candidates = draft.opening_track_candidates[: self.max_opening_candidates]
+
+        # First preserve the strongest contract: the model-proposed exact
+        # artist/title must independently resolve to a playable catalog item.
+        for candidate in candidates:
+            resolved = await resolve_track_proposal_across_providers(
+                self.retrieval,
+                candidate.to_track_proposal(),
+                limit=5,
+            )
+            if resolved is None:
+                continue
+            verified = await self._verified_playable_track(resolved)
+            if verified is not None:
+                return verified
+
+        # Proposal generation is a pre-listening UX boundary, not a canonical
+        # track-selection promise. If exact titles miss the catalog, keep the
+        # model's artist intent but choose another real playable song by exactly
+        # that artist. This avoids a dead-end Tune action without weakening the
+        # exact identity rules used by the Episode timeline.
+        seen_artists: set[str] = set()
+        for candidate in candidates:
+            artist_key = _proposal_catalog_name(candidate.artist)
+            if artist_key in seen_artists:
+                continue
+            seen_artists.add(artist_key)
+            alternatives = await self.retrieval.search(
+                candidate.artist,
+                requested_artist=candidate.artist,
+                limit=5,
+            )
+            for alternative in alternatives:
+                if _proposal_catalog_name(alternative.artist) != artist_key:
+                    continue
+                fallback = ResolvedTrack(
+                    track_ref=alternative.track_ref,
+                    canonical_artist=alternative.artist,
+                    canonical_title=alternative.title,
+                )
+                verified = await self._verified_playable_track(fallback)
+                if verified is None:
+                    continue
+                resolved_fallback, duration = verified
+                if _proposal_catalog_name(resolved_fallback.canonical_artist) != artist_key:
+                    continue
+                return resolved_fallback, duration
+        return None, None
+
+    async def _verified_playable_track(
+        self,
+        resolved: ResolvedTrack,
+    ) -> tuple[ResolvedTrack, int] | None:
+        try:
+            metadata = await self.retrieval.registry.resolve_track(resolved)
+        except ProviderError:
+            return None
+        if not metadata.playable or metadata.duration_seconds <= 0:
+            return None
+        return (
+            ResolvedTrack(
+                track_ref=metadata.track_ref,
+                canonical_artist=metadata.artist,
+                canonical_title=metadata.title,
+            ),
+            metadata.duration_seconds,
+        )
 
     @staticmethod
     def _prompt(request: ProposalGenerationRequest) -> str:
