@@ -10,10 +10,11 @@ import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixd
 import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff } from "../lib/playback";
 import { activeMixClipsAt, linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, overlapLeadSeconds, type MixPlan } from "../lib/mix-timeline";
 import { usePlayerStore } from "../lib/player-store";
-import type { LiveEpisode } from "../lib/types";
+import type { LiveEpisode, ProgramRenderManifest } from "../lib/types";
 import { isEpisodeSaved, recordRecentEpisode, saveMaterializedEpisode } from "../lib/user-library";
 import { ChaptersSheet } from "./chapters-sheet";
 import { MixAudioPlayer } from "./mix-audio-player";
+import { ProgramStreamPlayer, supportsNativeHls } from "./program-stream-player";
 import { ProgramArtwork } from "./program-artwork";
 import { WaveIcon } from "./wave-icon";
 
@@ -27,6 +28,13 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const [browserPosition, setBrowserPosition] = useState(0);
   const [browserPlaying, setBrowserPlaying] = useState(false);
   const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
+  const [programManifest, setProgramManifest] = useState<ProgramRenderManifest | null>(null);
+  const [programStreamSupported, setProgramStreamSupported] = useState(false);
+  const [programStreamActive, setProgramStreamActive] = useState(false);
+  const [programPosition, setProgramPosition] = useState(0);
+  const [programSeekToken, setProgramSeekToken] = useState(0);
+  const [programBuffering, setProgramBuffering] = useState(false);
+  const [programRenderRetryNonce, setProgramRenderRetryNonce] = useState(0);
   const [armedSuccessorId, setArmedSuccessorId] = useState<string | null>(null);
   const [transportSegmentId, setTransportSegmentId] = useState<string | null>(null);
   const [seekToken, setSeekToken] = useState(0);
@@ -58,6 +66,17 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const seekQueueRef = useRef<Promise<void>>(Promise.resolve());
   const resumeAfterSeekRef = useRef(false);
   const listenerPositionRef = useRef(0);
+  const programPositionRef = useRef(0);
+  const programStreamActiveRef = useRef(false);
+  const programRenderQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const programRenderSignatureRef = useRef<string | null>(null);
+  const programRenderRetryTimerRef = useRef<number | null>(null);
+  const programRenderRetryStateRef = useRef<{ signature: string | null; count: number }>({
+    signature: null,
+    count: 0,
+  });
+  const autoMaterializeEpisodeRef = useRef<string | null>(null);
+  const mixPlanRef = useRef<MixPlan | null>(null);
 
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
@@ -91,6 +110,21 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     () => localEpisode ? mixPlanSignature(localEpisode) : null,
     [localEpisode],
   );
+  const programRenderSignature = useMemo(
+    () => localEpisode
+      ? [
+          localEpisode.state,
+          ...localEpisode.segments.map((segment) => [
+            segment.id,
+            segment.state,
+            segment.audio_source_url ?? "",
+            segment.actual_duration_seconds ?? "",
+            segment.planned_duration_seconds,
+          ].join(":")),
+        ].join("|")
+      : null,
+    [localEpisode],
+  );
   const arrangementClip = useMemo(
     () => mixPlan?.clips.find((clip) => clip.segmentId === current?.id) ?? null,
     [current?.id, mixPlan],
@@ -101,6 +135,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   );
   const transportMixPlan = arrangementClip ? mixPlan : null;
   localEpisodeRef.current = localEpisode;
+  mixPlanRef.current = mixPlan;
+  programStreamActiveRef.current = programStreamActive;
+  programPositionRef.current = programPosition;
 
   useEffect(() => {
     setTransportSegmentId(null);
@@ -114,7 +151,26 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     seekIntentCounterRef.current += 1;
     pendingSeekIntentRef.current = null;
     resumeAfterSeekRef.current = false;
+    setProgramManifest(null);
+    setProgramStreamActive(false);
+    programStreamActiveRef.current = false;
+    setProgramPosition(0);
+    programPositionRef.current = 0;
+    setProgramSeekToken(0);
+    setProgramBuffering(false);
+    programRenderSignatureRef.current = null;
+    if (programRenderRetryTimerRef.current !== null) {
+      window.clearTimeout(programRenderRetryTimerRef.current);
+      programRenderRetryTimerRef.current = null;
+    }
+    programRenderRetryStateRef.current = { signature: null, count: 0 };
+    setProgramRenderRetryNonce(0);
+    autoMaterializeEpisodeRef.current = null;
   }, [localEpisode?.id]);
+
+  useEffect(() => {
+    setProgramStreamSupported(supportsNativeHls());
+  }, []);
 
   useEffect(() => {
     if (
@@ -161,6 +217,145 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [arrangementEpisodeId, arrangementSignature]);
 
   useEffect(() => {
+    if (
+      !programStreamSupported
+      || !localEpisode
+      || !localEpisode.is_listener_active
+      || localEpisode.state === "MATERIALIZED"
+      || localEpisode.state === "MATERIALIZING"
+      || autoMaterializeEpisodeRef.current === localEpisode.id
+    ) return;
+
+    autoMaterializeEpisodeRef.current = localEpisode.id;
+    void api.materialize(localEpisode.id)
+      .then((requested) => {
+        const latest = localEpisodeRef.current;
+        if (latest?.id === requested.id && requested.version >= latest.version) {
+          setEpisode(requested);
+        }
+      })
+      .catch(() => {
+        // Full publication is an optimization boundary. If the queue is
+        // temporarily unavailable, legacy progressive generation remains live.
+      });
+  }, [
+    localEpisode?.id,
+    localEpisode?.is_listener_active,
+    localEpisode?.state,
+    programStreamSupported,
+    setEpisode,
+  ]);
+
+  useEffect(() => {
+    if (
+      !programStreamSupported
+      || !localEpisode
+      || !programRenderSignature
+      || programRenderSignatureRef.current === programRenderSignature
+    ) return;
+
+    const episodeIdAtRequest = localEpisode.id;
+    programRenderSignatureRef.current = programRenderSignature;
+    programRenderQueueRef.current = programRenderQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const latestBefore = localEpisodeRef.current;
+        if (latestBefore?.id !== episodeIdAtRequest) return;
+
+        try {
+          const manifest = await api.programRender(episodeIdAtRequest);
+          const latest = localEpisodeRef.current;
+          if (latest?.id !== episodeIdAtRequest) return;
+          setProgramManifest(manifest);
+          programRenderRetryStateRef.current = {
+            signature: programRenderSignature,
+            count: 0,
+          };
+          if (programRenderRetryTimerRef.current !== null) {
+            window.clearTimeout(programRenderRetryTimerRef.current);
+            programRenderRetryTimerRef.current = null;
+          }
+
+          if (
+            manifest.chunks.length > 0
+            && manifest.renderedFrontierSeconds > 0
+            && !programStreamActiveRef.current
+          ) {
+            const latestPlan = mixPlanRef.current;
+            const legacyPosition = browserPositionRef.current;
+            const listenerPosition = (
+              latestPlan?.episodeId === latest.id
+                ? linearPositionToMixPosition(
+                    latest,
+                    latestPlan,
+                    legacyPosition,
+                  ).mixPositionSeconds
+                : legacyPosition
+            );
+            const maxActivatablePosition = Math.max(
+              0,
+              manifest.renderedFrontierSeconds - 0.25,
+            );
+            // Never migrate by clamping a listener who is already ahead of
+            // the immutable feed. Keep legacy playback running until the
+            // renderer catches up so activation cannot create a backward jump.
+            if (listenerPosition > maxActivatablePosition) return;
+            const bounded = Math.max(0, listenerPosition);
+
+            handoffRequestGuardRef.current.start();
+            completionRequestGuardRef.current.start();
+            setArmedSuccessorId(null);
+            armedSuccessorIdRef.current = null;
+            armedFromSegmentIdRef.current = null;
+            armedEpisodeRef.current = null;
+            handoffAttemptRef.current = null;
+            setTransportSegmentId(null);
+
+            programPositionRef.current = bounded;
+            setProgramPosition(bounded);
+            setProgramSeekToken((token) => token + 1);
+            programStreamActiveRef.current = true;
+            setProgramStreamActive(true);
+          }
+        } catch (reason: unknown) {
+          if (
+            reason instanceof ApiRequestError
+            && reason.status === 409
+          ) {
+            // Snapshot persistence and generation can briefly race the render.
+            // Retry the same structural signature a few times even if no new
+            // Episode event arrives; do not require listener interaction.
+            programRenderSignatureRef.current = null;
+            const retry = programRenderRetryStateRef.current;
+            if (retry.signature !== programRenderSignature) {
+              retry.signature = programRenderSignature;
+              retry.count = 0;
+            }
+            if (
+              retry.count < 3
+              && programRenderRetryTimerRef.current === null
+            ) {
+              retry.count += 1;
+              const delayMs = retry.count * 750;
+              programRenderRetryTimerRef.current = window.setTimeout(() => {
+                programRenderRetryTimerRef.current = null;
+                setProgramRenderRetryNonce((value) => value + 1);
+              }, delayMs);
+            }
+            return;
+          }
+          // Keep the proven legacy player available while publication is
+          // unavailable; one failed render must not interrupt current audio.
+        }
+      });
+  }, [
+    localEpisode?.id,
+    programRenderSignature,
+    programRenderRetryNonce,
+    programStreamSupported,
+  ]);
+
+  useEffect(() => {
     let mounted = true;
     const startGeneration = startEffectGuardRef.current.start();
     const deferLeave = (id: string) => {
@@ -175,7 +370,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     const leaveOnPageExit = () => {
       const currentEpisode = localEpisodeRef.current;
       if (episodeIdRef.current && currentEpisode) {
-        void api.checkpoint(episodeIdRef.current, Math.floor(browserPositionRef.current));
+        if (!programStreamActiveRef.current) {
+          void api.checkpoint(
+            episodeIdRef.current,
+            Math.floor(browserPositionRef.current),
+          );
+        }
         navigator.sendBeacon(`/api/episodes/${episodeIdRef.current}/leave`);
       }
     };
@@ -225,6 +425,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [localEpisode?.id, current?.id, current?.title]);
 
   useEffect(() => {
+    if (programStreamActiveRef.current) {
+      playbackAnchorRef.current = playbackAnchor(localEpisode);
+      return;
+    }
     if (pendingSeekIntentRef.current !== null) {
       playbackAnchorRef.current = playbackAnchor(localEpisode);
       return;
@@ -580,6 +784,67 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     upcomingArrangementClip,
   ]);
 
+  const handleProgramPosition = useCallback((positionSeconds: number) => {
+    const bounded = Math.max(0, positionSeconds);
+    programPositionRef.current = bounded;
+    setProgramPosition(bounded);
+  }, []);
+
+  const commitProgramSeek = useCallback((value: number) => {
+    const frontier = programManifest?.renderedFrontierSeconds ?? 0;
+    if (frontier <= 0) return;
+    const bounded = Math.min(
+      Math.max(0, value),
+      Math.max(0, frontier - 0.05),
+    );
+    programPositionRef.current = bounded;
+    setProgramPosition(bounded);
+    setProgramSeekToken((token) => token + 1);
+    seekPreviewRef.current = null;
+    setSeekPreview(null);
+  }, [programManifest?.renderedFrontierSeconds]);
+
+  const requestProgramPlay = useCallback(() => {
+    setBrowserPlaying(true);
+    setError(null);
+  }, []);
+
+  const requestProgramPause = useCallback(() => {
+    setBrowserPlaying(false);
+  }, []);
+
+  const fallbackFromProgramStream = useCallback(() => {
+    const latest = localEpisodeRef.current;
+    const plan = mixPlanRef.current;
+    if (latest && plan?.episodeId === latest.id) {
+      const mapped = mixPositionToLinearPosition(
+        latest,
+        plan,
+        programPositionRef.current,
+      );
+      setTransportSegmentId(mapped.segmentId);
+      browserPositionRef.current = mapped.linearPositionSeconds;
+      setBrowserPosition(mapped.linearPositionSeconds);
+      setSeekToken((token) => token + 1);
+    }
+    programStreamActiveRef.current = false;
+    setProgramStreamActive(false);
+    setProgramBuffering(false);
+    setError("单流节目暂时无法继续，已切回兼容播放");
+  }, []);
+
+  const handleProgramEnded = useCallback(() => {
+    const latest = localEpisodeRef.current;
+    setBrowserPlaying(false);
+    if (latest) {
+      void api.recordUserEvent({
+        event_type: "PLAY_COMPLETE",
+        program_id: latest.seed_id,
+        episode_id: latest.id,
+      }).catch(() => undefined);
+    }
+  }, []);
+
   const commitSeek = useCallback((value: number) => {
     if (!localEpisode) return;
 
@@ -734,13 +999,20 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     // cannot accidentally issue two seek requests.
     seekPreviewRef.current = null;
     setSeekPreview(null);
+    if (programStreamActiveRef.current) {
+      commitProgramSeek(preview);
+      return;
+    }
     commitSeek(preview);
-  }, [commitSeek]);
+  }, [commitProgramSeek, commitSeek]);
 
   const pausePlayback = useCallback(() => {
     if (!localEpisode) return;
     awaitingSuccessorRef.current = false;
     setBrowserPlaying(false);
+    if (programStreamActiveRef.current) {
+      return;
+    }
     const position = Math.floor(browserPositionRef.current);
     void api.checkpoint(localEpisode.id, position)
       .then(() => api.pause(localEpisode.id))
@@ -758,6 +1030,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (!localEpisode) return;
     awaitingSuccessorRef.current = false;
     setBrowserPlaying(true);
+    if (programStreamActiveRef.current && localEpisode.is_listener_active) {
+      setError(null);
+      return;
+    }
     void api.resume(localEpisode.id)
       .then((resumed) => {
         playbackAnchorRef.current = playbackAnchor(resumed);
@@ -789,15 +1065,17 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     );
   }
 
+  const streamMode = programStreamActive && programManifest !== null;
+
   const displayedLinearPosition = browserPosition;
-  const listenerPosition = transportMixPlan
+  const legacyListenerPosition = transportMixPlan
     ? linearPositionToMixPosition(
         localEpisode,
         transportMixPlan,
         displayedLinearPosition,
       ).mixPositionSeconds
     : displayedLinearPosition;
-  const maxSeekPosition = transportMixPlan?.durationSeconds
+  const legacyMaxSeekPosition = transportMixPlan?.durationSeconds
     ?? localEpisode.generated_frontier_seconds;
   const arrangementCompression = transportMixPlan
     ? Math.max(
@@ -806,26 +1084,59 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           - transportMixPlan.durationSeconds,
       )
     : 0;
-  const fullDuration = Math.max(
-    maxSeekPosition,
+  const legacyFullDuration = Math.max(
+    legacyMaxSeekPosition,
     localEpisode.timeline_duration_seconds - arrangementCompression,
   );
+
+  const maxSeekPosition = streamMode
+    ? programManifest.renderedFrontierSeconds
+    : legacyMaxSeekPosition;
+  const fullDuration = streamMode
+    ? (
+        programManifest.complete
+          ? programManifest.renderedFrontierSeconds
+          : Math.max(
+              programManifest.renderedFrontierSeconds,
+              mixPlan?.durationSeconds ?? legacyFullDuration,
+            )
+      )
+    : legacyFullDuration;
   const generatedPercent = Math.min(
     100,
     Math.round((maxSeekPosition / Math.max(1, fullDuration)) * 100),
   );
-  const displayedPosition = seekPreview ?? listenerPosition;
+  const displayedPosition = seekPreview ?? (
+    streamMode ? programPosition : legacyListenerPosition
+  );
+
+  const activeProgramClips = streamMode && mixPlan
+    ? activeMixClipsAt(mixPlan, programPosition)
+    : [];
+  const displayProgramClip = activeProgramClips.find(
+    (clip) => clip.lane === "VOICE",
+  ) ?? activeProgramClips[activeProgramClips.length - 1];
+  const displayCurrent = displayProgramClip
+    ? localEpisode.segments.find(
+        (segment) => segment.id === displayProgramClip.segmentId,
+      ) ?? current
+    : current;
+
   const currentOffset = current
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
-  const seekPreviewLinearPosition = seekPreview !== null && transportMixPlan
+  const seekPreviewLinearPosition = (
+    !streamMode
+    && seekPreview !== null
+    && transportMixPlan
+  )
     ? mixPositionToLinearPosition(
         localEpisode,
         transportMixPlan,
         seekPreview,
       ).linearPositionSeconds
     : seekPreview;
-  const seekPreviewTarget = seekPreviewLinearPosition !== null
+  const seekPreviewTarget = !streamMode && seekPreviewLinearPosition !== null
     ? segmentAtPosition(localEpisode, seekPreviewLinearPosition)
     : undefined;
   const preloadTarget = (
@@ -838,11 +1149,25 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const preloadSourceUrl = isPlaybackReadySegment(preloadTarget)
     ? preloadTarget?.audio_source_url ?? null
     : null;
-  const chapterIds = Array.from(new Set(localEpisode.segments.map((segment) => segment.chapter_id)));
-  const currentChapterIndex = Math.max(0, chapterIds.indexOf(current?.chapter_id ?? chapterIds[0]));
-  const chapterTitle = CHAPTER_TITLES[currentChapterIndex] ?? "Chapter " + (currentChapterIndex + 1);
+  const chapterIds = Array.from(
+    new Set(localEpisode.segments.map((segment) => segment.chapter_id)),
+  );
+  const currentChapterIndex = Math.max(
+    0,
+    chapterIds.indexOf(displayCurrent?.chapter_id ?? chapterIds[0]),
+  );
+  const chapterTitle = CHAPTER_TITLES[currentChapterIndex]
+    ?? "Chapter " + (currentChapterIndex + 1);
   const remaining = Math.max(0, fullDuration - displayedPosition);
-  const preparingAhead = localEpisode.state !== "MATERIALIZED" && localEpisode.buffer_ahead_seconds < 45;
+  const preparingAhead = streamMode
+    ? (
+        !programManifest.complete
+        && programManifest.renderedFrontierSeconds - displayedPosition < 45
+      )
+    : (
+        localEpisode.state !== "MATERIALIZED"
+        && localEpisode.buffer_ahead_seconds < 45
+      );
 
   const nextPlayback = async () => {
     const runNext = async () => {
@@ -865,24 +1190,49 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   listenerPositionRef.current = displayedPosition;
 
   const nudgeSeek = (seconds: number) => {
-    commitSeek(Math.max(0, listenerPositionRef.current + seconds));
+    const target = Math.max(0, listenerPositionRef.current + seconds);
+    if (streamMode) {
+      commitProgramSeek(target);
+      return;
+    }
+    commitSeek(target);
   };
 
   return (
     <main className="now-playing-page page-enter">
-      <MixAudioPlayer
-        segment={current}
-        upcomingSegment={upcoming}
-        plan={mixPlan}
-        playing={browserPlaying && localEpisode.is_listener_active}
-        positionSeconds={currentOffset}
-        seekToken={seekToken}
-        armedSuccessorId={armedSuccessorId}
-        preloadSourceUrl={preloadSourceUrl}
-        onPositionChange={handleAudioPosition}
-        onEnded={completeBrowserSegment}
-        onError={() => setError("音频暂时无法播放")}
-      />
+      {streamMode ? (
+        <ProgramStreamPlayer
+          streamUrl={programManifest.streamUrl}
+          playing={browserPlaying && localEpisode.is_listener_active}
+          positionSeconds={programPosition}
+          seekToken={programSeekToken}
+          title={localEpisode.title ?? "WaveCast"}
+          subtitle={displayCurrent?.kind === "MUSIC"
+            ? [displayCurrent.artist, displayCurrent.title].filter(Boolean).join(" — ")
+            : displayCurrent?.title ?? "WaveCast"}
+          onPositionChange={handleProgramPosition}
+          onPlayRequest={requestProgramPlay}
+          onPauseRequest={requestProgramPause}
+          onSeekRequest={commitProgramSeek}
+          onBufferingChange={setProgramBuffering}
+          onEnded={handleProgramEnded}
+          onError={fallbackFromProgramStream}
+        />
+      ) : (
+        <MixAudioPlayer
+          segment={current}
+          upcomingSegment={upcoming}
+          plan={mixPlan}
+          playing={browserPlaying && localEpisode.is_listener_active}
+          positionSeconds={currentOffset}
+          seekToken={seekToken}
+          armedSuccessorId={armedSuccessorId}
+          preloadSourceUrl={preloadSourceUrl}
+          onPositionChange={handleAudioPosition}
+          onEnded={completeBrowserSegment}
+          onError={() => setError("音频暂时无法播放")}
+        />
+      )}
 
       <div className="player-topbar">
         <Link href="/" className="icon-button glass-button" aria-label="返回节目"><WaveIcon name="back" /></Link>
@@ -933,9 +1283,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         <h1>{localEpisode.title ?? "正在播放"}</h1>
         <p className="chapter-line">Chapter {currentChapterIndex + 1} · {chapterTitle}</p>
         <p className="track-line">
-          {current?.kind === "MUSIC"
-            ? [current.artist, current.title].filter(Boolean).join(" — ")
-            : current?.title ?? "主持人正在串联"}
+          {displayCurrent?.kind === "MUSIC"
+            ? [displayCurrent.artist, displayCurrent.title].filter(Boolean).join(" — ")
+            : displayCurrent?.title ?? "主持人正在串联"}
         </p>
       </section>
 
@@ -948,6 +1298,13 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           value={Math.min(displayedPosition, Math.max(1, maxSeekPosition))}
           onChange={(event) => {
             const value = Number(event.target.value);
+            if (streamMode) {
+              if (value <= maxSeekPosition) {
+                seekPreviewRef.current = value;
+                setSeekPreview(value);
+              }
+              return;
+            }
             const linearValue = transportMixPlan
               ? mixPositionToLinearPosition(
                   localEpisode,
@@ -996,7 +1353,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         </button>
       </section>
 
-      {preparingAhead ? (
+      {streamMode && programBuffering ? (
+        <div className="preparing-hint"><i />正在缓冲节目音频</div>
+      ) : preparingAhead ? (
         <div className="preparing-hint"><i />正在准备接下来的章节</div>
       ) : upcoming ? (
         <div className="up-next">接下来：<strong>{upcoming.title}</strong>{upcoming.artist ? " · " + upcoming.artist : ""}</div>
