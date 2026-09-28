@@ -7,6 +7,61 @@ state is maintained in `docs/PROJECT_STATE.md`.
 
 ---
 
+## Active handoff: Narration P0
+
+This is the current pre-preliminary listening-quality work. A replacement
+session should start here, then read `docs/PROJECT_STATE.md` and ADR 0020.
+
+**Branches**
+
+- `ZakuZakuu/wavecast:feat/narration-p0`, based on `integration`
+- `ZakuZakuu/wavecast-music-dev:feat/narration-timing-p0`, based on sidecar
+  `main`
+- Hosted `integration` must not move until the feature PR is coherent and CI
+  is observed passing. This avoids unnecessary Railway/Vercel deployments.
+
+**P0 acceptance target**
+
+1. FastStart successor contains music only; no fixed first-transition copy.
+   Writer later authors the first direct A -> B slot if it is still speculative.
+2. `HostMode.NONE/LIGHT/FULL` changes actual narration behavior, not only a
+   prompt label. LIGHT is shorter/sparser; FULL remains guided-listening.
+3. A provider-neutral `TrackTimingProfile` carries real duration plus optional
+   timestamp-only lyric/vocal timing. P0 never stores or sends lyric text to the
+   LLM.
+4. MixPlan uses vocal timing when available: do not start the host over an
+   outgoing lead-vocal phrase, and do not let the incoming lead vocal begin
+   under the host. Missing timing metadata falls back to current fixed mixing.
+5. TTS prosody/emotion is **not** part of this P0. Tune it later with human
+   listening after the two major preliminary blockers (narration + UI) are
+   stable.
+
+**Implementation map**
+
+- `backend/wavecast/presentation.py`: host-density ratio/prompt policy.
+- `backend/wavecast/assembly.py`: music-only FastStart, Writer-owned bridge,
+  host-mode slot thinning, progressive-session propagation.
+- `backend/wavecast/audio_timing.py`: provider-neutral timing contract and
+  safe overlap helpers.
+- `backend/wavecast/providers/{music_http,netease,registry}.py`: optional
+  timing retrieval/attachment.
+- `backend/wavecast/models/{episode,progressive}.py`: durable timing and
+  presentation metadata.
+- `backend/wavecast/arrangement/planner.py`: lyric/vocal-aware voice/music
+  placement.
+- Sidecar `netease_sidecar/{upstream,timing,app}.py`: `/lyric` timestamp
+  normalization and `/tracks/{id}/timing`; raw lyric text is discarded.
+- Tests cover timing parsing, zero-slot budgets, host density, music-only
+  FastStart, sidecar timing, and lyric-aware arrangement geometry.
+
+**Deployment/cost discipline**
+
+Use PR CI for validation. Do not push incremental edits to `integration`.
+After the whole checkpoint is accepted, merge/deploy the sidecar once, then move
+WaveCast `integration` once. Railway Agent is not required.
+
+---
+
 ## How to use this handoff
 
 This document records the durable product, architecture, and long-range
