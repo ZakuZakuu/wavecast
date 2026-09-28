@@ -68,7 +68,11 @@ from wavecast.models.episode import (
     SegmentState,
 )
 from wavecast.orchestration.generation import GeneratedChapter
-from wavecast.presentation import HostMode, PresentationIntent
+from wavecast.presentation import (
+    HostMode,
+    PresentationIntent,
+    narration_ratio_for_host_mode,
+)
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
     ProgressiveAssemblySession,
@@ -297,8 +301,6 @@ class LiveEpisodeAssemblyService:
 
         async def prepare_candidate(
             proposal: TrackProposal,
-            *,
-            use_fast_narration: bool,
         ) -> GeneratedChapter | None:
             proposal_key = (proposal.artist.casefold(), proposal.title.casefold())
             if proposal_key in seen:
@@ -314,56 +316,13 @@ class LiveEpisodeAssemblyService:
             if resolved is None or _same_song_identity(resolved, opening_track):
                 return None
 
-            first_narration = fast_result.plan.first_narration
-            if request.presentation_intent.host_mode is HostMode.NONE:
-                bootstrap_script = RadioScript(blocks=[], intended_duration_seconds=1)
-            elif fast_result.trace.fallback_used or not use_fast_narration:
-                language = resolve_output_language(request.output_language, request.topic)
-                if language is OutputLanguage.ZH_CN:
-                    bridge_text = (
-                        f"刚才听到的是 {opening_track.canonical_artist} 的"
-                        f"《{opening_track.canonical_title}》。接下来先听 "
-                        f"{resolved.canonical_artist} 的《{resolved.canonical_title}》，"
-                        "后面的节目路线还在继续展开。"
-                    )
-                elif language is OutputLanguage.JA_JP:
-                    bridge_text = (
-                        f"今聴いたのは{opening_track.canonical_artist}の"
-                        f"「{opening_track.canonical_title}」でした。続いて "
-                        f"{resolved.canonical_artist}の「{resolved.canonical_title}」です。"
-                    )
-                else:
-                    bridge_text = (
-                        f"That was {opening_track.canonical_artist} — "
-                        f"{opening_track.canonical_title}. Up next is "
-                        f"{resolved.canonical_artist} — {resolved.canonical_title}."
-                    )
-                bootstrap_script = RadioScript(
-                    blocks=[
-                        RadioScriptBlock(
-                            kind=RadioScriptBlockKind.TRACK_INTRO,
-                            text=bridge_text,
-                            duration_seconds=10,
-                            track_index=0,
-                        )
-                    ],
-                    intended_duration_seconds=10,
-                )
-            else:
-                bootstrap_script = RadioScript(
-                    blocks=[
-                        RadioScriptBlock(
-                            kind=RadioScriptBlockKind.TRACK_INTRO,
-                            text=first_narration.text,
-                            tts_text=first_narration.tts_text,
-                            duration_seconds=first_narration.intended_duration_seconds,
-                            track_index=0,
-                            tts_cues=list(first_narration.tts_cues),
-                            evidence_ids=list(first_narration.evidence_ids),
-                        )
-                    ],
-                    intended_duration_seconds=first_narration.intended_duration_seconds,
-                )
+            # FastStart owns continuity, not final host copy. Persist music
+            # immediately and let the evidence-scoped Writer author the first
+            # A -> B bridge asynchronously once the progressive session exists.
+            # This removes the repeated deterministic "that was / up next"
+            # sentence from normal listening without putting Writer on the
+            # time-to-first-successor critical path.
+            bootstrap_script = RadioScript(blocks=[], intended_duration_seconds=1)
 
             try:
                 prepared = await self.composer.prepare_tracks([resolved])
@@ -384,19 +343,10 @@ class LiveEpisodeAssemblyService:
                 for segment in playable.segments
                 if isinstance(segment, NarrationSegment)
             ]
-            expected_narration = (
-                0
-                if request.presentation_intent.host_mode is HostMode.NONE
-                else 1
-            )
             if (
                 len(music) != 1
                 or not music[0].is_audio_ready
-                or len(narration) != expected_narration
-                or (
-                    narration
-                    and narration[0].state is not SegmentState.SCRIPT_READY
-                )
+                or narration
             ):
                 return None
             return _generated_runtime_chapter(
@@ -409,14 +359,7 @@ class LiveEpisodeAssemblyService:
         # catalog identity.
         selected = fast_result.plan.selected_next_track
         for proposal in proposals:
-            prepared = await prepare_candidate(
-                proposal,
-                use_fast_narration=(
-                    selected is not None
-                    and proposal.artist.casefold() == selected.artist.casefold()
-                    and proposal.title.casefold() == selected.title.casefold()
-                ),
-            )
+            prepared = await prepare_candidate(proposal)
             if prepared is not None:
                 return prepared
 
@@ -435,8 +378,7 @@ class LiveEpisodeAssemblyService:
                     title=candidate.title,
                     reasons=["FastStart catalog bootstrap from the opening artist."],
                     confidence=0.5,
-                ),
-                use_fast_narration=False,
+                )
             )
             if prepared is not None:
                 return prepared
@@ -670,7 +612,10 @@ class LiveEpisodeAssemblyService:
             unresolved_count=len(unresolved),
         )
         try:
-            slot_contexts = _build_narration_slot_contexts(resolved_chapters)
+            slot_contexts = _apply_host_mode_to_slot_contexts(
+                _build_narration_slot_contexts(resolved_chapters),
+                request.presentation_intent.host_mode,
+            )
         except NarrationPlacementError as error:
             raise EpisodeAssemblyError(
                 str(error),
@@ -754,7 +699,10 @@ class LiveEpisodeAssemblyService:
         resolved_music_seconds = sum(item.asset.duration for item in prepared_tracks)
         timing_plan = build_program_timing_plan(
             desired_total_seconds=request.desired_duration_seconds,
-            target_narration_ratio=self.narration_ratio,
+            target_narration_ratio=narration_ratio_for_host_mode(
+                request.presentation_intent.host_mode,
+                full_ratio=self.narration_ratio,
+            ),
             resolved_music_seconds=resolved_music_seconds,
             chapter_slot_counts=[len(contexts) for contexts in slot_contexts],
         )
@@ -786,6 +734,7 @@ class LiveEpisodeAssemblyService:
                     bundle.evidence,
                     previous_committed_context=previous_context,
                     next_track_metadata=next_metadata,
+                    host_mode=request.presentation_intent.host_mode,
                     target_duration_seconds=timing_plan.chapter_budgets[index].target_narration_seconds,
                     output_language=resolve_output_language(request.output_language, request.topic),
                     topic=request.topic,
@@ -806,6 +755,9 @@ class LiveEpisodeAssemblyService:
                     item.writer_chapter.connection_from_previous_track
                     for item in resolved_chapters
                 ],
+                require_final_slot=(
+                    request.presentation_intent.host_mode is not HostMode.NONE
+                ),
             )
         except NarrationPlacementError as error:
             raise EpisodeAssemblyError(
@@ -1418,7 +1370,10 @@ def _build_progressive_session(
         )
     )
     try:
-        all_slot_contexts = _build_narration_slot_contexts(normalized)
+        all_slot_contexts = _apply_host_mode_to_slot_contexts(
+            _build_narration_slot_contexts(normalized),
+            request.presentation_intent.host_mode,
+        )
     except NarrationPlacementError as error:
         raise EpisodeAssemblyError(
             str(error),
@@ -1462,7 +1417,10 @@ def _build_progressive_session(
         )
     timing_plan = build_program_timing_plan(
         desired_total_seconds=request.desired_duration_seconds,
-        target_narration_ratio=narration_ratio,
+        target_narration_ratio=narration_ratio_for_host_mode(
+            request.presentation_intent.host_mode,
+            full_ratio=narration_ratio,
+        ),
         resolved_music_seconds=future_music_count * _ESTIMATED_TRACK_DURATION_SECONDS,
         chapter_slot_counts=[len(contexts) for contexts in future_slots],
     )
@@ -1472,7 +1430,9 @@ def _build_progressive_session(
             chapter=item.writer_chapter,
             resolved_track=item.track,
             slot_contexts=future_slots[index],
-            target_narration_seconds=timing_plan.chapter_budgets[index].target_narration_seconds,
+            target_narration_seconds=max(
+                1, timing_plan.chapter_budgets[index].target_narration_seconds
+            ),
         )
         for index, item in enumerate(future)
     ]
@@ -1483,6 +1443,7 @@ def _build_progressive_session(
         max_tracks=request.max_tracks,
         max_chapters=request.max_chapters,
         output_language=resolve_output_language(request.output_language, request.topic),
+        presentation_intent=request.presentation_intent,
         opening_track_ref=opening_track.track_ref,
         fast_plan=prepared.fast_result.plan,
         research=prepared.bundle,
@@ -1767,6 +1728,45 @@ def _build_narration_slot_contexts(
             )
         contexts.append(chapter_slots)
     return contexts
+
+def _apply_host_mode_to_slot_contexts(
+    contexts: list[list[NarrationSlotContext]],
+    mode: HostMode,
+) -> list[list[NarrationSlotContext]]:
+    """Apply deterministic host density after truthful gap ownership is known.
+
+    FULL keeps every owned gap. LIGHT keeps the first direct music bridge and
+    then every other direct bridge, while preserving curated narrative beats
+    and the final outro. NONE owns no narration slots.
+    """
+
+    if mode is HostMode.FULL:
+        return [list(items) for items in contexts]
+    if mode is HostMode.NONE:
+        return [[] for _ in contexts]
+
+    direct_gap_index = 0
+    filtered: list[list[NarrationSlotContext]] = []
+    for chapter_contexts in contexts:
+        kept: list[NarrationSlotContext] = []
+        for context in chapter_contexts:
+            if context.is_final:
+                kept.append(context)
+                continue
+            if (
+                context.placement is NarrationSlotPlacement.BEFORE_TRACK
+                and context.chapter_track is not None
+            ):
+                if direct_gap_index % 2 == 0:
+                    kept.append(context)
+                direct_gap_index += 1
+                continue
+            # Narrative-only / opening beats were explicitly created by the
+            # editorial route and remain valuable even in LIGHT mode.
+            kept.append(context)
+        filtered.append(kept)
+    return filtered
+
 
 def _merge_writer_blocks(
     blocks: list[RadioScriptBlock],
@@ -2347,6 +2347,7 @@ class StagedProgressiveChapterGenerator:
                 self.session.research.evidence,
                 previous_committed_context=previous_context,
                 next_track_metadata=next_track_metadata,
+                host_mode=self.session.presentation_intent.host_mode,
                 target_duration_seconds=chapter.target_narration_seconds,
                 output_language=self.session.output_language,
                 topic=self.session.topic,
@@ -2380,6 +2381,13 @@ class StagedProgressiveChapterGenerator:
                 chapter.chapter_id,
                 type(error).__name__,
             )
+            if self.session.presentation_intent.host_mode is not HostMode.FULL:
+                logger.info(
+                    "narration_authoring_skipped_fallback chapter_id=%s host_mode=%s",
+                    chapter.chapter_id,
+                    self.session.presentation_intent.host_mode.value,
+                )
+                return None
             try:
                 fallback_script = _deterministic_narration_fallback(
                     chapter,
