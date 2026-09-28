@@ -1450,10 +1450,12 @@ def canonical_render_plan_for_episode(episode_id: str) -> MixPlan:
         if segment.is_audio_ready:
             ready_segments.append(cast(MusicSegment | NarrationSegment, segment))
             continue
-        if (
-            segment.kind is SegmentKind.NARRATION
-            and current.presentation_intent.host_mode is HostMode.NONE
+        if segment.kind is SegmentKind.NARRATION and (
+            segment.state is SegmentState.SKIPPED
+            or current.presentation_intent.host_mode is HostMode.NONE
         ):
+            # A persisted SKIPPED state is an editorial decision and is safe to
+            # freeze past. A merely pending narration is not.
             continue
         break
     if not ready_segments:
