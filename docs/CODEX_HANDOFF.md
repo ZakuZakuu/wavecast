@@ -23,7 +23,10 @@ session should start here, then read `docs/PROJECT_STATE.md` and ADR 0020.
 **P0 acceptance target**
 
 1. FastStart successor contains music only; no fixed first-transition copy.
-   Writer later authors the first direct A -> B slot if it is still speculative.
+   After one successor/session is durable, the worker runs the first Writer
+   slot under its generation lease before the second buffer fill; TTS remains
+   detached. If Writer fails, the gap stays music-only instead of using canned
+   catalog copy.
 2. `HostMode.NONE/LIGHT/FULL` changes actual narration behavior, not only a
    prompt label. LIGHT is shorter/sparser; FULL remains guided-listening.
 3. A provider-neutral `TrackTimingProfile` carries real duration plus optional
@@ -56,8 +59,11 @@ session should start here, then read `docs/PROJECT_STATE.md` and ADR 0020.
 
 **Deployment/cost discipline**
 
-Use PR CI for validation. Do not push incremental edits to `integration`.
-After the whole checkpoint is accepted, merge/deploy the sidecar once, then move
+Prefer PR CI for validation, but GitHub Actions currently terminates PR jobs
+before runner steps begin (even unchanged Web/deployment-smoke), and the API
+exposes no job logs. Do not describe that as a code-test failure or success.
+Do not push incremental edits to `integration`. After the whole checkpoint is
+accepted and validation is available, merge/deploy the sidecar once, then move
 WaveCast `integration` once. Railway Agent is not required.
 
 ---
