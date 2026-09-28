@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
+from wavecast.audio_timing import TrackTimingProfile
 from wavecast.presentation import PresentationIntent
 
 
@@ -74,6 +75,7 @@ class EpisodeSeed(BaseModel):
     opening_track_title: str
     opening_track_artist: str
     opening_track_duration_seconds: int | None = Field(default=None, gt=0)
+    opening_track_timing_profile: TrackTimingProfile | None = None
     cover: CoverParams
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     generation_profile: str = "balanced"
