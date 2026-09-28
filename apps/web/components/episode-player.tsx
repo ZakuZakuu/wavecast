@@ -130,7 +130,20 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     seekIntentCounterRef.current += 1;
     pendingSeekIntentRef.current = null;
     resumeAfterSeekRef.current = false;
+    setProgramManifest(null);
+    setProgramStreamActive(false);
+    programStreamActiveRef.current = false;
+    setProgramPosition(0);
+    programPositionRef.current = 0;
+    setProgramSeekToken(0);
+    setProgramBuffering(false);
+    programRenderSignatureRef.current = null;
+    autoMaterializeEpisodeRef.current = null;
   }, [localEpisode?.id]);
+
+  useEffect(() => {
+    setProgramStreamSupported(supportsNativeHls());
+  }, []);
 
   useEffect(() => {
     if (
