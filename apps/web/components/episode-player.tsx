@@ -905,6 +905,10 @@ export function EpisodePlayer({
             setSeekPreview(value);
           }}
           onPointerUp={commitSeekPreview}
+          onPointerCancel={commitSeekPreview}
+          onTouchEnd={commitSeekPreview}
+          onTouchCancel={commitSeekPreview}
+          onMouseUp={commitSeekPreview}
           onKeyUp={commitSeekPreview}
           onBlur={commitSeekPreview}
           style={{ "--played": playedPercent + "%" } as React.CSSProperties}
