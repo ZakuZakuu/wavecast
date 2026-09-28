@@ -47,19 +47,52 @@ const CHAPTER_TITLES = [
 const PROGRAM_CHECKPOINT_SECONDS = 5;
 const PROGRAM_PROGRESS_PREFIX = "wavecast-program-progress:";
 
+type StoredProgramProgress = {
+  positionSeconds: number;
+  updatedAtMs: number;
+  continueWhileHidden: boolean;
+};
+
 function storedProgramPosition(episodeId: string): number | null {
   if (typeof window === "undefined") return null;
   const raw = window.localStorage.getItem(PROGRAM_PROGRESS_PREFIX + episodeId);
   if (raw === null) return null;
-  const value = Number(raw);
-  return Number.isFinite(value) && value >= 0 ? value : null;
+
+  // Backward compatibility with the original numeric-only checkpoint.
+  const legacy = Number(raw);
+  if (Number.isFinite(legacy) && legacy >= 0) return legacy;
+
+  try {
+    const stored = JSON.parse(raw) as Partial<StoredProgramProgress>;
+    const position = Number(stored.positionSeconds);
+    if (!Number.isFinite(position) || position < 0) return null;
+    if (
+      stored.continueWhileHidden === true
+      && Number.isFinite(stored.updatedAtMs)
+    ) {
+      const elapsed = Math.max(0, (Date.now() - Number(stored.updatedAtMs)) / 1000);
+      return position + elapsed;
+    }
+    return position;
+  } catch {
+    return null;
+  }
 }
 
-function storeProgramPosition(episodeId: string, position: number): void {
+function storeProgramPosition(
+  episodeId: string,
+  position: number,
+  continueWhileHidden = false,
+): void {
   if (typeof window === "undefined") return;
+  const value: StoredProgramProgress = {
+    positionSeconds: Math.max(0, position),
+    updatedAtMs: Date.now(),
+    continueWhileHidden,
+  };
   window.localStorage.setItem(
     PROGRAM_PROGRESS_PREFIX + episodeId,
-    String(Math.max(0, position)),
+    JSON.stringify(value),
   );
 }
 
@@ -138,6 +171,7 @@ export function EpisodePlayer({
 
   const episodeIdRef = useRef<string | null>(null);
   const browserPositionRef = useRef(0);
+  const browserPlayingRef = useRef(false);
   const seekPreviewRef = useRef<number | null>(null);
   const checkpointBucketRef = useRef(-1);
   const materializationRequestVersionRef = useRef<number | null>(null);
@@ -372,6 +406,7 @@ export function EpisodePlayer({
       const initialPosition = stored ?? 0;
       setEpisode(started);
       setBrowserPlaying(started.is_listener_active);
+      browserPlayingRef.current = started.is_listener_active;
       setBrowserPosition(initialPosition);
       browserPositionRef.current = initialPosition;
       setSeekToken((token) => token + 1);
@@ -399,6 +434,37 @@ export function EpisodePlayer({
     setExportState("idle");
     setExportArtifact(null);
     setExportError(null);
+  }, [localEpisode?.id]);
+
+  useEffect(() => {
+    if (!localEpisode?.id) return;
+
+    const persistForLifecycle = () => {
+      const continuing = (
+        document.visibilityState === "hidden"
+        && browserPlayingRef.current
+      );
+      storeProgramPosition(
+        localEpisode.id,
+        browserPositionRef.current,
+        continuing,
+      );
+    };
+
+    document.addEventListener("visibilitychange", persistForLifecycle);
+    window.addEventListener("pagehide", persistForLifecycle);
+
+    return () => {
+      document.removeEventListener("visibilitychange", persistForLifecycle);
+      window.removeEventListener("pagehide", persistForLifecycle);
+      // A React unmount caused by ordinary in-app navigation means the route-
+      // local audio element is gone, so wall-clock continuation must stop.
+      storeProgramPosition(
+        localEpisode.id,
+        browserPositionRef.current,
+        false,
+      );
+    };
   }, [localEpisode?.id]);
 
   useEffect(() => {
@@ -584,7 +650,11 @@ export function EpisodePlayer({
     const nextPosition = Math.max(0, position);
     setBrowserPosition(nextPosition);
     browserPositionRef.current = nextPosition;
-    storeProgramPosition(target.id, nextPosition);
+    storeProgramPosition(
+      target.id,
+      nextPosition,
+      document.visibilityState === "hidden" && browserPlayingRef.current,
+    );
 
     const bucket = Math.floor(nextPosition / PROGRAM_CHECKPOINT_SECONDS);
     if (bucket !== checkpointBucketRef.current) {
@@ -622,8 +692,10 @@ export function EpisodePlayer({
 
   const pausePlayback = useCallback(() => {
     setBrowserPlaying(false);
+    browserPlayingRef.current = false;
     const target = localEpisodeRef.current;
     if (target) {
+      storeProgramPosition(target.id, browserPositionRef.current, false);
       void api.programCheckpoint(target.id, browserPositionRef.current)
         .catch(() => undefined);
     }
@@ -633,6 +705,12 @@ export function EpisodePlayer({
     const target = localEpisodeRef.current;
     if (!target) return;
     setBrowserPlaying(true);
+    browserPlayingRef.current = true;
+    storeProgramPosition(
+      target.id,
+      browserPositionRef.current,
+      document.visibilityState === "hidden",
+    );
     if (target.is_listener_active) return;
     void api.resume(target.id)
       .then((resumed) => {
@@ -652,6 +730,7 @@ export function EpisodePlayer({
   const handleProgrammeEnded = useCallback(() => {
     const target = localEpisodeRef.current;
     setBrowserPlaying(false);
+    browserPlayingRef.current = false;
     if (!target) return;
     void api.programCheckpoint(target.id, browserPositionRef.current)
       .catch(() => undefined);
@@ -809,6 +888,7 @@ export function EpisodePlayer({
           if (playing) {
             setProgramBuffering(false);
             setBrowserPlaying(true);
+            browserPlayingRef.current = true;
           }
         }}
         onBufferingChange={setProgramBuffering}

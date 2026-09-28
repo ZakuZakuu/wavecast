@@ -54,6 +54,7 @@ export function ProgrammeAudioPlayer({
   const completeRef = useRef(complete);
   const lastSeekTokenRef = useRef(seekToken);
   const lastEmitMsRef = useRef(0);
+  const appliedSeekTargetRef = useRef<number | null>(null);
   const playGenerationRef = useRef(0);
 
   const onPositionChangeRef = useRef(onPositionChange);
@@ -109,21 +110,37 @@ export function ProgrammeAudioPlayer({
         return;
       }
       if (target < first - FRONTIER_SEEK_EPSILON_SECONDS) {
-        // Native Safari can initially expose only the EVENT live edge. Never
-        // reinterpret a request for programme time 0 as "start at live edge";
-        // keep the seek pending until the immutable prefix is seekable.
         return;
       }
     }
 
-    try {
-      if (Math.abs(audio.currentTime - target) > FRONTIER_SEEK_EPSILON_SECONDS) {
-        audio.currentTime = target;
-      }
+    // MSE/hls.js seeks are asynchronous. Do not clear the pending intent at
+    // assignment time: Chrome may still expose the old currentTime for another
+    // frame, which would otherwise overwrite the requested target.
+    if (
+      Math.abs(audio.currentTime - target) <= FRONTIER_SEEK_EPSILON_SECONDS
+      && !audio.seeking
+    ) {
       pendingSeekRef.current = null;
+      appliedSeekTargetRef.current = null;
       onPositionChangeRef.current(target);
-    } catch {
-      // loadedmetadata/canplay/progress/durationchange will retry this target.
+      return;
+    }
+
+    if (
+      !audio.seeking
+      && (
+        appliedSeekTargetRef.current === null
+        || Math.abs(appliedSeekTargetRef.current - target)
+          > FRONTIER_SEEK_EPSILON_SECONDS
+      )
+    ) {
+      try {
+        appliedSeekTargetRef.current = target;
+        audio.currentTime = target;
+      } catch {
+        appliedSeekTargetRef.current = null;
+      }
     }
   }, []);
 
@@ -161,6 +178,7 @@ export function ProgrammeAudioPlayer({
     playGenerationRef.current += 1;
     audio.pause();
     pendingSeekRef.current = Math.max(0, positionSeconds);
+    appliedSeekTargetRef.current = null;
     onBufferingChangeRef.current?.(true);
 
     const wakeIfDesired = () => {
@@ -255,6 +273,7 @@ export function ProgrammeAudioPlayer({
 
     lastSeekTokenRef.current = seekToken;
     pendingSeekRef.current = Math.max(0, positionSeconds);
+    appliedSeekTargetRef.current = null;
     applyPendingSeek();
   }, [applyPendingSeek, positionSeconds, seekToken]);
 
@@ -298,7 +317,10 @@ export function ProgrammeAudioPlayer({
       onBufferingChangeRef.current?.(false);
     };
     const progress = () => applyPendingSeek();
-    const seeked = () => applyPendingSeek();
+    const seeked = () => {
+      applyPendingSeek();
+      playIfDesired();
+    };
     const ended = () => {
       markPaused();
       if (completeRef.current) {
@@ -328,6 +350,7 @@ export function ProgrammeAudioPlayer({
     const tick = (now: number) => {
       if (
         !audio.paused
+        && pendingSeekRef.current === null
         && now - lastEmitMsRef.current >= POSITION_EMIT_INTERVAL_MS
       ) {
         lastEmitMsRef.current = now;
@@ -378,7 +401,29 @@ export function ProgrammeAudioPlayer({
       audio.removeEventListener("ended", ended);
       audio.removeEventListener("error", failed);
     };
-  }, [applyPendingSeek]);
+    const syncVisiblePosition = () => {
+      if (
+        document.visibilityState === "visible"
+        && pendingSeekRef.current === null
+        && audio.readyState > 0
+      ) {
+        onPositionChangeRef.current(Math.max(0, audio.currentTime || 0));
+      }
+    };
+    document.addEventListener("visibilitychange", syncVisiblePosition);
+    window.addEventListener("pageshow", syncVisiblePosition);
+
+    return () => {
+      document.removeEventListener("visibilitychange", syncVisiblePosition);
+      window.removeEventListener("pageshow", syncVisiblePosition);
+    };
+  }, []);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const markBuffering = () => {
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
