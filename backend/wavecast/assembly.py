@@ -1472,6 +1472,13 @@ def _build_narration_slot_contexts(
             )
         owned_gap_keys.add(key)
 
+    def gap_is_owned(
+        kind: str,
+        left_music_index: int | None,
+        right_music_index: int | None,
+    ) -> bool:
+        return (kind, left_music_index, right_music_index) in owned_gap_keys
+
     for index, item in enumerate(chapters):
         previous_index = next(
             (
@@ -1578,10 +1585,18 @@ def _build_narration_slot_contexts(
                 # trailing chapter owns that physical slot.
                 contexts.append(chapter_slots)
                 continue
+            gap_kind = "final" if is_final_chapter else "inter-track"
+            gap_right = None if is_final_chapter else upcoming_music_index
+            if gap_is_owned(gap_kind, previous_music_index, gap_right):
+                # Curator may emit several narrative-only beats for the same
+                # physical music gap. Keep the earliest owner rather than
+                # failing the whole Episode or inventing an extra playback gap.
+                contexts.append(chapter_slots)
+                continue
             claim_gap(
-                "final" if is_final_chapter else "inter-track",
+                gap_kind,
                 previous_music_index,
-                None if is_final_chapter else upcoming_music_index,
+                gap_right,
                 item.chapter.index,
             )
             chapter_slots.append(
@@ -1605,6 +1620,12 @@ def _build_narration_slot_contexts(
                 )
             )
         elif item.track is None and upcoming is not None:
+            if gap_is_owned("opening", None, upcoming_music_index):
+                # Multiple leading narrative beats still map to one physical
+                # opening gap after the immediate first track. The earliest
+                # beat owns it; later duplicates do not block music planning.
+                contexts.append(chapter_slots)
+                continue
             claim_gap("opening", None, upcoming_music_index, item.chapter.index)
             # Immediate playback starts the first playable track even when
             # leading narrative chapters are trackless.  Those chapters own
