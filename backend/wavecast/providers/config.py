@@ -51,7 +51,7 @@ class ProviderSettings:
     deepseek_deep_max_output_tokens: int = 12288
     max_attempts: int = 2
 
-    minimax_tts_base_url: str = "https://api.minimax.io"
+    minimax_tts_base_url: str = "https://api.minimax.cn"
     minimax_tts_model: str = "speech-2.8-turbo"
     minimax_tts_voice_id: str | None = None
     minimax_tts_speed: float = 0.8
@@ -136,7 +136,7 @@ class ProviderSettings:
             deepseek_deep_max_output_tokens=_positive_int_from_env(
                 "DEEPSEEK_DEEP_MAX_OUTPUT_TOKENS", default=12288
             ),
-            minimax_tts_base_url=getenv("MINIMAX_TTS_BASE_URL", "https://api.minimax.io"),
+            minimax_tts_base_url=getenv("MINIMAX_TTS_BASE_URL", "https://api.minimax.cn"),
             minimax_tts_model=getenv("MINIMAX_TTS_MODEL", "speech-2.8-turbo"),
             minimax_tts_voice_id=getenv("MINIMAX_TTS_VOICE_ID"),
             minimax_tts_speed=_positive_float_from_env("MINIMAX_TTS_SPEED", default=0.8),
