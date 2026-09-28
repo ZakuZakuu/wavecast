@@ -130,3 +130,26 @@ export type ProgramIdea = {
   status: "AVAILABLE" | "DISMISSED" | "USED";
   created_at: string;
 };
+
+
+export type ProgramRenderChunk = {
+  index: number;
+  startSeconds: number;
+  durationSeconds: number;
+  planFingerprint: string;
+  contentSha256: string;
+  assetKey: string;
+  audioUrl: string;
+};
+
+export type ProgramRenderManifest = {
+  schemaVersion: 1;
+  episodeId: string;
+  revision: string;
+  chunkDurationSeconds: number;
+  holdbackSeconds: number;
+  renderedFrontierSeconds: number;
+  complete: boolean;
+  chunks: ProgramRenderChunk[];
+  streamUrl: string;
+};
