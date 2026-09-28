@@ -34,6 +34,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const [programPosition, setProgramPosition] = useState(0);
   const [programSeekToken, setProgramSeekToken] = useState(0);
   const [programBuffering, setProgramBuffering] = useState(false);
+  const [programRenderRetryNonce, setProgramRenderRetryNonce] = useState(0);
   const [armedSuccessorId, setArmedSuccessorId] = useState<string | null>(null);
   const [transportSegmentId, setTransportSegmentId] = useState<string | null>(null);
   const [seekToken, setSeekToken] = useState(0);
@@ -69,6 +70,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const programStreamActiveRef = useRef(false);
   const programRenderQueueRef = useRef<Promise<void>>(Promise.resolve());
   const programRenderSignatureRef = useRef<string | null>(null);
+  const programRenderRetryTimerRef = useRef<number | null>(null);
+  const programRenderRetryStateRef = useRef<{ signature: string | null; count: number }>({
+    signature: null,
+    count: 0,
+  });
   const autoMaterializeEpisodeRef = useRef<string | null>(null);
   const mixPlanRef = useRef<MixPlan | null>(null);
 
@@ -153,6 +159,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     setProgramSeekToken(0);
     setProgramBuffering(false);
     programRenderSignatureRef.current = null;
+    if (programRenderRetryTimerRef.current !== null) {
+      window.clearTimeout(programRenderRetryTimerRef.current);
+      programRenderRetryTimerRef.current = null;
+    }
+    programRenderRetryStateRef.current = { signature: null, count: 0 };
+    setProgramRenderRetryNonce(0);
     autoMaterializeEpisodeRef.current = null;
   }, [localEpisode?.id]);
 
@@ -255,6 +267,14 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           const latest = localEpisodeRef.current;
           if (latest?.id !== episodeIdAtRequest) return;
           setProgramManifest(manifest);
+          programRenderRetryStateRef.current = {
+            signature: programRenderSignature,
+            count: 0,
+          };
+          if (programRenderRetryTimerRef.current !== null) {
+            window.clearTimeout(programRenderRetryTimerRef.current);
+            programRenderRetryTimerRef.current = null;
+          }
 
           if (
             manifest.chunks.length > 0
@@ -272,10 +292,15 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
                   ).mixPositionSeconds
                 : legacyPosition
             );
-            const bounded = Math.min(
-              Math.max(0, listenerPosition),
-              Math.max(0, manifest.renderedFrontierSeconds - 0.05),
+            const maxActivatablePosition = Math.max(
+              0,
+              manifest.renderedFrontierSeconds - 0.25,
             );
+            // Never migrate by clamping a listener who is already ahead of
+            // the immutable feed. Keep legacy playback running until the
+            // renderer catches up so activation cannot create a backward jump.
+            if (listenerPosition > maxActivatablePosition) return;
+            const bounded = Math.max(0, listenerPosition);
 
             handoffRequestGuardRef.current.start();
             completionRequestGuardRef.current.start();
@@ -297,8 +322,26 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
             reason instanceof ApiRequestError
             && reason.status === 409
           ) {
-            // A render can briefly race generation/snapshot persistence. The
-            // next structural Episode event retries with the new signature.
+            // Snapshot persistence and generation can briefly race the render.
+            // Retry the same structural signature a few times even if no new
+            // Episode event arrives; do not require listener interaction.
+            programRenderSignatureRef.current = null;
+            const retry = programRenderRetryStateRef.current;
+            if (retry.signature !== programRenderSignature) {
+              retry.signature = programRenderSignature;
+              retry.count = 0;
+            }
+            if (
+              retry.count < 3
+              && programRenderRetryTimerRef.current === null
+            ) {
+              retry.count += 1;
+              const delayMs = retry.count * 750;
+              programRenderRetryTimerRef.current = window.setTimeout(() => {
+                programRenderRetryTimerRef.current = null;
+                setProgramRenderRetryNonce((value) => value + 1);
+              }, delayMs);
+            }
             return;
           }
           // Keep the proven legacy player available while publication is
@@ -308,6 +351,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [
     localEpisode?.id,
     programRenderSignature,
+    programRenderRetryNonce,
     programStreamSupported,
   ]);
 
