@@ -25,6 +25,26 @@ from wavecast.orchestration.episode import InMemoryEpisodeRepository
 from wavecast.storage import LocalObjectStorageProvider
 
 
+class EventLoopRejectingEpisodeRepository(InMemoryEpisodeRepository):
+    """Regression guard for sync repositories used by async API handlers."""
+
+    @staticmethod
+    def _assert_outside_running_loop() -> None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        raise AssertionError("sync episode repository called from a running event loop")
+
+    def get(self, episode_id: str) -> LiveEpisode:
+        self._assert_outside_running_loop()
+        return super().get(episode_id)
+
+    def save(self, episode: LiveEpisode) -> LiveEpisode:
+        self._assert_outside_running_loop()
+        return super().save(episode)
+
+
 def _wav_bytes(duration_seconds: float, frequency: float) -> bytes:
     sample_rate = 8000
     frames = int(sample_rate * duration_seconds)
@@ -54,7 +74,7 @@ def test_program_stream_renders_idempotent_single_feed_without_mutating_episode(
         return storage
 
     storage = asyncio.run(arrange())
-    repository = InMemoryEpisodeRepository()
+    repository = EventLoopRejectingEpisodeRepository()
     orchestrator = EpisodeOrchestrator(repository)
     monkeypatch.setattr(api_module, "repository", repository)
     monkeypatch.setattr(api_module, "orchestrator", orchestrator)
@@ -152,7 +172,7 @@ def test_program_stream_renders_idempotent_single_feed_without_mutating_episode(
 def test_progressive_render_snapshot_ignores_unready_future_music(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repository = InMemoryEpisodeRepository()
+    repository = EventLoopRejectingEpisodeRepository()
     orchestrator = EpisodeOrchestrator(repository)
     monkeypatch.setattr(api_module, "repository", repository)
     monkeypatch.setattr(api_module, "orchestrator", orchestrator)

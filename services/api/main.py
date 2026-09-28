@@ -1482,7 +1482,11 @@ async def _prepare_owned_music_assets(
     """
 
     for attempt in range(2):
-        current = orchestrator.get(episode_id)
+        # PostgresEpisodeRepository intentionally exposes a synchronous
+        # orchestrator boundary backed by asyncio.run(). This helper itself is
+        # async because source snapshotting performs network I/O, so all
+        # synchronous episode repository access must leave the request loop.
+        current = await to_thread.run_sync(orchestrator.get, episode_id)
         working = current.model_copy(deep=True)
         updates: list[tuple[MusicSegment, str, str, int]] = []
         blocked: list[BlockedMusicSource] = []
@@ -1553,7 +1557,7 @@ async def _prepare_owned_music_assets(
             segment.asset_ref = asset_ref
             segment.actual_duration_seconds = duration_seconds
         try:
-            repository.save(working)
+            await to_thread.run_sync(repository.save, working)
             return result
         except EpisodeConcurrencyError:
             if attempt == 0:
@@ -1581,7 +1585,7 @@ def episode_mix_plan(episode_id: str, request: Request) -> MixPlan:
 async def prepare_mixdown(episode_id: str, request: Request) -> MixdownPreparationResult:
     """Snapshot provider-backed music into owned assets without rendering."""
     actor = principal(request)
-    owned(episode_id, actor)
+    await to_thread.run_sync(owned, episode_id, actor)
     try:
         return await _prepare_owned_music_assets(episode_id)
     except EpisodeConcurrencyError as error:
@@ -1599,7 +1603,7 @@ async def render_program_stream(
     """Append the current safe canonical prefix to the immutable programme feed."""
 
     actor = principal(request)
-    owned(episode_id, actor)
+    await to_thread.run_sync(owned, episode_id, actor)
     try:
         preparation = await _prepare_owned_music_assets(
             episode_id,
@@ -1610,8 +1614,8 @@ async def render_program_stream(
                 status_code=409,
                 detail="Program render music source is unavailable",
             )
-        current = orchestrator.get(episode_id)
-        plan = canonical_render_plan_for_episode(episode_id)
+        current = await to_thread.run_sync(orchestrator.get, episode_id)
+        plan = await to_thread.run_sync(canonical_render_plan_for_episode, episode_id)
         complete = current.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
         return await render_program_prefix(
             plan,
