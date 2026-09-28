@@ -284,7 +284,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     const leaveOnPageExit = () => {
       const currentEpisode = localEpisodeRef.current;
       if (episodeIdRef.current && currentEpisode) {
-        void api.checkpoint(episodeIdRef.current, Math.floor(browserPositionRef.current));
+        if (!masterActiveRef.current) {
+          void api.checkpoint(
+            episodeIdRef.current,
+            Math.floor(browserPositionRef.current),
+          );
+        }
         navigator.sendBeacon(`/api/episodes/${episodeIdRef.current}/leave`);
       }
     };
@@ -334,6 +339,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [localEpisode?.id, current?.id, current?.title]);
 
   useEffect(() => {
+    if (masterActiveRef.current) {
+      playbackAnchorRef.current = playbackAnchor(localEpisode);
+      return;
+    }
     if (pendingSeekIntentRef.current !== null) {
       playbackAnchorRef.current = playbackAnchor(localEpisode);
       return;
