@@ -46,10 +46,12 @@ def test_planner_creates_voice_music_overlap_and_ducking() -> None:
     assert music_a.timeline_start_seconds < voice.timeline_start_seconds < music_a.timeline_end_seconds
     assert music_b.timeline_start_seconds < voice.timeline_end_seconds
     assert any(0 < point.gain <= 0.35 for point in music_a.gain_automation)
-    assert music_a.timeline_end_seconds > music_b.timeline_start_seconds
+    assert music_a.timeline_end_seconds == music_b.timeline_start_seconds
     assert next(point for point in music_a.gain_automation if point.offset_seconds == 0).gain == 1
-    assert next(point for point in music_b.gain_automation if point.offset_seconds == 9).gain == 0.35
-    assert next(point for point in music_b.gain_automation if point.offset_seconds == 9.5).gain == 1
+    assert next(point for point in music_a.gain_automation if point.offset_seconds == 36).gain == pytest.approx(0.30)
+    assert next(point for point in music_a.gain_automation if point.offset_seconds == 40).gain == 0
+    assert next(point for point in music_b.gain_automation if point.offset_seconds == 4).gain == pytest.approx(0.30)
+    assert next(point for point in music_b.gain_automation if point.offset_seconds == 5.5).gain == 1
 
 
 def test_planner_is_deterministic_and_bounds_all_clips() -> None:
@@ -125,8 +127,10 @@ def test_track_intro_anchors_incoming_music_to_voice_start() -> None:
     voice = next(clip for clip in plan.clips if clip.segment_id == "intro")
     incoming = next(clip for clip in plan.clips if clip.segment_id == "b")
 
-    assert incoming.timeline_start_seconds >= voice.timeline_start_seconds
-    assert incoming.timeline_start_seconds == voice.timeline_start_seconds
+    assert incoming.timeline_start_seconds > voice.timeline_start_seconds
+    assert incoming.timeline_start_seconds == next(
+        clip for clip in plan.clips if clip.segment_id == "a"
+    ).timeline_end_seconds
     assert incoming.timeline_start_seconds < voice.timeline_end_seconds
 
 
@@ -169,7 +173,8 @@ def test_track_intro_wins_after_multiple_narration_blocks() -> None:
     incoming = next(clip for clip in plan.clips if clip.segment_id == "b")
 
     assert all(left.timeline_end_seconds <= right.timeline_start_seconds for left, right in zip(voices, voices[1:]))
-    assert incoming.timeline_start_seconds == track_intro.timeline_start_seconds
+    assert track_intro.timeline_start_seconds < incoming.timeline_start_seconds
+    assert incoming.timeline_start_seconds < track_intro.timeline_end_seconds
     assert incoming.timeline_start_seconds > next(
         clip for clip in voices if clip.segment_id == "transition"
     ).timeline_start_seconds
@@ -189,7 +194,13 @@ def test_prefix_segment_starts_are_stable_when_future_music_is_ready() -> None:
 
 def test_direct_music_crossfade_remains_bounded() -> None:
     plan = plan_episode_mix(_episode(_music("a", 0, 40), _music("b", 1, 35)))
-    assert plan.segment_starts["b"] == 37
+    assert plan.segment_starts["b"] == 30
+    a = next(clip for clip in plan.clips if clip.segment_id == "a")
+    b = next(clip for clip in plan.clips if clip.segment_id == "b")
+    assert next(point for point in a.gain_automation if point.offset_seconds == 30).gain == 1
+    assert next(point for point in a.gain_automation if point.offset_seconds == 40).gain == 0
+    assert next(point for point in b.gain_automation if point.offset_seconds == 0).gain == 0
+    assert next(point for point in b.gain_automation if point.offset_seconds == 10).gain == 1
 
 
 @pytest.mark.parametrize("bridge_role", [NarrationRole.TRANSITION, NarrationRole.INTRO])
@@ -210,9 +221,61 @@ def test_semantic_bridge_survives_trailing_general(
     incoming = next(clip for clip in plan.clips if clip.segment_id == "b")
 
     assert bridge.timeline_end_seconds <= general.timeline_start_seconds
-    assert incoming.timeline_start_seconds >= general.timeline_start_seconds
-    assert incoming.timeline_start_seconds <= general.timeline_end_seconds
+    assert incoming.timeline_start_seconds > next(
+        clip for clip in plan.clips if clip.segment_id == "a"
+    ).timeline_end_seconds
+    assert incoming.timeline_start_seconds < general.timeline_end_seconds
     assert incoming.timeline_start_seconds > bridge.timeline_start_seconds
+
+
+def test_narrated_bridge_separates_duck_fade_out_and_incoming_fade() -> None:
+    plan = plan_episode_mix(
+        _episode(
+            _music("a", 0, 40),
+            _voice("bridge", 1, 8, NarrationRole.TRANSITION),
+            _music("b", 2, 35),
+        )
+    )
+    outgoing = next(clip for clip in plan.clips if clip.segment_id == "a")
+    voice = next(clip for clip in plan.clips if clip.segment_id == "bridge")
+    incoming = next(clip for clip in plan.clips if clip.segment_id == "b")
+
+    assert voice.timeline_start_seconds == 36
+    assert incoming.timeline_start_seconds == outgoing.timeline_end_seconds == 40
+    assert next(
+        point for point in outgoing.gain_automation if point.offset_seconds == 36
+    ).gain == pytest.approx(0.30)
+    assert next(
+        point for point in outgoing.gain_automation if point.offset_seconds == 40
+    ).gain == 0
+    assert next(
+        point for point in incoming.gain_automation if point.offset_seconds == 0
+    ).gain == 0
+    assert next(
+        point for point in incoming.gain_automation if point.offset_seconds == 4
+    ).gain == pytest.approx(0.30)
+    assert next(
+        point for point in incoming.gain_automation if point.offset_seconds == 5.5
+    ).gain == 1
+
+
+def test_voice_without_track_handoff_uses_ducking_not_bridge_fade() -> None:
+    plan = plan_episode_mix(
+        _episode(
+            _music("a", 0, 40),
+            _voice("overlay", 1, 8, NarrationRole.GENERAL),
+        )
+    )
+    music = next(clip for clip in plan.clips if clip.segment_id == "a")
+    voice = next(clip for clip in plan.clips if clip.segment_id == "overlay")
+
+    assert voice.timeline_start_seconds == 36
+    assert next(
+        point for point in music.gain_automation if point.offset_seconds == 36
+    ).gain == pytest.approx(0.30)
+    assert next(
+        point for point in music.gain_automation if point.offset_seconds == 40
+    ).gain == pytest.approx(0.30)
 
 
 def test_music_gain_automation_stays_bounded_for_role_aware_gap() -> None:
