@@ -7,6 +7,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
+from wavecast.presentation import PresentationIntent
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
@@ -73,6 +75,7 @@ class EpisodeSeed(BaseModel):
     opening_track_artist: str
     opening_track_duration_seconds: int | None = Field(default=None, gt=0)
     cover: CoverParams
+    presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     generation_profile: str = "balanced"
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -171,6 +174,7 @@ class LiveEpisode(BaseModel):
     state: EpisodeState = EpisodeState.STARTED
     generation_mode: GenerationMode = GenerationMode.PROGRESSIVE
     program_estimated_duration_seconds: int = Field(gt=0)
+    presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     progressive_session: ProgressiveAssemblySession | None = Field(
         default=None, exclude=True, repr=False
     )

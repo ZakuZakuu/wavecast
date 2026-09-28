@@ -49,6 +49,7 @@ from wavecast.intelligence.research import BackgroundResearchService, FastResear
 from wavecast.intelligence.writer import WriterService
 from wavecast.materialization import NarrationMaterializer
 from wavecast.models.episode import MusicSegment, NarrationSegment, SegmentState
+from wavecast.presentation import HostMode, PresentationIntent
 from wavecast.providers.fakes import FakeSearchProvider, MockMusicProvider, MockTTSProvider
 from wavecast.providers.registry import MusicProviderRegistry
 from wavecast.providers.retrieval import MusicRetrievalService
@@ -203,6 +204,36 @@ def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypa
         if call["output_type"] is FastStartPlan
     ]
     assert len(fast_start_calls) == 1
+
+
+def test_music_only_fast_successor_has_no_narration_segment(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assembly = service(tmp_path)
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    request = LiveEpisodeAssemblyRequest(
+        topic="只放歌，不要旁白",
+        anchor_tracks=["Neon First Light"],
+        desired_duration_seconds=900,
+        max_tracks=4,
+        max_chapters=8,
+        presentation_intent=PresentationIntent(host_mode=HostMode.NONE),
+    )
+
+    bootstrap = asyncio.run(
+        assembly.prepare_fast_successor(
+            request,
+            opening_track=opening,
+        )
+    )
+
+    assert bootstrap is not None
+    assert len(bootstrap.segments) == 1
+    assert isinstance(bootstrap.segments[0], MusicSegment)
+    assert bootstrap.segments[0].is_audio_ready
 
 
 def test_song_identity_collapses_catalog_aliases_without_merging_unrelated_covers() -> None:

@@ -68,6 +68,7 @@ from wavecast.models.episode import (
     SegmentState,
 )
 from wavecast.orchestration.generation import GeneratedChapter
+from wavecast.presentation import HostMode, PresentationIntent
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
     ProgressiveAssemblySession,
@@ -139,6 +140,7 @@ class LiveEpisodeAssemblyRequest(BaseModel):
     max_tracks: int = Field(default=4, ge=2, le=8)
     max_chapters: int = Field(default=16, ge=2, le=32)
     listener_taste_context: str | None = Field(default=None, max_length=1000)
+    presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     output_language: OutputLanguage = OutputLanguage.AUTO
 
 
@@ -313,7 +315,9 @@ class LiveEpisodeAssemblyService:
                 return None
 
             first_narration = fast_result.plan.first_narration
-            if fast_result.trace.fallback_used or not use_fast_narration:
+            if request.presentation_intent.host_mode is HostMode.NONE:
+                bootstrap_script = RadioScript(blocks=[], intended_duration_seconds=1)
+            elif fast_result.trace.fallback_used or not use_fast_narration:
                 language = resolve_output_language(request.output_language, request.topic)
                 if language is OutputLanguage.ZH_CN:
                     bridge_text = (
@@ -380,11 +384,19 @@ class LiveEpisodeAssemblyService:
                 for segment in playable.segments
                 if isinstance(segment, NarrationSegment)
             ]
+            expected_narration = (
+                0
+                if request.presentation_intent.host_mode is HostMode.NONE
+                else 1
+            )
             if (
                 len(music) != 1
                 or not music[0].is_audio_ready
-                or len(narration) != 1
-                or narration[0].state is not SegmentState.SCRIPT_READY
+                or len(narration) != expected_narration
+                or (
+                    narration
+                    and narration[0].state is not SegmentState.SCRIPT_READY
+                )
             ):
                 return None
             return _generated_runtime_chapter(

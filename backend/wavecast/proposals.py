@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.models.episode import CoverParams, EpisodeSeed, utc_now
+from wavecast.presentation import PresentationIntent, infer_presentation_intent
 from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
@@ -59,6 +60,7 @@ class ProgramProposal(BaseModel):
     genre_tags: list[str] = Field(default_factory=list, max_length=8)
     mood_tags: list[str] = Field(default_factory=list, max_length=8)
     anchor_artists: list[str] = Field(default_factory=list, max_length=8)
+    presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     generation_profile: str = Field(default="balanced", min_length=1, max_length=64)
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -74,6 +76,7 @@ class ProgramProposal(BaseModel):
             opening_track_artist=self.opening_track_artist,
             opening_track_duration_seconds=self.opening_track_duration_seconds,
             cover=self.cover,
+            presentation_intent=self.presentation_intent,
             generation_profile=self.generation_profile,
             created_at=self.created_at,
         )
@@ -95,6 +98,7 @@ class ProgramProposal(BaseModel):
             genre_tags=[],
             mood_tags=[],
             anchor_artists=[],
+            presentation_intent=seed.presentation_intent,
             generation_profile=seed.generation_profile,
             created_at=seed.created_at,
         )
@@ -400,6 +404,7 @@ class LLMProgramProposalGenerator:
                     genre_tags=list(draft.genre_tags),
                     mood_tags=list(draft.mood_tags),
                     anchor_artists=[resolved.canonical_artist],
+                    presentation_intent=infer_presentation_intent(request.prompt),
                     generation_profile="balanced",
                 )
             )
@@ -531,6 +536,7 @@ class DeterministicMockProgramProposalGenerator:
                     genre_tags=list(genres),
                     mood_tags=list(moods),
                     anchor_artists=["Mira Fields"],
+                    presentation_intent=infer_presentation_intent(request.prompt),
                 )
             )
         return proposals
