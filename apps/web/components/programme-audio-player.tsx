@@ -88,9 +88,6 @@ export function ProgrammeAudioPlayer({
     let target = Math.max(0, pending);
     const frontier = Math.max(0, frontierRef.current);
 
-    // A restored listener position may be ahead of the currently published
-    // immutable prefix. Never "solve" that by rewinding the listener. Keep one
-    // pending target while generation/rendering catches the programme up.
     if (
       !completeRef.current
       && target > Math.max(0, frontier - FRONTIER_SEEK_EPSILON_SECONDS)
@@ -114,9 +111,9 @@ export function ProgrammeAudioPlayer({
       }
     }
 
-    // MSE/hls.js seeks are asynchronous. Do not clear the pending intent at
-    // assignment time: Chrome may still expose the old currentTime for another
-    // frame, which would otherwise overwrite the requested target.
+    // MSE/hls.js applies currentTime asynchronously. Keep the seek intent
+    // pending until the media element confirms the target instead of allowing
+    // one stale frame to overwrite the requested position.
     if (
       Math.abs(audio.currentTime - target) <= FRONTIER_SEEK_EPSILON_SECONDS
       && !audio.seeking
@@ -401,6 +398,12 @@ export function ProgrammeAudioPlayer({
       audio.removeEventListener("ended", ended);
       audio.removeEventListener("error", failed);
     };
+  }, [applyPendingSeek, playIfDesired]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
     const syncVisiblePosition = () => {
       if (
         document.visibilityState === "visible"
@@ -410,20 +413,14 @@ export function ProgrammeAudioPlayer({
         onPositionChangeRef.current(Math.max(0, audio.currentTime || 0));
       }
     };
+
     document.addEventListener("visibilitychange", syncVisiblePosition);
     window.addEventListener("pageshow", syncVisiblePosition);
-
     return () => {
       document.removeEventListener("visibilitychange", syncVisiblePosition);
       window.removeEventListener("pageshow", syncVisiblePosition);
     };
   }, []);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    const markBuffering = () => {
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
