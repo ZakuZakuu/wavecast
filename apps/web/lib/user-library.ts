@@ -325,7 +325,12 @@ export function recentRecordFromEpisode(
     topic: episode.topic ?? null,
     currentTitle,
     updatedAt: timestamp,
-    progressSeconds: Math.max(0, episode.playback_position_seconds),
+    progressSeconds: Math.max(
+      0,
+      episode.program_transport_active
+        ? episode.program_playback_position_seconds ?? 0
+        : episode.playback_position_seconds,
+    ),
     durationSeconds: Math.max(
       episode.timeline_duration_seconds,
       episode.program_estimated_duration_seconds,
