@@ -721,6 +721,26 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const activateMasterPlayback = useCallback(() => {
     if (!masterArtifact || masterActiveRef.current) return;
 
+    const latest = localEpisodeRef.current;
+    const plan = mixPlanRef.current;
+    if (latest) {
+      const legacyPosition = browserPositionRef.current;
+      const target = plan?.episodeId === latest.id
+        ? linearPositionToMixPosition(
+            latest,
+            plan,
+            legacyPosition,
+          ).mixPositionSeconds
+        : legacyPosition;
+      const bounded = Math.min(
+        Math.max(0, target),
+        Math.max(0, masterArtifact.durationSeconds - 0.05),
+      );
+      masterPositionRef.current = bounded;
+      setMasterPosition(bounded);
+      setMasterSeekToken((token) => token + 1);
+    }
+
     handoffRequestGuardRef.current.start();
     completionRequestGuardRef.current.start();
     setArmedSuccessorId(null);
