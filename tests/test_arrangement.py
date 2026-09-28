@@ -1,5 +1,6 @@
 import pytest
 from wavecast.arrangement import plan_episode_mix
+from wavecast.audio_timing import TrackTimingProfile, TimingInterval
 from wavecast.models.episode import (
     MusicSegment,
     NarrationRole,
@@ -289,3 +290,99 @@ def test_music_gain_automation_stays_bounded_for_role_aware_gap() -> None:
     )
     for clip in plan.clips:
         assert all(0 <= point.gain <= 1 for point in clip.gain_automation)
+
+
+
+def _timing_profile(
+    *,
+    duration: int,
+    first_vocal_start: float,
+    last_vocal_end: float,
+) -> TrackTimingProfile:
+    return TrackTimingProfile(
+        source_duration_seconds=duration,
+        lyric_timestamps_available=True,
+        lyric_lines=(
+            TimingInterval(
+                start_seconds=first_vocal_start,
+                end_seconds=min(first_vocal_start + 4, last_vocal_end),
+            ),
+            TimingInterval(
+                start_seconds=max(first_vocal_start + 5, last_vocal_end - 4),
+                end_seconds=last_vocal_end,
+            ),
+        ),
+        vocal_intervals=(
+            TimingInterval(
+                start_seconds=first_vocal_start,
+                end_seconds=min(first_vocal_start + 4, last_vocal_end),
+            ),
+            TimingInterval(
+                start_seconds=max(first_vocal_start + 5, last_vocal_end - 4),
+                end_seconds=last_vocal_end,
+            ),
+        ),
+    )
+
+
+def test_lyric_timing_places_voice_after_last_outgoing_vocal() -> None:
+    outgoing = _music("a", 0, 60).model_copy(
+        update={
+            "timing_profile": _timing_profile(
+                duration=60,
+                first_vocal_start=5,
+                last_vocal_end=50,
+            )
+        }
+    )
+    plan = plan_episode_mix(
+        _episode(
+            outgoing,
+            _voice("bridge", 1, 12, NarrationRole.TRANSITION),
+            _music("b", 2, 35),
+        )
+    )
+
+    voice = next(clip for clip in plan.clips if clip.segment_id == "bridge")
+    assert voice.timeline_start_seconds == pytest.approx(50.75)
+    assert voice.timeline_start_seconds > 50
+
+
+def test_lyric_timing_keeps_incoming_vocal_out_from_under_narration() -> None:
+    incoming = _music("b", 2, 35).model_copy(
+        update={
+            "timing_profile": _timing_profile(
+                duration=35,
+                first_vocal_start=3,
+                last_vocal_end=30,
+            )
+        }
+    )
+    plan = plan_episode_mix(
+        _episode(
+            _music("a", 0, 40),
+            _voice("bridge", 1, 8, NarrationRole.TRANSITION),
+            incoming,
+        )
+    )
+
+    voice = next(clip for clip in plan.clips if clip.segment_id == "bridge")
+    music = next(clip for clip in plan.clips if clip.segment_id == "b")
+    assert music.timeline_start_seconds == pytest.approx(voice.timeline_end_seconds - 2.25)
+    # The first vocal begins after the narration has finished plus the guard.
+    assert music.timeline_start_seconds + 3 >= voice.timeline_end_seconds + 0.75
+
+
+def test_missing_timing_profile_retains_existing_fixed_bridge_geometry() -> None:
+    plan = plan_episode_mix(
+        _episode(
+            _music("a", 0, 40),
+            _voice("bridge", 1, 8, NarrationRole.TRANSITION),
+            _music("b", 2, 35),
+        )
+    )
+    voice = next(clip for clip in plan.clips if clip.segment_id == "bridge")
+    incoming = next(clip for clip in plan.clips if clip.segment_id == "b")
+
+    assert voice.timeline_start_seconds == 36
+    assert incoming.timeline_start_seconds == 40
