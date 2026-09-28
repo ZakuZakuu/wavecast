@@ -293,7 +293,11 @@ class LiveEpisodeAssemblyService:
 
         seen: set[tuple[str, str]] = set()
 
-        async def prepare_candidate(proposal: TrackProposal) -> GeneratedChapter | None:
+        async def prepare_candidate(
+            proposal: TrackProposal,
+            *,
+            use_fast_narration: bool,
+        ) -> GeneratedChapter | None:
             proposal_key = (proposal.artist.casefold(), proposal.title.casefold())
             if proposal_key in seen:
                 return None
@@ -309,7 +313,7 @@ class LiveEpisodeAssemblyService:
                 return None
 
             first_narration = fast_result.plan.first_narration
-            if fast_result.trace.fallback_used:
+            if fast_result.trace.fallback_used or not use_fast_narration:
                 language = resolve_output_language(request.output_language, request.topic)
                 if language is OutputLanguage.ZH_CN:
                     bridge_text = (
@@ -391,8 +395,16 @@ class LiveEpisodeAssemblyService:
 
         # Prefer the actual FastStart route when it produced a usable exact
         # catalog identity.
+        selected = fast_result.plan.selected_next_track
         for proposal in proposals:
-            prepared = await prepare_candidate(proposal)
+            prepared = await prepare_candidate(
+                proposal,
+                use_fast_narration=(
+                    selected is not None
+                    and proposal.artist.casefold() == selected.artist.casefold()
+                    and proposal.title.casefold() == selected.title.casefold()
+                ),
+            )
             if prepared is not None:
                 return prepared
 
@@ -411,7 +423,8 @@ class LiveEpisodeAssemblyService:
                     title=candidate.title,
                     reasons=["FastStart catalog bootstrap from the opening artist."],
                     confidence=0.5,
-                )
+                ),
+                use_fast_narration=False,
             )
             if prepared is not None:
                 return prepared
