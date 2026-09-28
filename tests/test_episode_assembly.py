@@ -48,6 +48,7 @@ from wavecast.intelligence.models import (
 from wavecast.intelligence.research import BackgroundResearchService, FastResearchService
 from wavecast.intelligence.writer import WriterService
 from wavecast.materialization import NarrationMaterializer
+from wavecast.models.episode import MusicSegment, NarrationSegment, SegmentState
 from wavecast.providers.fakes import FakeSearchProvider, MockMusicProvider, MockTTSProvider
 from wavecast.providers.registry import MusicProviderRegistry
 from wavecast.providers.retrieval import MusicRetrievalService
