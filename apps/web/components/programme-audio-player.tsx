@@ -315,7 +315,19 @@ export function ProgrammeAudioPlayer({
     };
     const progress = () => applyPendingSeek();
     const seeked = () => {
-      applyPendingSeek();
+      const pending = pendingSeekRef.current;
+      if (pending !== null && appliedSeekTargetRef.current !== null) {
+        // The media element owns the final seek landing point. MSE/hls.js may
+        // resolve to a nearby decoded timestamp instead of the exact requested
+        // float, so a real seeked event is the completion signal.
+        const actual = Math.max(0, audio.currentTime || 0);
+        pendingSeekRef.current = null;
+        appliedSeekTargetRef.current = null;
+        onPositionChangeRef.current(actual);
+        onBufferingChangeRef.current?.(false);
+      } else {
+        applyPendingSeek();
+      }
       playIfDesired();
     };
     const ended = () => {
