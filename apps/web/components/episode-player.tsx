@@ -939,8 +939,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     // cannot accidentally issue two seek requests.
     seekPreviewRef.current = null;
     setSeekPreview(null);
+    if (masterActiveRef.current) {
+      commitMasterSeek(preview);
+      return;
+    }
     commitSeek(preview);
-  }, [commitSeek]);
+  }, [commitMasterSeek, commitSeek]);
 
   const pausePlayback = useCallback(() => {
     if (!localEpisode) return;
