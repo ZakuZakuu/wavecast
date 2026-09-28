@@ -197,8 +197,10 @@ def test_direct_music_crossfade_remains_bounded() -> None:
     assert plan.segment_starts["b"] == 30
     a = next(clip for clip in plan.clips if clip.segment_id == "a")
     b = next(clip for clip in plan.clips if clip.segment_id == "b")
-    assert next(point for point in a.gain_automation if point.offset_seconds == 35).gain == pytest.approx(0.5)
-    assert next(point for point in b.gain_automation if point.offset_seconds == 5).gain == pytest.approx(0.5)
+    assert next(point for point in a.gain_automation if point.offset_seconds == 30).gain == 1
+    assert next(point for point in a.gain_automation if point.offset_seconds == 40).gain == 0
+    assert next(point for point in b.gain_automation if point.offset_seconds == 0).gain == 0
+    assert next(point for point in b.gain_automation if point.offset_seconds == 10).gain == 1
 
 
 @pytest.mark.parametrize("bridge_role", [NarrationRole.TRANSITION, NarrationRole.INTRO])
