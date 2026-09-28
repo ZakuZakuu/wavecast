@@ -66,6 +66,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const programRenderBusyRef = useRef(false);
   const programRefillAtRef = useRef(0);
   const usingProgramStreamRef = useRef(false);
+  const programStreamActivatedRef = useRef(false);
 
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
@@ -129,6 +130,36 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   usingProgramStreamRef.current = usingProgramStream;
 
   useEffect(() => {
+    if (
+      !usingProgramStream
+      || !programRender
+      || !mixPlan
+      || !localEpisode
+      || programStreamActivatedRef.current
+    ) {
+      return;
+    }
+
+    const programmePosition = linearPositionToMixPosition(
+      localEpisode,
+      mixPlan,
+      browserPositionRef.current,
+    ).mixPositionSeconds;
+    const target = clampProgramPosition(programRender, programmePosition);
+    programStreamActivatedRef.current = true;
+    setTransportSegmentId(null);
+    setArmedSuccessorId(null);
+    armedSuccessorIdRef.current = null;
+    armedFromSegmentIdRef.current = null;
+    armedEpisodeRef.current = null;
+    handoffAttemptRef.current = null;
+    setBrowserPosition(target);
+    browserPositionRef.current = target;
+    listenerPositionRef.current = target;
+    setSeekToken((token) => token + 1);
+  }, [localEpisode, mixPlan, programRender, usingProgramStream]);
+
+  useEffect(() => {
     setNativeHlsSupported(supportsNativeHls());
   }, []);
 
@@ -136,6 +167,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     setProgramRender(null);
     programRenderSignatureRef.current = null;
     programRenderBusyRef.current = false;
+    programStreamActivatedRef.current = false;
     setTransportSegmentId(null);
     setArmedSuccessorId(null);
     armedSuccessorIdRef.current = null;
@@ -871,6 +903,38 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     commitSeek(preview);
   }, [commitSeek]);
 
+  const handleProgrammePosition = useCallback((position: number) => {
+    if (seekPreviewRef.current !== null) return;
+    const bounded = programRender
+      ? clampProgramPosition(programRender, position)
+      : Math.max(0, position);
+    setBrowserPosition(bounded);
+    browserPositionRef.current = bounded;
+    listenerPositionRef.current = bounded;
+
+    if (
+      programRender
+      && !programRender.complete
+      && programRender.renderedFrontierSeconds - bounded <= 45
+    ) {
+      requestProgramRefill();
+    }
+  }, [programRender, requestProgramRefill]);
+
+  const completeProgrammePlayback = useCallback(() => {
+    if (!localEpisode) return;
+    if (!programRender?.complete) {
+      requestProgramRefill();
+      return;
+    }
+    setBrowserPlaying(false);
+    void api.recordUserEvent({
+      event_type: "PLAY_COMPLETE",
+      program_id: localEpisode.seed_id,
+      episode_id: localEpisode.id,
+    }).catch(() => undefined);
+  }, [localEpisode, programRender?.complete, requestProgramRefill]);
+
   const pausePlayback = useCallback(() => {
     if (!localEpisode) return;
     awaitingSuccessorRef.current = false;
@@ -1000,6 +1064,25 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   );
 
   const nextPlayback = async () => {
+    if (usingProgramStream) {
+      const nextStart = upcoming && mixPlan?.segmentStarts[upcoming.id];
+      if (
+        typeof nextStart === "number"
+        && nextStart <= maxSeekPosition
+      ) {
+        commitSeek(nextStart);
+        void api.recordUserEvent({
+          event_type: "SKIP",
+          program_id: localEpisode.seed_id,
+          episode_id: localEpisode.id,
+        }).catch(() => undefined);
+        return;
+      }
+      requestProgramRefill();
+      setError("下一章节还在准备中");
+      return;
+    }
+
     const runNext = async () => {
       const response = await api.next(localEpisode.id);
       setEpisode(response);
@@ -1025,19 +1108,39 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   return (
     <main className="now-playing-page page-enter">
-      <MixAudioPlayer
-        segment={current}
-        upcomingSegment={upcoming}
-        plan={mixPlan}
-        playing={browserPlaying && localEpisode.is_listener_active}
-        positionSeconds={currentOffset}
-        seekToken={seekToken}
-        armedSuccessorId={armedSuccessorId}
-        preloadSourceUrl={preloadSourceUrl}
-        onPositionChange={handleAudioPosition}
-        onEnded={completeBrowserSegment}
-        onError={() => setError("音频暂时无法播放")}
-      />
+      {usingProgramStream && programRender ? (
+        <ProgrammeAudioPlayer
+          manifest={programRender}
+          playing={browserPlaying && localEpisode.is_listener_active}
+          positionSeconds={listenerPosition}
+          seekToken={seekToken}
+          title={localEpisode.title ?? "WaveCast"}
+          subtitle={current?.kind === "MUSIC"
+            ? [current.artist, current.title].filter(Boolean).join(" — ")
+            : current?.title ?? "WaveCast"}
+          onPositionChange={handleProgrammePosition}
+          onPlayRequest={resumePlayback}
+          onPauseRequest={pausePlayback}
+          onSeekRequest={commitSeek}
+          onNeedMore={requestProgramRefill}
+          onEnded={completeProgrammePlayback}
+          onError={() => setError("节目音频流暂时无法播放")}
+        />
+      ) : (
+        <MixAudioPlayer
+          segment={current}
+          upcomingSegment={upcoming}
+          plan={mixPlan}
+          playing={browserPlaying && localEpisode.is_listener_active}
+          positionSeconds={currentOffset}
+          seekToken={seekToken}
+          armedSuccessorId={armedSuccessorId}
+          preloadSourceUrl={preloadSourceUrl}
+          onPositionChange={handleAudioPosition}
+          onEnded={completeBrowserSegment}
+          onError={() => setError("音频暂时无法播放")}
+        />
+      )}
 
       <div className="player-topbar">
         <Link href="/" className="icon-button glass-button" aria-label="返回节目"><WaveIcon name="back" /></Link>
@@ -1103,6 +1206,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           value={Math.min(displayedPosition, Math.max(1, maxSeekPosition))}
           onChange={(event) => {
             const value = Number(event.target.value);
+            if (usingProgramStream && programRender) {
+              seekPreviewRef.current = clampProgramPosition(programRender, value);
+              setSeekPreview(clampProgramPosition(programRender, value));
+              return;
+            }
             const linearValue = transportMixPlan
               ? mixPositionToLinearPosition(
                   localEpisode,
