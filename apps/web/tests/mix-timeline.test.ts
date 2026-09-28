@@ -80,6 +80,27 @@ describe("deterministic mix timeline", () => {
     expect(roundTrip.segmentId).toBe("voice-a");
   });
 
+  it("preserves listener time when authority hands off inside an overlap", () => {
+    const plan = canonicalPlan;
+    const musicA = plan.clips.find((clip) => clip.segmentId === "music-a")!;
+    const handoffMixPosition = (
+      musicA.timelineStartSeconds + musicA.playableDurationSeconds
+    );
+    const linear = mixPositionToLinearPosition(
+      episode,
+      plan,
+      handoffMixPosition,
+    );
+    const restored = linearPositionToMixPosition(
+      episode,
+      plan,
+      linear.linearPositionSeconds,
+    );
+
+    expect(linear.segmentId).toBe("voice-a");
+    expect(restored.mixPositionSeconds).toBeCloseTo(handoffMixPosition);
+  });
+
   it("is deterministic and produces bounded seek schedules", () => {
     const first = canonicalPlan;
     const second = canonicalPlan;

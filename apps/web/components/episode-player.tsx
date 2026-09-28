@@ -8,7 +8,7 @@ import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
 import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
 import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
-import { mixPlanSignature, overlapLeadSeconds, type MixPlan } from "../lib/mix-timeline";
+import { linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, overlapLeadSeconds, type MixPlan } from "../lib/mix-timeline";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
 import { isEpisodeSaved, recordRecentEpisode, saveMaterializedEpisode } from "../lib/user-library";
@@ -308,15 +308,20 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     });
 
     if (canHandoffOptimistically && armedSegment && armedEpisode) {
-      const nextPosition = segmentStart(armedEpisode, armedSegment.id);
+      const currentMixEnd = arrangementClip
+        ? arrangementClip.timelineStartSeconds + arrangementClip.playableDurationSeconds
+        : null;
+      const nextPosition = currentMixEnd !== null && mixPlan
+        ? mixPositionToLinearPosition(
+            armedEpisode,
+            mixPlan,
+            currentMixEnd,
+          ).linearPositionSeconds
+        : segmentStart(armedEpisode, armedSegment.id);
       setTransportSegmentId(armedSegment.id);
       setBrowserPosition(nextPosition);
       browserPositionRef.current = nextPosition;
       setBrowserPlaying(true);
-    } else {
-      // Without a durable armed successor, retain the conservative server-gated
-      // completion behavior.
-      setBrowserPlaying(false);
     }
 
     const completion = canHandoffOptimistically && armedSegment
@@ -380,7 +385,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         setBrowserPlaying(false);
         setError(reason instanceof Error ? reason.message : "播放状态暂时没有同步");
       });
-  }, [browserPlaying, current, localEpisode, setEpisode]);
+  }, [arrangementClip, browserPlaying, current, localEpisode, mixPlan, setEpisode]);
 
   const exportEpisode = useCallback(async () => {
     if (!localEpisode || localEpisode.state !== "MATERIALIZED" || exportState === "preparing") return;
@@ -551,7 +556,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   const commitSeek = useCallback((value: number) => {
     if (!localEpisode) return;
-    const linearValue = value;
+    const linearValue = mixPlan
+      ? mixPositionToLinearPosition(localEpisode, mixPlan, value).linearPositionSeconds
+      : value;
     if (!isSeekAllowed(localEpisode, linearValue)) {
       seekPreviewRef.current = null;
       setSeekPreview(null);
@@ -606,7 +613,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         }
         setError(reason instanceof Error ? reason.message : "跳转暂时没有完成");
       });
-  }, [current, localEpisode, setEpisode]);
+  }, [current, localEpisode, mixPlan, setEpisode]);
 
   const commitSeekPreview = useCallback(() => {
     const preview = seekPreviewRef.current;
@@ -665,16 +672,43 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     );
   }
 
-  const maxSeekPosition = localEpisode.generated_frontier_seconds;
-  const fullDuration = localEpisode.timeline_duration_seconds;
-  const generatedPercent = Math.min(100, Math.round((maxSeekPosition / Math.max(1, fullDuration)) * 100));
-  const displayedPosition = seekPreview ?? browserPosition;
   const displayedLinearPosition = browserPosition;
+  const listenerPosition = mixPlan && arrangementClip
+    ? linearPositionToMixPosition(
+        localEpisode,
+        mixPlan,
+        displayedLinearPosition,
+      ).mixPositionSeconds
+    : displayedLinearPosition;
+  const maxSeekPosition = mixPlan?.durationSeconds
+    ?? localEpisode.generated_frontier_seconds;
+  const arrangementCompression = mixPlan
+    ? Math.max(
+        0,
+        localEpisode.generated_frontier_seconds - mixPlan.durationSeconds,
+      )
+    : 0;
+  const fullDuration = Math.max(
+    maxSeekPosition,
+    localEpisode.timeline_duration_seconds - arrangementCompression,
+  );
+  const generatedPercent = Math.min(
+    100,
+    Math.round((maxSeekPosition / Math.max(1, fullDuration)) * 100),
+  );
+  const displayedPosition = seekPreview ?? listenerPosition;
   const currentOffset = current
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
-  const seekPreviewTarget = seekPreview !== null
-    ? segmentAtPosition(localEpisode, seekPreview)
+  const seekPreviewLinearPosition = seekPreview !== null && mixPlan
+    ? mixPositionToLinearPosition(
+        localEpisode,
+        mixPlan,
+        seekPreview,
+      ).linearPositionSeconds
+    : seekPreview;
+  const seekPreviewTarget = seekPreviewLinearPosition !== null
+    ? segmentAtPosition(localEpisode, seekPreviewLinearPosition)
     : undefined;
   const preloadTarget = (
     seekPreviewTarget
@@ -711,7 +745,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   };
 
   const nudgeSeek = (seconds: number) => {
-    commitSeek(Math.max(0, browserPositionRef.current + seconds));
+    commitSeek(Math.max(0, displayedPosition + seconds));
   };
 
   return (
@@ -794,7 +828,13 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           value={Math.min(displayedPosition, Math.max(1, maxSeekPosition))}
           onChange={(event) => {
             const value = Number(event.target.value);
-            const linearValue = value;
+            const linearValue = mixPlan
+              ? mixPositionToLinearPosition(
+                  localEpisode,
+                  mixPlan,
+                  value,
+                ).linearPositionSeconds
+              : value;
             if (isSeekAllowed(localEpisode, linearValue)) {
               seekPreviewRef.current = value;
               setSeekPreview(value);
