@@ -43,6 +43,7 @@ from wavecast.models.episode import (
     NarrationSegment,
     PlayableEpisode,
     SegmentKind,
+    SegmentState,
 )
 from wavecast.orchestration import (
     EpisodeOrchestrator,
