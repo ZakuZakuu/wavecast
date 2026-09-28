@@ -1102,6 +1102,21 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       );
 
   const nextPlayback = async () => {
+    if (masterMode && mixPlan) {
+      const nextStart = Object.values(mixPlan.segmentStarts)
+        .filter((start) => start > masterPosition + 0.5)
+        .sort((left, right) => left - right)[0];
+      if (typeof nextStart === "number") {
+        commitMasterSeek(nextStart);
+        void api.recordUserEvent({
+          event_type: "SKIP",
+          program_id: localEpisode.seed_id,
+          episode_id: localEpisode.id,
+        }).catch(() => undefined);
+      }
+      return;
+    }
+
     const runNext = async () => {
       const response = await api.next(localEpisode.id);
       setEpisode(response);
@@ -1122,7 +1137,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   listenerPositionRef.current = displayedPosition;
 
   const nudgeSeek = (seconds: number) => {
-    commitSeek(Math.max(0, listenerPositionRef.current + seconds));
+    const target = Math.max(0, listenerPositionRef.current + seconds);
+    if (masterMode) {
+      commitMasterSeek(target);
+      return;
+    }
+    commitSeek(target);
   };
 
   return (
