@@ -73,6 +73,28 @@ export type NarrationSegment = SegmentBase & {
 
 export type Segment = MusicSegment | NarrationSegment;
 
+export type ProgramRenderChunk = {
+  index: number;
+  startSeconds: number;
+  durationSeconds: number;
+  planFingerprint: string;
+  contentSha256: string;
+  assetKey: string;
+  audioUrl: string;
+};
+
+export type ProgramRenderManifest = {
+  schemaVersion: 1;
+  episodeId: string;
+  revision: string;
+  chunkDurationSeconds: number;
+  holdbackSeconds: number;
+  renderedFrontierSeconds: number;
+  complete: boolean;
+  chunks: ProgramRenderChunk[];
+  streamUrl: string;
+};
+
 export type LiveEpisode = {
   id: string;
   seed_id: string;
@@ -85,6 +107,8 @@ export type LiveEpisode = {
   segments: Segment[];
   current_segment_id: string | null;
   playback_position_seconds: number;
+  program_playback_position_seconds?: number;
+  program_transport_active?: boolean;
   is_listener_active: boolean;
   is_playing: boolean;
   program_estimated_duration_seconds: number;
