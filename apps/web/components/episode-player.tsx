@@ -10,10 +10,11 @@ import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixd
 import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff } from "../lib/playback";
 import { activeMixClipsAt, linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, overlapLeadSeconds, type MixPlan } from "../lib/mix-timeline";
 import { usePlayerStore } from "../lib/player-store";
-import type { LiveEpisode } from "../lib/types";
+import type { LiveEpisode, ProgramRenderManifest } from "../lib/types";
 import { isEpisodeSaved, recordRecentEpisode, saveMaterializedEpisode } from "../lib/user-library";
 import { ChaptersSheet } from "./chapters-sheet";
 import { MixAudioPlayer } from "./mix-audio-player";
+import { ProgramStreamPlayer, supportsNativeHls } from "./program-stream-player";
 import { ProgramArtwork } from "./program-artwork";
 import { WaveIcon } from "./wave-icon";
 
@@ -27,6 +28,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const [browserPosition, setBrowserPosition] = useState(0);
   const [browserPlaying, setBrowserPlaying] = useState(false);
   const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
+  const [programManifest, setProgramManifest] = useState<ProgramRenderManifest | null>(null);
+  const [programStreamSupported, setProgramStreamSupported] = useState(false);
+  const [programStreamActive, setProgramStreamActive] = useState(false);
+  const [programPosition, setProgramPosition] = useState(0);
+  const [programSeekToken, setProgramSeekToken] = useState(0);
+  const [programBuffering, setProgramBuffering] = useState(false);
   const [armedSuccessorId, setArmedSuccessorId] = useState<string | null>(null);
   const [transportSegmentId, setTransportSegmentId] = useState<string | null>(null);
   const [seekToken, setSeekToken] = useState(0);
@@ -58,6 +65,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const seekQueueRef = useRef<Promise<void>>(Promise.resolve());
   const resumeAfterSeekRef = useRef(false);
   const listenerPositionRef = useRef(0);
+  const programPositionRef = useRef(0);
+  const programStreamActiveRef = useRef(false);
+  const programRenderQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const programRenderSignatureRef = useRef<string | null>(null);
+  const autoMaterializeEpisodeRef = useRef<string | null>(null);
+  const mixPlanRef = useRef<MixPlan | null>(null);
 
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
@@ -101,6 +114,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   );
   const transportMixPlan = arrangementClip ? mixPlan : null;
   localEpisodeRef.current = localEpisode;
+  mixPlanRef.current = mixPlan;
+  programStreamActiveRef.current = programStreamActive;
+  programPositionRef.current = programPosition;
 
   useEffect(() => {
     setTransportSegmentId(null);
