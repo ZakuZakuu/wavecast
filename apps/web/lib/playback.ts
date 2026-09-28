@@ -146,12 +146,17 @@ export function isProgramPlaybackComplete(episode: LiveEpisode): boolean {
     && activeSegments.every((segment) => segment.state === "PLAYED");
 }
 
-export function nextVisibleSegment(episode: LiveEpisode): Segment | undefined {
-  const current = episode.segments.find((segment) => segment.id === episode.current_segment_id);
+export function nextVisibleSegment(
+  episode: LiveEpisode,
+  afterSegmentId: string | null = episode.current_segment_id,
+): Segment | undefined {
+  const current = episode.segments.find((segment) => segment.id === afterSegmentId);
   return episode.segments
     .filter((segment) => segment.order > (current?.order ?? -1))
     .find((segment) => ["AUDIO_READY", "COMMITTED", "PLAYED"].includes(segment.state))
-    ?? episode.segments.filter((segment) => segment.order > (current?.order ?? -1)).find((segment) => segment.kind === "MUSIC");
+    ?? episode.segments
+      .filter((segment) => segment.order > (current?.order ?? -1))
+      .find((segment) => segment.kind === "MUSIC");
 }
 
 export function formatSeconds(seconds: number): string {

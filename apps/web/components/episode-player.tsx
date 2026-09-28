@@ -8,17 +8,18 @@ import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
 import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
 import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
-import { mixPlanSignature, type MixPlan } from "../lib/mix-timeline";
+import { mixPlanSignature, overlapLeadSeconds, type MixPlan } from "../lib/mix-timeline";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
 import { isEpisodeSaved, recordRecentEpisode, saveMaterializedEpisode } from "../lib/user-library";
 import { ChaptersSheet } from "./chapters-sheet";
-import { AudioPlayer } from "./audio-player";
+import { MixAudioPlayer } from "./mix-audio-player";
 import { ProgramArtwork } from "./program-artwork";
 import { WaveIcon } from "./wave-icon";
 
 const CHAPTER_TITLES = ["开场", "夜色开始变暖", "从旋律走进城市", "另一面的节奏", "慢慢收回来"];
 const HANDOFF_ARM_SECONDS = 2;
+const ARRANGEMENT_ARM_SAFETY_SECONDS = 1.5;
 
 export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeId?: string }) {
   const { episode, setEpisode } = usePlayerStore();
@@ -26,6 +27,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const [browserPosition, setBrowserPosition] = useState(0);
   const [browserPlaying, setBrowserPlaying] = useState(false);
   const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
+  const [armedSuccessorId, setArmedSuccessorId] = useState<string | null>(null);
   const [transportSegmentId, setTransportSegmentId] = useState<string | null>(null);
   const [seekToken, setSeekToken] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
@@ -72,7 +74,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     [localEpisode, serverCurrent, transportSegmentId],
   );
   const upcoming = useMemo(
-    () => localEpisode && current ? nextVisibleSegment(localEpisode) : undefined,
+    () => localEpisode && current
+      ? nextVisibleSegment(localEpisode, current.id)
+      : undefined,
     [current, localEpisode],
   );
   const arrangementEpisodeId = localEpisode?.id ?? null;
@@ -84,10 +88,15 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     () => mixPlan?.clips.find((clip) => clip.segmentId === current?.id) ?? null,
     [current?.id, mixPlan],
   );
+  const upcomingArrangementClip = useMemo(
+    () => mixPlan?.clips.find((clip) => clip.segmentId === upcoming?.id) ?? null,
+    [mixPlan, upcoming?.id],
+  );
   localEpisodeRef.current = localEpisode;
 
   useEffect(() => {
     setTransportSegmentId(null);
+    setArmedSuccessorId(null);
     armedSuccessorIdRef.current = null;
     armedFromSegmentIdRef.current = null;
     armedEpisodeRef.current = null;
@@ -107,6 +116,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       && localEpisode?.current_segment_id
       && localEpisode.current_segment_id !== armedFrom
     ) {
+      setArmedSuccessorId(null);
       armedSuccessorIdRef.current = null;
       armedFromSegmentIdRef.current = null;
       armedEpisodeRef.current = null;
@@ -120,15 +130,17 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       return;
     }
     let cancelled = false;
-    setMixPlan(null);
+    setMixPlan((currentPlan) => (
+      currentPlan?.episodeId === arrangementEpisodeId ? currentPlan : null
+    ));
     void api.mixPlan(arrangementEpisodeId)
       .then((plan) => {
         if (!cancelled) setMixPlan(plan);
       })
       .catch(() => {
-        // Arrangement is optional decoration over stable browser transport.
-        // A stale/unavailable plan must never interrupt ordinary playback.
-        if (!cancelled) setMixPlan(null);
+        // Keep the previous same-Episode plan while a refreshed ready-prefix
+        // arrangement is temporarily unavailable. Serial playback remains the
+        // fallback when the current segment is not present in that plan.
       });
     return () => {
       cancelled = true;
@@ -474,13 +486,23 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       ?? current.actual_duration_seconds
       ?? current.planned_duration_seconds;
     const remainingSeconds = Math.max(0, currentDuration - segmentPosition);
+    const plannedOverlapSeconds = overlapLeadSeconds(
+      arrangementClip,
+      upcomingArrangementClip,
+    );
+    const armThresholdSeconds = Math.max(
+      HANDOFF_ARM_SECONDS,
+      plannedOverlapSeconds > 0
+        ? plannedOverlapSeconds + ARRANGEMENT_ARM_SAFETY_SECONDS
+        : HANDOFF_ARM_SECONDS,
+    );
     const canArm = shouldArmHandoff({
       current,
       upcoming,
       serverCurrentId: localEpisode.current_segment_id,
       transportSegmentId,
       remainingSeconds,
-      armThresholdSeconds: HANDOFF_ARM_SECONDS,
+      armThresholdSeconds,
     });
     if (canArm && upcoming) {
       const handoffKey = `${current.id}->${upcoming.id}`;
@@ -493,6 +515,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
               latest?.id !== localEpisode.id
               || latest.current_segment_id !== current.id
             ) return;
+            setArmedSuccessorId(upcoming.id);
             armedSuccessorIdRef.current = upcoming.id;
             armedFromSegmentIdRef.current = current.id;
             const effectiveEpisode = latest.version > armed.version ? latest : armed;
@@ -516,7 +539,15 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       checkpointRef.current = position;
       void api.checkpoint(localEpisode.id, position).catch(() => undefined);
     }
-  }, [current, localEpisode, setEpisode, transportSegmentId, upcoming]);
+  }, [
+    arrangementClip,
+    current,
+    localEpisode,
+    setEpisode,
+    transportSegmentId,
+    upcoming,
+    upcomingArrangementClip,
+  ]);
 
   const commitSeek = useCallback((value: number) => {
     if (!localEpisode) return;
@@ -685,23 +716,15 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   return (
     <main className="now-playing-page page-enter">
-      <AudioPlayer
+      <MixAudioPlayer
         segment={current}
+        upcomingSegment={upcoming}
+        plan={mixPlan}
         playing={browserPlaying && localEpisode.is_listener_active}
         positionSeconds={currentOffset}
         seekToken={seekToken}
-        arrangement={arrangementClip
-          ? {
-              sourceOffsetSeconds: 0,
-              playableDurationSeconds: arrangementClip.playableDurationSeconds,
-              fadeInSeconds: arrangementClip.fadeInSeconds,
-              fadeOutSeconds: arrangementClip.fadeOutSeconds,
-            }
-          : null}
+        armedSuccessorId={armedSuccessorId}
         preloadSourceUrl={preloadSourceUrl}
-        maxDurationSeconds={arrangementClip?.playableDurationSeconds ?? (current
-          ? current.duration_seconds ?? current.actual_duration_seconds ?? current.planned_duration_seconds
-          : null)}
         onPositionChange={handleAudioPosition}
         onEnded={completeBrowserSegment}
         onError={() => setError("音频暂时无法播放")}

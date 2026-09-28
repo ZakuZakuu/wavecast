@@ -97,6 +97,18 @@ export function clampMixPosition(plan: MixPlan, positionSeconds: number): number
   return Math.max(0, Math.min(plan.durationSeconds, positionSeconds));
 }
 
+export function overlapLeadSeconds(
+  current: MixClip | null | undefined,
+  next: MixClip | null | undefined,
+): number {
+  if (!current || !next) return 0;
+  const currentEnd = current.timelineStartSeconds + current.playableDurationSeconds;
+  return Math.max(
+    0,
+    Math.min(current.playableDurationSeconds, currentEnd - next.timelineStartSeconds),
+  );
+}
+
 export function segmentIdAt(plan: MixPlan, positionSeconds: number): string | undefined {
   const active = activeMixClipsAt(plan, positionSeconds);
   return active.find((clip) => clip.lane === "VOICE")?.segmentId

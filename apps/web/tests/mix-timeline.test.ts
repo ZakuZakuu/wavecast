@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { activeMixClipsAt, clampMixPosition, evaluateGain, linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, scheduleAt } from "../lib/mix-timeline";
+import { activeMixClipsAt, clampMixPosition, evaluateGain, linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, overlapLeadSeconds, scheduleAt } from "../lib/mix-timeline";
 import { canonicalPlan } from "./fixtures/canonical-mix-plan";
 import type { LiveEpisode } from "../lib/types";
 
@@ -45,6 +45,17 @@ describe("deterministic mix timeline", () => {
     expect(musicA.timelineStartSeconds + musicA.playableDurationSeconds).toBeGreaterThan(musicB.timelineStartSeconds);
     expect(evaluateGain(musicA, voice.timelineStartSeconds + 0.5)).toBeLessThan(1);
     expect(activeMixClipsAt(plan, voice.timelineStartSeconds + 0.5).map((clip) => clip.lane)).toEqual(["MUSIC", "VOICE", "MUSIC"] );
+  });
+
+  it("reports the amount of browser-authoritative overlap to arm ahead", () => {
+    const plan = canonicalPlan;
+    const musicA = plan.clips.find((clip) => clip.segmentId === "music-a")!;
+    const voice = plan.clips.find((clip) => clip.segmentId === "voice-a")!;
+    const musicB = plan.clips.find((clip) => clip.segmentId === "music-b")!;
+
+    expect(overlapLeadSeconds(musicA, voice)).toBeGreaterThan(0);
+    expect(overlapLeadSeconds(voice, musicB)).toBeGreaterThan(0);
+    expect(overlapLeadSeconds(null, musicB)).toBe(0);
   });
 
   it("holds ducking through narration and restores after release", () => {
