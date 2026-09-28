@@ -10,6 +10,7 @@ import type {
   ProgramProposalBatch,
   ProposalGenerationRequest,
   Seed,
+  ProgramRenderManifest,
 } from "./types";
 import type { MixdownArtifact, MixdownPreparationResult } from "./episode-export";
 import { getApiAuthToken, getApiAuthTokenForUser, getApiAuthUserId } from "./auth-client";
@@ -107,6 +108,10 @@ export const api = {
   start: (seedId: string) => request<LiveEpisode>(`/episodes/from-seed/${seedId}`, { method: "POST" }),
   get: (id: string) => request<LiveEpisode>(`/episodes/${id}`),
   mixPlan: async (id: string): Promise<MixPlan> => parseMixPlan(await request<unknown>(`/episodes/${id}/mix-plan`)),
+  programRender: (id: string) =>
+    request<ProgramRenderManifest>(`/episodes/${id}/program-render`, { method: "POST" }),
+  programRenderStatus: (id: string) =>
+    request<ProgramRenderManifest>(`/episodes/${id}/program-render`),
   completed: (id: string) => request<LiveEpisode>(`/episodes/${id}/completed`, { method: "POST" }),
   completedSegment: (id: string, segmentId: string) =>
     request<LiveEpisode>(`/episodes/${id}/completed/${segmentId}`, { method: "POST" }),
