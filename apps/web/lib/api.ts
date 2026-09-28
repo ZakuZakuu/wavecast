@@ -12,6 +12,7 @@ import type {
   Seed,
 } from "./types";
 import type { MixdownArtifact, MixdownPreparationResult } from "./episode-export";
+import type { ProgramRenderManifest } from "./program-stream";
 import { getApiAuthToken, getApiAuthTokenForUser, getApiAuthUserId } from "./auth-client";
 
 export class ApiRequestError extends Error {
@@ -127,6 +128,9 @@ export const api = {
   materialize: (id: string) => request<LiveEpisode>(`/episodes/${id}/materialize`, { method: "POST" }),
   prepareMixdown: (id: string) => request<MixdownPreparationResult>(`/episodes/${id}/prepare-mixdown`, { method: "POST" }),
   mixdown: (id: string) => request<MixdownArtifact>(`/episodes/${id}/mixdown`, { method: "POST" }),
+  programRender: (id: string) => request<ProgramRenderManifest>(`/episodes/${id}/program-render`, { method: "POST" }),
+  programRenderStatus: (id: string) => request<ProgramRenderManifest>(`/episodes/${id}/program-render`),
+  ensureBuffer: (id: string) => request<LiveEpisode>(`/episodes/${id}/ensure-buffer`, { method: "POST", body: JSON.stringify({ target_chapters: 2 }) }),
   myLibrary: (expectedUserId: string) => request<unknown>("/me/library", undefined, expectedUserId),
   mergeMyLibrary: (library: unknown, expectedUserId: string) => request<unknown>("/me/library/merge", {
     method: "POST",
