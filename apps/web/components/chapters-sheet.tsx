@@ -30,15 +30,18 @@ export function ChaptersSheet({
   episode,
   open,
   onClose,
+  currentSegmentId,
 }: {
   episode: LiveEpisode;
   open: boolean;
   onClose: () => void;
+  currentSegmentId?: string | null;
 }) {
   if (!open) return null;
   const chapters = chaptersForEpisode(episode);
+  const effectiveCurrentSegmentId = currentSegmentId ?? episode.current_segment_id;
   const currentIndex = chapters.findIndex((chapter) =>
-    chapter.segments.some((segment) => segment.id === episode.current_segment_id),
+    chapter.segments.some((segment) => segment.id === effectiveCurrentSegmentId),
   );
 
   return (
