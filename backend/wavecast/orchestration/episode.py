@@ -158,6 +158,7 @@ class EpisodeOrchestrator:
             audio_source_url=opening_source.source_url,
             title=seed.opening_track_title,
             artist=seed.opening_track_artist,
+            timing_profile=seed.opening_track_timing_profile,
             committed_at=now,
         )
         episode = LiveEpisode(
