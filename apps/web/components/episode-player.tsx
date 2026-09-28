@@ -698,6 +698,93 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     upcomingArrangementClip,
   ]);
 
+  const handleMasterPosition = useCallback((positionSeconds: number) => {
+    const bounded = Math.max(0, positionSeconds);
+    masterPositionRef.current = bounded;
+    setMasterPosition(bounded);
+  }, []);
+
+  const commitMasterSeek = useCallback((value: number) => {
+    const artifact = masterArtifact;
+    if (!artifact) return;
+    const bounded = Math.min(
+      Math.max(0, value),
+      Math.max(0, artifact.durationSeconds - 0.05),
+    );
+    masterPositionRef.current = bounded;
+    setMasterPosition(bounded);
+    setMasterSeekToken((token) => token + 1);
+    seekPreviewRef.current = null;
+    setSeekPreview(null);
+  }, [masterArtifact]);
+
+  const activateMasterPlayback = useCallback(() => {
+    if (!masterArtifact || masterActiveRef.current) return;
+
+    handoffRequestGuardRef.current.start();
+    completionRequestGuardRef.current.start();
+    setArmedSuccessorId(null);
+    armedSuccessorIdRef.current = null;
+    armedFromSegmentIdRef.current = null;
+    armedEpisodeRef.current = null;
+    handoffAttemptRef.current = null;
+    setTransportSegmentId(null);
+    masterActiveRef.current = true;
+    setMasterActive(true);
+    setMasterBuffering(false);
+    setError(null);
+  }, [masterArtifact]);
+
+  const fallbackFromMasterPlayback = useCallback(() => {
+    const latest = localEpisodeRef.current;
+    const plan = mixPlanRef.current;
+    if (!latest || !plan || plan.episodeId !== latest.id) {
+      masterActiveRef.current = false;
+      setMasterActive(false);
+      setBrowserPlaying(false);
+      setError("完整节目音频暂时无法继续播放");
+      return;
+    }
+
+    const mapped = mixPositionToLinearPosition(
+      latest,
+      plan,
+      masterPositionRef.current,
+    );
+    masterActiveRef.current = false;
+    setMasterActive(false);
+    setMasterBuffering(false);
+    setTransportSegmentId(mapped.segmentId ?? null);
+    browserPositionRef.current = mapped.linearPositionSeconds;
+    setBrowserPosition(mapped.linearPositionSeconds);
+    setSeekToken((token) => token + 1);
+
+    void api.seek(latest.id, Math.floor(mapped.linearPositionSeconds))
+      .then((reconciled) => {
+        playbackAnchorRef.current = playbackAnchor(reconciled);
+        setEpisode(reconciled);
+        setBrowserPlaying(
+          reconciled.is_listener_active && reconciled.is_playing,
+        );
+        setError("完整节目音频暂时不可用，已切回兼容播放");
+      })
+      .catch(() => {
+        setBrowserPlaying(false);
+        setError("完整节目音频暂时无法继续播放");
+      });
+  }, [setEpisode]);
+
+  const handleMasterEnded = useCallback(() => {
+    const latest = localEpisodeRef.current;
+    setBrowserPlaying(false);
+    if (!latest) return;
+    void api.recordUserEvent({
+      event_type: "PLAY_COMPLETE",
+      program_id: latest.seed_id,
+      episode_id: latest.id,
+    }).catch(() => undefined);
+  }, []);
+
   const commitSeek = useCallback((value: number) => {
     if (!localEpisode) return;
 
@@ -859,6 +946,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (!localEpisode) return;
     awaitingSuccessorRef.current = false;
     setBrowserPlaying(false);
+    if (masterActiveRef.current) {
+      return;
+    }
     const position = Math.floor(browserPositionRef.current);
     void api.checkpoint(localEpisode.id, position)
       .then(() => api.pause(localEpisode.id))
@@ -876,6 +966,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (!localEpisode) return;
     awaitingSuccessorRef.current = false;
     setBrowserPlaying(true);
+    if (masterActiveRef.current && localEpisode.is_listener_active) {
+      setError(null);
+      return;
+    }
     void api.resume(localEpisode.id)
       .then((resumed) => {
         playbackAnchorRef.current = playbackAnchor(resumed);
