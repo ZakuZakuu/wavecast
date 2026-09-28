@@ -335,7 +335,6 @@ def _proposal_catalog_name(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
-
 def _cover_for(proposal_id: str, title: str) -> CoverParams:
     digest = sha1(f"{proposal_id}|{title}".encode()).hexdigest()
     seed = int(digest[:8], 16)
