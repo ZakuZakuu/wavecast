@@ -15,6 +15,7 @@ from wavecast.intelligence.models import (
     ResearchBundle,
     ResolvedTrack,
 )
+from wavecast.presentation import PresentationIntent
 from wavecast.timing import ProgramTimingPlan
 
 if TYPE_CHECKING:
@@ -55,6 +56,7 @@ class ProgressiveAssemblySession(BaseModel):
     max_tracks: int = Field(ge=2, le=8)
     max_chapters: int = Field(ge=2, le=32)
     output_language: OutputLanguage
+    presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     opening_track_ref: str | None = Field(default=None, max_length=300)
     fast_plan: FastStartPlan
     research: ResearchBundle
