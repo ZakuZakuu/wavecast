@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from io import BytesIO
@@ -163,6 +164,12 @@ if DATABASE_URL:
 GUEST_PROGRAM_LIMIT = int(os.getenv("WAVECAST_GUEST_PROGRAM_LIMIT", "3"))
 AUTH_DAILY_PROGRAM_LIMIT = int(os.getenv("WAVECAST_AUTH_DAILY_PROGRAM_LIMIT", "20"))
 GLOBAL_DAILY_PROGRAM_LIMIT = int(os.getenv("WAVECAST_GLOBAL_DAILY_PROGRAM_LIMIT", "100"))
+
+# Programme HLS is a rebuildable cache. Keep enough headroom on the small
+# Railway volume for source snapshots/TTS instead of allowing old renders to
+# consume the filesystem.
+PROGRAM_RENDER_GC_LOW_WATERMARK_BYTES = 120 * 1024 * 1024
+PROGRAM_RENDER_GC_TARGET_FREE_BYTES = 200 * 1024 * 1024
 if min(GUEST_PROGRAM_LIMIT, AUTH_DAILY_PROGRAM_LIMIT, GLOBAL_DAILY_PROGRAM_LIMIT) < 0:
     raise RuntimeError("generation quota limits must be non-negative")
 
@@ -180,6 +187,85 @@ recommendation_repository: ProgramIdeaRepository = (
     if DATABASE_URL
     else InMemoryProgramIdeaRepository()
 )
+
+
+def _gc_program_render_cache(current_episode_id: str) -> tuple[int, int | None]:
+    """Best-effort low-watermark GC for rebuildable programme HLS renders."""
+
+    root = Path(AUDIO_ROOT)
+    try:
+        usage = shutil.disk_usage(root)
+    except OSError as error:
+        logger.warning(
+            "program_render_gc_disk_usage_failed root=%s error=%s",
+            root,
+            str(error),
+        )
+        return 0, None
+
+    if usage.free >= PROGRAM_RENDER_GC_LOW_WATERMARK_BYTES:
+        return 0, usage.free
+
+    cache_root = root / "program-renders"
+    if not cache_root.is_dir():
+        return 0, usage.free
+
+    safe_current_episode_id = re.sub(r"[^a-zA-Z0-9_-]", "_", current_episode_id)
+    candidates: list[tuple[float, Path]] = []
+    try:
+        for child in cache_root.iterdir():
+            if not child.is_dir() or child.name == safe_current_episode_id:
+                continue
+            try:
+                candidates.append((child.stat().st_mtime, child))
+            except OSError:
+                continue
+    except OSError as error:
+        logger.warning(
+            "program_render_gc_scan_failed root=%s error=%s",
+            cache_root,
+            str(error),
+        )
+        return 0, usage.free
+
+    deleted = 0
+    free_bytes = usage.free
+    for _mtime, candidate in sorted(candidates, key=lambda item: item[0]):
+        try:
+            shutil.rmtree(candidate)
+            deleted += 1
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            logger.warning(
+                "program_render_gc_delete_failed path=%s error=%s",
+                candidate,
+                str(error),
+            )
+            continue
+
+        try:
+            free_bytes = shutil.disk_usage(root).free
+        except OSError:
+            free_bytes = None
+            break
+        if free_bytes >= PROGRAM_RENDER_GC_TARGET_FREE_BYTES:
+            break
+
+    logger.info(
+        "program_render_gc episode_id=%s deleted=%s free_bytes=%s",
+        current_episode_id,
+        deleted,
+        free_bytes,
+    )
+    return deleted, free_bytes
+
+
+def _program_render_free_bytes() -> int | None:
+    try:
+        return shutil.disk_usage(Path(AUDIO_ROOT)).free
+    except OSError:
+        return None
 
 
 def _build_recommendation_planner(settings: ProviderSettings) -> RecommendationPlanner:
@@ -1604,6 +1690,7 @@ async def render_program_stream(
 
     actor = principal(request)
     await to_thread.run_sync(owned, episode_id, actor)
+    await to_thread.run_sync(_gc_program_render_cache, episode_id)
     try:
         preparation = await _prepare_owned_music_assets(
             episode_id,
@@ -1650,6 +1737,13 @@ async def render_program_stream(
         )
         raise HTTPException(status_code=502, detail="Program renderer failed") from error
     except OSError as error:
+        logger.error(
+            "program_render_storage_failed episode_id=%s errno=%s error=%s free_bytes=%s",
+            episode_id,
+            getattr(error, "errno", None),
+            str(error),
+            _program_render_free_bytes(),
+        )
         raise HTTPException(status_code=500, detail="Program render storage failed") from error
 
 

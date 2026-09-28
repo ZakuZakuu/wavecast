@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import math
+import os
 import shutil
 import struct
 import wave
@@ -59,6 +60,67 @@ def _wav_bytes(duration_seconds: float, frequency: float) -> bytes:
         output.setframerate(sample_rate)
         output.writeframes(bytes(samples))
     return buffer.getvalue()
+
+
+def test_program_render_gc_deletes_oldest_cache_until_target(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audio_root = tmp_path / "audio"
+    cache_root = audio_root / "program-renders"
+    old = cache_root / "old-episode"
+    current = cache_root / "current-episode"
+    newer = cache_root / "newer-episode"
+    for path in (old, current, newer):
+        path.mkdir(parents=True)
+        (path / "chunk.ts").write_bytes(b"x")
+
+    os.utime(old, (10, 10))
+    os.utime(current, (20, 20))
+    os.utime(newer, (30, 30))
+
+    monkeypatch.setattr(api_module, "AUDIO_ROOT", str(audio_root))
+    monkeypatch.setattr(api_module, "PROGRAM_RENDER_GC_LOW_WATERMARK_BYTES", 100)
+    monkeypatch.setattr(api_module, "PROGRAM_RENDER_GC_TARGET_FREE_BYTES", 200)
+
+    def fake_disk_usage(_path):
+        # 50 bytes free initially; each deleted cache directory recovers 100.
+        deleted = sum(not path.exists() for path in (old, newer))
+        free = 50 + (100 * deleted)
+        return shutil._ntuple_diskusage(total=1000, used=1000 - free, free=free)
+
+    monkeypatch.setattr(api_module.shutil, "disk_usage", fake_disk_usage)
+
+    deleted, free_bytes = api_module._gc_program_render_cache("current-episode")
+
+    assert deleted == 2
+    assert free_bytes == 250
+    assert not old.exists()
+    assert not newer.exists()
+    assert current.exists()
+
+
+def test_program_render_gc_is_noop_above_low_watermark(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audio_root = tmp_path / "audio"
+    cache = audio_root / "program-renders" / "old-episode"
+    cache.mkdir(parents=True)
+
+    monkeypatch.setattr(api_module, "AUDIO_ROOT", str(audio_root))
+    monkeypatch.setattr(api_module, "PROGRAM_RENDER_GC_LOW_WATERMARK_BYTES", 100)
+    monkeypatch.setattr(
+        api_module.shutil,
+        "disk_usage",
+        lambda _path: shutil._ntuple_diskusage(total=1000, used=800, free=200),
+    )
+
+    deleted, free_bytes = api_module._gc_program_render_cache("current-episode")
+
+    assert deleted == 0
+    assert free_bytes == 200
+    assert cache.exists()
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
