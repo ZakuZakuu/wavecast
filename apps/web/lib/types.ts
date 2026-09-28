@@ -2,6 +2,14 @@ export type SegmentKind = "MUSIC" | "NARRATION";
 export type SegmentState = "PLANNED" | "SCRIPT_READY" | "AUDIO_GENERATING" | "AUDIO_READY" | "COMMITTED" | "PLAYED" | "SKIPPED";
 
 export type DurationIntent = "AUTO" | "SHORT" | "STANDARD" | "DEEP";
+export type HostMode = "NONE" | "LIGHT" | "FULL";
+export type OpeningStrategy = "FULL_TRACK" | "OPPORTUNISTIC" | "EARLY_BRIDGE";
+export type TransitionStyle = "CLEAN" | "RADIO" | "DJ";
+export type PresentationIntent = {
+  host_mode: HostMode;
+  opening_strategy: OpeningStrategy;
+  transition_style: TransitionStyle;
+};
 
 export type Seed = {
   id: string;
@@ -13,6 +21,7 @@ export type Seed = {
   opening_track_title: string;
   opening_track_artist: string;
   cover: { family: string; seed: number; palette: [string, string] };
+  presentation_intent?: PresentationIntent;
 };
 
 export type ProgramProposal = Seed & {
@@ -79,6 +88,7 @@ export type LiveEpisode = {
   is_listener_active: boolean;
   is_playing: boolean;
   program_estimated_duration_seconds: number;
+  presentation_intent?: PresentationIntent;
   generated_frontier_seconds: number;
   buffer_ahead_seconds: number;
   committed_frontier_seconds: number;
