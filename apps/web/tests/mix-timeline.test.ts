@@ -68,16 +68,16 @@ describe("deterministic mix timeline", () => {
     expect(evaluateGain(musicB, 47.5)).toBe(1);
   });
 
-  it("round-trips overlap positions through the linear runtime seam", () => {
+  it("round-trips overlap seeks through the outgoing transport owner", () => {
     const plan = canonicalPlan;
     const mixPosition = 39.5;
     const linear = mixPositionToLinearPosition(episode, plan, mixPosition);
     const roundTrip = linearPositionToMixPosition(episode, plan, linear.linearPositionSeconds);
 
-    expect(linear.segmentId).toBe("voice-a");
-    expect(linear.linearPositionSeconds).toBe(40.5);
+    expect(linear.segmentId).toBe("music-a");
+    expect(linear.linearPositionSeconds).toBe(39.5);
     expect(roundTrip.mixPositionSeconds).toBe(mixPosition);
-    expect(roundTrip.segmentId).toBe("voice-a");
+    expect(roundTrip.segmentId).toBe("music-a");
   });
 
   it("preserves listener time when authority hands off inside an overlap", () => {
