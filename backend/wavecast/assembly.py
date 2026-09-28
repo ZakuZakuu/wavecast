@@ -68,15 +68,15 @@ from wavecast.models.episode import (
     SegmentState,
 )
 from wavecast.orchestration.generation import GeneratedChapter
-from wavecast.presentation import (
-    HostMode,
-    PresentationIntent,
-    narration_ratio_for_host_mode,
-)
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
     ProgressiveAssemblySession,
     ProgressiveSessionDiagnostic,
+)
+from wavecast.presentation import (
+    HostMode,
+    PresentationIntent,
+    narration_ratio_for_host_mode,
 )
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import (
@@ -2372,56 +2372,16 @@ class StagedProgressiveChapterGenerator:
             EpisodeAssemblyError,
             ValueError,
         ) as error:
-            # Writer is the quality layer, not the existence guarantee. Fall
-            # back to a short script using only authoritative adjacent catalog
-            # metadata, so one provider/format failure does not erase the host.
+            # Writer is the quality layer, not the existence guarantee. P0
+            # deliberately prefers a clean music-only gap over canned catalog
+            # copy when Writer cannot produce a trustworthy bridge.
             logger.warning(
-                "narration_authoring_failed chapter_id=%s error_type=%s",
+                "narration_authoring_failed chapter_id=%s error_type=%s host_mode=%s",
                 chapter.chapter_id,
                 type(error).__name__,
+                self.session.presentation_intent.host_mode.value,
             )
-            if self.session.presentation_intent.host_mode is not HostMode.FULL:
-                logger.info(
-                    "narration_authoring_skipped_fallback chapter_id=%s host_mode=%s",
-                    chapter.chapter_id,
-                    self.session.presentation_intent.host_mode.value,
-                )
-                return None
-            try:
-                fallback_script = _deterministic_narration_fallback(
-                    chapter,
-                    self.session.output_language,
-                )
-                radio_script, _ = _assemble_writer_scripts(
-                    [fallback_script],
-                    len(prepared_tracks),
-                    chapter_music_indices=[chapter_music_index],
-                    slot_contexts=[chapter.slot_contexts],
-                    chapter_connections=[chapter.chapter.connection_from_previous_track],
-                    previous_music_indices=[0 if has_previous_music else None],
-                    require_final_slot=(
-                        bool(self.session.chapters)
-                        and chapter.chapter_id == self.session.chapters[-1].chapter_id
-                    ),
-                )
-                playable = self.composer.compose_prepared(prepared_tracks, radio_script)
-                _assert_narration_blocks_materialized(radio_script, playable)
-            except (
-                NarrationPlacementError,
-                EpisodeAssemblyError,
-                ValueError,
-            ) as fallback_error:
-                logger.warning(
-                    "narration_fallback_failed chapter_id=%s error_type=%s",
-                    chapter.chapter_id,
-                    type(fallback_error).__name__,
-                )
-                return None
-            logger.info(
-                "narration_authoring_fallback chapter_id=%s narration_blocks=%s",
-                chapter.chapter_id,
-                len(radio_script.blocks),
-            )
+            return None
         return _generated_runtime_chapter(
             chapter.chapter_id,
             list(playable.segments),
