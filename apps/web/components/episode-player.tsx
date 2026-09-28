@@ -104,6 +104,21 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     () => localEpisode ? mixPlanSignature(localEpisode) : null,
     [localEpisode],
   );
+  const programRenderSignature = useMemo(
+    () => localEpisode
+      ? [
+          localEpisode.state,
+          ...localEpisode.segments.map((segment) => [
+            segment.id,
+            segment.state,
+            segment.audio_source_url ?? "",
+            segment.actual_duration_seconds ?? "",
+            segment.planned_duration_seconds,
+          ].join(":")),
+        ].join("|")
+      : null,
+    [localEpisode],
+  );
   const arrangementClip = useMemo(
     () => mixPlan?.clips.find((clip) => clip.segmentId === current?.id) ?? null,
     [current?.id, mixPlan],
@@ -188,6 +203,113 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       cancelled = true;
     };
   }, [arrangementEpisodeId, arrangementSignature]);
+
+  useEffect(() => {
+    if (
+      !programStreamSupported
+      || !localEpisode
+      || !localEpisode.is_listener_active
+      || localEpisode.state === "MATERIALIZED"
+      || localEpisode.state === "MATERIALIZING"
+      || autoMaterializeEpisodeRef.current === localEpisode.id
+    ) return;
+
+    autoMaterializeEpisodeRef.current = localEpisode.id;
+    void api.materialize(localEpisode.id)
+      .then((requested) => {
+        const latest = localEpisodeRef.current;
+        if (latest?.id === requested.id && requested.version >= latest.version) {
+          setEpisode(requested);
+        }
+      })
+      .catch(() => {
+        // Full publication is an optimization boundary. If the queue is
+        // temporarily unavailable, legacy progressive generation remains live.
+      });
+  }, [
+    localEpisode?.id,
+    localEpisode?.is_listener_active,
+    localEpisode?.state,
+    programStreamSupported,
+    setEpisode,
+  ]);
+
+  useEffect(() => {
+    if (
+      !programStreamSupported
+      || !localEpisode
+      || !programRenderSignature
+      || programRenderSignatureRef.current === programRenderSignature
+    ) return;
+
+    const episodeIdAtRequest = localEpisode.id;
+    programRenderSignatureRef.current = programRenderSignature;
+    programRenderQueueRef.current = programRenderQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const latestBefore = localEpisodeRef.current;
+        if (latestBefore?.id !== episodeIdAtRequest) return;
+
+        try {
+          const manifest = await api.programRender(episodeIdAtRequest);
+          const latest = localEpisodeRef.current;
+          if (latest?.id !== episodeIdAtRequest) return;
+          setProgramManifest(manifest);
+
+          if (
+            manifest.chunks.length > 0
+            && manifest.renderedFrontierSeconds > 0
+            && !programStreamActiveRef.current
+          ) {
+            const latestPlan = mixPlanRef.current;
+            const legacyPosition = browserPositionRef.current;
+            const listenerPosition = (
+              latestPlan?.episodeId === latest.id
+                ? linearPositionToMixPosition(
+                    latest,
+                    latestPlan,
+                    legacyPosition,
+                  ).mixPositionSeconds
+                : legacyPosition
+            );
+            const bounded = Math.min(
+              Math.max(0, listenerPosition),
+              Math.max(0, manifest.renderedFrontierSeconds - 0.05),
+            );
+
+            handoffRequestGuardRef.current.start();
+            completionRequestGuardRef.current.start();
+            setArmedSuccessorId(null);
+            armedSuccessorIdRef.current = null;
+            armedFromSegmentIdRef.current = null;
+            armedEpisodeRef.current = null;
+            handoffAttemptRef.current = null;
+            setTransportSegmentId(null);
+
+            programPositionRef.current = bounded;
+            setProgramPosition(bounded);
+            setProgramSeekToken((token) => token + 1);
+            programStreamActiveRef.current = true;
+            setProgramStreamActive(true);
+          }
+        } catch (reason: unknown) {
+          if (
+            reason instanceof ApiRequestError
+            && reason.status === 409
+          ) {
+            // A render can briefly race generation/snapshot persistence. The
+            // next structural Episode event retries with the new signature.
+            return;
+          }
+          // Keep the proven legacy player available while publication is
+          // unavailable; one failed render must not interrupt current audio.
+        }
+      });
+  }, [
+    localEpisode?.id,
+    programRenderSignature,
+    programStreamSupported,
+  ]);
 
   useEffect(() => {
     let mounted = true;
