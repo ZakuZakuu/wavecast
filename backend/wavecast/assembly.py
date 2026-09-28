@@ -291,33 +291,12 @@ class LiveEpisodeAssemblyService:
             proposals.append(fast_result.plan.selected_next_track)
         proposals.extend(fast_result.plan.next_candidates)
 
-        # FastStart can time out before it has a usable candidate. The opening
-        # track is already playing, so use one bounded catalog lookup for another
-        # real song by the opening artist rather than waiting for the full
-        # Research/Curator route before a successor exists.
-        try:
-            catalog_fallbacks = await self.retrieval.search(
-                opening_track.canonical_artist,
-                requested_artist=opening_track.canonical_artist,
-                limit=5,
-            )
-        except ProviderError:
-            catalog_fallbacks = []
-        proposals.extend(
-            TrackProposal(
-                artist=candidate.artist,
-                title=candidate.title,
-                reasons=["FastStart catalog bootstrap from the opening artist."],
-                confidence=0.5,
-            )
-            for candidate in catalog_fallbacks
-        )
-
         seen: set[tuple[str, str]] = set()
-        for proposal in proposals:
+
+        async def prepare_candidate(proposal: TrackProposal) -> GeneratedChapter | None:
             proposal_key = (proposal.artist.casefold(), proposal.title.casefold())
             if proposal_key in seen:
-                continue
+                return None
             seen.add(proposal_key)
             try:
                 resolved = await resolve_track_proposal_across_providers(
@@ -325,9 +304,9 @@ class LiveEpisodeAssemblyService:
                     proposal,
                 )
             except ProviderError:
-                continue
+                return None
             if resolved is None or _same_song_identity(resolved, opening_track):
-                continue
+                return None
 
             first_narration = fast_result.plan.first_narration
             if fast_result.trace.fallback_used:
@@ -385,7 +364,7 @@ class LiveEpisodeAssemblyService:
                     bootstrap_script,
                 )
             except (ProviderError, UnresolvedTrackError, ValueError):
-                continue
+                return None
 
             music = [
                 segment
@@ -403,12 +382,39 @@ class LiveEpisodeAssemblyService:
                 or len(narration) != 1
                 or narration[0].state is not SegmentState.SCRIPT_READY
             ):
-                continue
+                return None
             return _generated_runtime_chapter(
                 "chapter-2",
                 playable.segments,
                 base_order=1,
             )
+
+        # Prefer the actual FastStart route when it produced a usable exact
+        # catalog identity.
+        for proposal in proposals:
+            prepared = await prepare_candidate(proposal)
+            if prepared is not None:
+                return prepared
+
+        # Only if FastStart cannot yield a playable successor, spend one bounded
+        # catalog lookup on another song by the opening artist. This keeps a
+        # concrete next source ahead of the slower Research/Curator route.
+        catalog_fallbacks = await self.retrieval.search(
+            opening_track.canonical_artist,
+            requested_artist=opening_track.canonical_artist,
+            limit=5,
+        )
+        for candidate in catalog_fallbacks:
+            prepared = await prepare_candidate(
+                TrackProposal(
+                    artist=candidate.artist,
+                    title=candidate.title,
+                    reasons=["FastStart catalog bootstrap from the opening artist."],
+                    confidence=0.5,
+                )
+            )
+            if prepared is not None:
+                return prepared
         return None
 
     async def prepare_progressive_session(
