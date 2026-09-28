@@ -131,6 +131,7 @@ class MusicSegment(Segment):
     kind: Literal[SegmentKind.MUSIC] = SegmentKind.MUSIC
     track_ref: str
     audio_source_url: str | None = None
+    timing_profile: TrackTimingProfile | None = None
 
 
 class NarrationSegment(Segment):
