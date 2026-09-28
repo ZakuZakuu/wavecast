@@ -1477,7 +1477,10 @@ async def _prepare_owned_music_assets(episode_id: str) -> MixdownPreparationResu
         reused_count = 0
 
         for segment in working.timeline_segments:
-            if not isinstance(segment, MusicSegment):
+            if not isinstance(segment, MusicSegment) or not segment.is_audio_ready:
+                # Future/speculative tracks are not render inputs yet. Snapshotting
+                # them would make an unfinished chapter block publication of the
+                # already-ready immutable prefix.
                 continue
             classification = classify_music_source(segment.audio_source_url or "")
             if classification.kind is MusicSourceKind.OWNED_ASSET:
