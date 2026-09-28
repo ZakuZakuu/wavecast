@@ -9,17 +9,24 @@ from wavecast.models.episode import NarrationRole, PlayableEpisode, Segment, Seg
 
 @dataclass(frozen=True)
 class ArrangementDefaults:
-    """Small bounded defaults for a radio-like baseline, not a DAW."""
+    """Deterministic first-pass radio mixing primitives.
 
-    outgoing_voice_overlap_seconds: float = 2.0
-    crossfade_seconds: float = 3.0
+    The three baseline behaviors are intentionally independent:
+    direct music-to-music uses a long crossfade, narration between tracks uses
+    a narrated bridge envelope, and narration without a track handoff only
+    ducks the music underneath the voice.
+    """
+
+    outgoing_voice_overlap_seconds: float = 5.0
+    crossfade_seconds: float = 10.0
     incoming_narration_offset_seconds: float = 1.0
-    music_fade_in_seconds: float = 3.0
-    music_fade_out_seconds: float = 3.0
+    bridge_incoming_fade_seconds: float = 5.0
+    music_fade_in_seconds: float = 10.0
+    music_fade_out_seconds: float = 10.0
     voice_fade_seconds: float = 0.08
-    duck_gain: float = 0.35
-    duck_attack_seconds: float = 0.5
-    duck_release_seconds: float = 0.5
+    duck_gain: float = 0.30
+    duck_attack_seconds: float = 1.5
+    duck_release_seconds: float = 1.5
 
 
 def _active_segments(episode: PlayableEpisode) -> list[Segment]:
@@ -53,7 +60,6 @@ def _music_after(segments: list[Segment], index: int) -> int | None:
 
 
 def _narration_role(segment: Segment) -> NarrationRole:
-    # Keep old generic narration compatible with the typed role contract.
     return getattr(segment, "narration_role", NarrationRole.GENERAL)
 
 
@@ -67,6 +73,35 @@ def _narration_run_before(segments: list[Segment], index: int) -> list[int]:
     return run
 
 
+def _narration_run_after(segments: list[Segment], index: int) -> list[int]:
+    run: list[int] = []
+    candidate = index + 1
+    while candidate < len(segments) and segments[candidate].kind is SegmentKind.NARRATION:
+        run.append(candidate)
+        candidate += 1
+    return run
+
+
+def _bridge_run_before(segments: list[Segment], index: int) -> list[int]:
+    run = _narration_run_before(segments, index)
+    if not run:
+        return []
+    previous_index = run[0] - 1
+    if previous_index >= 0 and segments[previous_index].kind is SegmentKind.MUSIC:
+        return run
+    return []
+
+
+def _bridge_run_after(segments: list[Segment], index: int) -> list[int]:
+    run = _narration_run_after(segments, index)
+    if not run:
+        return []
+    next_index = run[-1] + 1
+    if next_index < len(segments) and segments[next_index].kind is SegmentKind.MUSIC:
+        return run
+    return []
+
+
 def _semantic_incoming_music_start(
     *,
     segments: list[Segment],
@@ -75,56 +110,35 @@ def _semantic_incoming_music_start(
     config: ArrangementDefaults,
     fallback: float,
 ) -> float:
+    """Placement for narration that is not bridging out of a previous song."""
+
     run = _narration_run_before(segments, index)
     if not run:
         return fallback
 
     track_intro_index = next(
-        (candidate for candidate in reversed(run)
-         if _narration_role(segments[candidate]) is NarrationRole.TRACK_INTRO),
+        (
+            candidate
+            for candidate in reversed(run)
+            if _narration_role(segments[candidate]) is NarrationRole.TRACK_INTRO
+        ),
         None,
     )
     if track_intro_index is not None:
-        track_intro = segments[track_intro_index]
-        return _incoming_music_start(
-            narration_start=starts_by_index[track_intro_index],
-            narration_duration=_duration(track_intro),
-            role=NarrationRole.TRACK_INTRO,
-            config=config,
-            fallback=fallback,
-        )
+        return starts_by_index[track_intro_index]
 
     if any(
-        _narration_role(segments[candidate]) in {NarrationRole.TRANSITION, NarrationRole.INTRO}
+        _narration_role(segments[candidate])
+        in {NarrationRole.TRANSITION, NarrationRole.INTRO}
         for candidate in run
     ):
         last = run[-1]
-        return _incoming_music_start(
-            narration_start=starts_by_index[last],
-            narration_duration=_duration(segments[last]),
-            role=NarrationRole.TRANSITION,
-            config=config,
-            fallback=fallback,
+        duration = _duration(segments[last])
+        return starts_by_index[last] + min(
+            config.incoming_narration_offset_seconds,
+            duration / 2,
         )
 
-    return fallback
-
-
-def _incoming_music_start(
-    *,
-    narration_start: float,
-    narration_duration: float,
-    role: NarrationRole,
-    config: ArrangementDefaults,
-    fallback: float,
-) -> float:
-    # Role owns semantic placement; the planner owns bounded physical offsets.
-    if role is NarrationRole.TRACK_INTRO:
-        return narration_start
-    if role in {NarrationRole.TRANSITION, NarrationRole.INTRO}:
-        offset = min(config.incoming_narration_offset_seconds, narration_duration / 2)
-        return narration_start + offset
-    # Generic narration keeps the Phase 6B crossfade compatibility baseline.
     return fallback
 
 
@@ -135,11 +149,112 @@ def _unique_points(points: Iterable[GainPoint]) -> tuple[GainPoint, ...]:
     return tuple(by_offset[offset] for offset in sorted(by_offset))
 
 
+def _lerp(left: float, right: float, progress: float) -> float:
+    bounded = max(0.0, min(1.0, progress))
+    return left + (right - left) * bounded
+
+
 def _fade_factor(offset: float, duration: float, fade_in: float, fade_out: float) -> float:
-    if fade_in and offset < fade_in:
-        return max(0.0, min(1.0, offset / fade_in))
-    if fade_out and offset > duration - fade_out:
-        return max(0.0, min(1.0, (duration - offset) / fade_out))
+    factor = 1.0
+    if fade_in:
+        factor = min(factor, max(0.0, min(1.0, offset / fade_in)))
+    if fade_out:
+        factor = min(
+            factor,
+            max(0.0, min(1.0, (duration - offset) / fade_out)),
+        )
+    return factor
+
+
+def _duck_factor(
+    absolute: float,
+    *,
+    intervals: list[tuple[float, float]],
+    duck_gain: float,
+    duck_attack: float,
+    duck_release: float,
+) -> float:
+    factor = 1.0
+    for narration_start, narration_end in intervals:
+        if duck_attack > 0 and narration_start - duck_attack < absolute < narration_start:
+            progress = (absolute - (narration_start - duck_attack)) / duck_attack
+            factor = min(factor, _lerp(1.0, duck_gain, progress))
+        elif narration_start <= absolute < narration_end:
+            factor = min(factor, duck_gain)
+        elif duck_release > 0 and narration_end <= absolute < narration_end + duck_release:
+            progress = (absolute - narration_end) / duck_release
+            factor = min(factor, _lerp(duck_gain, 1.0, progress))
+    return factor
+
+
+def _bridge_outgoing_factor(
+    absolute: float,
+    *,
+    narration_start: float,
+    music_end: float,
+    duck_gain: float,
+    duck_attack: float,
+) -> float:
+    attack_start = narration_start - duck_attack
+    if absolute <= attack_start:
+        return 1.0
+    if absolute < narration_start and duck_attack > 0:
+        return _lerp(
+            1.0,
+            duck_gain,
+            (absolute - attack_start) / duck_attack,
+        )
+    if absolute < music_end:
+        span = music_end - narration_start
+        if span <= 0:
+            return 0.0
+        return _lerp(
+            duck_gain,
+            0.0,
+            (absolute - narration_start) / span,
+        )
+    return 0.0
+
+
+def _bridge_incoming_factor(
+    absolute: float,
+    *,
+    music_start: float,
+    narration_end: float,
+    fade_seconds: float,
+    duck_gain: float,
+    duck_release: float,
+) -> float:
+    if absolute <= music_start:
+        return 0.0
+
+    if narration_end <= music_start:
+        if fade_seconds <= 0:
+            return 1.0
+        return _lerp(
+            0.0,
+            1.0,
+            (absolute - music_start) / fade_seconds,
+        )
+
+    ramp_end = min(narration_end, music_start + fade_seconds)
+    if absolute < ramp_end:
+        span = ramp_end - music_start
+        if span <= 0:
+            return duck_gain
+        return _lerp(
+            0.0,
+            duck_gain,
+            (absolute - music_start) / span,
+        )
+    if absolute < narration_end:
+        return duck_gain
+    if duck_release > 0 and absolute < narration_end + duck_release:
+        return _lerp(
+            duck_gain,
+            1.0,
+            (absolute - narration_end) / duck_release,
+        )
     return 1.0
 
 
@@ -153,14 +268,20 @@ def _music_automation(
     duck_gain: float,
     duck_attack: float,
     duck_release: float,
+    outgoing_bridge: tuple[float, float] | None = None,
+    incoming_bridge: tuple[float, float] | None = None,
+    bridge_incoming_fade: float = 0.0,
 ) -> tuple[GainPoint, ...]:
     offsets = {0.0, duration}
+    end = start + duration
+
     if fade_in:
         offsets.add(min(duration, fade_in))
     if fade_out:
         offsets.add(max(0.0, duration - fade_out))
+
     for narration_start, narration_end in narration_intervals:
-        if narration_end > start and narration_start < start + duration:
+        if narration_end > start and narration_start < end:
             offsets.update(
                 {
                     max(0.0, narration_start - duck_attack - start),
@@ -170,37 +291,86 @@ def _music_automation(
                 }
             )
 
-    def duck_factor(absolute: float) -> float:
-        factor = 1.0
-        for narration_start, narration_end in narration_intervals:
-            if narration_start - duck_attack < absolute < narration_start:
-                progress = (absolute - (narration_start - duck_attack)) / duck_attack
-                factor = min(factor, 1.0 + (duck_gain - 1.0) * progress)
-            elif narration_start <= absolute < narration_end:
-                factor = min(factor, duck_gain)
-            elif narration_end <= absolute < narration_end + duck_release:
-                progress = (absolute - narration_end) / duck_release
-                factor = min(factor, duck_gain + (1.0 - duck_gain) * progress)
-        return factor
+    if outgoing_bridge is not None:
+        narration_start, _ = outgoing_bridge
+        offsets.update(
+            {
+                max(0.0, narration_start - duck_attack - start),
+                max(0.0, narration_start - start),
+                duration,
+            }
+        )
+
+    if incoming_bridge is not None:
+        _, narration_end = incoming_bridge
+        ramp_end = min(narration_end, start + bridge_incoming_fade)
+        offsets.update(
+            {
+                0.0,
+                max(0.0, min(duration, ramp_end - start)),
+                max(0.0, min(duration, narration_end - start)),
+                max(0.0, min(duration, narration_end + duck_release - start)),
+            }
+        )
 
     points: list[GainPoint] = []
     for offset in sorted(offsets):
         absolute = start + offset
+        gain = _fade_factor(offset, duration, fade_in, fade_out)
+        gain *= _duck_factor(
+            absolute,
+            intervals=narration_intervals,
+            duck_gain=duck_gain,
+            duck_attack=duck_attack,
+            duck_release=duck_release,
+        )
+        if outgoing_bridge is not None:
+            gain *= _bridge_outgoing_factor(
+                absolute,
+                narration_start=outgoing_bridge[0],
+                music_end=end,
+                duck_gain=duck_gain,
+                duck_attack=duck_attack,
+            )
+        if incoming_bridge is not None:
+            gain *= _bridge_incoming_factor(
+                absolute,
+                music_start=start,
+                narration_end=incoming_bridge[1],
+                fade_seconds=bridge_incoming_fade,
+                duck_gain=duck_gain,
+                duck_release=duck_release,
+            )
         points.append(
             GainPoint(
                 offset_seconds=offset,
-                gain=_fade_factor(offset, duration, fade_in, fade_out)
-                * duck_factor(absolute),
+                gain=max(0.0, min(1.0, gain)),
             )
         )
     return _unique_points(points)
+
+
+def _run_interval(
+    run: list[int],
+    *,
+    segments: list[Segment],
+    starts_by_index: dict[int, float],
+) -> tuple[float, float] | None:
+    if not run:
+        return None
+    first = run[0]
+    last = run[-1]
+    return (
+        starts_by_index[first],
+        starts_by_index[last] + _duration(segments[last]),
+    )
 
 
 def plan_episode_mix(
     episode: PlayableEpisode,
     defaults: ArrangementDefaults | None = None,
 ) -> MixPlan:
-    """Build a deterministic overlap arrangement from a materialized timeline."""
+    """Build deterministic radio-style mixing from one ready timeline prefix."""
 
     config = defaults or ArrangementDefaults()
     segments = _active_segments(episode)
@@ -211,32 +381,51 @@ def plan_episode_mix(
     for index, segment in enumerate(segments):
         duration = _duration(segment)
         previous = segments[index - 1] if index else None
+
         if index == 0:
             start = 0.0
         elif segment.kind is SegmentKind.MUSIC:
+            bridge_run = _bridge_run_before(segments, index)
             prior_music_index = _music_before(segments, index)
-            fallback = cursor
-            if prior_music_index is not None:
+
+            if bridge_run and prior_music_index is not None:
                 prior_start = starts_by_index[prior_music_index]
                 prior_end = prior_start + _duration(segments[prior_music_index])
-                fallback = max(0.0, prior_end - config.crossfade_seconds)
-            if previous and previous.kind is SegmentKind.NARRATION:
+                narration_end = (
+                    starts_by_index[bridge_run[-1]]
+                    + _duration(segments[bridge_run[-1]])
+                )
+                start = max(
+                    prior_end,
+                    narration_end - config.bridge_incoming_fade_seconds,
+                )
+            elif previous and previous.kind is SegmentKind.MUSIC:
+                previous_start = starts_by_index[index - 1]
+                previous_duration = _duration(previous)
+                overlap = min(
+                    config.crossfade_seconds,
+                    previous_duration,
+                    duration,
+                )
+                start = max(0.0, previous_start + previous_duration - overlap)
+            elif previous and previous.kind is SegmentKind.NARRATION:
                 start = _semantic_incoming_music_start(
                     segments=segments,
                     index=index,
                     starts_by_index=starts_by_index,
                     config=config,
-                    fallback=fallback,
+                    fallback=cursor,
                 )
             else:
-                start = fallback
+                start = cursor
         elif previous and previous.kind is SegmentKind.MUSIC:
             previous_end = starts_by_index[index - 1] + _duration(previous)
-            start = max(
-                0.0,
-                previous_end
-                - min(config.outgoing_voice_overlap_seconds, _duration(previous)),
+            overlap = min(
+                config.outgoing_voice_overlap_seconds,
+                duration / 2,
+                _duration(previous),
             )
+            start = max(0.0, previous_end - overlap)
         else:
             start = cursor
 
@@ -244,16 +433,20 @@ def plan_episode_mix(
         starts[segment.id] = start
         cursor = max(cursor, start + duration)
 
-    narration_intervals = [
-        (starts_by_index[index], starts_by_index[index] + _duration(segment))
+    narration_by_index = {
+        index: (
+            starts_by_index[index],
+            starts_by_index[index] + _duration(segment),
+        )
         for index, segment in enumerate(segments)
         if segment.kind is SegmentKind.NARRATION
-    ]
+    }
 
     clips: list[AudioClip] = []
     for index, segment in enumerate(segments):
         start = starts_by_index[index]
         duration = _duration(segment)
+
         if segment.kind is SegmentKind.NARRATION:
             clips.append(
                 AudioClip(
@@ -268,9 +461,16 @@ def plan_episode_mix(
                     fade_out_seconds=min(config.voice_fade_seconds, duration),
                     gain_automation=(
                         GainPoint(offset_seconds=0, gain=0),
-                        GainPoint(offset_seconds=min(config.voice_fade_seconds, duration), gain=1),
                         GainPoint(
-                            offset_seconds=max(0, duration - config.voice_fade_seconds), gain=1
+                            offset_seconds=min(config.voice_fade_seconds, duration),
+                            gain=1,
+                        ),
+                        GainPoint(
+                            offset_seconds=max(
+                                0,
+                                duration - config.voice_fade_seconds,
+                            ),
+                            gain=1,
                         ),
                         GainPoint(offset_seconds=duration, gain=0),
                     ),
@@ -278,10 +478,60 @@ def plan_episode_mix(
             )
             continue
 
-        previous_music = _music_before(segments, index) is not None
-        next_music = _music_after(segments, index)
-        fade_in = config.music_fade_in_seconds if previous_music else 0.0
-        fade_out = config.music_fade_out_seconds if next_music is not None else 0.0
+        incoming_run = _bridge_run_before(segments, index)
+        outgoing_run = _bridge_run_after(segments, index)
+        incoming_bridge = _run_interval(
+            incoming_run,
+            segments=segments,
+            starts_by_index=starts_by_index,
+        )
+        outgoing_bridge = _run_interval(
+            outgoing_run,
+            segments=segments,
+            starts_by_index=starts_by_index,
+        )
+
+        previous_is_music = bool(
+            index > 0 and segments[index - 1].kind is SegmentKind.MUSIC
+        )
+        next_is_music = bool(
+            index + 1 < len(segments)
+            and segments[index + 1].kind is SegmentKind.MUSIC
+        )
+
+        fade_in = (
+            min(config.music_fade_in_seconds, duration)
+            if previous_is_music
+            else 0.0
+        )
+        fade_out = (
+            min(config.music_fade_out_seconds, duration)
+            if next_is_music
+            else 0.0
+        )
+
+        excluded_narration = set(incoming_run) | set(outgoing_run)
+        duck_intervals = [
+            interval
+            for narration_index, interval in narration_by_index.items()
+            if narration_index not in excluded_narration
+        ]
+
+        metadata_fade_in = fade_in
+        if incoming_bridge is not None:
+            metadata_fade_in = min(
+                duration,
+                config.bridge_incoming_fade_seconds,
+                max(0.0, incoming_bridge[1] - start),
+            )
+
+        metadata_fade_out = fade_out
+        if outgoing_bridge is not None:
+            metadata_fade_out = min(
+                duration,
+                max(0.0, start + duration - outgoing_bridge[0]),
+            )
+
         clips.append(
             AudioClip(
                 id=f"{segment.id}:music",
@@ -291,17 +541,20 @@ def plan_episode_mix(
                 timeline_start_seconds=start,
                 source_offset_seconds=0,
                 playable_duration_seconds=duration,
-                fade_in_seconds=min(fade_in, duration),
-                fade_out_seconds=min(fade_out, duration),
+                fade_in_seconds=metadata_fade_in,
+                fade_out_seconds=metadata_fade_out,
                 gain_automation=_music_automation(
                     start=start,
                     duration=duration,
-                    fade_in=min(fade_in, duration),
-                    fade_out=min(fade_out, duration),
-                    narration_intervals=narration_intervals,
+                    fade_in=fade_in,
+                    fade_out=fade_out,
+                    narration_intervals=duck_intervals,
                     duck_gain=config.duck_gain,
                     duck_attack=config.duck_attack_seconds,
                     duck_release=config.duck_release_seconds,
+                    outgoing_bridge=outgoing_bridge,
+                    incoming_bridge=incoming_bridge,
+                    bridge_incoming_fade=config.bridge_incoming_fade_seconds,
                 ),
             )
         )
