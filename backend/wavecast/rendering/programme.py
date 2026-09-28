@@ -439,6 +439,7 @@ def hls_playlist(manifest: ProgramRenderManifest) -> str:
         f"#EXT-X-TARGETDURATION:{target}",
         "#EXT-X-MEDIA-SEQUENCE:0",
         "#EXT-X-PLAYLIST-TYPE:EVENT",
+        "#EXT-X-START:TIME-OFFSET=0.000,PRECISE=YES",
         "#EXT-X-INDEPENDENT-SEGMENTS",
     ]
     for chunk in manifest.chunks:

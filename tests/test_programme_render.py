@@ -145,6 +145,7 @@ def test_program_render_appends_immutable_chunks_and_reuses_frozen_prefix(
 
         playlist = hls_playlist(second)
         assert "#EXT-X-PLAYLIST-TYPE:EVENT" in playlist
+        assert "#EXT-X-START:TIME-OFFSET=0.000,PRECISE=YES" in playlist
         assert "#EXT-X-ENDLIST" not in playlist
         for chunk in second.chunks:
             assert chunk.audio_url in playlist

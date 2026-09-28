@@ -317,6 +317,7 @@ export function recentRecordFromEpisode(
   episode: LiveEpisode,
   currentTitle: string | null = null,
   timestamp = Date.now(),
+  progressSeconds?: number,
 ): RecentProgramRecord {
   return {
     episodeId: episode.id,
@@ -325,11 +326,10 @@ export function recentRecordFromEpisode(
     topic: episode.topic ?? null,
     currentTitle,
     updatedAt: timestamp,
+    // Programme scheduling checkpoints are not listener resume state.
     progressSeconds: Math.max(
       0,
-      episode.program_transport_active
-        ? episode.program_playback_position_seconds ?? 0
-        : episode.playback_position_seconds,
+      progressSeconds ?? episode.playback_position_seconds,
     ),
     durationSeconds: Math.max(
       episode.timeline_duration_seconds,
@@ -341,17 +341,28 @@ export function recentRecordFromEpisode(
 export function recordRecentEpisode(
   episode: LiveEpisode,
   currentTitle: string | null = null,
+  progressSeconds?: number,
 ): UserLibraryState {
   const next = persistUserLibrary(
     upsertRecentInState(
       readUserLibrary(),
-      recentRecordFromEpisode(episode, currentTitle),
+      recentRecordFromEpisode(
+        episode,
+        currentTitle,
+        Date.now(),
+        progressSeconds,
+      ),
     ),
   );
   if (activeAccountId) {
     const accountId = activeAccountId;
     const generation = identityGeneration;
-    const record = recentRecordFromEpisode(episode, currentTitle);
+    const record = recentRecordFromEpisode(
+      episode,
+      currentTitle,
+      Date.now(),
+      progressSeconds,
+    );
     void api.recordLibraryRecent(record, accountId)
       .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
       .catch(() => undefined);
@@ -362,9 +373,15 @@ export function recordRecentEpisode(
 export function saveMaterializedEpisode(
   episode: LiveEpisode,
   currentTitle: string | null = null,
+  progressSeconds?: number,
 ): boolean {
   if (episode.state !== "MATERIALIZED") return false;
-  const recent = recentRecordFromEpisode(episode, currentTitle);
+  const recent = recentRecordFromEpisode(
+    episode,
+    currentTitle,
+    Date.now(),
+    progressSeconds,
+  );
   const saved = { ...recent, savedAt: Date.now() };
   persistUserLibrary(
     upsertSavedInState(

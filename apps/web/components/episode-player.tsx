@@ -339,9 +339,10 @@ export function EpisodePlayer({
       }
 
       const stored = storedProgramPosition(started.id);
-      const initialPosition = stored
-        ?? started.program_playback_position_seconds
-        ?? 0;
+      // Only listener-owned playback state may restore <audio>.currentTime.
+      // program_playback_position_seconds is generation scheduling metadata and
+      // must never become transport authority.
+      const initialPosition = stored ?? 0;
       setEpisode(started);
       setBrowserPlaying(started.is_listener_active);
       setBrowserPosition(initialPosition);
@@ -372,7 +373,11 @@ export function EpisodePlayer({
 
   useEffect(() => {
     if (!localEpisode) return;
-    recordRecentEpisode(localEpisode, current?.title ?? null);
+    recordRecentEpisode(
+      localEpisode,
+      current?.title ?? null,
+      browserPositionRef.current,
+    );
     setSaved(isEpisodeSaved(localEpisode.id));
   }, [current?.id, current?.title, localEpisode?.id]);
 
@@ -448,8 +453,13 @@ export function EpisodePlayer({
   }, [exportArtifact, exportState, localEpisode]);
 
   const persistMaterializedEpisode = useCallback((ready: LiveEpisode) => {
-    recordRecentEpisode(ready, current?.title ?? null);
-    if (!saveMaterializedEpisode(ready, current?.title ?? null)) {
+    const listenerPosition = browserPositionRef.current;
+    recordRecentEpisode(ready, current?.title ?? null, listenerPosition);
+    if (!saveMaterializedEpisode(
+      ready,
+      current?.title ?? null,
+      listenerPosition,
+    )) {
       throw new Error("完整节目还没有准备好");
     }
     setSaved(true);

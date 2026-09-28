@@ -109,7 +109,10 @@ export function ProgrammeAudioPlayer({
         return;
       }
       if (target < first - FRONTIER_SEEK_EPSILON_SECONDS) {
-        target = first;
+        // Native Safari can initially expose only the EVENT live edge. Never
+        // reinterpret a request for programme time 0 as "start at live edge";
+        // keep the seek pending until the immutable prefix is seekable.
+        return;
       }
     }
 
@@ -126,7 +129,12 @@ export function ProgrammeAudioPlayer({
 
   const playIfDesired = useCallback(() => {
     const audio = audioRef.current;
-    if (!audio || !desiredPlayingRef.current || !audio.paused) return;
+    if (
+      !audio
+      || !desiredPlayingRef.current
+      || !audio.paused
+      || pendingSeekRef.current !== null
+    ) return;
 
     const generation = playGenerationRef.current + 1;
     playGenerationRef.current = generation;
@@ -191,6 +199,7 @@ export function ProgrammeAudioPlayer({
             lowLatencyMode: false,
             backBufferLength: 600,
             maxBufferLength: 120,
+            startPosition: Math.max(0, positionSeconds),
           });
           hlsRef.current = hls;
           hls.attachMedia(audio);
@@ -289,6 +298,7 @@ export function ProgrammeAudioPlayer({
       onBufferingChangeRef.current?.(false);
     };
     const progress = () => applyPendingSeek();
+    const seeked = () => applyPendingSeek();
     const ended = () => {
       markPaused();
       if (completeRef.current) {
@@ -306,6 +316,7 @@ export function ProgrammeAudioPlayer({
     audio.addEventListener("canplay", ready);
     audio.addEventListener("progress", progress);
     audio.addEventListener("durationchange", progress);
+    audio.addEventListener("seeked", seeked);
     audio.addEventListener("playing", markPlaying);
     audio.addEventListener("waiting", markBuffering);
     audio.addEventListener("stalled", markBuffering);
@@ -359,6 +370,7 @@ export function ProgrammeAudioPlayer({
       audio.removeEventListener("canplay", ready);
       audio.removeEventListener("progress", progress);
       audio.removeEventListener("durationchange", progress);
+      audio.removeEventListener("seeked", seeked);
       audio.removeEventListener("playing", markPlaying);
       audio.removeEventListener("waiting", markBuffering);
       audio.removeEventListener("stalled", markBuffering);
