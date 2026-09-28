@@ -955,8 +955,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     // cannot accidentally issue two seek requests.
     seekPreviewRef.current = null;
     setSeekPreview(null);
+    if (programStreamActiveRef.current) {
+      commitProgramSeek(preview);
+      return;
+    }
     commitSeek(preview);
-  }, [commitSeek]);
+  }, [commitProgramSeek, commitSeek]);
 
   const pausePlayback = useCallback(() => {
     if (!localEpisode) return;
@@ -1017,15 +1021,17 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     );
   }
 
+  const streamMode = programStreamActive && programManifest !== null;
+
   const displayedLinearPosition = browserPosition;
-  const listenerPosition = transportMixPlan
+  const legacyListenerPosition = transportMixPlan
     ? linearPositionToMixPosition(
         localEpisode,
         transportMixPlan,
         displayedLinearPosition,
       ).mixPositionSeconds
     : displayedLinearPosition;
-  const maxSeekPosition = transportMixPlan?.durationSeconds
+  const legacyMaxSeekPosition = transportMixPlan?.durationSeconds
     ?? localEpisode.generated_frontier_seconds;
   const arrangementCompression = transportMixPlan
     ? Math.max(
@@ -1034,26 +1040,59 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           - transportMixPlan.durationSeconds,
       )
     : 0;
-  const fullDuration = Math.max(
-    maxSeekPosition,
+  const legacyFullDuration = Math.max(
+    legacyMaxSeekPosition,
     localEpisode.timeline_duration_seconds - arrangementCompression,
   );
+
+  const maxSeekPosition = streamMode
+    ? programManifest.renderedFrontierSeconds
+    : legacyMaxSeekPosition;
+  const fullDuration = streamMode
+    ? (
+        programManifest.complete
+          ? programManifest.renderedFrontierSeconds
+          : Math.max(
+              programManifest.renderedFrontierSeconds,
+              mixPlan?.durationSeconds ?? legacyFullDuration,
+            )
+      )
+    : legacyFullDuration;
   const generatedPercent = Math.min(
     100,
     Math.round((maxSeekPosition / Math.max(1, fullDuration)) * 100),
   );
-  const displayedPosition = seekPreview ?? listenerPosition;
+  const displayedPosition = seekPreview ?? (
+    streamMode ? programPosition : legacyListenerPosition
+  );
+
+  const activeProgramClips = streamMode && mixPlan
+    ? activeMixClipsAt(mixPlan, programPosition)
+    : [];
+  const displayProgramClip = activeProgramClips.find(
+    (clip) => clip.lane === "VOICE",
+  ) ?? activeProgramClips[activeProgramClips.length - 1];
+  const displayCurrent = displayProgramClip
+    ? localEpisode.segments.find(
+        (segment) => segment.id === displayProgramClip.segmentId,
+      ) ?? current
+    : current;
+
   const currentOffset = current
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
-  const seekPreviewLinearPosition = seekPreview !== null && transportMixPlan
+  const seekPreviewLinearPosition = (
+    !streamMode
+    && seekPreview !== null
+    && transportMixPlan
+  )
     ? mixPositionToLinearPosition(
         localEpisode,
         transportMixPlan,
         seekPreview,
       ).linearPositionSeconds
     : seekPreview;
-  const seekPreviewTarget = seekPreviewLinearPosition !== null
+  const seekPreviewTarget = !streamMode && seekPreviewLinearPosition !== null
     ? segmentAtPosition(localEpisode, seekPreviewLinearPosition)
     : undefined;
   const preloadTarget = (
@@ -1066,11 +1105,25 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const preloadSourceUrl = isPlaybackReadySegment(preloadTarget)
     ? preloadTarget?.audio_source_url ?? null
     : null;
-  const chapterIds = Array.from(new Set(localEpisode.segments.map((segment) => segment.chapter_id)));
-  const currentChapterIndex = Math.max(0, chapterIds.indexOf(current?.chapter_id ?? chapterIds[0]));
-  const chapterTitle = CHAPTER_TITLES[currentChapterIndex] ?? "Chapter " + (currentChapterIndex + 1);
+  const chapterIds = Array.from(
+    new Set(localEpisode.segments.map((segment) => segment.chapter_id)),
+  );
+  const currentChapterIndex = Math.max(
+    0,
+    chapterIds.indexOf(displayCurrent?.chapter_id ?? chapterIds[0]),
+  );
+  const chapterTitle = CHAPTER_TITLES[currentChapterIndex]
+    ?? "Chapter " + (currentChapterIndex + 1);
   const remaining = Math.max(0, fullDuration - displayedPosition);
-  const preparingAhead = localEpisode.state !== "MATERIALIZED" && localEpisode.buffer_ahead_seconds < 45;
+  const preparingAhead = streamMode
+    ? (
+        !programManifest.complete
+        && programManifest.renderedFrontierSeconds - displayedPosition < 45
+      )
+    : (
+        localEpisode.state !== "MATERIALIZED"
+        && localEpisode.buffer_ahead_seconds < 45
+      );
 
   const nextPlayback = async () => {
     const runNext = async () => {
