@@ -207,30 +207,40 @@ export function EpisodePlayer({
           window.clearTimeout(renderRetryTimerRef.current);
           renderRetryTimerRef.current = null;
         }
+        setRenderRetryNonce(0);
         setRenderState("ready");
         setError(null);
       })
       .catch((reason: unknown) => {
         if (localEpisodeRef.current?.id !== episodeIdAtRequest) return;
-        if (reason instanceof ApiRequestError && reason.status === 409) {
-          // Rendering can race a concurrent generation update. Preserve the
-          // immutable prefix and retry the same structural signature a bounded
-          // number of times instead of declaring the programme stream broken.
-          setRenderState((state) => state === "ready" ? state : "preparing");
+        if (
+          reason instanceof ApiRequestError
+          && [409, 502, 503].includes(reason.status)
+        ) {
+          // Progressive generation can briefly expose a render plan before all
+          // source/renderer inputs have settled. Keep an already-published
+          // immutable prefix, or stay in the preparing state when this is the
+          // first render, and retry with bounded backoff. A genuine persistent
+          // renderer failure will still surface after the retry budget expires.
           const retry = renderRetryStateRef.current;
           if (retry.signature !== signatureAtRequest) {
             retry.signature = signatureAtRequest;
             retry.count = 0;
           }
-          if (retry.count < 4 && renderRetryTimerRef.current === null) {
+          const maxRetries = reason.status === 409 ? 6 : 6;
+          if (retry.count < maxRetries && renderRetryTimerRef.current === null) {
+            setRenderState((state) => state === "ready" ? state : "preparing");
+            setError(null);
             retry.count += 1;
-            const delayMs = retry.count * 750;
+            const delayMs = reason.status === 409
+              ? retry.count * 1_000
+              : retry.count * 1_500;
             renderRetryTimerRef.current = window.setTimeout(() => {
               renderRetryTimerRef.current = null;
               setRenderRetryNonce((value) => value + 1);
             }, delayMs);
+            return;
           }
-          return;
         }
         setRenderState("error");
         setError(

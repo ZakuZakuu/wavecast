@@ -84,6 +84,16 @@ def build_filter_graph(plan: MixPlan) -> str:
     return ";".join(chains)
 
 
+def _stderr_summary(stderr: bytes | None) -> str:
+    if not stderr:
+        return "no ffmpeg stderr"
+    text = stderr.decode("utf-8", errors="replace").strip()
+    if not text:
+        return "empty ffmpeg stderr"
+    # Keep diagnostics compact and avoid dumping full command/source context.
+    return text.splitlines()[-1][-320:]
+
+
 def _ffmpeg_binary(binary: str) -> str:
     resolved = shutil.which(binary)
     if resolved is None:
@@ -315,7 +325,10 @@ def render_mix_hls_prefix(
     except OSError as error:
         raise MixRenderError("ffmpeg could not be started") from error
     if completed.returncode != 0:
-        raise MixRenderError("ffmpeg did not produce a valid HLS prefix")
+        raise MixRenderError(
+            "ffmpeg did not produce a valid HLS prefix: "
+            + _stderr_summary(completed.stderr)
+        )
 
     segments = _parse_hls_segments(playlist_path)
     duration = sum(segment.duration_seconds for segment in segments)

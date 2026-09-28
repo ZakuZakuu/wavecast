@@ -1643,6 +1643,11 @@ async def render_program_stream(
     except MixSourceUnavailableError as error:
         raise HTTPException(status_code=409, detail="Program render source is unavailable") from error
     except MixRenderError as error:
+        logger.warning(
+            "program_render_failed episode_id=%s error=%s",
+            episode_id,
+            str(error),
+        )
         raise HTTPException(status_code=502, detail="Program renderer failed") from error
     except OSError as error:
         raise HTTPException(status_code=500, detail="Program render storage failed") from error
