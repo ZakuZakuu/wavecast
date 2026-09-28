@@ -155,11 +155,15 @@ def _lerp(left: float, right: float, progress: float) -> float:
 
 
 def _fade_factor(offset: float, duration: float, fade_in: float, fade_out: float) -> float:
-    if fade_in and offset < fade_in:
-        return max(0.0, min(1.0, offset / fade_in))
-    if fade_out and offset > duration - fade_out:
-        return max(0.0, min(1.0, (duration - offset) / fade_out))
-    return 1.0
+    factor = 1.0
+    if fade_in:
+        factor = min(factor, max(0.0, min(1.0, offset / fade_in)))
+    if fade_out:
+        factor = min(
+            factor,
+            max(0.0, min(1.0, (duration - offset) / fade_out)),
+        )
+    return factor
 
 
 def _duck_factor(
