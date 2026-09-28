@@ -11,9 +11,12 @@ import type { Segment } from "../lib/types";
 
 type DeckKey = "a" | "b";
 type DeckSegments = Record<DeckKey, string | null>;
+type DeckFlags = Record<DeckKey, boolean>;
+type DeckNumbers = Record<DeckKey, number>;
 
 const POSITION_EMIT_INTERVAL_MS = 200;
-const DRIFT_CORRECTION_SECONDS = 0.35;
+const SECONDARY_PLAY_RETRY_MS = 250;
+const SUCCESSOR_SAFETY_GAIN = 0.30;
 const END_EPSILON_SECONDS = 0.04;
 
 function otherDeck(key: DeckKey): DeckKey {
@@ -73,6 +76,11 @@ export function MixAudioPlayer({
   const deckARef = useRef<HTMLAudioElement | null>(null);
   const deckBRef = useRef<HTMLAudioElement | null>(null);
   const deckSegmentsRef = useRef<DeckSegments>({ a: null, b: null });
+  const alignedSegmentsRef = useRef<DeckSegments>({ a: null, b: null });
+  const audibleSegmentsRef = useRef<DeckSegments>({ a: null, b: null });
+  const playPendingRef = useRef<DeckFlags>({ a: false, b: false });
+  const playEpochRef = useRef<DeckNumbers>({ a: 0, b: 0 });
+  const lastPlayAttemptMsRef = useRef<DeckNumbers>({ a: 0, b: 0 });
   const activeDeckRef = useRef<DeckKey>("a");
   const completedRef = useRef(false);
   const lastSeekTokenRef = useRef(seekToken);
@@ -95,6 +103,14 @@ export function MixAudioPlayer({
     key === "a" ? deckARef.current : deckBRef.current
   );
 
+  const invalidateDeckPlayback = (key: DeckKey) => {
+    playEpochRef.current[key] += 1;
+    playPendingRef.current[key] = false;
+    alignedSegmentsRef.current[key] = null;
+    audibleSegmentsRef.current[key] = null;
+    lastPlayAttemptMsRef.current[key] = 0;
+  };
+
   const configureDeck = (
     key: DeckKey,
     target: Segment,
@@ -108,6 +124,7 @@ export function MixAudioPlayer({
       || audio.src !== requested
     ) {
       audio.pause();
+      invalidateDeckPlayback(key);
       audio.src = requested;
       audio.load();
       audio.currentTime = Math.max(0, sourcePositionSeconds);
@@ -115,6 +132,55 @@ export function MixAudioPlayer({
       deckSegmentsRef.current[key] = target.id;
     }
     return audio;
+  };
+
+  const startDeckOnce = (
+    key: DeckKey,
+    audio: HTMLAudioElement,
+    target: Segment,
+    sourceTimeSeconds: number,
+  ) => {
+    if (deckSegmentsRef.current[key] !== target.id) return;
+
+    if (alignedSegmentsRef.current[key] !== target.id) {
+      const desired = Math.max(0, sourceTimeSeconds);
+      if (Math.abs(audio.currentTime - desired) > 0.05) {
+        audio.currentTime = desired;
+      }
+      alignedSegmentsRef.current[key] = target.id;
+    }
+
+    if (!audio.paused) {
+      audibleSegmentsRef.current[key] = target.id;
+      return;
+    }
+    if (playPendingRef.current[key]) return;
+
+    const now = performance.now();
+    if (now - lastPlayAttemptMsRef.current[key] < SECONDARY_PLAY_RETRY_MS) {
+      return;
+    }
+    lastPlayAttemptMsRef.current[key] = now;
+    const epoch = playEpochRef.current[key] + 1;
+    playEpochRef.current[key] = epoch;
+    playPendingRef.current[key] = true;
+    void audio.play()
+      .then(() => {
+        if (
+          playEpochRef.current[key] === epoch
+          && deckSegmentsRef.current[key] === target.id
+        ) {
+          playPendingRef.current[key] = false;
+          audibleSegmentsRef.current[key] = target.id;
+        }
+      })
+      .catch(() => {
+        if (playEpochRef.current[key] === epoch) {
+          playPendingRef.current[key] = false;
+          alignedSegmentsRef.current[key] = null;
+          audibleSegmentsRef.current[key] = null;
+        }
+      });
   };
 
   useEffect(() => {
@@ -155,6 +221,9 @@ export function MixAudioPlayer({
     }
 
     const secondary = otherDeck(active);
+    if (seekChanged) {
+      invalidateDeckPlayback(secondary);
+    }
     const preloadTarget = (
       preloadSourceUrl
       && preloadSourceUrl !== segment.audio_source_url
@@ -176,6 +245,7 @@ export function MixAudioPlayer({
         const requested = absoluteSourceUrl(preloadSourceUrl);
         if (secondaryAudio.src !== requested) {
           secondaryAudio.pause();
+          invalidateDeckPlayback(secondary);
           secondaryAudio.src = requested;
           secondaryAudio.load();
           secondaryAudio.currentTime = 0;
@@ -269,12 +339,11 @@ export function MixAudioPlayer({
           < currentClip.timelineStartSeconds + currentClip.playableDurationSeconds,
       );
 
-      currentAudio.volume = currentClip && (!nextOverlaps || nextIsArmed)
-        ? evaluateGain(currentClip, mixPosition)
-        : 1;
-
       const secondary = otherDeck(active);
       const secondaryAudio = deck(secondary);
+      let successorAudible = false;
+      let withinNext = false;
+
       if (
         playing
         && currentClip
@@ -288,7 +357,7 @@ export function MixAudioPlayer({
           upcomingSegment,
           upcomingClip.sourceOffsetSeconds,
         );
-        const withinNext = (
+        withinNext = (
           mixPosition >= upcomingClip.timelineStartSeconds
           && mixPosition
             < upcomingClip.timelineStartSeconds
@@ -300,20 +369,24 @@ export function MixAudioPlayer({
             + mixPosition
             - upcomingClip.timelineStartSeconds
           );
-          if (
-            secondaryAudio.paused
-            || Math.abs(secondaryAudio.currentTime - desiredSourceTime)
-              > DRIFT_CORRECTION_SECONDS
-          ) {
-            secondaryAudio.currentTime = Math.max(0, desiredSourceTime);
-          }
           secondaryAudio.volume = evaluateGain(upcomingClip, mixPosition);
-          safePlay(secondaryAudio);
+          startDeckOnce(
+            secondary,
+            secondaryAudio,
+            upcomingSegment,
+            desiredSourceTime,
+          );
+          successorAudible = (
+            audibleSegmentsRef.current[secondary] === upcomingSegment.id
+            && !secondaryAudio.paused
+          );
         } else if (mixPosition < upcomingClip.timelineStartSeconds) {
           secondaryAudio.pause();
           secondaryAudio.volume = 0;
+          audibleSegmentsRef.current[secondary] = null;
         } else {
           secondaryAudio.pause();
+          audibleSegmentsRef.current[secondary] = null;
         }
       } else if (
         secondaryAudio
@@ -321,7 +394,23 @@ export function MixAudioPlayer({
       ) {
         secondaryAudio.pause();
         secondaryAudio.volume = 0;
+        audibleSegmentsRef.current[secondary] = null;
       }
+
+      const plannedCurrentGain = currentClip
+        ? evaluateGain(currentClip, mixPosition)
+        : 1;
+      currentAudio.volume = (
+        currentClip
+        && nextOverlaps
+        && nextIsArmed
+        && withinNext
+        && !successorAudible
+      )
+        ? Math.max(plannedCurrentGain, SUCCESSOR_SAFETY_GAIN)
+        : currentClip && (!nextOverlaps || nextIsArmed)
+          ? plannedCurrentGain
+          : 1;
 
       const now = performance.now();
       if (now - lastEmitMsRef.current >= POSITION_EMIT_INTERVAL_MS) {
