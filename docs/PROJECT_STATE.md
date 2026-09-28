@@ -24,17 +24,20 @@ Scope and decisions:
 
 - **Writer-owned first bridge:** FastStart prepares/persists the first playable
   successor as music-only. The repeated deterministic “that was / up next”
-  sentence is removed from the normal path. Once the progressive session exists,
-  the evidence-scoped Writer owns the first A -> B narration slot without being
-  placed on the time-to-first-successor critical path.
+  sentence is removed from the normal path. Once one successor and the
+  progressive session are durable, the first Writer call runs under the
+  still-owned generation lease before the second buffer fill. This starts the
+  A -> B bridge early without putting Writer on the time-to-first-successor
+  critical path; TTS remains detached.
 - **Host density is real policy:** `NONE` owns no narration slots. `LIGHT`
   (default) uses a lower spoken-time target and thins ordinary direct-track
   bridges while preserving the first useful bridge, explicit narrative beats,
   and final outro. `FULL` keeps all truthful owned slots and the existing
   guided-listening density.
-- **Quality-first fallback:** a Writer failure in `LIGHT` may omit optional
-  narration rather than playing a repeated catalog-template sentence. The
-  deterministic adjacent-track fallback remains available only for `FULL`.
+- **Quality-first fallback:** a Writer failure in any host mode omits optional
+  narration rather than playing repeated catalog-template copy. Music
+  continuity wins over canned speech; FULL differs through richer slot density,
+  not through a lower-quality fallback sentence.
 - **TrackTimingProfile v1:** music may carry source duration, timestamp-only
   lyric-line intervals, vocal intervals, and derived intro/gap/outro sections.
   Raw lyric text is deliberately excluded from WaveCast's P0 model and from
@@ -55,9 +58,12 @@ Scope and decisions:
   full lyric semantics, beat/downbeat analysis, and advanced adaptive DJ
   transitions remain deferred.
 
-Validation status: implementation and tests are being completed on the feature
-branches. Do not treat this section as evidence that CI or a live listening
-probe has passed until the validation bullets are updated.
+Validation status: implementation and tests are on the feature branches.
+GitHub Actions PR jobs currently terminate before runner steps begin (including
+unchanged Web/deployment-smoke jobs), with no job logs available through the
+GitHub API. This is treated as an Actions infrastructure/account blocker, not a
+test result. No live Narration P0 listening probe or hosted deployment has been
+claimed yet.
 
 ### Local Runtime v2 milestone: adaptive buffer policy (historical)
 
