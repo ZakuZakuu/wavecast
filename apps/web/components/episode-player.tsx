@@ -92,6 +92,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     () => mixPlan?.clips.find((clip) => clip.segmentId === upcoming?.id) ?? null,
     [mixPlan, upcoming?.id],
   );
+  const transportMixPlan = arrangementClip ? mixPlan : null;
   localEpisodeRef.current = localEpisode;
 
   useEffect(() => {
@@ -311,10 +312,14 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       const currentMixEnd = arrangementClip
         ? arrangementClip.timelineStartSeconds + arrangementClip.playableDurationSeconds
         : null;
-      const nextPosition = currentMixEnd !== null && mixPlan
+      const nextPosition = (
+        currentMixEnd !== null
+        && transportMixPlan
+        && upcomingArrangementClip
+      )
         ? mixPositionToLinearPosition(
             armedEpisode,
-            mixPlan,
+            transportMixPlan,
             currentMixEnd,
           ).linearPositionSeconds
         : segmentStart(armedEpisode, armedSegment.id);
@@ -385,7 +390,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         setBrowserPlaying(false);
         setError(reason instanceof Error ? reason.message : "播放状态暂时没有同步");
       });
-  }, [arrangementClip, browserPlaying, current, localEpisode, mixPlan, setEpisode]);
+  }, [arrangementClip, browserPlaying, current, localEpisode, setEpisode, transportMixPlan, upcomingArrangementClip]);
 
   const exportEpisode = useCallback(async () => {
     if (!localEpisode || localEpisode.state !== "MATERIALIZED" || exportState === "preparing") return;
@@ -556,8 +561,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   const commitSeek = useCallback((value: number) => {
     if (!localEpisode) return;
-    const linearValue = mixPlan
-      ? mixPositionToLinearPosition(localEpisode, mixPlan, value).linearPositionSeconds
+    const linearValue = transportMixPlan
+      ? mixPositionToLinearPosition(
+          localEpisode,
+          transportMixPlan,
+          value,
+        ).linearPositionSeconds
       : value;
     if (!isSeekAllowed(localEpisode, linearValue)) {
       seekPreviewRef.current = null;
@@ -613,7 +622,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         }
         setError(reason instanceof Error ? reason.message : "跳转暂时没有完成");
       });
-  }, [current, localEpisode, mixPlan, setEpisode]);
+  }, [current, localEpisode, setEpisode, transportMixPlan]);
 
   const commitSeekPreview = useCallback(() => {
     const preview = seekPreviewRef.current;
@@ -673,19 +682,20 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }
 
   const displayedLinearPosition = browserPosition;
-  const listenerPosition = mixPlan && arrangementClip
+  const listenerPosition = transportMixPlan
     ? linearPositionToMixPosition(
         localEpisode,
-        mixPlan,
+        transportMixPlan,
         displayedLinearPosition,
       ).mixPositionSeconds
     : displayedLinearPosition;
-  const maxSeekPosition = mixPlan?.durationSeconds
+  const maxSeekPosition = transportMixPlan?.durationSeconds
     ?? localEpisode.generated_frontier_seconds;
-  const arrangementCompression = mixPlan
+  const arrangementCompression = transportMixPlan
     ? Math.max(
         0,
-        localEpisode.generated_frontier_seconds - mixPlan.durationSeconds,
+        localEpisode.generated_frontier_seconds
+          - transportMixPlan.durationSeconds,
       )
     : 0;
   const fullDuration = Math.max(
@@ -700,10 +710,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const currentOffset = current
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
-  const seekPreviewLinearPosition = seekPreview !== null && mixPlan
+  const seekPreviewLinearPosition = seekPreview !== null && transportMixPlan
     ? mixPositionToLinearPosition(
         localEpisode,
-        mixPlan,
+        transportMixPlan,
         seekPreview,
       ).linearPositionSeconds
     : seekPreview;
@@ -828,10 +838,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           value={Math.min(displayedPosition, Math.max(1, maxSeekPosition))}
           onChange={(event) => {
             const value = Number(event.target.value);
-            const linearValue = mixPlan
+            const linearValue = transportMixPlan
               ? mixPositionToLinearPosition(
                   localEpisode,
-                  mixPlan,
+                  transportMixPlan,
                   value,
                 ).linearPositionSeconds
               : value;
