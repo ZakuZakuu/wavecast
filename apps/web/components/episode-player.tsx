@@ -1005,15 +1005,17 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     );
   }
 
+  const masterMode = masterActive && masterArtifact !== null;
+
   const displayedLinearPosition = browserPosition;
-  const listenerPosition = transportMixPlan
+  const legacyListenerPosition = transportMixPlan
     ? linearPositionToMixPosition(
         localEpisode,
         transportMixPlan,
         displayedLinearPosition,
       ).mixPositionSeconds
     : displayedLinearPosition;
-  const maxSeekPosition = transportMixPlan?.durationSeconds
+  const legacyMaxSeekPosition = transportMixPlan?.durationSeconds
     ?? localEpisode.generated_frontier_seconds;
   const arrangementCompression = transportMixPlan
     ? Math.max(
@@ -1022,26 +1024,54 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
           - transportMixPlan.durationSeconds,
       )
     : 0;
-  const fullDuration = Math.max(
-    maxSeekPosition,
+  const legacyFullDuration = Math.max(
+    legacyMaxSeekPosition,
     localEpisode.timeline_duration_seconds - arrangementCompression,
   );
-  const generatedPercent = Math.min(
-    100,
-    Math.round((maxSeekPosition / Math.max(1, fullDuration)) * 100),
+
+  const maxSeekPosition = masterMode
+    ? masterArtifact.durationSeconds
+    : legacyMaxSeekPosition;
+  const fullDuration = masterMode
+    ? masterArtifact.durationSeconds
+    : legacyFullDuration;
+  const generatedPercent = masterMode
+    ? 100
+    : Math.min(
+        100,
+        Math.round((maxSeekPosition / Math.max(1, fullDuration)) * 100),
+      );
+  const displayedPosition = seekPreview ?? (
+    masterMode ? masterPosition : legacyListenerPosition
   );
-  const displayedPosition = seekPreview ?? listenerPosition;
+
+  const activeMasterClips = masterMode && mixPlan
+    ? activeMixClipsAt(mixPlan, masterPosition)
+    : [];
+  const displayMasterClip = activeMasterClips.find(
+    (clip) => clip.lane === "VOICE",
+  ) ?? activeMasterClips[activeMasterClips.length - 1];
+  const displayCurrent = displayMasterClip
+    ? localEpisode.segments.find(
+        (segment) => segment.id === displayMasterClip.segmentId,
+      ) ?? current
+    : current;
+
   const currentOffset = current
     ? segmentOffset(localEpisode, current.id, displayedLinearPosition)
     : 0;
-  const seekPreviewLinearPosition = seekPreview !== null && transportMixPlan
+  const seekPreviewLinearPosition = (
+    !masterMode
+    && seekPreview !== null
+    && transportMixPlan
+  )
     ? mixPositionToLinearPosition(
         localEpisode,
         transportMixPlan,
         seekPreview,
       ).linearPositionSeconds
     : seekPreview;
-  const seekPreviewTarget = seekPreviewLinearPosition !== null
+  const seekPreviewTarget = !masterMode && seekPreviewLinearPosition !== null
     ? segmentAtPosition(localEpisode, seekPreviewLinearPosition)
     : undefined;
   const preloadTarget = (
@@ -1054,11 +1084,22 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const preloadSourceUrl = isPlaybackReadySegment(preloadTarget)
     ? preloadTarget?.audio_source_url ?? null
     : null;
-  const chapterIds = Array.from(new Set(localEpisode.segments.map((segment) => segment.chapter_id)));
-  const currentChapterIndex = Math.max(0, chapterIds.indexOf(current?.chapter_id ?? chapterIds[0]));
-  const chapterTitle = CHAPTER_TITLES[currentChapterIndex] ?? "Chapter " + (currentChapterIndex + 1);
+  const chapterIds = Array.from(
+    new Set(localEpisode.segments.map((segment) => segment.chapter_id)),
+  );
+  const currentChapterIndex = Math.max(
+    0,
+    chapterIds.indexOf(displayCurrent?.chapter_id ?? chapterIds[0]),
+  );
+  const chapterTitle = CHAPTER_TITLES[currentChapterIndex]
+    ?? "Chapter " + (currentChapterIndex + 1);
   const remaining = Math.max(0, fullDuration - displayedPosition);
-  const preparingAhead = localEpisode.state !== "MATERIALIZED" && localEpisode.buffer_ahead_seconds < 45;
+  const preparingAhead = masterMode
+    ? false
+    : (
+        localEpisode.state !== "MATERIALIZED"
+        && localEpisode.buffer_ahead_seconds < 45
+      );
 
   const nextPlayback = async () => {
     const runNext = async () => {
