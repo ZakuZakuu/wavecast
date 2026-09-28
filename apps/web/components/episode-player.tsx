@@ -680,17 +680,17 @@ export function EpisodePlayer({
     seekPreview ?? browserPosition,
     maxSeekPosition,
   );
-  const fullDuration = programManifest.complete
-    ? maxSeekPosition
-    : Math.max(
-        maxSeekPosition,
-        localEpisode.program_estimated_duration_seconds,
-      );
-  const generatedPercent = Math.min(
+  // Playback UI uses one programme-time authority. The slider's max, visual
+  // fill and remaining-time label must all describe the same currently
+  // rendered timeline; generation progress is a separate concern.
+  const playedPercent = Math.min(
     100,
-    Math.round((maxSeekPosition / Math.max(1, fullDuration)) * 100),
+    Math.max(
+      0,
+      (displayedPosition / Math.max(1, maxSeekPosition)) * 100,
+    ),
   );
-  const remaining = Math.max(0, fullDuration - displayedPosition);
+  const remaining = Math.max(0, maxSeekPosition - displayedPosition);
   const chapterIds = Array.from(
     new Set(localEpisode.segments.map((segment) => segment.chapter_id)),
   );
@@ -857,7 +857,7 @@ export function EpisodePlayer({
           onPointerUp={commitSeekPreview}
           onKeyUp={commitSeekPreview}
           onBlur={commitSeekPreview}
-          style={{ "--generated": generatedPercent + "%" } as React.CSSProperties}
+          style={{ "--played": playedPercent + "%" } as React.CSSProperties}
         />
         <div>
           <span>{formatSeconds(displayedPosition)}</span>

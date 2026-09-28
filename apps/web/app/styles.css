@@ -1097,7 +1097,7 @@ h1, h2, h3, strong { text-wrap: balance; }
   margin: 0;
   appearance: none;
   border-radius: 999px;
-  background: linear-gradient(to right, #fff var(--generated), rgba(255,255,255,.22) var(--generated));
+  background: linear-gradient(to right, #fff var(--played), rgba(255,255,255,.22) var(--played));
   cursor: pointer;
 }
 .player-progress input::-webkit-slider-thumb {
