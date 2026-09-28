@@ -129,7 +129,7 @@ describe("armed browser handoff", () => {
   it("finds the future segment after an optimistic browser authority", () => {
     const optimisticEpisode: LiveEpisode = {
       ...episode,
-      current_segment_id: "music-a",
+      current_segment_id: "opening",
       segments: [
         ...episode.segments,
         {
