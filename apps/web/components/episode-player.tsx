@@ -54,30 +54,47 @@ type StoredProgramProgress = {
   continueWhileHidden: boolean;
 };
 
-function storedProgramPosition(episodeId: string): number | null {
+function storedProgramProgress(
+  episodeId: string,
+): StoredProgramProgress | null {
   if (typeof window === "undefined") return null;
   const raw = window.localStorage.getItem(PROGRAM_PROGRESS_PREFIX + episodeId);
   if (raw === null) return null;
 
   // Backward compatibility with the original numeric-only checkpoint.
   const legacy = Number(raw);
-  if (Number.isFinite(legacy) && legacy >= 0) return legacy;
+  if (Number.isFinite(legacy) && legacy >= 0) {
+    return {
+      positionSeconds: legacy,
+      updatedAtMs: Date.now(),
+      continueWhileHidden: false,
+    };
+  }
 
   try {
     const stored = JSON.parse(raw) as Partial<StoredProgramProgress>;
     const position = Number(stored.positionSeconds);
+    const updatedAtMs = Number(stored.updatedAtMs);
     if (!Number.isFinite(position) || position < 0) return null;
-    if (
-      stored.continueWhileHidden === true
-      && Number.isFinite(stored.updatedAtMs)
-    ) {
-      const elapsed = Math.max(0, (Date.now() - Number(stored.updatedAtMs)) / 1000);
-      return position + elapsed;
-    }
-    return position;
+    return {
+      positionSeconds: position,
+      updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : Date.now(),
+      continueWhileHidden: stored.continueWhileHidden === true,
+    };
   } catch {
     return null;
   }
+}
+
+function resolvedProgramPosition(stored: StoredProgramProgress | null): number | null {
+  if (!stored) return null;
+  if (!stored.continueWhileHidden) return stored.positionSeconds;
+  const elapsed = Math.max(0, (Date.now() - stored.updatedAtMs) / 1000);
+  return stored.positionSeconds + elapsed;
+}
+
+function storedProgramPosition(episodeId: string): number | null {
+  return resolvedProgramPosition(storedProgramProgress(episodeId));
 }
 
 function storeProgramPosition(
@@ -456,17 +473,37 @@ export function EpisodePlayer({
       }).catch(() => undefined);
       if (!mounted) return;
 
-      const stored = storedProgramPosition(started.id);
+      const storedProgress = storedProgramProgress(started.id);
+      const stored = resolvedProgramPosition(storedProgress);
       // Only listener-owned playback state may restore <audio>.currentTime.
       // program_playback_position_seconds is generation scheduling metadata and
       // must never become transport authority.
       const initialPosition = stored ?? 0;
+      const shouldResume = storedProgress?.continueWhileHidden === true;
       setEpisode(started);
-      setBrowserPlaying(started.is_listener_active);
-      browserPlayingRef.current = started.is_listener_active;
+      setBrowserPlaying(shouldResume || started.is_listener_active);
+      browserPlayingRef.current = shouldResume || started.is_listener_active;
       setBrowserPosition(initialPosition);
       browserPositionRef.current = initialPosition;
       setSeekToken((token) => token + 1);
+
+      // iOS may suspend long enough for the server-side listener lease to
+      // expire. If the listener was actively playing when the page went
+      // background, restore that lease automatically on remount.
+      if (shouldResume && !started.is_listener_active) {
+        void api.resume(started.id)
+          .then((resumed) => {
+            if (!mounted) return;
+            setEpisode(resumed);
+            setBrowserPlaying(true);
+            browserPlayingRef.current = true;
+            setError(null);
+          })
+          .catch(() => {
+            // Keep the local resume intent; an explicit tap can retry if the
+            // browser's autoplay policy requires user interaction.
+          });
+      }
     }).catch((reason: unknown) => {
       if (!mounted) return;
       setError(
@@ -514,18 +551,16 @@ export function EpisodePlayer({
     return () => {
       document.removeEventListener("visibilitychange", persistForLifecycle);
       window.removeEventListener("pagehide", persistForLifecycle);
-      // Safari may tear down the route while the page is backgrounded. Preserve
-      // the wall-clock resume anchor in that case; only a visible in-app
-      // navigation means the route-local audio transport has actually stopped.
-      const continuing = (
-        document.visibilityState === "hidden"
-        && browserPlayingRef.current
-      );
-      storeProgramPosition(
-        localEpisode.id,
-        browserPositionRef.current,
-        continuing,
-      );
+      // visibilitychange/pagehide already captured the original hidden
+      // timestamp. Rewriting the same stale position during an iOS background
+      // teardown would erase the elapsed background time.
+      if (document.visibilityState !== "hidden") {
+        storeProgramPosition(
+          localEpisode.id,
+          browserPositionRef.current,
+          false,
+        );
+      }
     };
   }, [localEpisode?.id]);
 

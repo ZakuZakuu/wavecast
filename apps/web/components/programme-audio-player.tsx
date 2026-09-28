@@ -55,6 +55,7 @@ export function ProgrammeAudioPlayer({
   const lastSeekTokenRef = useRef(seekToken);
   const lastEmitMsRef = useRef(0);
   const appliedSeekTargetRef = useRef<number | null>(null);
+  const suppressPositionUntilRef = useRef(0);
   const playGenerationRef = useRef(0);
 
   const onPositionChangeRef = useRef(onPositionChange);
@@ -254,6 +255,8 @@ export function ProgrammeAudioPlayer({
       detachNativeListeners?.();
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      suppressPositionUntilRef.current = 0;
+      appliedSeekTargetRef.current = null;
       playGenerationRef.current += 1;
       audio.pause();
       audio.removeAttribute("src");
@@ -269,7 +272,29 @@ export function ProgrammeAudioPlayer({
     if (lastSeekTokenRef.current === seekToken) return;
 
     lastSeekTokenRef.current = seekToken;
-    pendingSeekRef.current = Math.max(0, positionSeconds);
+    const target = Math.max(0, positionSeconds);
+
+    if (hlsRef.current && audio.readyState > 0) {
+      // hls.js/MSE owns an explicit user seek once playback is established.
+      // Keep playback controls live and only suppress stale currentTime frames
+      // while Chromium catches up to the requested timestamp.
+      pendingSeekRef.current = null;
+      appliedSeekTargetRef.current = target;
+      suppressPositionUntilRef.current = performance.now() + 1_500;
+      try {
+        audio.currentTime = target;
+        onPositionChangeRef.current(target);
+        if (desiredPlayingRef.current && audio.paused) playIfDesired();
+      } catch {
+        appliedSeekTargetRef.current = null;
+        suppressPositionUntilRef.current = 0;
+        pendingSeekRef.current = target;
+        applyPendingSeek();
+      }
+      return;
+    }
+
+    pendingSeekRef.current = target;
     appliedSeekTargetRef.current = null;
     applyPendingSeek();
   }, [applyPendingSeek, positionSeconds, seekToken]);
@@ -315,14 +340,11 @@ export function ProgrammeAudioPlayer({
     };
     const progress = () => applyPendingSeek();
     const seeked = () => {
-      const pending = pendingSeekRef.current;
-      if (pending !== null && appliedSeekTargetRef.current !== null) {
-        // The media element owns the final seek landing point. MSE/hls.js may
-        // resolve to a nearby decoded timestamp instead of the exact requested
-        // float, so a real seeked event is the completion signal.
-        const actual = Math.max(0, audio.currentTime || 0);
+      const actual = Math.max(0, audio.currentTime || 0);
+      if (appliedSeekTargetRef.current !== null) {
         pendingSeekRef.current = null;
         appliedSeekTargetRef.current = null;
+        suppressPositionUntilRef.current = 0;
         onPositionChangeRef.current(actual);
         onBufferingChangeRef.current?.(false);
       } else {
@@ -360,6 +382,7 @@ export function ProgrammeAudioPlayer({
       if (
         !audio.paused
         && pendingSeekRef.current === null
+        && now >= suppressPositionUntilRef.current
         && now - lastEmitMsRef.current >= POSITION_EMIT_INTERVAL_MS
       ) {
         lastEmitMsRef.current = now;
