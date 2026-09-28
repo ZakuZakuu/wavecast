@@ -286,22 +286,21 @@ class LiveEpisodeAssemblyService:
         except ProviderError:
             return None
 
-        if fast_result.trace.fallback_used:
-            # A fallback FastStart is intentionally conservative and may expose
-            # unranked research candidates. Do not freeze one of those into the
-            # Episode merely to gain a few seconds of buffer.
-            return None
-
         proposals: list[TrackProposal] = []
         if fast_result.plan.selected_next_track is not None:
             proposals.append(fast_result.plan.selected_next_track)
         proposals.extend(fast_result.plan.next_candidates)
 
         seen: set[tuple[str, str]] = set()
-        for proposal in proposals:
+
+        async def prepare_candidate(
+            proposal: TrackProposal,
+            *,
+            use_fast_narration: bool,
+        ) -> GeneratedChapter | None:
             proposal_key = (proposal.artist.casefold(), proposal.title.casefold())
             if proposal_key in seen:
-                continue
+                return None
             seen.add(proposal_key)
             try:
                 resolved = await resolve_track_proposal_across_providers(
@@ -309,30 +308,126 @@ class LiveEpisodeAssemblyService:
                     proposal,
                 )
             except ProviderError:
-                continue
+                return None
             if resolved is None or _same_song_identity(resolved, opening_track):
-                continue
+                return None
+
+            first_narration = fast_result.plan.first_narration
+            if fast_result.trace.fallback_used or not use_fast_narration:
+                language = resolve_output_language(request.output_language, request.topic)
+                if language is OutputLanguage.ZH_CN:
+                    bridge_text = (
+                        f"刚才听到的是 {opening_track.canonical_artist} 的"
+                        f"《{opening_track.canonical_title}》。接下来先听 "
+                        f"{resolved.canonical_artist} 的《{resolved.canonical_title}》，"
+                        "后面的节目路线还在继续展开。"
+                    )
+                elif language is OutputLanguage.JA_JP:
+                    bridge_text = (
+                        f"今聴いたのは{opening_track.canonical_artist}の"
+                        f"「{opening_track.canonical_title}」でした。続いて "
+                        f"{resolved.canonical_artist}の「{resolved.canonical_title}」です。"
+                    )
+                else:
+                    bridge_text = (
+                        f"That was {opening_track.canonical_artist} — "
+                        f"{opening_track.canonical_title}. Up next is "
+                        f"{resolved.canonical_artist} — {resolved.canonical_title}."
+                    )
+                bootstrap_script = RadioScript(
+                    blocks=[
+                        RadioScriptBlock(
+                            kind=RadioScriptBlockKind.TRACK_INTRO,
+                            text=bridge_text,
+                            duration_seconds=10,
+                            track_index=0,
+                        )
+                    ],
+                    intended_duration_seconds=10,
+                )
+            else:
+                bootstrap_script = RadioScript(
+                    blocks=[
+                        RadioScriptBlock(
+                            kind=RadioScriptBlockKind.TRACK_INTRO,
+                            text=first_narration.text,
+                            tts_text=first_narration.tts_text,
+                            duration_seconds=first_narration.intended_duration_seconds,
+                            track_index=0,
+                            tts_cues=list(first_narration.tts_cues),
+                            evidence_ids=list(first_narration.evidence_ids),
+                        )
+                    ],
+                    intended_duration_seconds=first_narration.intended_duration_seconds,
+                )
+
             try:
                 prepared = await self.composer.prepare_tracks([resolved])
                 playable = self.composer.compose_prepared(
                     prepared,
-                    RadioScript(blocks=[], intended_duration_seconds=1),
+                    bootstrap_script,
                 )
             except (ProviderError, UnresolvedTrackError, ValueError):
-                continue
+                return None
 
             music = [
                 segment
                 for segment in playable.segments
                 if isinstance(segment, MusicSegment)
             ]
-            if len(music) != 1 or not music[0].is_audio_ready:
-                continue
+            narration = [
+                segment
+                for segment in playable.segments
+                if isinstance(segment, NarrationSegment)
+            ]
+            if (
+                len(music) != 1
+                or not music[0].is_audio_ready
+                or len(narration) != 1
+                or narration[0].state is not SegmentState.SCRIPT_READY
+            ):
+                return None
             return _generated_runtime_chapter(
                 "chapter-2",
-                music,
+                playable.segments,
                 base_order=1,
             )
+
+        # Prefer the actual FastStart route when it produced a usable exact
+        # catalog identity.
+        selected = fast_result.plan.selected_next_track
+        for proposal in proposals:
+            prepared = await prepare_candidate(
+                proposal,
+                use_fast_narration=(
+                    selected is not None
+                    and proposal.artist.casefold() == selected.artist.casefold()
+                    and proposal.title.casefold() == selected.title.casefold()
+                ),
+            )
+            if prepared is not None:
+                return prepared
+
+        # Only if FastStart cannot yield a playable successor, spend one bounded
+        # catalog lookup on another song by the opening artist. This keeps a
+        # concrete next source ahead of the slower Research/Curator route.
+        catalog_fallbacks = await self.retrieval.search(
+            opening_track.canonical_artist,
+            requested_artist=opening_track.canonical_artist,
+            limit=5,
+        )
+        for candidate in catalog_fallbacks:
+            prepared = await prepare_candidate(
+                TrackProposal(
+                    artist=candidate.artist,
+                    title=candidate.title,
+                    reasons=["FastStart catalog bootstrap from the opening artist."],
+                    confidence=0.5,
+                ),
+                use_fast_narration=False,
+            )
+            if prepared is not None:
+                return prepared
         return None
 
     async def prepare_progressive_session(

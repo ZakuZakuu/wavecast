@@ -412,6 +412,27 @@ class EpisodeOrchestrator:
             for segment in episode.timeline_segments
         )
 
+    async def ensure_fast_start_async(self, episode_id: str) -> LiveEpisode:
+        """Persist and voice the first bridge before full route planning."""
+
+        episode = await asyncio.to_thread(self._active_episode, episode_id)
+        if episode.state is EpisodeState.MATERIALIZED:
+            return episode
+        episode = await self._ensure_fast_successor(episode_id, episode)
+        has_bootstrap_script = any(
+            isinstance(segment, NarrationSegment)
+            and segment.chapter_id == "chapter-2"
+            and segment.state is SegmentState.SCRIPT_READY
+            and not segment.is_committed
+            for segment in episode.timeline_segments
+        )
+        if has_bootstrap_script:
+            episode = await self.materialize_pending_narration_async(
+                episode_id,
+                max_segments=1,
+            )
+        return episode
+
     async def ensure_buffer_async(
         self,
         episode_id: str,
@@ -1064,6 +1085,19 @@ class EpisodeOrchestrator:
             raise EpisodeRuntimeError("progressive session preparation anchor is stale")
         if latest.progressive_session is not None:
             return latest
+        if any(
+            isinstance(segment, NarrationSegment)
+            and segment.chapter_id == "chapter-2"
+            for segment in latest.ordered_segments
+        ) and "chapter-2" not in prepared.narration_authored_chapter_ids:
+            prepared = prepared.model_copy(
+                update={
+                    "narration_authored_chapter_ids": [
+                        *prepared.narration_authored_chapter_ids,
+                        "chapter-2",
+                    ]
+                }
+            )
         latest.progressive_session = prepared
         try:
             return await asyncio.to_thread(self.repository.save, latest)
