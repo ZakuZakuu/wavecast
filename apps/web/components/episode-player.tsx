@@ -7,8 +7,8 @@ import { api, ApiRequestError } from "../lib/api";
 import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
 import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
-import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
-import { linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, overlapLeadSeconds, type MixPlan } from "../lib/mix-timeline";
+import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff } from "../lib/playback";
+import { activeMixClipsAt, linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, overlapLeadSeconds, type MixPlan } from "../lib/mix-timeline";
 import { usePlayerStore } from "../lib/player-store";
 import type { LiveEpisode } from "../lib/types";
 import { isEpisodeSaved, recordRecentEpisode, saveMaterializedEpisode } from "../lib/user-library";
@@ -51,9 +51,13 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
   const startEffectGuardRef = useRef(createEffectGenerationGuard());
   const synchronizationGuardRef = useRef(createSynchronizationGuard());
-  const seekRequestGuardRef = useRef(createEffectGenerationGuard());
   const handoffRequestGuardRef = useRef(createEffectGenerationGuard());
   const completionRequestGuardRef = useRef(createEffectGenerationGuard());
+  const seekIntentCounterRef = useRef(0);
+  const pendingSeekIntentRef = useRef<number | null>(null);
+  const seekQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const resumeAfterSeekRef = useRef(false);
+  const listenerPositionRef = useRef(0);
 
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
@@ -105,9 +109,11 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     armedFromSegmentIdRef.current = null;
     armedEpisodeRef.current = null;
     handoffAttemptRef.current = null;
-    seekRequestGuardRef.current.start();
     handoffRequestGuardRef.current.start();
     completionRequestGuardRef.current.start();
+    seekIntentCounterRef.current += 1;
+    pendingSeekIntentRef.current = null;
+    resumeAfterSeekRef.current = false;
   }, [localEpisode?.id]);
 
   useEffect(() => {
@@ -219,6 +225,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [localEpisode?.id, current?.id, current?.title]);
 
   useEffect(() => {
+    if (pendingSeekIntentRef.current !== null) {
+      playbackAnchorRef.current = playbackAnchor(localEpisode);
+      return;
+    }
     const linearPosition = reconcileBrowserPosition(
       browserPositionRef.current,
       playbackAnchorRef.current,
@@ -592,12 +602,16 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       return;
     }
 
-    const seekGeneration = seekRequestGuardRef.current.start();
+    const intentId = seekIntentCounterRef.current + 1;
+    seekIntentCounterRef.current = intentId;
+    if (pendingSeekIntentRef.current === null) {
+      resumeAfterSeekRef.current = browserPlaying;
+    }
+    pendingSeekIntentRef.current = intentId;
+
     handoffRequestGuardRef.current.start();
     completionRequestGuardRef.current.start();
 
-    // A seek is a new transport decision. Clear every speculative handoff from
-    // the previous position before moving the browser-owned media element.
     setArmedSuccessorId(null);
     armedSuccessorIdRef.current = null;
     armedFromSegmentIdRef.current = null;
@@ -605,47 +619,113 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     handoffAttemptRef.current = null;
     awaitingSuccessorRef.current = false;
 
-    const withinCurrent = targetSegment.id === localEpisode.current_segment_id;
-    setTransportSegmentId(withinCurrent ? null : targetSegment.id);
+    const activeSegmentIds = transportMixPlan
+      ? new Set(
+          activeMixClipsAt(transportMixPlan, value).map(
+            (clip) => clip.segmentId,
+          ),
+        )
+      : new Set<string>();
+    const transitionSuccessor = nextVisibleSegment(
+      localEpisode,
+      targetSegment.id,
+    );
+    const overlapSuccessorId = (
+      transitionSuccessor
+      && activeSegmentIds.has(transitionSuccessor.id)
+      && isPlaybackReadySegment(transitionSuccessor)
+    )
+      ? transitionSuccessor.id
+      : null;
+
+    setBrowserPlaying(false);
+    setTransportSegmentId(targetSegment.id);
     setBrowserPosition(linearValue);
     browserPositionRef.current = linearValue;
+    listenerPositionRef.current = value;
     setSeekToken((token) => token + 1);
     seekPreviewRef.current = null;
     setSeekPreview(null);
 
-    void api.seek(localEpisode.id, Math.floor(linearValue))
-      .then((response) => {
-        if (!seekRequestGuardRef.current.isCurrent(seekGeneration)) return;
+    const episodeIdAtIntent = localEpisode.id;
+    const targetSegmentId = targetSegment.id;
+    seekQueueRef.current = seekQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (intentId !== seekIntentCounterRef.current) return;
+
+        let response: LiveEpisode;
+        try {
+          response = await api.seek(
+            episodeIdAtIntent,
+            Math.floor(linearValue),
+          );
+        } catch (reason: unknown) {
+          if (intentId !== seekIntentCounterRef.current) return;
+          pendingSeekIntentRef.current = null;
+          const latest = localEpisodeRef.current;
+          if (latest?.id === episodeIdAtIntent) {
+            setTransportSegmentId(null);
+            setBrowserPosition(latest.playback_position_seconds);
+            browserPositionRef.current = latest.playback_position_seconds;
+            setSeekToken((token) => token + 1);
+            setBrowserPlaying(
+              resumeAfterSeekRef.current
+              && latest.is_playing
+              && latest.is_listener_active,
+            );
+          }
+          resumeAfterSeekRef.current = false;
+          setError(
+            reason instanceof Error ? reason.message : "跳转暂时没有完成",
+          );
+          return;
+        }
+
+        if (intentId !== seekIntentCounterRef.current) return;
         playbackAnchorRef.current = playbackAnchor(response);
         setEpisode(response);
+
+        let effectiveEpisode = response;
+        if (
+          overlapSuccessorId
+          && response.current_segment_id === targetSegmentId
+        ) {
+          try {
+            const armed = await api.armHandoff(
+              episodeIdAtIntent,
+              overlapSuccessorId,
+            );
+            if (intentId !== seekIntentCounterRef.current) return;
+            effectiveEpisode = armed;
+            setArmedSuccessorId(overlapSuccessorId);
+            armedSuccessorIdRef.current = overlapSuccessorId;
+            armedFromSegmentIdRef.current = targetSegmentId;
+            armedEpisodeRef.current = armed;
+            setEpisode(armed);
+          } catch {
+            // Serial playback from the requested source is still valid.
+          }
+        }
+
+        if (intentId !== seekIntentCounterRef.current) return;
+        pendingSeekIntentRef.current = null;
         setBrowserPosition(linearValue);
         browserPositionRef.current = linearValue;
         setError(null);
-      })
-      .catch((reason: unknown) => {
-        if (!seekRequestGuardRef.current.isCurrent(seekGeneration)) return;
-        if (
-          reason instanceof ApiRequestError
-          && shouldSuppressSeekConflict({
-            status: reason.status,
-            withinCurrent,
-          })
-        ) {
-          // The local media seek is already authoritative inside the current
-          // source; a later checkpoint can reconcile durable progress.
-          setError(null);
-          return;
-        }
-        const latest = localEpisodeRef.current;
-        if (latest) {
-          setTransportSegmentId(null);
-          setBrowserPosition(latest.playback_position_seconds);
-          browserPositionRef.current = latest.playback_position_seconds;
-          setSeekToken((token) => token + 1);
-        }
-        setError(reason instanceof Error ? reason.message : "跳转暂时没有完成");
+        setBrowserPlaying(
+          resumeAfterSeekRef.current
+          && effectiveEpisode.is_playing
+          && effectiveEpisode.is_listener_active,
+        );
+        resumeAfterSeekRef.current = false;
       });
-  }, [localEpisode, setEpisode, transportMixPlan]);
+  }, [
+    browserPlaying,
+    localEpisode,
+    setEpisode,
+    transportMixPlan,
+  ]);
 
   const commitSeekPreview = useCallback(() => {
     const preview = seekPreviewRef.current;
@@ -782,8 +862,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     }
   };
 
+  listenerPositionRef.current = displayedPosition;
+
   const nudgeSeek = (seconds: number) => {
-    commitSeek(Math.max(0, displayedPosition + seconds));
+    commitSeek(Math.max(0, listenerPositionRef.current + seconds));
   };
 
   return (
