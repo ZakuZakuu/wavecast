@@ -8,12 +8,14 @@ import { subscribeToEpisodeEvents } from "../lib/episode-events";
 import { createEffectGenerationGuard, createSynchronizationGuard } from "../lib/episode-synchronization";
 import { downloadFilename, ExportBlockedError, prepareEpisodeExport, triggerMixdownDownload, type MixdownArtifact } from "../lib/episode-export";
 import { canUseArmedHandoff, formatSeconds, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, playbackAnchor, reconcileBrowserPosition, segmentAtPosition, segmentOffset, segmentStart, shouldArmHandoff } from "../lib/playback";
-import { activeMixClipsAt, linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, overlapLeadSeconds, type MixPlan } from "../lib/mix-timeline";
+import { activeMixClipsAt, linearPositionToMixPosition, mixPlanSignature, mixPositionToLinearPosition, overlapLeadSeconds, segmentIdAt, type MixPlan } from "../lib/mix-timeline";
 import { usePlayerStore } from "../lib/player-store";
+import { clampProgramPosition, supportsNativeHls, type ProgramRenderManifest } from "../lib/program-stream";
 import type { LiveEpisode } from "../lib/types";
 import { isEpisodeSaved, recordRecentEpisode, saveMaterializedEpisode } from "../lib/user-library";
 import { ChaptersSheet } from "./chapters-sheet";
 import { MixAudioPlayer } from "./mix-audio-player";
+import { ProgrammeAudioPlayer } from "./programme-audio-player";
 import { ProgramArtwork } from "./program-artwork";
 import { WaveIcon } from "./wave-icon";
 
@@ -27,6 +29,8 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const [browserPosition, setBrowserPosition] = useState(0);
   const [browserPlaying, setBrowserPlaying] = useState(false);
   const [mixPlan, setMixPlan] = useState<MixPlan | null>(null);
+  const [programRender, setProgramRender] = useState<ProgramRenderManifest | null>(null);
+  const [nativeHlsSupported, setNativeHlsSupported] = useState(false);
   const [armedSuccessorId, setArmedSuccessorId] = useState<string | null>(null);
   const [transportSegmentId, setTransportSegmentId] = useState<string | null>(null);
   const [seekToken, setSeekToken] = useState(0);
@@ -58,11 +62,26 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const seekQueueRef = useRef<Promise<void>>(Promise.resolve());
   const resumeAfterSeekRef = useRef(false);
   const listenerPositionRef = useRef(0);
+  const programRenderSignatureRef = useRef<string | null>(null);
+  const programRenderBusyRef = useRef(false);
+  const programRefillAtRef = useRef(0);
+  const usingProgramStreamRef = useRef(false);
 
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
     ? episode
     : null;
+  const usingProgramStream = Boolean(
+    nativeHlsSupported
+    && programRender
+    && programRender.chunks.length > 0
+  );
+  const programmeSegmentId = useMemo(
+    () => usingProgramStream && mixPlan
+      ? segmentIdAt(mixPlan, browserPosition)
+      : undefined,
+    [browserPosition, mixPlan, usingProgramStream],
+  );
   const serverCurrent = useMemo(
     () => localEpisode?.segments.find((segment) => segment.id === localEpisode.current_segment_id),
     [localEpisode],
@@ -70,6 +89,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const current = useMemo(
     () => {
       if (!localEpisode) return undefined;
+      if (programmeSegmentId) {
+        const rendered = localEpisode.segments.find(
+          (segment) => segment.id === programmeSegmentId,
+        );
+        if (rendered) return rendered;
+      }
       if (transportSegmentId) {
         const optimistic = localEpisode.segments.find(
           (segment) => segment.id === transportSegmentId,
@@ -78,7 +103,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       }
       return serverCurrent;
     },
-    [localEpisode, serverCurrent, transportSegmentId],
+    [localEpisode, programmeSegmentId, serverCurrent, transportSegmentId],
   );
   const upcoming = useMemo(
     () => localEpisode && current
@@ -99,10 +124,14 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     () => mixPlan?.clips.find((clip) => clip.segmentId === upcoming?.id) ?? null,
     [mixPlan, upcoming?.id],
   );
-  const transportMixPlan = arrangementClip ? mixPlan : null;
+  const transportMixPlan = usingProgramStream ? mixPlan : arrangementClip ? mixPlan : null;
   localEpisodeRef.current = localEpisode;
+  usingProgramStreamRef.current = usingProgramStream;
 
   useEffect(() => {
+    setProgramRender(null);
+    programRenderSignatureRef.current = null;
+    programRenderBusyRef.current = false;
     setTransportSegmentId(null);
     setArmedSuccessorId(null);
     armedSuccessorIdRef.current = null;
@@ -175,7 +204,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     const leaveOnPageExit = () => {
       const currentEpisode = localEpisodeRef.current;
       if (episodeIdRef.current && currentEpisode) {
-        void api.checkpoint(episodeIdRef.current, Math.floor(browserPositionRef.current));
+        if (!usingProgramStreamRef.current) {
+          void api.checkpoint(episodeIdRef.current, Math.floor(browserPositionRef.current));
+        }
         navigator.sendBeacon(`/api/episodes/${episodeIdRef.current}/leave`);
       }
     };
@@ -225,6 +256,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   }, [localEpisode?.id, current?.id, current?.title]);
 
   useEffect(() => {
+    if (usingProgramStream) {
+      playbackAnchorRef.current = playbackAnchor(localEpisode);
+      return;
+    }
     if (pendingSeekIntentRef.current !== null) {
       playbackAnchorRef.current = playbackAnchor(localEpisode);
       return;
@@ -239,7 +274,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       browserPositionRef.current = linearPosition;
     }
     playbackAnchorRef.current = playbackAnchor(localEpisode);
-  }, [localEpisode?.current_segment_id, localEpisode?.playback_position_seconds]);
+  }, [localEpisode?.current_segment_id, localEpisode?.playback_position_seconds, usingProgramStream]);
 
   useEffect(() => {
     if (localEpisode && !localEpisode.is_listener_active) {
