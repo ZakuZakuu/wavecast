@@ -47,24 +47,36 @@ export function ProgramStreamPlayer({
   onError,
 }: ProgramStreamPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const desiredPositionRef = useRef(positionSeconds);
+  const pendingSeekRef = useRef<number | null>(Math.max(0, positionSeconds));
   const lastSeekTokenRef = useRef(seekToken);
   const lastEmitMsRef = useRef(0);
   const playGenerationRef = useRef(0);
 
-  desiredPositionRef.current = positionSeconds;
-
-  const applyDesiredPosition = () => {
+  const applyPendingSeek = () => {
     const audio = audioRef.current;
-    if (!audio || audio.readyState === 0) return;
-    const desired = Math.max(0, desiredPositionRef.current);
-    if (Math.abs(audio.currentTime - desired) > 0.05) {
-      try {
-        audio.currentTime = desired;
-      } catch {
-        // An EVENT playlist can briefly expose no seekable range while Safari
-        // refreshes it. loadedmetadata/progress will retry the same target.
+    const pending = pendingSeekRef.current;
+    if (!audio || pending === null || audio.readyState === 0) return;
+
+    // Native HLS can expose metadata before Safari has refreshed the EVENT
+    // playlist's seekable window. Keep the explicit seek pending rather than
+    // clamping it to a stale range or repeatedly rewinding normal playback.
+    if (audio.seekable.length > 0) {
+      const first = audio.seekable.start(0);
+      const last = audio.seekable.end(audio.seekable.length - 1);
+      if (pending > last + 0.05) return;
+      if (pending < first - 0.05) {
+        pendingSeekRef.current = first;
       }
+    }
+
+    const desired = Math.max(0, pendingSeekRef.current ?? pending);
+    try {
+      if (Math.abs(audio.currentTime - desired) > 0.05) {
+        audio.currentTime = desired;
+      }
+      pendingSeekRef.current = null;
+    } catch {
+      // progress/canplay/durationchange will retry the same explicit target.
     }
   };
 
@@ -90,10 +102,11 @@ export function ProgramStreamPlayer({
 
     playGenerationRef.current += 1;
     audio.pause();
+    pendingSeekRef.current = Math.max(0, positionSeconds);
     audio.src = streamUrl;
     audio.preload = "auto";
     audio.load();
-    applyDesiredPosition();
+    applyPendingSeek();
   }, [streamUrl]);
 
   useEffect(() => {
@@ -101,7 +114,10 @@ export function ProgramStreamPlayer({
     if (!audio) return;
     const changed = lastSeekTokenRef.current !== seekToken;
     lastSeekTokenRef.current = seekToken;
-    if (changed) applyDesiredPosition();
+    if (changed) {
+      pendingSeekRef.current = Math.max(0, positionSeconds);
+      applyPendingSeek();
+    }
   }, [seekToken, positionSeconds]);
 
   useEffect(() => {
@@ -115,10 +131,17 @@ export function ProgramStreamPlayer({
       return;
     }
 
-    void audio.play().catch(() => {
-      if (playGenerationRef.current === generation) onError?.();
+    void audio.play().catch((reason: unknown) => {
+      if (playGenerationRef.current !== generation) return;
+      if (reason instanceof DOMException && reason.name === "NotAllowedError") {
+        // Autoplay policy is not a transport failure. Leave the programme
+        // source intact and wait for the listener's next explicit play action.
+        onPauseRequest();
+        return;
+      }
+      onError?.();
     });
-  }, [playing, streamUrl, onError]);
+  }, [playing, streamUrl, onError, onPauseRequest]);
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
@@ -192,10 +215,10 @@ export function ProgramStreamPlayer({
       }
     };
     const ready = () => {
-      applyDesiredPosition();
+      applyPendingSeek();
       onReady?.();
     };
-    const progress = () => applyDesiredPosition();
+    const progress = () => applyPendingSeek();
     const ended = () => {
       markPaused();
       onEnded?.();
@@ -208,6 +231,7 @@ export function ProgramStreamPlayer({
     audio.addEventListener("loadedmetadata", ready);
     audio.addEventListener("canplay", ready);
     audio.addEventListener("progress", progress);
+    audio.addEventListener("durationchange", progress);
     audio.addEventListener("playing", markPlaying);
     audio.addEventListener("waiting", markBuffering);
     audio.addEventListener("stalled", markBuffering);
@@ -234,6 +258,7 @@ export function ProgramStreamPlayer({
       audio.removeEventListener("loadedmetadata", ready);
       audio.removeEventListener("canplay", ready);
       audio.removeEventListener("progress", progress);
+      audio.removeEventListener("durationchange", progress);
       audio.removeEventListener("playing", markPlaying);
       audio.removeEventListener("waiting", markBuffering);
       audio.removeEventListener("stalled", markBuffering);
