@@ -117,3 +117,17 @@ def test_timing_summary_exposes_planned_and_actual_drift() -> None:
     assert summary.planned_total_seconds == 835
     assert summary.actual_total_seconds == 828
     assert summary.target_error_seconds == -72
+
+
+
+def test_timing_plan_gives_zero_budget_to_chapters_without_slots() -> None:
+    plan = build_program_timing_plan(
+        desired_total_seconds=900,
+        target_narration_ratio=0.10,
+        resolved_music_seconds=700,
+        chapter_slot_counts=[1, 0, 1, 0],
+    )
+
+    assert [item.slot_count for item in plan.chapter_budgets] == [1, 0, 1, 0]
+    assert [item.target_narration_seconds for item in plan.chapter_budgets] == [45, 0, 45, 0]
+    assert plan.allocated_narration_seconds == 90
