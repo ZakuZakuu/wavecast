@@ -1,6 +1,6 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-27
+**Last updated:** 2026-09-29
 
 ## Product reminder
 
@@ -11,7 +11,55 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-### Local Runtime v2 milestone: adaptive buffer policy (awaiting review)
+### Narration P0 — pre-preliminary listening quality
+
+Active implementation branches:
+
+- WaveCast: `feat/narration-p0` (based on hosted `integration`)
+- NetEase sidecar: `feat/narration-timing-p0` (based on sidecar `main`)
+- Do **not** advance `integration` until the coherent P0 PR passes CI. Feature
+  branches are intentionally not hosted deployment checkpoints.
+
+Scope and decisions:
+
+- **Writer-owned first bridge:** FastStart prepares/persists the first playable
+  successor as music-only. The repeated deterministic “that was / up next”
+  sentence is removed from the normal path. Once the progressive session exists,
+  the evidence-scoped Writer owns the first A -> B narration slot without being
+  placed on the time-to-first-successor critical path.
+- **Host density is real policy:** `NONE` owns no narration slots. `LIGHT`
+  (default) uses a lower spoken-time target and thins ordinary direct-track
+  bridges while preserving the first useful bridge, explicit narrative beats,
+  and final outro. `FULL` keeps all truthful owned slots and the existing
+  guided-listening density.
+- **Quality-first fallback:** a Writer failure in `LIGHT` may omit optional
+  narration rather than playing a repeated catalog-template sentence. The
+  deterministic adjacent-track fallback remains available only for `FULL`.
+- **TrackTimingProfile v1:** music may carry source duration, timestamp-only
+  lyric-line intervals, vocal intervals, and derived intro/gap/outro sections.
+  Raw lyric text is deliberately excluded from WaveCast's P0 model and from
+  Writer prompts.
+- **Provider seam:** the NetEase development sidecar adds best-effort
+  `GET /tracks/{id}/timing`, backed by conventional `/lyric` timestamps.
+  Failure degrades to duration-only timing and never makes a playable track
+  unusable.
+- **Lyric-aware arrangement:** when timed vocal information is available,
+  narration enters only after the final outgoing vocal (with a guard), and
+  incoming music is delayed so an early lead vocal does not sit underneath the
+  host. Tracks without timing data retain the existing fixed conservative
+  transition geometry.
+- The immutable programme feed's current 30-second render holdback still exceeds
+  this P0 lyric-aware narration lookback (bounded to 12 seconds), so the new
+  placement policy does not require rewriting already-published chunks.
+- **Explicitly P1:** TTS prosody/emotion/voice tuning requires human listening;
+  full lyric semantics, beat/downbeat analysis, and advanced adaptive DJ
+  transitions remain deferred.
+
+Validation status: implementation and tests are being completed on the feature
+branches. Do not treat this section as evidence that CI or a live listening
+probe has passed until the validation bullets are updated.
+
+### Local Runtime v2 milestone: adaptive buffer policy (historical)
 
 - Based on `53bdde72ab64d043d5b27d2f07055447959d494c`; no live/provider calls or deployment.
 - API refill signals and orchestrator share a deterministic buffer decision. A long opening still requires a playable successor; unfinished optional narration does not make ready music unhealthy.
