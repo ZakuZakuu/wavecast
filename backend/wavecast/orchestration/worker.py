@@ -262,10 +262,28 @@ class GenerationWorker:
             getattr(first_buffer, "progressive_session", None) is None
             and getattr(self.orchestrator, "progressive_runtime", None) is not None
         ):
-            # A ready FastStart successor/bridge may outlive a recoverable full
-            # route planning miss. Do not immediately repeat the same expensive
+            # A ready FastStart successor may outlive a recoverable full-route
+            # planning miss. Do not immediately repeat the same expensive
             # intelligence work in this job.
             return job.episode_id
+
+        # The successor is already durable, so Writer may now spend latency on
+        # the first A -> B bridge without being on the music-readiness critical
+        # path. Keep this inside the generation lease so a completion race
+        # cannot duplicate a paid Writer call. TTS remains detached after job
+        # completion.
+        try:
+            await self.orchestrator.author_pending_narration_async(
+                job.episode_id,
+                max_chapters=1,
+            )
+        except Exception as error:
+            logger.warning(
+                "narration_enrichment_failed episode_id=%s stage=first_writer "
+                "error_type=%s",
+                job.episode_id,
+                type(error).__name__,
+            )
 
         if self.policy.target_chapters > 1:
             await self.orchestrator.ensure_buffer_async(
@@ -273,8 +291,7 @@ class GenerationWorker:
                 target_chapters=self.policy.target_chapters,
                 target_ahead_seconds=self.policy.target_ahead_seconds,
             )
-        # Later Writer/TTS work remains detached after completion. The opening
-        # latency mask already owns chapter-2 narration.
+        # Residual Writer work and all TTS remain detached after completion.
         return job.episode_id
 
     def _schedule_narration_enrichment(self, episode_id: str) -> None:
@@ -296,9 +313,9 @@ class GenerationWorker:
         *,
         max_chapters: int | None = None,
     ) -> None:
-        # Music readiness remains the continuity floor. The first invocation may
-        # run inline immediately after one successor is durable; residual
-        # enrichment still runs detached after job completion.
+        # Music readiness remains the continuity floor. The first Writer slot
+        # may already have been authored under the generation lease; residual
+        # Writer work and TTS run detached after job completion.
         limit = self.policy.target_chapters if max_chapters is None else max_chapters
         try:
             authored = await self.orchestrator.author_pending_narration_async(
