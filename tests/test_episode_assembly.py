@@ -1115,34 +1115,44 @@ def test_duplicate_narrative_middle_transitions_collapse_to_one_slot() -> None:
     assert script.blocks[0].text == "middle one middle two"
 
 
-def test_multiple_middle_narrative_chapters_cannot_share_one_physical_gap() -> None:
-    with pytest.raises(
-        NarrationPlacementError,
-        match="physical playback gap has multiple narration owners",
-    ):
-        _build_narration_slot_contexts(
-            [
-                _resolved_chapter(0, 0),
-                _resolved_chapter(1, None),
-                _resolved_chapter(2, None),
-                _resolved_chapter(3, 1),
-            ]
-        )
+def test_multiple_middle_narrative_chapters_collapse_to_one_physical_gap() -> None:
+    contexts = _build_narration_slot_contexts(
+        [
+            _resolved_chapter(0, 0),
+            _resolved_chapter(1, None),
+            _resolved_chapter(2, None),
+            _resolved_chapter(3, 1),
+        ]
+    )
+
+    assert [context.slot_id for context in contexts[1]] == [
+        "chapter-1:after-previous"
+    ]
+    assert contexts[2] == []
+    assert [context.slot_id for context in contexts[3]] == [
+        "chapter-3:after-final"
+    ]
 
 
-def test_multiple_leading_narrative_chapters_cannot_share_opening_gap() -> None:
-    with pytest.raises(
-        NarrationPlacementError,
-        match="physical playback gap has multiple narration owners",
-    ):
-        _build_narration_slot_contexts(
-            [
-                _resolved_chapter(0, None),
-                _resolved_chapter(1, None),
-                _resolved_chapter(2, 0),
-                _resolved_chapter(3, 1),
-            ]
-        )
+def test_multiple_leading_narrative_chapters_collapse_to_one_opening_gap() -> None:
+    contexts = _build_narration_slot_contexts(
+        [
+            _resolved_chapter(0, None),
+            _resolved_chapter(1, None),
+            _resolved_chapter(2, 0),
+            _resolved_chapter(3, 1),
+        ]
+    )
+
+    assert [context.slot_id for context in contexts[0]] == [
+        "chapter-0:after-opening"
+    ]
+    assert contexts[1] == []
+    assert contexts[2] == []
+    assert [context.slot_id for context in contexts[3]] == [
+        "chapter-3:before-track",
+        "chapter-3:after-final",
+    ]
 
 
 def test_assembly_wraps_narration_placement_failure_at_writer_boundary(tmp_path, monkeypatch) -> None:
