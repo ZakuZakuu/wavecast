@@ -277,6 +277,7 @@ export function MixAudioPlayer({
       const secondaryAudio = deck(secondary);
       if (
         playing
+        && currentClip
         && nextIsArmed
         && upcomingSegment?.audio_source_url
         && upcomingClip
