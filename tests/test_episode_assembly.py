@@ -165,8 +165,11 @@ def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypa
 
     assert bootstrap is not None
     assert bootstrap.chapter_id == "chapter-2"
-    assert len(bootstrap.segments) == 1
-    successor = bootstrap.segments[0]
+    assert len(bootstrap.segments) == 2
+    bridge, successor = bootstrap.segments
+    assert isinstance(bridge, NarrationSegment)
+    assert bridge.state is SegmentState.SCRIPT_READY
+    assert isinstance(successor, MusicSegment)
     assert successor.track_ref == "mock:bridge"
     assert successor.title == "Midnight Transfer"
     assert successor.artist == "Signal Garden"

@@ -81,6 +81,11 @@ def test_worker_prioritizes_first_narration_after_one_successor() -> None:
             self.calls: list[str] = []
             self.episode = _Episode()
 
+        async def ensure_fast_start_async(self, episode_id: str):
+            del episode_id
+            self.calls.append("fast-start")
+            return self.episode
+
         async def ensure_buffer_async(
             self,
             episode_id: str,
@@ -92,26 +97,6 @@ def test_worker_prioritizes_first_narration_after_one_successor() -> None:
             self.calls.append(f"ensure:{target_chapters}")
             return self.episode
 
-        async def author_pending_narration_async(
-            self,
-            episode_id: str,
-            *,
-            max_chapters: int = 2,
-        ):
-            del episode_id
-            self.calls.append(f"author:{max_chapters}")
-            return self.episode
-
-        async def materialize_pending_narration_async(
-            self,
-            episode_id: str,
-            *,
-            max_segments: int = 2,
-        ):
-            del episode_id
-            self.calls.append(f"tts:{max_segments}")
-            return self.episode
-
     runtime = RecordingRuntime()
     jobs = InMemoryGenerationJobRepository()
     job = jobs.request("episode-priority")
@@ -120,9 +105,8 @@ def test_worker_prioritizes_first_narration_after_one_successor() -> None:
     assert asyncio.run(worker._execute_claimed_job(job)) == "episode-priority"
 
     assert runtime.calls == [
+        "fast-start",
         "ensure:1",
-        "author:1",
-        "tts:1",
         "ensure:2",
     ]
 
