@@ -129,6 +129,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   usingProgramStreamRef.current = usingProgramStream;
 
   useEffect(() => {
+    setNativeHlsSupported(supportsNativeHls());
+  }, []);
+
+  useEffect(() => {
     setProgramRender(null);
     programRenderSignatureRef.current = null;
     programRenderBusyRef.current = false;
@@ -188,6 +192,80 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       cancelled = true;
     };
   }, [arrangementEpisodeId, arrangementSignature]);
+
+  const requestProgramRender = useCallback((force = false) => {
+    const latest = localEpisodeRef.current;
+    if (!latest || !nativeHlsSupported) return;
+
+    const signature = mixPlanSignature(latest);
+    if (
+      !force
+      && programRenderSignatureRef.current === signature
+    ) {
+      return;
+    }
+    if (programRenderBusyRef.current) return;
+
+    programRenderBusyRef.current = true;
+    programRenderSignatureRef.current = signature;
+    void api.programRender(latest.id)
+      .then((manifest) => {
+        setProgramRender(manifest);
+        setError((currentError) => (
+          currentError === "节目音频流暂时还没有准备好" ? null : currentError
+        ));
+      })
+      .catch((reason: unknown) => {
+        if (programRenderSignatureRef.current === signature) {
+          programRenderSignatureRef.current = null;
+        }
+        if (
+          reason instanceof ApiRequestError
+          && [404, 409].includes(reason.status)
+        ) {
+          return;
+        }
+        setError("节目音频流暂时还没有准备好");
+      })
+      .finally(() => {
+        programRenderBusyRef.current = false;
+      });
+  }, [nativeHlsSupported]);
+
+  useEffect(() => {
+    if (!arrangementEpisodeId || !arrangementSignature || !nativeHlsSupported) {
+      return;
+    }
+    requestProgramRender(false);
+  }, [
+    arrangementEpisodeId,
+    arrangementSignature,
+    nativeHlsSupported,
+    requestProgramRender,
+  ]);
+
+  const requestProgramRefill = useCallback(() => {
+    const latest = localEpisodeRef.current;
+    if (!latest || !nativeHlsSupported) return;
+
+    const now = Date.now();
+    if (now - programRefillAtRef.current < 5_000) return;
+    programRefillAtRef.current = now;
+
+    // First try to append anything already renderable, then ask the durable
+    // generation worker for more future content. SSE will trigger another
+    // programme render as soon as new audio-ready segments appear.
+    requestProgramRender(true);
+    void api.ensureBuffer(latest.id)
+      .then((buffered) => {
+        if (localEpisodeRef.current?.id === buffered.id) {
+          setEpisode(buffered);
+        }
+      })
+      .catch(() => {
+        // Refill is resource scheduling, not playback semantics.
+      });
+  }, [nativeHlsSupported, requestProgramRender, setEpisode]);
 
   useEffect(() => {
     let mounted = true;
