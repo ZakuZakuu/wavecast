@@ -118,7 +118,8 @@ class PostgresProgramProposalRepository:
                 row.owner_listener_id != owner_listener_id
                 or row.owner_user_id != owner_user_id
                 or row.source != source
-                or dict(row.payload) != expected[row.id]["payload"]
+                or ProgramProposal.model_validate(row.payload).model_dump(mode="json")
+                != expected[row.id]["payload"]
                 for row in existing
             ):
                 raise ProposalPersistenceConflict("proposal id already exists")

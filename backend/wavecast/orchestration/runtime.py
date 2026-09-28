@@ -77,6 +77,7 @@ class StagedProgressiveRuntimeAdapter:
             desired_duration_seconds=episode.program_estimated_duration_seconds,
             max_tracks=5,
             max_chapters=8,
+            presentation_intent=episode.presentation_intent,
             output_language=OutputLanguage.AUTO,
         )
         return await self.assembly.prepare_fast_successor(
@@ -117,6 +118,7 @@ class StagedProgressiveRuntimeAdapter:
             desired_duration_seconds=episode.program_estimated_duration_seconds,
             max_tracks=5,
             max_chapters=8,
+            presentation_intent=episode.presentation_intent,
             output_language=OutputLanguage.AUTO,
         )
         locked_segment = next(

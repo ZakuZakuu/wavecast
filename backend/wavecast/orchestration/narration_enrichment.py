@@ -16,6 +16,7 @@ from wavecast.models.episode import (
     SegmentState,
 )
 from wavecast.orchestration.generation import GeneratedChapter
+from wavecast.presentation import HostMode
 from wavecast.orchestration.runtime import StagedProgressiveRuntime
 from wavecast.storage.episodes import EpisodeConcurrencyError, EpisodeRepository
 
@@ -38,9 +39,27 @@ async def author_pending_narration(
     """Run Writer only for already-persisted, still-speculative music chapters."""
     if max_chapters < 1:
         raise ValueError("narration authoring limit must be positive")
+
+    initial = await asyncio.to_thread(host.repository.get, episode_id)
+    if initial.presentation_intent.host_mode is HostMode.NONE:
+        session = initial.progressive_session
+        if session is not None:
+            persisted = {segment.chapter_id for segment in initial.ordered_segments}
+            authored = list(session.narration_authored_chapter_ids)
+            for chapter in session.chapters:
+                if chapter.chapter_id in persisted and chapter.chapter_id not in authored:
+                    authored.append(chapter.chapter_id)
+            if authored != session.narration_authored_chapter_ids:
+                initial.progressive_session = session.model_copy(
+                    update={"narration_authored_chapter_ids": authored}
+                )
+                initial.last_activity_at = host.now()
+                initial = await asyncio.to_thread(host.repository.save, initial)
+        return initial
+
     runtime = host.progressive_runtime
     if runtime is None:
-        return await asyncio.to_thread(host.repository.get, episode_id)
+        return initial
 
     processed = 0
     while processed < max_chapters:

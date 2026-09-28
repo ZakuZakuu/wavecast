@@ -168,6 +168,7 @@ class EpisodeOrchestrator:
             title=seed.title,
             topic=seed.topic,
             program_estimated_duration_seconds=seed.estimated_duration_seconds,
+            presentation_intent=seed.presentation_intent,
             segments=[opening],
             current_segment_id=opening.id,
             last_activity_at=now,
