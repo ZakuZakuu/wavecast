@@ -4,9 +4,12 @@ from wavecast.rendering.errors import (
     MixSourceUnavailableError,
 )
 from wavecast.rendering.ffmpeg import (
+    HlsRenderedSegment,
+    HlsRenderResult,
     RenderResult,
     build_filter_graph,
     render_mix,
+    render_mix_hls_prefix,
     render_mix_transport_segment,
 )
 from wavecast.rendering.fingerprint import mix_plan_fingerprint
@@ -28,9 +31,12 @@ __all__ = [
     "MixRendererUnavailableError",
     "MixSourceUnavailableError",
     "MixdownArtifact",
+    "HlsRenderedSegment",
+    "HlsRenderResult",
     "RenderResult",
     "build_filter_graph",
     "render_mix",
+    "render_mix_hls_prefix",
     "render_mix_transport_segment",
     "resolve_mix_sources",
     "mix_plan_fingerprint",

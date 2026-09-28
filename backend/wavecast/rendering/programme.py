@@ -13,17 +13,18 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from wavecast.arrangement.models import AudioClip, GainPoint, MixPlan
 from wavecast.providers.contracts import ObjectStorageProvider
 from wavecast.rendering.errors import MixRenderError
-from wavecast.rendering.ffmpeg import render_mix_transport_segment
+from wavecast.rendering.ffmpeg import HlsRenderedSegment, render_mix_hls_prefix
 from wavecast.rendering.fingerprint import mix_plan_fingerprint
 from wavecast.rendering.sources import resolve_mix_sources
 
 
 DEFAULT_PROGRAM_CHUNK_SECONDS = 6.0
 DEFAULT_RENDER_HOLDBACK_SECONDS = 30.0
+_MEDIA_TIMELINE_TOLERANCE_SECONDS = 0.15
 
 
 class ProgramImmutabilityError(RuntimeError):
-    """A newer plan attempted to rewrite audio behind the render frontier."""
+    """A newer plan or renderer attempted to rewrite audio behind the frontier."""
 
 
 class ProgramRenderChunk(BaseModel):
@@ -63,10 +64,10 @@ class ProgramRenderManifest(BaseModel):
         for index, chunk in enumerate(self.chunks):
             if chunk.index != index:
                 raise ValueError("program chunks must have contiguous indices")
-            if abs(chunk.start_seconds - expected_start) > 1e-6:
+            if abs(chunk.start_seconds - expected_start) > 1e-5:
                 raise ValueError("program chunks must be contiguous")
             expected_start = chunk.end_seconds
-        if abs(expected_start - self.rendered_frontier_seconds) > 1e-6:
+        if abs(expected_start - self.rendered_frontier_seconds) > 1e-5:
             raise ValueError("rendered frontier must equal the end of the final chunk")
         return self
 
@@ -126,7 +127,7 @@ def _slice_gain_automation(
 
 
 def slice_mix_plan(plan: MixPlan, start_seconds: float, end_seconds: float) -> MixPlan:
-    """Project one immutable absolute programme interval into a standalone MixPlan."""
+    """Project one absolute programme interval into a standalone canonical MixPlan."""
 
     if start_seconds < 0 or end_seconds <= start_seconds:
         raise ValueError("invalid mix slice")
@@ -183,12 +184,12 @@ def committable_frontier(
     chunk_duration_seconds: float = DEFAULT_PROGRAM_CHUNK_SECONDS,
     holdback_seconds: float = DEFAULT_RENDER_HOLDBACK_SECONDS,
 ) -> float:
-    """Return the largest timeline point that can be frozen without rewriting a tail."""
+    """Return the latest source-timeline point allowed to become immutable."""
 
+    del chunk_duration_seconds
     if complete:
         return plan.duration_seconds
-    safe = max(0.0, plan.duration_seconds - holdback_seconds)
-    return math.floor((safe + 1e-9) / chunk_duration_seconds) * chunk_duration_seconds
+    return max(0.0, plan.duration_seconds - holdback_seconds)
 
 
 def _safe_episode_id(episode_id: str) -> str:
@@ -222,7 +223,7 @@ async def _store_manifest(
 ) -> None:
     await storage.put(
         manifest_key(manifest.episode_id),
-        manifest.model_dump_json(by_alias=True).encode("utf-8"),
+        manifest.model_dump_json().encode("utf-8"),
         "application/json",
         {
             "episode_id": manifest.episode_id,
@@ -249,13 +250,45 @@ def _new_manifest(
     )
 
 
+def _fingerprint_interval(
+    plan: MixPlan,
+    start_seconds: float,
+    media_end_seconds: float,
+) -> str:
+    source_end = min(media_end_seconds, plan.duration_seconds)
+    if source_end <= start_seconds + 1e-9:
+        raise ProgramImmutabilityError("rendered media extends beyond the canonical programme")
+    return mix_plan_fingerprint(slice_mix_plan(plan, start_seconds, source_end))
+
+
 def _verify_frozen_prefix(plan: MixPlan, manifest: ProgramRenderManifest) -> None:
     for chunk in manifest.chunks:
-        if chunk.end_seconds > plan.duration_seconds + 1e-6:
+        if chunk.start_seconds >= plan.duration_seconds + _MEDIA_TIMELINE_TOLERANCE_SECONDS:
             raise ProgramImmutabilityError("new plan is shorter than the frozen programme")
-        current = slice_mix_plan(plan, chunk.start_seconds, chunk.end_seconds)
-        if mix_plan_fingerprint(current) != chunk.plan_fingerprint:
+        fingerprint = _fingerprint_interval(
+            plan,
+            chunk.start_seconds,
+            chunk.end_seconds,
+        )
+        if fingerprint != chunk.plan_fingerprint:
             raise ProgramImmutabilityError("new plan rewrites frozen programme audio")
+
+
+def _candidate_prefix(
+    segments: tuple[HlsRenderedSegment, ...],
+    *,
+    safe_frontier_seconds: float,
+    complete: bool,
+) -> list[tuple[float, HlsRenderedSegment]]:
+    candidates: list[tuple[float, HlsRenderedSegment]] = []
+    cursor = 0.0
+    for segment in segments:
+        end = cursor + segment.duration_seconds
+        if not complete and end > safe_frontier_seconds + 1e-6:
+            break
+        candidates.append((cursor, segment))
+        cursor = end
+    return candidates
 
 
 async def render_program_prefix(
@@ -266,7 +299,14 @@ async def render_program_prefix(
     chunk_duration_seconds: float = DEFAULT_PROGRAM_CHUNK_SECONDS,
     holdback_seconds: float = DEFAULT_RENDER_HOLDBACK_SECONDS,
 ) -> ProgramRenderManifest:
-    """Append immutable rendered transport-stream chunks up to the safe frontier."""
+    """Append immutable HLS chunks from a continuously encoded canonical prefix.
+
+    Each extension re-renders the ready prefix from time zero in one ffmpeg
+    process. Existing transport chunks must reproduce byte-for-byte before any
+    new chunk is published. That costs extra CPU today, but it gives the first
+    production transport a strong immutability guarantee and avoids AAC encoder
+    resets between chunks.
+    """
 
     if chunk_duration_seconds <= 0:
         raise ValueError("chunk duration must be positive")
@@ -290,46 +330,59 @@ async def render_program_prefix(
     if manifest.complete:
         return manifest
 
-    target = committable_frontier(
+    safe_frontier = committable_frontier(
         plan,
         complete=complete,
         chunk_duration_seconds=chunk_duration_seconds,
         holdback_seconds=holdback_seconds,
     )
-    if target < manifest.rendered_frontier_seconds - 1e-6:
-        raise ProgramImmutabilityError("render frontier would move backwards")
-
-    if target <= manifest.rendered_frontier_seconds + 1e-6:
-        if complete and abs(target - manifest.rendered_frontier_seconds) <= 1e-6:
-            manifest = manifest.model_copy(update={"complete": True})
-            await _store_manifest(storage, manifest)
-        return manifest
 
     with TemporaryDirectory(prefix="wavecast-program-render-") as temporary:
         root = Path(temporary)
         sources = await resolve_mix_sources(plan, storage, root / "inputs")
-        chunks = list(manifest.chunks)
-        cursor = manifest.rendered_frontier_seconds
+        rendered = await asyncio.to_thread(
+            render_mix_hls_prefix,
+            plan,
+            sources,
+            root / "hls",
+            segment_time_seconds=chunk_duration_seconds,
+        )
+        candidates = _candidate_prefix(
+            rendered.segments,
+            safe_frontier_seconds=safe_frontier,
+            complete=complete,
+        )
 
-        while cursor < target - 1e-6:
-            end = min(cursor + chunk_duration_seconds, target)
-            sliced = slice_mix_plan(plan, cursor, end)
-            fingerprint = mix_plan_fingerprint(sliced)
-            output = root / f"chunk-{len(chunks):06d}.ts"
-            result = await asyncio.to_thread(
-                render_mix_transport_segment,
-                sliced,
-                sources,
-                output,
-                timeline_offset_seconds=cursor,
-            )
-            content = output.read_bytes()
+        if len(candidates) < len(manifest.chunks):
+            raise ProgramImmutabilityError("rendered prefix moved behind the frozen frontier")
+
+        # Re-rendering from zero must reproduce every previously published
+        # transport segment byte-for-byte. This also protects against an ffmpeg
+        # configuration/version change silently altering a live programme.
+        for existing, (start, rendered_segment) in zip(manifest.chunks, candidates):
+            if (
+                abs(existing.start_seconds - start) > 1e-5
+                or abs(existing.duration_seconds - rendered_segment.duration_seconds) > 1e-5
+            ):
+                raise ProgramImmutabilityError("renderer changed a frozen segment boundary")
+            digest = hashlib.sha256(rendered_segment.output_path.read_bytes()).hexdigest()
+            if digest != existing.content_sha256:
+                raise ProgramImmutabilityError("renderer changed frozen programme bytes")
+
+        chunks = list(manifest.chunks)
+        for index in range(len(chunks), len(candidates)):
+            start, rendered_segment = candidates[index]
+            end = start + rendered_segment.duration_seconds
+            if start >= plan.duration_seconds + _MEDIA_TIMELINE_TOLERANCE_SECONDS:
+                break
+            content = rendered_segment.output_path.read_bytes()
             if not content:
                 raise MixRenderError("program renderer produced an empty chunk")
             digest = hashlib.sha256(content).hexdigest()
+            fingerprint = _fingerprint_interval(plan, start, end)
             key = (
                 f"program-renders/{_safe_episode_id(plan.episode_id)}/r1/"
-                f"{len(chunks):06d}-{fingerprint[:16]}.ts"
+                f"{index:06d}-{digest[:20]}.ts"
             )
             url = await storage.put(
                 key,
@@ -337,34 +390,39 @@ async def render_program_prefix(
                 "video/mp2t",
                 {
                     "episode_id": plan.episode_id,
-                    "chunk_index": len(chunks),
-                    "start_seconds": cursor,
-                    "duration_seconds": result.duration_seconds,
+                    "chunk_index": index,
+                    "start_seconds": start,
+                    "duration_seconds": rendered_segment.duration_seconds,
                     "plan_fingerprint": fingerprint,
                     "content_sha256": digest,
                 },
             )
             chunks.append(
                 ProgramRenderChunk(
-                    index=len(chunks),
-                    start_seconds=cursor,
-                    duration_seconds=result.duration_seconds,
+                    index=index,
+                    start_seconds=start,
+                    duration_seconds=rendered_segment.duration_seconds,
                     plan_fingerprint=fingerprint,
                     content_sha256=digest,
                     asset_key=key,
                     audio_url=url,
                 )
             )
-            cursor = end
-            manifest = manifest.model_copy(
-                update={
-                    "chunks": tuple(chunks),
-                    "rendered_frontier_seconds": cursor,
-                    "complete": complete and cursor >= target - 1e-6,
-                }
-            )
-            await _store_manifest(storage, manifest)
 
+    frontier = chunks[-1].end_seconds if chunks else 0.0
+    is_complete = bool(
+        complete
+        and chunks
+        and frontier >= plan.duration_seconds - _MEDIA_TIMELINE_TOLERANCE_SECONDS
+    )
+    manifest = manifest.model_copy(
+        update={
+            "chunks": tuple(chunks),
+            "rendered_frontier_seconds": frontier,
+            "complete": is_complete,
+        }
+    )
+    await _store_manifest(storage, manifest)
     return manifest
 
 
@@ -384,7 +442,7 @@ def hls_playlist(manifest: ProgramRenderManifest) -> str:
         "#EXT-X-INDEPENDENT-SEGMENTS",
     ]
     for chunk in manifest.chunks:
-        lines.append(f"#EXTINF:{chunk.duration_seconds:.3f},")
+        lines.append(f"#EXTINF:{chunk.duration_seconds:.6f},")
         lines.append(chunk.audio_url)
     if manifest.complete:
         lines.append("#EXT-X-ENDLIST")

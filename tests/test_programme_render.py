@@ -64,6 +64,43 @@ def _plan(
     )
 
 
+def _extended_plan_with_future_music() -> MixPlan:
+    return MixPlan(
+        episode_id="program-render-fixture",
+        duration_seconds=24,
+        clips=(
+            AudioClip(
+                id="music-a:music",
+                segment_id="music-a",
+                source_url="/api/assets/audio/source.wav",
+                lane="MUSIC",
+                timeline_start_seconds=0,
+                source_offset_seconds=0,
+                playable_duration_seconds=20,
+                gain_automation=(
+                    GainPoint(offset_seconds=0, gain=1),
+                    GainPoint(offset_seconds=20, gain=1),
+                ),
+            ),
+            AudioClip(
+                id="music-b:music",
+                segment_id="music-b",
+                source_url="/api/assets/audio/source-b.wav",
+                lane="MUSIC",
+                timeline_start_seconds=16,
+                source_offset_seconds=0,
+                playable_duration_seconds=8,
+                gain_automation=(
+                    GainPoint(offset_seconds=0, gain=0),
+                    GainPoint(offset_seconds=4, gain=1),
+                    GainPoint(offset_seconds=8, gain=1),
+                ),
+            ),
+        ),
+        segment_starts={"music-a": 0, "music-b": 16},
+    )
+
+
 def test_slice_mix_plan_preserves_source_and_gain_at_absolute_window() -> None:
     plan = _plan(12, first_gain=0.4)
 
@@ -86,27 +123,25 @@ def test_program_render_appends_immutable_chunks_and_reuses_frozen_prefix(
 ) -> None:
     async def run() -> None:
         storage = LocalObjectStorageProvider(tmp_path / "audio")
-        await storage.put("source.wav", _wav_bytes(15), "audio/wav")
+        await storage.put("source.wav", _wav_bytes(24), "audio/wav")
 
         first = await render_program_prefix(
-            _plan(9),
+            _plan(16),
             storage,
-            chunk_duration_seconds=3,
             holdback_seconds=3,
         )
-        assert first.rendered_frontier_seconds == 6
-        assert len(first.chunks) == 2
+        assert first.rendered_frontier_seconds > 11
+        assert len(first.chunks) >= 2
         assert first.complete is False
 
         second = await render_program_prefix(
-            _plan(12),
+            _plan(22),
             storage,
-            chunk_duration_seconds=3,
             holdback_seconds=3,
         )
-        assert second.rendered_frontier_seconds == 9
-        assert len(second.chunks) == 3
-        assert second.chunks[:2] == first.chunks
+        assert second.rendered_frontier_seconds > first.rendered_frontier_seconds
+        assert len(second.chunks) > len(first.chunks)
+        assert second.chunks[: len(first.chunks)] == first.chunks
 
         playlist = hls_playlist(second)
         assert "#EXT-X-PLAYLIST-TYPE:EVENT" in playlist
@@ -119,16 +154,41 @@ def test_program_render_appends_immutable_chunks_and_reuses_frozen_prefix(
             assert stored.content
 
         final = await render_program_prefix(
-            _plan(12),
+            _plan(22),
             storage,
             complete=True,
-            chunk_duration_seconds=3,
             holdback_seconds=3,
         )
-        assert final.rendered_frontier_seconds == 12
+        assert final.rendered_frontier_seconds == pytest.approx(22, abs=0.15)
         assert final.complete is True
-        assert len(final.chunks) == 4
+        assert len(final.chunks) > len(second.chunks)
         assert "#EXT-X-ENDLIST" in hls_playlist(final)
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_future_mix_inputs_do_not_change_frozen_transport_bytes(tmp_path: Path) -> None:
+    async def run() -> None:
+        storage = LocalObjectStorageProvider(tmp_path / "audio")
+        await storage.put("source.wav", _wav_bytes(24, 220), "audio/wav")
+        await storage.put("source-b.wav", _wav_bytes(10, 330), "audio/wav")
+
+        first = await render_program_prefix(
+            _plan(16),
+            storage,
+            holdback_seconds=3,
+        )
+        assert first.chunks
+
+        extended = await render_program_prefix(
+            _extended_plan_with_future_music(),
+            storage,
+            holdback_seconds=3,
+        )
+
+        assert extended.chunks[: len(first.chunks)] == first.chunks
+        assert len(extended.chunks) > len(first.chunks)
 
     asyncio.run(run())
 
@@ -137,19 +197,18 @@ def test_program_render_appends_immutable_chunks_and_reuses_frozen_prefix(
 def test_program_render_rejects_rewrite_behind_frozen_frontier(tmp_path: Path) -> None:
     async def run() -> None:
         storage = LocalObjectStorageProvider(tmp_path / "audio")
-        await storage.put("source.wav", _wav_bytes(12), "audio/wav")
-        await render_program_prefix(
-            _plan(9),
+        await storage.put("source.wav", _wav_bytes(24), "audio/wav")
+        frozen = await render_program_prefix(
+            _plan(16),
             storage,
-            chunk_duration_seconds=3,
             holdback_seconds=3,
         )
+        assert frozen.chunks
 
         with pytest.raises(ProgramImmutabilityError, match="rewrites frozen"):
             await render_program_prefix(
-                _plan(12, first_gain=0.5),
+                _plan(22, first_gain=0.5),
                 storage,
-                chunk_duration_seconds=3,
                 holdback_seconds=3,
             )
 
