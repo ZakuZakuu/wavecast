@@ -1319,7 +1319,12 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       {exportError ? <p className="player-error">{exportError}</p> : null}
       {exportArtifact ? <a className="export-download" href={exportArtifact.audioUrl} download={downloadFilename(exportArtifact.episodeId)}>再次下载 MP3</a> : null}
 
-      <ChaptersSheet episode={localEpisode} open={chaptersOpen} onClose={() => setChaptersOpen(false)} />
+      <ChaptersSheet
+        episode={localEpisode}
+        open={chaptersOpen}
+        onClose={() => setChaptersOpen(false)}
+        currentSegmentId={displayCurrent?.id ?? null}
+      />
     </main>
   );
 }
