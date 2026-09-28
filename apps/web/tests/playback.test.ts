@@ -126,6 +126,51 @@ describe("armed browser handoff", () => {
     state: "AUDIO_READY" as const,
   };
 
+  it("finds the future segment after an optimistic browser authority", () => {
+    const optimisticEpisode: LiveEpisode = {
+      ...episode,
+      current_segment_id: "music-a",
+      segments: [
+        ...episode.segments,
+        {
+          id: "voice-next",
+          chapter_id: "b",
+          order: 1,
+          kind: "NARRATION",
+          state: "COMMITTED",
+          planned_duration_seconds: 8,
+          actual_duration_seconds: 8,
+          audio_source_url: "/voice.mp3",
+          duration_seconds: 8,
+          track_ref: null,
+          title: "Voice",
+          artist: null,
+          narration_text: "Bridge",
+          asset_ref: null,
+        },
+        {
+          id: "music-after",
+          chapter_id: "c",
+          order: 2,
+          kind: "MUSIC",
+          state: "AUDIO_READY",
+          planned_duration_seconds: 30,
+          actual_duration_seconds: 30,
+          audio_source_url: "/after.mp3",
+          duration_seconds: 30,
+          track_ref: "after",
+          title: "After",
+          artist: "Artist",
+          narration_text: null,
+          asset_ref: null,
+        },
+      ],
+    };
+
+    expect(nextVisibleSegment(optimisticEpisode)?.id).toBe("voice-next");
+    expect(nextVisibleSegment(optimisticEpisode, "voice-next")?.id).toBe("music-after");
+  });
+
   it("arms only an immediate playback-ready future near the media boundary", () => {
     expect(shouldArmHandoff({
       current,
