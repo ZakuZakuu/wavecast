@@ -51,6 +51,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const localEpisodeRef = useRef<LiveEpisode | null>(null);
   const startEffectGuardRef = useRef(createEffectGenerationGuard());
   const synchronizationGuardRef = useRef(createSynchronizationGuard());
+  const seekRequestGuardRef = useRef(createEffectGenerationGuard());
+  const handoffRequestGuardRef = useRef(createEffectGenerationGuard());
+  const completionRequestGuardRef = useRef(createEffectGenerationGuard());
 
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
@@ -102,6 +105,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     armedFromSegmentIdRef.current = null;
     armedEpisodeRef.current = null;
     handoffAttemptRef.current = null;
+    seekRequestGuardRef.current.start();
+    handoffRequestGuardRef.current.start();
+    completionRequestGuardRef.current.start();
   }, [localEpisode?.id]);
 
   useEffect(() => {
@@ -296,6 +302,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
   const completeBrowserSegment = useCallback(() => {
     if (!localEpisode || !browserPlaying || !current) return;
 
+    const completionGeneration = completionRequestGuardRef.current.start();
     const armedId = armedSuccessorIdRef.current;
     const armedEpisode = armedEpisodeRef.current;
     const armedSegment = armedId
@@ -335,6 +342,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
     void completion
       .then((completed) => {
+        if (!completionRequestGuardRef.current.isCurrent(completionGeneration)) return;
         playbackAnchorRef.current = playbackAnchor(completed);
         setEpisode(completed);
         setError(null);
@@ -359,6 +367,7 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
         }
       })
       .catch((reason: unknown) => {
+        if (!completionRequestGuardRef.current.isCurrent(completionGeneration)) return;
         awaitingSuccessorRef.current = false;
         // A completion event can race with an explicit seek/manual transport
         // change. The backend rejects the stale segment identity; never let
@@ -518,8 +527,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
       const handoffKey = `${current.id}->${upcoming.id}`;
       if (handoffAttemptRef.current !== handoffKey) {
         handoffAttemptRef.current = handoffKey;
+        const handoffGeneration = handoffRequestGuardRef.current.start();
         void api.armHandoff(localEpisode.id, upcoming.id)
           .then((armed) => {
+            if (!handoffRequestGuardRef.current.isCurrent(handoffGeneration)) return;
             const latest = localEpisodeRef.current;
             if (
               latest?.id !== localEpisode.id
@@ -561,51 +572,58 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
 
   const commitSeek = useCallback((value: number) => {
     if (!localEpisode) return;
-    const linearValue = transportMixPlan
+
+    const mapped = transportMixPlan
       ? mixPositionToLinearPosition(
           localEpisode,
           transportMixPlan,
           value,
-        ).linearPositionSeconds
-      : value;
-    if (!isSeekAllowed(localEpisode, linearValue)) {
+        )
+      : null;
+    const linearValue = mapped?.linearPositionSeconds ?? value;
+    const targetSegment = (
+      mapped?.segmentId
+        ? localEpisode.segments.find((segment) => segment.id === mapped.segmentId)
+        : segmentAtPosition(localEpisode, linearValue)
+    );
+    if (!isSeekAllowed(localEpisode, linearValue) || !targetSegment) {
       seekPreviewRef.current = null;
       setSeekPreview(null);
       return;
     }
 
-    const currentStart = current ? segmentStart(localEpisode, current.id) : 0;
-    const currentDuration = current
-      ? current.duration_seconds ?? current.actual_duration_seconds ?? current.planned_duration_seconds
-      : 0;
-    const withinCurrent = Boolean(
-      current
-      && linearValue >= currentStart
-      && linearValue < currentStart + currentDuration,
-    );
+    const seekGeneration = seekRequestGuardRef.current.start();
+    handoffRequestGuardRef.current.start();
+    completionRequestGuardRef.current.start();
 
-    if (withinCurrent) {
-      setBrowserPosition(linearValue);
-      browserPositionRef.current = linearValue;
-      setSeekToken((token) => token + 1);
-      seekPreviewRef.current = null;
-      setSeekPreview(null);
-    }
+    // A seek is a new transport decision. Clear every speculative handoff from
+    // the previous position before moving the browser-owned media element.
+    setArmedSuccessorId(null);
+    armedSuccessorIdRef.current = null;
+    armedFromSegmentIdRef.current = null;
+    armedEpisodeRef.current = null;
+    handoffAttemptRef.current = null;
+    awaitingSuccessorRef.current = false;
+
+    const withinCurrent = targetSegment.id === localEpisode.current_segment_id;
+    setTransportSegmentId(withinCurrent ? null : targetSegment.id);
+    setBrowserPosition(linearValue);
+    browserPositionRef.current = linearValue;
+    setSeekToken((token) => token + 1);
+    seekPreviewRef.current = null;
+    setSeekPreview(null);
 
     void api.seek(localEpisode.id, Math.floor(linearValue))
       .then((response) => {
+        if (!seekRequestGuardRef.current.isCurrent(seekGeneration)) return;
         playbackAnchorRef.current = playbackAnchor(response);
         setEpisode(response);
         setBrowserPosition(linearValue);
         browserPositionRef.current = linearValue;
-        if (!withinCurrent) setSeekToken((token) => token + 1);
-        seekPreviewRef.current = null;
-        setSeekPreview(null);
         setError(null);
       })
       .catch((reason: unknown) => {
-        seekPreviewRef.current = null;
-        setSeekPreview(null);
+        if (!seekRequestGuardRef.current.isCurrent(seekGeneration)) return;
         if (
           reason instanceof ApiRequestError
           && shouldSuppressSeekConflict({
@@ -613,20 +631,30 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
             withinCurrent,
           })
         ) {
-          // A checkpoint/heartbeat may win the durable Episode update while the
-          // browser is seeking inside the same audio source. The local media
-          // position is already authoritative here; a later heartbeat/checkpoint
-          // will reconcile durable progress without interrupting playback.
+          // The local media seek is already authoritative inside the current
+          // source; a later checkpoint can reconcile durable progress.
           setError(null);
           return;
         }
+        const latest = localEpisodeRef.current;
+        if (latest) {
+          setTransportSegmentId(null);
+          setBrowserPosition(latest.playback_position_seconds);
+          browserPositionRef.current = latest.playback_position_seconds;
+          setSeekToken((token) => token + 1);
+        }
         setError(reason instanceof Error ? reason.message : "跳转暂时没有完成");
       });
-  }, [current, localEpisode, setEpisode, transportMixPlan]);
+  }, [localEpisode, setEpisode, transportMixPlan]);
 
   const commitSeekPreview = useCallback(() => {
     const preview = seekPreviewRef.current;
-    if (preview !== null) commitSeek(preview);
+    if (preview === null) return;
+    // Pointer-up is commonly followed by blur. Clear synchronously so one drag
+    // cannot accidentally issue two seek requests.
+    seekPreviewRef.current = null;
+    setSeekPreview(null);
+    commitSeek(preview);
   }, [commitSeek]);
 
   const pausePlayback = useCallback(() => {

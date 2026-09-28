@@ -151,7 +151,11 @@ export function mixPositionToLinearPosition(
 ): MixTransport {
   const mixPosition = clampMixPosition(plan, positionSeconds);
   const active = activeMixClipsAt(plan, mixPosition);
-  const clip = active.find((candidate) => candidate.lane === "VOICE") ?? active[active.length - 1];
+  // A listener seek inside an overlap must anchor to the earliest active clip.
+  // That preserves the outgoing source so the player can reconstruct the
+  // transition by arming the following clip, instead of silently jumping
+  // forward to narration or the incoming track.
+  const clip = active[0];
   if (!clip) return { mixPositionSeconds: mixPosition, linearPositionSeconds: mixPosition };
 
   const offset = Math.max(
