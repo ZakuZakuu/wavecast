@@ -72,7 +72,7 @@ export function ProgrammeAudioPlayer({
       onPositionChangeRef.current(desired);
       if (playing) safePlay(audio, onErrorRef.current);
     };
-    if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) {
+    if (audio.readyState >= 1) {
       align();
       return;
     }
