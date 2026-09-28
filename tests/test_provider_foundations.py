@@ -27,6 +27,7 @@ def test_mock_mode_is_credential_free(monkeypatch: pytest.MonkeyPatch) -> None:
         "AUDIUS_API_KEY",
         "AUDIUS_BEARER_TOKEN",
         "MINIMAX_API_KEY",
+        "MINIMAX_TTS_BASE_URL",
         "MINIMAX_TTS_VOICE_ID",
         "WAVECAST_PROPOSAL_PLANNER",
         "WAVECAST_MUSIC_PROVIDER",
@@ -48,6 +49,7 @@ def test_mock_mode_is_credential_free(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.resolved_curator_provider == "mock"
     assert settings.resolved_writer_provider == "mock"
     assert settings.resolved_tts_provider == "mock"
+    assert settings.minimax_tts_base_url == "https://api.minimax.cn"
     assert settings.minimax_tts_model == "speech-2.8-turbo"
     assert settings.minimax_tts_speed == 0.8
     with pytest.raises(ProviderConfigurationError):
