@@ -268,8 +268,9 @@ def test_writer_failure_falls_back_to_catalog_only_narration(tmp_path) -> None:
     assert music[0].audio_source_url == music_url
     assert len(narration) == 2
     assert all(segment.state is SegmentState.SCRIPT_READY for segment in narration)
-    assert "Opening Artist" in narration[0].narration_text
-    assert "Bridge Artist" in narration[0].narration_text
+    fallback_text = narration[0].narration_text or ""
+    assert "Opening Artist" in fallback_text
+    assert "Bridge Artist" in fallback_text
 
 
 def test_writer_enrichment_adds_script_ready_narration_without_repreparing_music(
