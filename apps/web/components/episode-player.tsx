@@ -740,6 +740,67 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     upcomingArrangementClip,
   ]);
 
+  const handleProgramPosition = useCallback((positionSeconds: number) => {
+    const bounded = Math.max(0, positionSeconds);
+    programPositionRef.current = bounded;
+    setProgramPosition(bounded);
+  }, []);
+
+  const commitProgramSeek = useCallback((value: number) => {
+    const frontier = programManifest?.renderedFrontierSeconds ?? 0;
+    if (frontier <= 0) return;
+    const bounded = Math.min(
+      Math.max(0, value),
+      Math.max(0, frontier - 0.05),
+    );
+    programPositionRef.current = bounded;
+    setProgramPosition(bounded);
+    setProgramSeekToken((token) => token + 1);
+    seekPreviewRef.current = null;
+    setSeekPreview(null);
+  }, [programManifest?.renderedFrontierSeconds]);
+
+  const requestProgramPlay = useCallback(() => {
+    setBrowserPlaying(true);
+    setError(null);
+  }, []);
+
+  const requestProgramPause = useCallback(() => {
+    setBrowserPlaying(false);
+  }, []);
+
+  const fallbackFromProgramStream = useCallback(() => {
+    const latest = localEpisodeRef.current;
+    const plan = mixPlanRef.current;
+    if (latest && plan?.episodeId === latest.id) {
+      const mapped = mixPositionToLinearPosition(
+        latest,
+        plan,
+        programPositionRef.current,
+      );
+      setTransportSegmentId(mapped.segmentId);
+      browserPositionRef.current = mapped.linearPositionSeconds;
+      setBrowserPosition(mapped.linearPositionSeconds);
+      setSeekToken((token) => token + 1);
+    }
+    programStreamActiveRef.current = false;
+    setProgramStreamActive(false);
+    setProgramBuffering(false);
+    setError("单流节目暂时无法继续，已切回兼容播放");
+  }, []);
+
+  const handleProgramEnded = useCallback(() => {
+    const latest = localEpisodeRef.current;
+    setBrowserPlaying(false);
+    if (latest) {
+      void api.recordUserEvent({
+        event_type: "PLAY_COMPLETE",
+        program_id: latest.seed_id,
+        episode_id: latest.id,
+      }).catch(() => undefined);
+    }
+  }, []);
+
   const commitSeek = useCallback((value: number) => {
     if (!localEpisode) return;
 
@@ -901,6 +962,9 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (!localEpisode) return;
     awaitingSuccessorRef.current = false;
     setBrowserPlaying(false);
+    if (programStreamActiveRef.current) {
+      return;
+    }
     const position = Math.floor(browserPositionRef.current);
     void api.checkpoint(localEpisode.id, position)
       .then(() => api.pause(localEpisode.id))
@@ -918,6 +982,10 @@ export function EpisodePlayer({ seedId, episodeId }: { seedId?: string; episodeI
     if (!localEpisode) return;
     awaitingSuccessorRef.current = false;
     setBrowserPlaying(true);
+    if (programStreamActiveRef.current && localEpisode.is_listener_active) {
+      setError(null);
+      return;
+    }
     void api.resume(localEpisode.id)
       .then((resumed) => {
         playbackAnchorRef.current = playbackAnchor(resumed);
