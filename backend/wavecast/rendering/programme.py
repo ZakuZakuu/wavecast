@@ -222,7 +222,10 @@ async def _store_manifest(
 ) -> None:
     await storage.put(
         manifest_key(manifest.episode_id),
-        manifest.model_dump_json(by_alias=True).encode("utf-8"),
+        # Persist Python field names so the storage format round-trips through
+        # model_validate_json without depending on API serialization aliases.
+        # FastAPI can still expose camelCase aliases at the HTTP boundary.
+        manifest.model_dump_json().encode("utf-8"),
         "application/json",
         {
             "episode_id": manifest.episode_id,
