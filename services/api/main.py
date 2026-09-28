@@ -229,7 +229,7 @@ def _gc_program_render_cache(current_episode_id: str) -> tuple[int, int | None]:
         return 0, usage.free
 
     deleted = 0
-    free_bytes = usage.free
+    free_bytes: int | None = usage.free
     for _mtime, candidate in sorted(candidates, key=lambda item: item[0]):
         try:
             shutil.rmtree(candidate)
