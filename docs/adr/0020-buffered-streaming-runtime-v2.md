@@ -714,3 +714,32 @@ fallback while the single-source player is migrated. The investment being kept
 is substantial: provider selection, progressive generation, narration assets,
 Arrangement primitives, canonical MixPlan, gain envelopes, source snapshots,
 and ffmpeg rendering all remain valid and move one layer earlier in the stack.
+
+
+### Single-source master staging — September 28, 2026
+
+The first production client migration uses one immutable full-programme master
+artifact before progressive HLS becomes the default transport. This is a
+deliberate continuity safeguard: the current experimental HLS publisher encodes
+each transport chunk independently, so AAC encoder priming/decoder continuity
+must be validated or redesigned before those chunks are trusted as a seamless
+listener path.
+
+The client therefore keeps progressive source playback only as the opening
+latency mask, requests FULL materialization in the background, and then renders
+the canonical completed MixPlan exactly once through the existing ffmpeg
+mixdown path. The resulting fingerprint-keyed MP3 is preloaded in one
+HTMLAudioElement and only becomes authoritative after canplay.
+
+After that handoff:
+
+- play/pause/seek operate only on the single media element;
+- those actions do not mutate Episode editorial state;
+- timeline UI derives from the canonical MixPlan at the master audio cursor;
+- Media Session exposes one stable system media source;
+- export reuses the same master artifact rather than rendering a second version.
+
+The append-only programme render contract from the previous section remains the
+target for low-latency progressive publication. The next HLS iteration must
+preserve continuous codec state across segment boundaries (or use an equivalent
+gapless packaging strategy) before replacing the master-file staging path.
