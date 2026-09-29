@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from inspect import isawaitable
 from typing import TYPE_CHECKING
@@ -75,8 +76,12 @@ class MusicProviderRegistry:
 
     async def get_playback_asset(self, resolved_track: ResolvedTrack) -> AudioAsset:
         provider = self.provider_for_track_ref(resolved_track.track_ref)
-        asset = await provider.get_playback_asset(resolved_track)
-        timing = await self.get_timing_profile(resolved_track)
+        # Timing is optional enrichment. Start it alongside playback resolution so
+        # its bounded sidecar lookup does not add serial latency to music readiness.
+        asset, timing = await asyncio.gather(
+            provider.get_playback_asset(resolved_track),
+            self.get_timing_profile(resolved_track),
+        )
         if timing is None:
             return asset
         metadata = dict(asset.metadata)
