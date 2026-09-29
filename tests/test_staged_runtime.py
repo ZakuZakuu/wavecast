@@ -230,6 +230,29 @@ class _PlaceholderBootstrapRuntime(_BootstrapRuntime):
         )
 
 
+class _ExplodingFastBridgeRuntime(_PlaceholderBootstrapRuntime):
+    async def author_fast_successor_narration(self, episode):
+        del episode
+        raise RuntimeError("synthetic fast bridge failure")
+
+
+def test_fast_bridge_failure_skips_placeholder_and_keeps_music_ready() -> None:
+    staged = _ExplodingFastBridgeRuntime()
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
+    episode = runtime.start(_seed())
+
+    asyncio.run(runtime.ensure_fast_start_async(episode.id))
+    degraded = asyncio.run(runtime.author_fast_successor_narration_async(episode.id))
+
+    placeholder = degraded.segment("chapter-2:narration:0")
+    music = degraded.segment("chapter-2:music:0")
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.SKIPPED
+    assert isinstance(music, MusicSegment)
+    assert music.is_audio_ready
+
+
 def test_planned_fast_placeholder_is_not_marked_as_authored() -> None:
     staged = _PlaceholderBootstrapRuntime()
     repository = InMemoryEpisodeRepository()
@@ -486,6 +509,35 @@ def test_full_generation_never_accepts_progressive_planning_deferral() -> None:
 
     with pytest.raises(EpisodeRuntimeError, match="cannot defer"):
         asyncio.run(runtime.materialize_all_async(episode.id))
+
+def test_program_checkpoint_during_staged_preparation_does_not_stale_attach() -> None:
+    staged = _FakeRuntime(gated=True)
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
+    episode = runtime.start(_seed())
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            runtime.ensure_buffer_async(
+                episode.id,
+                target_chapters=1,
+                target_ahead_seconds=300,
+            )
+        )
+        await staged.started.wait()
+        before_version = repository.get(episode.id).version
+        checkpointed = runtime.checkpoint_program_playback(episode.id, 5.5)
+        assert checkpointed.version == before_version
+        staged.release.set()
+        await task
+
+    asyncio.run(run())
+
+    restored = repository.get(episode.id)
+    assert staged.prepare_calls == 1
+    assert restored.progressive_session is not None
+    assert restored.segment("chapter-2:music").is_audio_ready
+
 
 def test_heartbeat_during_staged_preparation_does_not_stale_attach() -> None:
     staged = _FakeRuntime(gated=True)
