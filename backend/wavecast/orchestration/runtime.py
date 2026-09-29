@@ -85,6 +85,173 @@ class StagedProgressiveRuntimeAdapter:
             opening_track=opening_track,
         )
 
+    async def author_fast_successor_narration(
+        self, episode: LiveEpisode
+    ) -> GeneratedChapter | None:
+        """Write the first A -> B host bridge from durable playback identity only."""
+
+        from wavecast.assembly import (
+            EpisodeAssemblyError,
+            NarrationPlacementError,
+            _assemble_writer_scripts,
+            _assert_narration_blocks_materialized,
+            _generated_runtime_chapter,
+        )
+        from wavecast.composer import PreparedMusicAsset
+        from wavecast.intelligence.models import (
+            ChapterPlan,
+            NarrativeRole,
+            NarrationSlotContext,
+            NarrationSlotPlacement,
+            RadioScriptBlockKind,
+            TrackProposal,
+        )
+        from wavecast.presentation import HostMode
+        from wavecast.providers.contracts import AudioAsset, AudioAssetType
+        from wavecast.providers.errors import ProviderError
+
+        if episode.presentation_intent.host_mode is HostMode.NONE:
+            return None
+        opening = next(
+            (
+                segment
+                for segment in episode.ordered_segments
+                if segment.chapter_id == "chapter-1"
+                and isinstance(segment, MusicSegment)
+                and segment.track_ref
+                and segment.artist
+                and segment.title
+            ),
+            None,
+        )
+        successor = next(
+            (
+                segment
+                for segment in episode.ordered_segments
+                if segment.chapter_id == "chapter-2"
+                and isinstance(segment, MusicSegment)
+                and segment.track_ref
+                and segment.artist
+                and segment.title
+                and segment.audio_source_url
+            ),
+            None,
+        )
+        pending = next(
+            (
+                segment
+                for segment in episode.ordered_segments
+                if segment.chapter_id == "chapter-2"
+                and isinstance(segment, NarrationSegment)
+                and segment.state.value == "PLANNED"
+            ),
+            None,
+        )
+        if opening is None or successor is None or pending is None or not episode.topic:
+            return None
+
+        opening_track = ResolvedTrack(
+            track_ref=opening.track_ref,
+            canonical_artist=opening.artist,
+            canonical_title=opening.title,
+        )
+        successor_track = ResolvedTrack(
+            track_ref=successor.track_ref,
+            canonical_artist=successor.artist,
+            canonical_title=successor.title,
+        )
+        chapter = ChapterPlan(
+            index=1,
+            track=TrackProposal(
+                artist=successor_track.canonical_artist,
+                title=successor_track.canonical_title,
+                reasons=["FastStart successor already resolved for playback."],
+                confidence=1.0,
+            ),
+            narrative_role=NarrativeRole.BRIDGE,
+            reason="Connect the opening to the already prepared successor.",
+            narration_goal=(
+                "Give one concise spoken bridge from the track just heard to the "
+                "already prepared next track without unsupported factual claims."
+            ),
+        )
+        slot = NarrationSlotContext(
+            slot_id="fast-successor:before-track",
+            chapter_index=1,
+            placement=NarrationSlotPlacement.BEFORE_TRACK,
+            allowed_block_kinds=[RadioScriptBlockKind.TRACK_INTRO],
+            chapter_track=successor_track,
+            just_played_track=opening_track,
+            upcoming_track=successor_track,
+        )
+        target_seconds = (
+            24
+            if episode.presentation_intent.host_mode is HostMode.FULL
+            else 12
+        )
+        try:
+            script = await self.assembly.background_pipeline.writer.write(
+                chapter,
+                [],
+                next_track_metadata=(
+                    f"{successor_track.canonical_artist} - "
+                    f"{successor_track.canonical_title}"
+                ),
+                host_mode=episode.presentation_intent.host_mode,
+                target_duration_seconds=target_seconds,
+                output_language=OutputLanguage.AUTO,
+                topic=episode.topic,
+                slot_contexts=[slot],
+            )
+            radio_script, _ = _assemble_writer_scripts(
+                [script],
+                1,
+                chapter_music_indices=[0],
+                slot_contexts=[[slot]],
+                previous_music_indices=[0],
+                require_final_slot=False,
+            )
+            if not radio_script.blocks:
+                return None
+            metadata = {}
+            if successor.timing_profile is not None:
+                metadata["timing_profile"] = successor.timing_profile.model_dump(
+                    mode="json"
+                )
+            prepared = PreparedMusicAsset(
+                track=successor_track,
+                asset=AudioAsset(
+                    asset_id=successor.asset_ref or f"persisted:{successor.track_ref}",
+                    asset_type=AudioAssetType.MUSIC,
+                    provider="persisted",
+                    playback_url=successor.audio_source_url,
+                    duration=successor.duration_seconds,
+                    metadata=metadata,
+                ),
+            )
+            playable = self.assembly.composer.compose_prepared(
+                [prepared],
+                radio_script,
+            )
+            _assert_narration_blocks_materialized(radio_script, playable)
+        except (
+            ProviderError,
+            NarrationPlacementError,
+            EpisodeAssemblyError,
+            ValueError,
+        ):
+            return None
+
+        return _generated_runtime_chapter(
+            "chapter-2",
+            playable.segments,
+            base_order=min(
+                segment.order
+                for segment in episode.ordered_segments
+                if segment.chapter_id == "chapter-2"
+            ),
+        )
+
     async def prepare_session(self, episode: LiveEpisode) -> ProgressiveAssemblySession:
         if not episode.topic:
             raise ValueError("progressive session requires episode topic")
