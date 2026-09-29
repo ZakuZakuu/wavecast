@@ -178,10 +178,16 @@ def test_staged_generator_publishes_music_before_writer_or_tts(tmp_path) -> None
 
     assert generated is not None
     assert generated.chapter_id == "chapter-2"
-    assert [segment.id for segment in generated.segments] == ["chapter-2:music:0"]
-    assert isinstance(generated.segments[0], MusicSegment)
-    assert generated.segments[0].track_ref == "mock:bridge"
-    assert generated.segments[0].is_audio_ready
+    assert [segment.id for segment in generated.segments] == [
+        "chapter-2:narration:0",
+        "chapter-2:music:0",
+    ]
+    placeholder, music = generated.segments
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.PLANNED
+    assert isinstance(music, MusicSegment)
+    assert music.track_ref == "mock:bridge"
+    assert music.is_audio_ready
 
 def test_staged_generator_uses_unique_ids_through_append_seam(tmp_path) -> None:
     track = ResolvedTrack(
@@ -232,7 +238,9 @@ def test_staged_generator_uses_unique_ids_through_append_seam(tmp_path) -> None:
     }
 
 
-def test_writer_failure_degrades_to_music_only_gap(tmp_path) -> None:
+def test_writer_failure_returns_no_authored_copy_before_orchestrator_degrades_gap(
+    tmp_path,
+) -> None:
     track = ResolvedTrack(
         track_ref="mock:bridge",
         canonical_artist="Bridge Artist",
@@ -263,11 +271,9 @@ def test_writer_failure_degrades_to_music_only_gap(tmp_path) -> None:
     music = episode.segment("chapter-2:music:0")
     assert isinstance(music, MusicSegment)
     assert music.audio_source_url == music_url
-    assert all(
-        not isinstance(segment, NarrationSegment)
-        for segment in episode.segments
-        if segment.chapter_id == "chapter-2"
-    )
+    placeholder = episode.segment("chapter-2:narration:0")
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.PLANNED
 
 
 def test_writer_enrichment_adds_script_ready_narration_without_repreparing_music(
