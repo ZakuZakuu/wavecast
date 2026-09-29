@@ -54,6 +54,7 @@ from wavecast.orchestration import (
 from wavecast.orchestration.buffer import buffer_decision
 from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeRepository
 from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
+from wavecast.presentation import HostMode
 from wavecast.proposals import (
     DeterministicMockProgramProposalGenerator,
     InMemoryProgramProposalRepository,
@@ -80,7 +81,6 @@ from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.usage import UsageLedger
-from wavecast.presentation import HostMode
 from wavecast.recommendations import (
     DeterministicRecommendationPlanner,
     InMemoryProgramIdeaRepository,

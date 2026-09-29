@@ -158,6 +158,7 @@ class EpisodeOrchestrator:
             audio_source_url=opening_source.source_url,
             title=seed.opening_track_title,
             artist=seed.opening_track_artist,
+            timing_profile=seed.opening_track_timing_profile,
             committed_at=now,
         )
         episode = LiveEpisode(
@@ -414,7 +415,12 @@ class EpisodeOrchestrator:
         )
 
     async def ensure_fast_start_async(self, episode_id: str) -> LiveEpisode:
-        """Persist and voice the first bridge before full route planning."""
+        """Persist the first playable successor before full route planning.
+
+        New Narration P0 episodes keep FastStart music-only. The legacy
+        SCRIPT_READY check below exists only so an already-persisted older
+        bootstrap can still finish safely instead of being stranded.
+        """
 
         episode = await asyncio.to_thread(self._active_episode, episode_id)
         if episode.state is EpisodeState.MATERIALIZED:

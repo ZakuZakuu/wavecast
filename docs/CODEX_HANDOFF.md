@@ -7,6 +7,116 @@ state is maintained in `docs/PROJECT_STATE.md`.
 
 ---
 
+## Active handoff: Narration P0
+
+This is the current pre-preliminary listening-quality work. A replacement
+session should start here, then read `docs/PROJECT_STATE.md` and ADR 0020.
+
+**Branches**
+
+- `ZakuZakuu/wavecast:feat/narration-p0`, based on `integration`
+- `ZakuZakuu/wavecast-music-dev:feat/narration-timing-p0`, based on sidecar
+  `main`
+- Hosted `integration` must not move until the feature PR is coherent and CI
+  is observed passing. This avoids unnecessary Railway/Vercel deployments.
+
+**P0 acceptance target**
+
+1. FastStart successor contains music only; no fixed first-transition copy.
+   After one successor/session is durable, the worker runs the first Writer
+   slot under its generation lease before the second buffer fill; TTS remains
+   detached. If Writer fails, the gap stays music-only instead of using canned
+   catalog copy.
+2. `HostMode.NONE/LIGHT/FULL` changes actual narration behavior, not only a
+   prompt label. LIGHT is shorter/sparser; FULL remains guided-listening.
+3. A provider-neutral `TrackTimingProfile` carries real duration plus optional
+   timestamp-only lyric/vocal timing. P0 never stores or sends lyric text to the
+   LLM.
+4. MixPlan uses vocal timing when available: do not start the host over an
+   outgoing lead-vocal phrase, and do not let the incoming lead vocal begin
+   under the host. Missing timing metadata falls back to current fixed mixing.
+5. TTS prosody/emotion is **not** part of this P0. Tune it later with human
+   listening after the two major preliminary blockers (narration + UI) are
+   stable.
+
+**Implementation map**
+
+- `backend/wavecast/presentation.py`: host-density ratio/prompt policy.
+- `backend/wavecast/assembly.py`: music-only FastStart, Writer-owned bridge,
+  host-mode slot thinning, progressive-session propagation.
+- `backend/wavecast/audio_timing.py`: provider-neutral timing contract and
+  safe overlap helpers.
+- `backend/wavecast/providers/{music_http,netease,registry}.py`: optional
+  timing retrieval/attachment.
+- `backend/wavecast/models/{episode,progressive}.py`: durable timing and
+  presentation metadata.
+- `backend/wavecast/arrangement/planner.py`: lyric/vocal-aware voice/music
+  placement.
+- Sidecar `netease_sidecar/{upstream,timing,app}.py`: `/lyric` timestamp
+  normalization and `/tracks/{id}/timing`; raw lyric text is discarded.
+- Tests cover timing parsing, zero-slot budgets, host density, music-only
+  FastStart, sidecar timing, and lyric-aware arrangement geometry.
+
+**Deployment/cost discipline**
+
+Prefer PR CI for validation, but GitHub Actions currently terminates PR jobs
+before runner steps begin (even unchanged Web/deployment-smoke), and the API
+exposes no job logs. Do not describe that as a code-test failure or success.
+Do not push incremental edits to `integration`. After the whole checkpoint is
+accepted and validation is available, merge/deploy the sidecar once, then move
+WaveCast `integration` once. Railway Agent is not required.
+
+
+**Validation fallback while hosted Actions is blocked**
+
+- A rerun on 2026-09-29 reproduced the same behavior: every GitHub-hosted job
+  queued, then failed within seconds with zero runner steps and no job log.
+- Historical Actions data shows the last observed successful hosted run at
+  2026-09-27T11:05:03Z; subsequent runs from 11:05:18Z onward consistently fail
+  before steps begin. This strongly suggests an account-level hosted-runner
+  usage/budget/billing block rather than a repository test failure, but the
+  GitHub API available to this session cannot read the account billing page.
+- Do not burn commits trying to fix CI YAML unless a run actually reaches steps.
+  Either restore hosted Actions allowance, use a self-hosted runner, or execute
+  the exact workflow commands locally.
+
+WaveCast local equivalent:
+
+```bash
+uv sync --all-groups
+uv run alembic upgrade head
+uv run ruff check .
+uv run mypy
+uv run pytest
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm test:web
+WAVECAST_INTERNAL_API_URL=https://api.example.test pnpm build
+python3 scripts/vercel_rewrite_smoke.py --expected https://api.example.test/api/:path*
+```
+
+The deployment smoke remains:
+
+```bash
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+uv run python scripts/deployment_smoke.py --restart-api --compose-file docker-compose.prod.yml
+docker compose -f docker-compose.prod.yml down -v
+```
+
+Sidecar local equivalent:
+
+```bash
+uv sync --all-groups
+uv run ruff check .
+uv run mypy
+uv run pytest -q
+```
+
+
+---
+
 ## How to use this handoff
 
 This document records the durable product, architecture, and long-range

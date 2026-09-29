@@ -328,7 +328,7 @@ This project is self-funded. Avoid unnecessary paid calls in development.
 - Use `.env.example` with names only.
 - Keep generated private user data out of logs where possible.
 - Sanitize provider errors before returning them to clients.
-- Keep the repository private.
+- Do not change repository visibility without explicit user approval. Never expose credentials, private user data, or deployment secrets.
 
 ---
 

@@ -232,7 +232,7 @@ def test_staged_generator_uses_unique_ids_through_append_seam(tmp_path) -> None:
     }
 
 
-def test_writer_failure_falls_back_to_catalog_only_narration(tmp_path) -> None:
+def test_writer_failure_degrades_to_music_only_gap(tmp_path) -> None:
     track = ResolvedTrack(
         track_ref="mock:bridge",
         canonical_artist="Bridge Artist",
@@ -259,18 +259,15 @@ def test_writer_failure_falls_back_to_catalog_only_narration(tmp_path) -> None:
 
     authored = asyncio.run(generator.author_narration(episode, "chapter-2"))
 
-    assert authored is not None
-    music = [segment for segment in authored.segments if isinstance(segment, MusicSegment)]
-    narration = [
-        segment for segment in authored.segments if isinstance(segment, NarrationSegment)
-    ]
-    assert len(music) == 1
-    assert music[0].audio_source_url == music_url
-    assert len(narration) == 2
-    assert all(segment.state is SegmentState.SCRIPT_READY for segment in narration)
-    fallback_text = narration[0].narration_text or ""
-    assert "Opening Artist" in fallback_text
-    assert "Bridge Artist" in fallback_text
+    assert authored is None
+    music = episode.segment("chapter-2:music:0")
+    assert isinstance(music, MusicSegment)
+    assert music.audio_source_url == music_url
+    assert all(
+        not isinstance(segment, NarrationSegment)
+        for segment in episode.segments
+        if segment.chapter_id == "chapter-2"
+    )
 
 
 def test_writer_enrichment_adds_script_ready_narration_without_repreparing_music(

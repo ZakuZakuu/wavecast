@@ -16,10 +16,9 @@ from wavecast.models.episode import (
     SegmentState,
 )
 from wavecast.orchestration.generation import GeneratedChapter
-from wavecast.presentation import HostMode
 from wavecast.orchestration.runtime import StagedProgressiveRuntime
+from wavecast.presentation import HostMode
 from wavecast.storage.episodes import EpisodeConcurrencyError, EpisodeRepository
-
 
 logger = logging.getLogger(__name__)
 

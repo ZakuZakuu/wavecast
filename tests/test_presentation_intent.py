@@ -3,6 +3,7 @@ from wavecast.presentation import (
     OpeningStrategy,
     TransitionStyle,
     infer_presentation_intent,
+    narration_ratio_for_host_mode,
 )
 
 
@@ -28,3 +29,13 @@ def test_full_track_request_preserves_song_and_default_light_host() -> None:
     assert intent.host_mode is HostMode.LIGHT
     assert intent.opening_strategy is OpeningStrategy.FULL_TRACK
     assert intent.transition_style is TransitionStyle.RADIO
+
+
+def test_host_modes_have_distinct_narration_density() -> None:
+    none = narration_ratio_for_host_mode(HostMode.NONE)
+    light = narration_ratio_for_host_mode(HostMode.LIGHT)
+    full = narration_ratio_for_host_mode(HostMode.FULL)
+
+    assert none == 0
+    assert 0 < light < full
+    assert full == 0.15

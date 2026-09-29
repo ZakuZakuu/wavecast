@@ -99,3 +99,38 @@ def test_sidecar_adapters_use_provider_neutral_http_contract(
         "/tracks/track-1",
         "/tracks/track-1/playback",
     ]
+
+
+def test_netease_sidecar_exposes_optional_timing_profile() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/tracks/track-1/timing"
+        return httpx.Response(
+            200,
+            json={
+                "source_duration_seconds": 184,
+                "lyric_timestamps_available": True,
+                "lyric_lines": [{"start_seconds": 4.0, "end_seconds": 8.0}],
+                "vocal_intervals": [{"start_seconds": 4.0, "end_seconds": 8.0}],
+            },
+        )
+
+    async def run():
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="https://netease.sidecar",
+        )
+        provider = NeteaseMusicProvider(
+            ProviderSettings(),
+            client=client,
+            base_url="https://netease.sidecar",
+        )
+        profile = await provider.get_timing_profile("netease:track-1")
+        await client.aclose()
+        return profile
+
+    profile = asyncio.run(run())
+
+    assert profile is not None
+    assert profile.source_duration_seconds == 184
+    assert profile.first_vocal_start_seconds == 4
+    assert profile.last_vocal_end_seconds == 8

@@ -8,7 +8,6 @@ import wave
 from pathlib import Path
 
 import pytest
-
 from wavecast.arrangement.models import AudioClip, GainPoint, MixPlan
 from wavecast.rendering import (
     ProgramImmutabilityError,

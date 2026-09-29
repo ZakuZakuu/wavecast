@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from wavecast.audio_timing import TrackTimingProfile
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.models.episode import CoverParams, EpisodeSeed, utc_now
@@ -55,6 +56,7 @@ class ProgramProposal(BaseModel):
     opening_track_title: str = Field(min_length=1, max_length=300)
     opening_track_artist: str = Field(min_length=1, max_length=300)
     opening_track_duration_seconds: int | None = Field(default=None, gt=0)
+    opening_track_timing_profile: TrackTimingProfile | None = None
     cover: CoverParams
     editorial_route: list[str] = Field(min_length=2, max_length=8)
     genre_tags: list[str] = Field(default_factory=list, max_length=8)
@@ -75,6 +77,7 @@ class ProgramProposal(BaseModel):
             opening_track_title=self.opening_track_title,
             opening_track_artist=self.opening_track_artist,
             opening_track_duration_seconds=self.opening_track_duration_seconds,
+            opening_track_timing_profile=self.opening_track_timing_profile,
             cover=self.cover,
             presentation_intent=self.presentation_intent,
             generation_profile=self.generation_profile,
@@ -93,6 +96,7 @@ class ProgramProposal(BaseModel):
             opening_track_title=seed.opening_track_title,
             opening_track_artist=seed.opening_track_artist,
             opening_track_duration_seconds=seed.opening_track_duration_seconds,
+            opening_track_timing_profile=seed.opening_track_timing_profile,
             cover=seed.cover,
             editorial_route=["开场", "展开", "转折", "收尾"],
             genre_tags=[],
@@ -383,7 +387,9 @@ class LLMProgramProposalGenerator:
 
         proposals: list[ProgramProposal] = []
         for draft in raw.proposals:
-            resolved, opening_duration_seconds = await self._resolve_opening_track(draft)
+            resolved, opening_duration_seconds, opening_timing_profile = (
+                await self._resolve_opening_track(draft)
+            )
             if resolved is None or opening_duration_seconds is None:
                 raise ProgramProposalGenerationError("opening_track_unresolved")
 
@@ -399,6 +405,7 @@ class LLMProgramProposalGenerator:
                     opening_track_title=resolved.canonical_title,
                     opening_track_artist=resolved.canonical_artist,
                     opening_track_duration_seconds=opening_duration_seconds,
+                    opening_track_timing_profile=opening_timing_profile,
                     cover=_cover_for(proposal_id, draft.title),
                     editorial_route=list(draft.editorial_route),
                     genre_tags=list(draft.genre_tags),
@@ -413,7 +420,7 @@ class LLMProgramProposalGenerator:
     async def _resolve_opening_track(
         self,
         draft: ProgramProposalDraft,
-    ) -> tuple[ResolvedTrack | None, int | None]:
+    ) -> tuple[ResolvedTrack | None, int | None, TrackTimingProfile | None]:
         candidates = draft.opening_track_candidates[: self.max_opening_candidates]
 
         # First preserve the strongest contract: the model-proposed exact
@@ -457,30 +464,29 @@ class LLMProgramProposalGenerator:
                 verified = await self._verified_playable_track(fallback)
                 if verified is None:
                     continue
-                resolved_fallback, duration = verified
+                resolved_fallback, duration, timing_profile = verified
                 if _proposal_catalog_name(resolved_fallback.canonical_artist) != artist_key:
                     continue
-                return resolved_fallback, duration
-        return None, None
+                return resolved_fallback, duration, timing_profile
+        return None, None, None
 
     async def _verified_playable_track(
         self,
         resolved: ResolvedTrack,
-    ) -> tuple[ResolvedTrack, int] | None:
+    ) -> tuple[ResolvedTrack, int, TrackTimingProfile | None] | None:
         try:
             metadata = await self.retrieval.registry.resolve_track(resolved)
         except ProviderError:
             return None
         if not metadata.playable or metadata.duration_seconds <= 0:
             return None
-        return (
-            ResolvedTrack(
-                track_ref=metadata.track_ref,
-                canonical_artist=metadata.artist,
-                canonical_title=metadata.title,
-            ),
-            metadata.duration_seconds,
+        canonical = ResolvedTrack(
+            track_ref=metadata.track_ref,
+            canonical_artist=metadata.artist,
+            canonical_title=metadata.title,
         )
+        timing_profile = await self.retrieval.registry.get_timing_profile(canonical)
+        return canonical, metadata.duration_seconds, timing_profile
 
     @staticmethod
     def _prompt(request: ProposalGenerationRequest) -> str:

@@ -12,6 +12,7 @@ from wavecast.assembly import (
     LiveEpisodeAssemblyService,
     MockEpisodeAssemblyLLM,
     NarrationPlacementError,
+    _apply_host_mode_to_slot_contexts,
     _assemble_radio_script,
     _assemble_writer_scripts,
     _bound_progressive_resolved_route,
@@ -22,8 +23,8 @@ from wavecast.assembly import (
     _mock_writer_slot_contexts,
     _normalize_opening_resolved_route,
     _reindex_resolved_chapters,
-    _same_song_identity,
     _ResolvedChapter,
+    _same_song_identity,
     create_episode_assembly_service,
 )
 from wavecast.composer import EpisodeComposer
@@ -48,7 +49,7 @@ from wavecast.intelligence.models import (
 from wavecast.intelligence.research import BackgroundResearchService, FastResearchService
 from wavecast.intelligence.writer import WriterService
 from wavecast.materialization import NarrationMaterializer
-from wavecast.models.episode import MusicSegment, NarrationSegment, SegmentState
+from wavecast.models.episode import MusicSegment
 from wavecast.presentation import HostMode, PresentationIntent
 from wavecast.providers.fakes import FakeSearchProvider, MockMusicProvider, MockTTSProvider
 from wavecast.providers.registry import MusicProviderRegistry
@@ -140,7 +141,6 @@ def service(tmp_path, llm: RecordingAssemblyLLM | None = None) -> LiveEpisodeAss
     )
 
 
-
 def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     llm = RecordingAssemblyLLM()
@@ -167,10 +167,8 @@ def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypa
 
     assert bootstrap is not None
     assert bootstrap.chapter_id == "chapter-2"
-    assert len(bootstrap.segments) == 2
-    bridge, successor = bootstrap.segments
-    assert isinstance(bridge, NarrationSegment)
-    assert bridge.state is SegmentState.SCRIPT_READY
+    assert len(bootstrap.segments) == 1
+    successor = bootstrap.segments[0]
     assert isinstance(successor, MusicSegment)
     assert successor.track_ref == "mock:bridge"
     assert successor.title == "Midnight Transfer"
@@ -226,6 +224,31 @@ def test_music_only_fast_successor_has_no_narration_segment(tmp_path, monkeypatc
     bootstrap = asyncio.run(
         assembly.prepare_fast_successor(
             request,
+            opening_track=opening,
+        )
+    )
+
+    assert bootstrap is not None
+    assert len(bootstrap.segments) == 1
+    assert isinstance(bootstrap.segments[0], MusicSegment)
+    assert bootstrap.segments[0].is_audio_ready
+
+
+def test_default_light_fast_successor_is_music_only(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assembly = service(tmp_path)
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    bootstrap = asyncio.run(
+        assembly.prepare_fast_successor(
+            LiveEpisodeAssemblyRequest(
+                topic="guided listening",
+                anchor_tracks=["Neon First Light"],
+            ),
             opening_track=opening,
         )
     )
@@ -431,9 +454,9 @@ def test_writer_runs_only_after_resolution_and_receives_next_track_context(tmp_p
     )
 
     writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
-    assert len(writer_calls) == 3
+    assert writer_calls
     assert "\"canonical_title\": \"Midnight Transfer\"" in writer_calls[0]["prompt"]
-    assert "Previous context:" in writer_calls[1]["prompt"]
+    assert any("Previous context:" in call["prompt"] for call in writer_calls[1:])
     assert sum(block.kind is RadioScriptBlockKind.INTRO for block in result.radio_script.blocks) == 0
     assert sum(block.kind is RadioScriptBlockKind.OUTRO for block in result.radio_script.blocks) == 1
     assert all(
@@ -1104,6 +1127,32 @@ def test_duplicate_before_track_intro_blocks_collapse_into_final_slots() -> None
         RadioScriptBlockKind.OUTRO,
     ]
     assert script.blocks[1].text == "duplicate intro final outro"
+
+
+def test_host_mode_filters_narration_density_after_gap_ownership() -> None:
+    full = _build_narration_slot_contexts(
+        [
+            _resolved_chapter(0, 0),
+            _resolved_chapter(1, 1),
+            _resolved_chapter(2, 2),
+            _resolved_chapter(3, 3),
+        ]
+    )
+
+    light = _apply_host_mode_to_slot_contexts(full, HostMode.LIGHT)
+    none = _apply_host_mode_to_slot_contexts(full, HostMode.NONE)
+    kept_light_slots = [
+        context.slot_id for contexts in light for context in contexts
+    ]
+
+    assert "chapter-1:before-track" in kept_light_slots
+    assert "chapter-2:before-track" not in kept_light_slots
+    assert "chapter-3:before-track" in kept_light_slots
+    assert "chapter-3:after-final" in kept_light_slots
+    assert all(not contexts for contexts in none)
+    assert sum(len(contexts) for contexts in light) < sum(
+        len(contexts) for contexts in full
+    )
 
 
 def test_direct_music_gap_has_one_slot_owner() -> None:
