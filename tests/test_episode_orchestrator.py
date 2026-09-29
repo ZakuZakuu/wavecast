@@ -10,6 +10,7 @@ from wavecast.models.episode import (
     EpisodeState,
     LiveEpisode,
     MusicSegment,
+    NarrationRole,
     NarrationSegment,
     SegmentState,
 )
@@ -68,6 +69,35 @@ def test_verified_seed_duration_overrides_audio_provider_fallback(
     assert opening.duration_seconds == 187
     assert episode.generated_frontier_seconds == 187
     assert opening.audio_source_url is not None
+
+
+def test_audio_ready_opening_host_can_attach_before_playback(
+    runtime: EpisodeOrchestrator,
+    seed: EpisodeSeed,
+) -> None:
+    episode = runtime.start(seed)
+    narration = NarrationSegment(
+        id="prepared-opening",
+        chapter_id="chapter-1",
+        order=1,
+        state=SegmentState.AUDIO_READY,
+        planned_duration_seconds=8,
+        actual_duration_seconds=8,
+        audio_source_url="/api/assets/audio/opening-host.mp3",
+        title="Prepared opening",
+        narration_text="我们先从这里开始。",
+        narration_role=NarrationRole.INTRO,
+    )
+
+    updated = runtime.attach_opening_narration(episode.id, narration)
+
+    opening_host = updated.segment("segment-opening-host")
+    assert opening_host.order == 1
+    assert opening_host.chapter_id == "chapter-1"
+    assert opening_host.is_audio_ready
+    assert isinstance(opening_host, NarrationSegment)
+    assert opening_host.narration_role is NarrationRole.INTRO
+    assert opening_host.title == "Track Intro"
 
 
 def test_timeline_serializes_explicit_playable_audio_segment_fields(
