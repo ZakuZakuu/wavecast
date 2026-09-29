@@ -1,6 +1,6 @@
 import pytest
 from wavecast.arrangement import plan_episode_mix
-from wavecast.audio_timing import TrackTimingProfile, TimingInterval
+from wavecast.audio_timing import TimingInterval, TrackTimingProfile
 from wavecast.models.episode import (
     MusicSegment,
     NarrationRole,
