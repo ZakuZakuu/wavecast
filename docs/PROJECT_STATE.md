@@ -83,6 +83,11 @@ Hosted/code state at the current checkpoint:
   test while Web and API are on different checkpoints. Do not reconnect the
   GitHub source, switch branches, or manufacture repeated deploy triggers while
   Railway has deployment access paused.
+- Railway's deployment pause blocks hosted acceptance, **not development**.
+  New implementation work may continue in the local-agent workflow on feature
+  branches with local lint/type/test/build validation. Browser ChatGPT should
+  remain the planning/review layer and avoid overlapping edits while a local
+  agent owns execution. See `docs/DEVELOPMENT_WORKFLOWS.md`.
 
 Immediate next step after Railway restores deployment access:
 
