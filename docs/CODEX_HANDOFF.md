@@ -42,6 +42,12 @@ handoff. The canonical operational details live in
 
 Current execution status still belongs in `docs/PROJECT_STATE.md`, not here.
 
+For execution ownership, read `docs/DEVELOPMENT_WORKFLOWS.md`. In short:
+Browser ChatGPT is the cloud planning/review/orchestration layer; local
+Codex/agents are the preferred execution layer for substantial implementation
+and local test/debug loops; C2C combines the two without changing Git or tests
+as the source of truth.
+
 ---
 
 ## Historical handoff: Narration P0
