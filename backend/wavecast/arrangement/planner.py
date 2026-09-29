@@ -113,6 +113,12 @@ def _opening_host_offset_seconds(
         # rather than semantically moving an introduction to the song tail.
         return config.opening_host_lead_in_seconds
 
+    if not profile.vocal_intervals:
+        # A timing profile with no detected vocals is positive evidence for an
+        # instrumental track, not missing data. Treat the opening as freely
+        # talk-over-able and keep the host near the start.
+        return config.opening_host_lead_in_seconds
+
     preferred_kinds = (
         TrackSectionKind.INTRO_INSTRUMENTAL,
         TrackSectionKind.INSTRUMENTAL_GAP,
