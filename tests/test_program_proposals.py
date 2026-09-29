@@ -41,6 +41,8 @@ def test_mock_proposal_generation_is_deterministic_and_seed_compatible() -> None
     assert seed.opening_track_ref == "mock:opening"
     assert first.opening_track_duration_seconds == 22
     assert seed.opening_track_duration_seconds == 22
+    assert seed.opening_narration_text == first.opening_narration_text
+    assert seed.opening_narration_text
     assert seed.cover == first.cover
 
 
@@ -146,6 +148,7 @@ def test_llm_generator_resolves_opening_track_before_creating_proposal() -> None
                     editorial_route=["先放慢速度", "沿着夜色推进", "留一个明亮出口"],
                     genre_tags=["Electronic"],
                     mood_tags=["夜晚", "流动"],
+                    opening_host_note="先听它把夜色拉开一点，我们再顺着这股空间感往前走。",
                     opening_track_candidates=[
                         OpeningTrackCandidate(
                             artist="Imaginary Artist", title="Imaginary Song"
@@ -174,9 +177,14 @@ def test_llm_generator_resolves_opening_track_before_creating_proposal() -> None
     assert proposal.opening_track_title == "Midnight Transfer"
     assert proposal.opening_track_duration_seconds == 24
     assert proposal.to_episode_seed().opening_track_duration_seconds == 24
+    assert proposal.opening_narration_text is not None
+    assert "Signal Garden" in proposal.opening_narration_text
+    assert "Midnight Transfer" in proposal.opening_narration_text
+    assert "先听它把夜色拉开一点" in proposal.opening_narration_text
     assert proposal.anchor_artists == ["Signal Garden"]
     assert proposal.estimated_duration_seconds == 72 * 60
     assert "Taste context:" in llm.prompt
+    assert "opening_host_note" in llm.prompt
     opening_schema = ProgramProposalDraftBatch.model_json_schema()["$defs"][
         "OpeningTrackCandidate"
     ]["properties"]
