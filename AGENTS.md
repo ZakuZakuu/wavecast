@@ -8,6 +8,33 @@ The product is **not** a generic chatbot, playlist generator, or one-shot podcas
 
 Your default behavior should be highly autonomous: inspect the repo, infer the next sensible implementation step from the current milestone and docs, implement it, test it, commit it, and continue. Do not stop for routine engineering decisions.
 
+## Preliminary-round priority gate
+
+**Before making any non-trivial change during the current hackathon preliminary stage, read `docs/PRELIMINARY_PRODUCT_TARGET.md`.**
+
+The current delivery order is intentionally narrow:
+
+> **Listening P0 -> UI P0 -> preliminary-round submission**
+
+Do not let historical architecture work, old ADRs, or implementation neatness expand this scope by default.
+
+For this milestone, prefer:
+
+1. a convincing listener-facing radio experience;
+2. uninterrupted playback and graceful degradation;
+3. natural narration/music arrangement;
+4. demo reliability and visible polish;
+5. only then broader architecture generality.
+
+In particular:
+
+- narration is **not** restricted to gaps between complete songs;
+- a temporary two-track or short generated prefix is **not automatically a complete programme**;
+- there is **no product requirement to hard-code a minimum song count** for a programme;
+- the preliminary P0 focuses on one polished, lightly hosted radio style rather than perfect parity across NONE/LIGHT/FULL;
+- avoid another broad player/runtime rewrite unless a concrete blocker makes it unavoidable;
+- if an existing implementation invariant conflicts with the current product target, do not silently optimize the invariant. Reconcile the conflict against the product target first.
+
 ---
 
 ## Source of truth
@@ -15,11 +42,13 @@ Your default behavior should be highly autonomous: inspect the repo, infer the n
 Read these before making non-trivial changes:
 
 1. `AGENTS.md`
-2. `docs/PROJECT_STATE.md` for the current milestone, branch/main state, and
+2. `docs/PRELIMINARY_PRODUCT_TARGET.md` for the current user-facing product goal
+   and the explicit preliminary-round scope/priority order
+3. `docs/PROJECT_STATE.md` for the current milestone, branch/main state, and
    immediate next task
-3. `docs/CODEX_HANDOFF.md` for the long-lived product and architecture contract
-4. Any relevant ADRs under `docs/adr/`
-5. Existing tests and schemas
+4. `docs/CODEX_HANDOFF.md` for the long-lived product and architecture contract
+5. Any relevant ADRs under `docs/adr/`
+6. Existing tests and schemas
 
 If implementation and docs disagree, do not silently redefine the product. Preserve established domain semantics and either:
 
@@ -205,7 +234,9 @@ Consumes the current future skeleton plus user feedback such as skip, like, "les
 - Home cards are cheap "program promises", not fully generated episodes.
 - A card should include at minimum title/topic, estimated duration, procedural cover parameters, and opening track information when possible.
 - Clicking a card should begin the opening track immediately or as close to immediately as platform constraints allow.
-- Expensive research, writing, and TTS start after the click.
+- The opening experience should have enough editorial context prepared that a short host introduction can arrive during an appropriate early instrumental/non-vocal window; it does not need to wait for the first song to finish.
+- Narration may be arranged inside a track, over an intro/break/outro, or around a transition. Do not model narration as inherently inter-track-only.
+- Expensive research, writing, and TTS may continue after the click, but the listener should perceive a continuous programme rather than generation stages.
 - Users may seek backward through generated/committed content.
 - Users may not seek beyond the generated frontier.
 - "Next" should skip to the next chapter/track; it must not block on unfinished narration if playable music is already known.

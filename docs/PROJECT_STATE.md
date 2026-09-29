@@ -11,7 +11,68 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-### Narration P0 — pre-preliminary listening quality
+### Preliminary product freeze — listening P0, then UI P0
+
+**Mandatory product reference:** `docs/PRELIMINARY_PRODUCT_TARGET.md`
+
+The team has deliberately re-centered the preliminary-round work on the
+listener-facing product experience after several rounds of necessary low-level
+playback/runtime debugging.
+
+The immediate roadmap is now intentionally short:
+
+> **Listening P0 -> UI P0 -> preliminary-round submission**
+
+Current product decision:
+
+- Ship one convincing **light-hosted radio** experience first. Think casual
+  driving radio: music-led, occasional concise host commentary, natural
+  transitions, no requirement to narrate every song.
+- Narration is part of the programme arrangement and may occur **inside a
+  track** over a safe instrumental/non-vocal region, over an intro/break/outro,
+  or around a transition. It is not inherently an inter-track block.
+- The opening should start music quickly while an opening host beat is already
+  prepared or can be synthesized before an early safe musical window. The first
+  host appearance must not require the first song to finish.
+- The programme should have a coherent editorial beginning, middle, and genuine
+  ending, but **track count is flexible**. Do not encode a product rule such as
+  “minimum 3 tracks” merely to prevent a premature Outro.
+- Music continuity remains the fallback floor: late/failed Writer or TTS must
+  not stop playback.
+- Existing NONE/LIGHT/FULL concepts may remain, but only one polished default
+  light-radio mode is P0 now. Do not spend this stage making every mode equally
+  complete.
+- Avoid another broad player/runtime rewrite. Prefer the smallest product-correct
+  change that can deliver the target listening experience on the existing
+  programme-stream/timing/arrangement foundation.
+- Once the default programme can be listened through convincingly, stop
+  expanding playback and move to **UI P0**. The intended UI pass is roughly one
+  focused day before submission.
+
+Hosted/code state at this product reset:
+
+- `integration` is at `1c1ecaa734301313bfacc144a04afd057d8d132f`
+  (PR #140 merged); CI #544 was fully green and the corresponding hosted
+  checkpoint was deployed successfully.
+- Human listening confirmed that music continuity works and later narration/TTS
+  can play, but the observed programme incorrectly reached an `Outro` after
+  only the second song and the opening host behavior still does not match the
+  desired radio experience.
+- PR #141 (`fix/progressive-route-completeness`) was opened during debugging
+  with a “long-form requires at least 3 resolved tracks” guard. **Do not merge
+  that approach as-is.** The new product target explicitly rejects hard song-count
+  rules as the definition of programme completeness. Re-evaluate or supersede
+  the PR using the product target above.
+- Coding/testing is intentionally paused at this checkpoint until the product
+  target is treated as the governing contract for the next implementation step.
+
+The next engineering session should first map the desired radio experience onto
+the existing capabilities before changing architecture. In particular, determine
+the smallest way to support an opening host beat and flexible in-track/talk-over
+placement using the existing timing + MixPlan/programme stream rather than
+starting another runtime rewrite.
+
+### Narration P0 — historical implementation notes (superseded by the product freeze above)
 
 Active implementation branches:
 

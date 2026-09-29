@@ -2,15 +2,32 @@
 
 **Status:** Long-lived architecture and product handoff; current execution
 state is maintained in `docs/PROJECT_STATE.md`.
+
+> **Preliminary-round override:** before using this document to choose work,
+> read `docs/PRELIMINARY_PRODUCT_TARGET.md`. That document defines the current
+> listener-facing goal and milestone priority. Historical architecture/P0 notes
+> below must not be used to override it.
+
 **Target:** Hackathon prototype with production-minded architecture  
 **Primary objective:** Build the smallest end-to-end product that proves the listening experience, streaming generation model, and research/curation intelligence.
 
 ---
 
-## Active handoff: Narration P0
+## Historical handoff: Narration P0
 
-This is the current pre-preliminary listening-quality work. A replacement
-session should start here, then read `docs/PROJECT_STATE.md` and ADR 0020.
+> **Superseded as the active product contract.** The implementation details in
+> this section remain useful context for the timing/runtime work already done,
+> but the current preliminary listening target is
+> `docs/PRELIMINARY_PRODUCT_TARGET.md`. A replacement session must read that
+> document and `docs/PROJECT_STATE.md` **before** deciding whether any item
+> below should continue.
+
+This section records the previous pre-preliminary listening-quality plan. In
+particular, assumptions such as a first host bridge being inherently an A -> B
+inter-track event are historical implementation choices, not current product
+requirements. The current target allows host speech inside tracks over safe
+musical windows and explicitly avoids defining programme completeness by a hard
+minimum song count.
 
 **Branches**
 
@@ -121,8 +138,10 @@ uv run pytest -q
 
 This document records the durable product, architecture, and long-range
 roadmap contract. It is not the current task queue. Before starting work,
-read `AGENTS.md` and `docs/PROJECT_STATE.md`; use the latter for canonical
-main, completed milestones, active work, and session recovery. The bootstrap
+read `AGENTS.md`, `docs/PRELIMINARY_PRODUCT_TARGET.md`, and
+`docs/PROJECT_STATE.md`; use the product target for current user-facing
+priorities and the state document for canonical main, completed milestones,
+active work, and session recovery. The bootstrap
 assignment and first-review criteria near the end are historical Phase 0/1
 guidance and apply only when the repository lacks meaningful implementation.
 
