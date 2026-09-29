@@ -20,7 +20,13 @@ function chaptersForEpisode(episode: LiveEpisode): Chapter[] {
 }
 
 function chapterTitle(chapter: Chapter, index: number): string {
-  const narration = chapter.segments.find((segment) => segment.kind === "NARRATION");
+  const narration = chapter.segments.find(
+    (segment) =>
+      segment.kind === "NARRATION"
+      && segment.state !== "PLANNED"
+      && segment.state !== "SKIPPED"
+      && Boolean(segment.narration_text),
+  );
   if (narration && narration.title && narration.title !== "Track Intro") return narration.title;
   const fallback = ["开场", "夜色开始变暖", "从旋律走进城市", "另一面的节奏", "慢慢收回来"];
   return fallback[index] ?? "Chapter " + (index + 1);
