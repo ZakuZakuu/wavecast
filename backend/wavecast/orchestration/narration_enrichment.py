@@ -112,10 +112,22 @@ async def author_pending_narration(
                 reason,
             )
         else:
-            generated = await runtime.author_narration(
-                episode.model_copy(deep=True),
-                chapter_id,
-            )
+            try:
+                generated = await runtime.author_narration(
+                    episode.model_copy(deep=True),
+                    chapter_id,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning(
+                    "narration_authoring_degraded episode_id=%s chapter_id=%s "
+                    "reason=writer_error error_type=%s",
+                    episode_id,
+                    chapter_id,
+                    type(error).__name__,
+                )
+                generated = None
             if generated is None:
                 logger.info(
                     "narration_authoring_degraded episode_id=%s chapter_id=%s "
@@ -136,13 +148,29 @@ async def author_pending_narration(
                     narration_count,
                 )
 
-        await asyncio.to_thread(
-            _finish_authoring,
-            host,
-            episode_id,
-            chapter_id,
-            generated,
-        )
+        try:
+            await asyncio.to_thread(
+                _finish_authoring,
+                host,
+                episode_id,
+                chapter_id,
+                generated,
+            )
+        except ValueError as error:
+            logger.warning(
+                "narration_authoring_degraded episode_id=%s chapter_id=%s "
+                "reason=validation_error error_type=%s",
+                episode_id,
+                chapter_id,
+                type(error).__name__,
+            )
+            await asyncio.to_thread(
+                _finish_authoring,
+                host,
+                episode_id,
+                chapter_id,
+                None,
+            )
         processed += 1
 
     return await asyncio.to_thread(host.repository.get, episode_id)
@@ -171,7 +199,7 @@ def _finish_authoring(
     generated: GeneratedChapter | None,
 ) -> LiveEpisode:
     """Insert SCRIPT_READY narration unless playback has exposed the chapter."""
-    for attempt in range(2):
+    for attempt in range(5):
         episode = host.repository.get(episode_id).model_copy(deep=True)
         session = episode.progressive_session
         if session is None or chapter_id in session.narration_authored_chapter_ids:
@@ -273,7 +301,7 @@ def _finish_authoring(
         try:
             return host.repository.save(episode)
         except EpisodeConcurrencyError:
-            if attempt == 0:
+            if attempt < 4:
                 continue
             raise
 
