@@ -177,11 +177,14 @@ def _finish_authoring(
         if session is None or chapter_id in session.narration_authored_chapter_ids:
             return episode
 
-        existing = [
-            segment
-            for segment in episode.ordered_segments
-            if segment.chapter_id == chapter_id
-        ]
+        existing: list[MusicSegment | NarrationSegment] = sorted(
+            (
+                segment
+                for segment in episode.segments
+                if segment.chapter_id == chapter_id
+            ),
+            key=lambda segment: segment.order,
+        )
         if not existing:
             return episode
 
