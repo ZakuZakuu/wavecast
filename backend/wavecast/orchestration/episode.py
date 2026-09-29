@@ -778,6 +778,138 @@ class EpisodeOrchestrator:
             return self.repository.save(episode)
         return episode
 
+    async def author_fast_successor_narration_async(
+        self,
+        episode_id: str,
+    ) -> LiveEpisode:
+        """Author the first host bridge without waiting for full route planning."""
+
+        runtime = self.progressive_runtime
+        author_fast = getattr(runtime, "author_fast_successor_narration", None)
+        if runtime is None or not callable(author_fast):
+            return await asyncio.to_thread(self.repository.get, episode_id)
+
+        episode = await asyncio.to_thread(self.repository.get, episode_id)
+        if episode.presentation_intent.host_mode.value == "none":
+            return episode
+        pending = any(
+            isinstance(segment, NarrationSegment)
+            and segment.chapter_id == "chapter-2"
+            and segment.state is SegmentState.PLANNED
+            for segment in episode.ordered_segments
+        )
+        if not pending:
+            return episode
+
+        generated = await author_fast(episode.model_copy(deep=True))
+        return await asyncio.to_thread(
+            self._finish_fast_successor_narration,
+            episode_id,
+            generated,
+        )
+
+    def _finish_fast_successor_narration(
+        self,
+        episode_id: str,
+        generated: GeneratedChapter | None,
+    ) -> LiveEpisode:
+        """Replace the FastStart placeholder, or skip it so music never stalls."""
+
+        for _ in range(5):
+            episode = self.repository.get(episode_id).model_copy(deep=True)
+            existing = sorted(
+                (
+                    segment
+                    for segment in episode.segments
+                    if segment.chapter_id == "chapter-2"
+                ),
+                key=lambda segment: segment.order,
+            )
+            if not existing:
+                return episode
+            pending = [
+                segment
+                for segment in existing
+                if isinstance(segment, NarrationSegment)
+                and segment.state is SegmentState.PLANNED
+            ]
+            if not pending:
+                return episode
+
+            base_order = min(segment.order for segment in existing)
+            last_order = max(segment.order for segment in existing)
+            replacement: list[MusicSegment | NarrationSegment]
+
+            if generated is None:
+                replacement = [
+                    (
+                        segment.model_copy(update={"state": SegmentState.SKIPPED})
+                        if isinstance(segment, NarrationSegment)
+                        and segment.state is SegmentState.PLANNED
+                        else segment
+                    )
+                    for segment in existing
+                ]
+            else:
+                existing_music = [
+                    segment for segment in existing if isinstance(segment, MusicSegment)
+                ]
+                generated_music = [
+                    segment
+                    for segment in generated.segments
+                    if isinstance(segment, MusicSegment)
+                ]
+                generated_narration = [
+                    segment
+                    for segment in generated.segments
+                    if isinstance(segment, NarrationSegment)
+                ]
+                if (
+                    len(existing_music) != 1
+                    or len(generated_music) != 1
+                    or not generated_narration
+                ):
+                    generated = None
+                    continue
+                current_music = existing_music[0]
+                proposed_music = generated_music[0]
+                if (
+                    current_music.track_ref != proposed_music.track_ref
+                    or current_music.artist != proposed_music.artist
+                    or current_music.title != proposed_music.title
+                ):
+                    generated = None
+                    continue
+
+                replacement = []
+                for offset, segment in enumerate(generated.segments):
+                    order = base_order + offset
+                    if isinstance(segment, MusicSegment):
+                        replacement.append(current_music.model_copy(update={"order": order}))
+                    else:
+                        if segment.state is not SegmentState.SCRIPT_READY:
+                            generated = None
+                            break
+                        replacement.append(segment.model_copy(update={"order": order}))
+                if generated is None:
+                    continue
+
+            delta = len(replacement) - len(existing)
+            retained: list[MusicSegment | NarrationSegment] = []
+            for segment in episode.segments:
+                if segment.chapter_id == "chapter-2":
+                    continue
+                if segment.order > last_order:
+                    segment = segment.model_copy(update={"order": segment.order + delta})
+                retained.append(segment)
+            episode.segments = retained + replacement
+            episode.last_activity_at = self.now()
+            try:
+                return self.repository.save(episode)
+            except EpisodeConcurrencyError:
+                continue
+        return self.repository.get(episode_id)
+
     async def author_pending_narration_async(
         self,
         episode_id: str,
@@ -1111,6 +1243,7 @@ class EpisodeOrchestrator:
         if any(
             isinstance(segment, NarrationSegment)
             and segment.chapter_id == "chapter-2"
+            and segment.state is not SegmentState.PLANNED
             for segment in latest.ordered_segments
         ) and "chapter-2" not in prepared.narration_authored_chapter_ids:
             prepared = prepared.model_copy(
