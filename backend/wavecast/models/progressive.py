@@ -37,7 +37,7 @@ class ProgressiveAssemblyChapter(BaseModel):
     chapter: ChapterPlan
     resolved_track: ResolvedTrack | None = None
     slot_contexts: list[NarrationSlotContext] = Field(default_factory=list)
-    target_narration_seconds: int = Field(ge=1)
+    target_narration_seconds: int = Field(ge=0)
 
 
 class ProgressiveSessionReconstructionError(ValueError):
