@@ -14,6 +14,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Final
 
+from wavecast.models.episode import NarrationSegment, SegmentState
 from wavecast.orchestration.episode import EpisodeOrchestrator, EpisodeRuntimeError
 from wavecast.providers.errors import (
     ProviderConfigurationError,
@@ -263,11 +264,18 @@ class GenerationWorker:
         )
         if callable(fast_bridge):
             try:
-                await fast_bridge(job.episode_id)
-                await self.orchestrator.materialize_pending_narration_async(
-                    job.episode_id,
-                    max_segments=1,
+                fast_bridge_episode = await fast_bridge(job.episode_id)
+                has_fast_script = any(
+                    isinstance(segment, NarrationSegment)
+                    and segment.chapter_id == "chapter-2"
+                    and segment.state is SegmentState.SCRIPT_READY
+                    for segment in fast_bridge_episode.ordered_segments
                 )
+                if has_fast_script:
+                    await self.orchestrator.materialize_pending_narration_async(
+                        job.episode_id,
+                        max_segments=1,
+                    )
             except Exception as error:
                 logger.warning(
                     "narration_enrichment_failed episode_id=%s "
