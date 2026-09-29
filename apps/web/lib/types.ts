@@ -20,6 +20,7 @@ export type Seed = {
   opening_track_ref: string;
   opening_track_title: string;
   opening_track_artist: string;
+  opening_narration_text?: string | null;
   cover: { family: string; seed: number; palette: [string, string] };
   presentation_intent?: PresentationIntent;
 };
