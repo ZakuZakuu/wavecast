@@ -1,6 +1,11 @@
 import pytest
 from wavecast.arrangement import plan_episode_mix
-from wavecast.audio_timing import TimingInterval, TrackTimingProfile
+from wavecast.audio_timing import (
+    TimingInterval,
+    TrackSection,
+    TrackSectionKind,
+    TrackTimingProfile,
+)
 from wavecast.models.episode import (
     MusicSegment,
     NarrationRole,
@@ -321,6 +326,69 @@ def _timing_profile(
             ),
         ),
     )
+
+
+def test_opening_host_uses_safe_instrumental_window_without_breaking_crossfade() -> None:
+    opening = _music("a", 0, 60).model_copy(
+        update={
+            "timing_profile": TrackTimingProfile(
+                source_duration_seconds=60,
+                lyric_timestamps_available=True,
+                lyric_lines=(
+                    TimingInterval(start_seconds=24, end_seconds=28),
+                    TimingInterval(start_seconds=48, end_seconds=52),
+                ),
+                vocal_intervals=(
+                    TimingInterval(start_seconds=24, end_seconds=28),
+                    TimingInterval(start_seconds=48, end_seconds=52),
+                ),
+                sections=(
+                    TrackSection(
+                        kind=TrackSectionKind.INTRO_INSTRUMENTAL,
+                        start_seconds=0,
+                        end_seconds=24,
+                    ),
+                    TrackSection(
+                        kind=TrackSectionKind.VOCAL,
+                        start_seconds=24,
+                        end_seconds=52,
+                    ),
+                    TrackSection(
+                        kind=TrackSectionKind.OUTRO_INSTRUMENTAL,
+                        start_seconds=52,
+                        end_seconds=60,
+                    ),
+                ),
+            )
+        }
+    )
+    opening_host = _voice(
+        "segment-opening-host",
+        1,
+        8,
+        NarrationRole.INTRO,
+    )
+    next_music = _music("b", 2, 35)
+
+    plan = plan_episode_mix(_episode(opening, opening_host, next_music))
+
+    voice = next(
+        clip for clip in plan.clips if clip.segment_id == "segment-opening-host"
+    )
+    first = next(clip for clip in plan.clips if clip.segment_id == "a")
+    second = next(clip for clip in plan.clips if clip.segment_id == "b")
+
+    assert voice.timeline_start_seconds == pytest.approx(6.0)
+    assert voice.timeline_end_seconds < 24
+    assert second.timeline_start_seconds == pytest.approx(50.0)
+    assert first.timeline_end_seconds == pytest.approx(60.0)
+    assert next(
+        point for point in first.gain_automation if point.offset_seconds == 6.0
+    ).gain == pytest.approx(0.30)
+    assert next(
+        point for point in first.gain_automation if point.offset_seconds == 15.5
+    ).gain == pytest.approx(1.0)
+    assert second.fade_in_seconds == pytest.approx(10.0)
 
 
 def test_lyric_timing_places_voice_after_last_outgoing_vocal() -> None:

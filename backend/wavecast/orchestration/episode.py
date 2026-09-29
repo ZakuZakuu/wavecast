@@ -14,6 +14,7 @@ from wavecast.models.episode import (
     GenerationMode,
     LiveEpisode,
     MusicSegment,
+    NarrationRole,
     NarrationSegment,
     PlayableEpisode,
     Segment,
@@ -187,6 +188,43 @@ class EpisodeOrchestrator:
             last_activity_at=now,
             last_heartbeat_at=now,
         )
+        return self.repository.save(episode)
+
+    def attach_opening_narration(
+        self,
+        episode_id: str,
+        narration: NarrationSegment,
+    ) -> LiveEpisode:
+        """Attach one already-materialized opening host beat before playback starts."""
+
+        if narration.state is not SegmentState.AUDIO_READY or not narration.audio_source_url:
+            raise EpisodeRuntimeError("opening narration must be audio-ready")
+        if narration.narration_role is not NarrationRole.INTRO:
+            raise EpisodeRuntimeError("opening narration must use the INTRO role")
+
+        episode = self.get(episode_id).model_copy(deep=True)
+        if any(segment.id == "segment-opening-host" for segment in episode.segments):
+            return episode
+        if (
+            len(episode.segments) != 1
+            or episode.current_segment_id != "segment-opening"
+            or episode.program_playback_position_seconds > 0
+            or episode.playback_position_seconds > 0
+        ):
+            # Never retrofit an opening talk-over after the listener has already
+            # received/generated later programme structure.
+            return episode
+
+        normalized = narration.model_copy(
+            update={
+                "id": "segment-opening-host",
+                "chapter_id": "chapter-1",
+                "order": 1,
+                "title": "Track Intro",
+            }
+        )
+        episode.segments.append(normalized)
+        episode.last_activity_at = self.now()
         return self.repository.save(episode)
 
     def start_or_resume(

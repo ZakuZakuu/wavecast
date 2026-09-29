@@ -57,6 +57,7 @@ class ProgramProposal(BaseModel):
     opening_track_artist: str = Field(min_length=1, max_length=300)
     opening_track_duration_seconds: int | None = Field(default=None, gt=0)
     opening_track_timing_profile: TrackTimingProfile | None = None
+    opening_narration_text: str | None = Field(default=None, max_length=320)
     cover: CoverParams
     editorial_route: list[str] = Field(min_length=2, max_length=8)
     genre_tags: list[str] = Field(default_factory=list, max_length=8)
@@ -78,6 +79,7 @@ class ProgramProposal(BaseModel):
             opening_track_artist=self.opening_track_artist,
             opening_track_duration_seconds=self.opening_track_duration_seconds,
             opening_track_timing_profile=self.opening_track_timing_profile,
+            opening_narration_text=self.opening_narration_text,
             cover=self.cover,
             presentation_intent=self.presentation_intent,
             generation_profile=self.generation_profile,
@@ -97,6 +99,7 @@ class ProgramProposal(BaseModel):
             opening_track_artist=seed.opening_track_artist,
             opening_track_duration_seconds=seed.opening_track_duration_seconds,
             opening_track_timing_profile=seed.opening_track_timing_profile,
+            opening_narration_text=seed.opening_narration_text,
             cover=seed.cover,
             editorial_route=["开场", "展开", "转折", "收尾"],
             genre_tags=[],
@@ -147,6 +150,7 @@ class ProgramProposalDraft(BaseModel):
     editorial_route: list[str] = Field(min_length=2, max_length=8)
     genre_tags: list[str] = Field(default_factory=list, max_length=8)
     mood_tags: list[str] = Field(default_factory=list, max_length=8)
+    opening_host_note: str | None = Field(default=None, max_length=220)
     opening_track_candidates: list[OpeningTrackCandidate] = Field(min_length=1, max_length=4)
 
     @field_validator("title", "short_description")
@@ -156,6 +160,14 @@ class ProgramProposalDraft(BaseModel):
         if not normalized:
             raise ValueError("proposal copy cannot be blank")
         return normalized
+
+    @field_validator("opening_host_note")
+    @classmethod
+    def normalize_opening_host_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.split())
+        return normalized or None
 
     @field_validator("editorial_route")
     @classmethod
@@ -343,6 +355,30 @@ def _proposal_catalog_name(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
+def _uses_cjk(value: str) -> bool:
+    return any("\u3400" <= character <= "\u9fff" for character in value)
+
+
+def _opening_narration_text(
+    request: ProposalGenerationRequest,
+    draft: ProgramProposalDraft,
+    resolved: ResolvedTrack,
+) -> str:
+    note = draft.opening_host_note
+    if _uses_cjk(request.prompt):
+        identity = (
+            f"我们先从 {resolved.canonical_artist} 的《{resolved.canonical_title}》开始。"
+        )
+        fallback = "先别急着跳歌，听听它怎么把今天这条声音路线打开。"
+    else:
+        identity = (
+            f'Let\'s start with "{resolved.canonical_title}" by '
+            f"{resolved.canonical_artist}. "
+        )
+        fallback = "Give it a moment and listen for how it sets the direction for this programme."
+    return f"{identity}{note or fallback}".strip()
+
+
 def _cover_for(proposal_id: str, title: str) -> CoverParams:
     digest = sha1(f"{proposal_id}|{title}".encode()).hexdigest()
     seed = int(digest[:8], 16)
@@ -406,6 +442,11 @@ class LLMProgramProposalGenerator:
                     opening_track_artist=resolved.canonical_artist,
                     opening_track_duration_seconds=opening_duration_seconds,
                     opening_track_timing_profile=opening_timing_profile,
+                    opening_narration_text=_opening_narration_text(
+                        request,
+                        draft,
+                        resolved,
+                    ),
                     cover=_cover_for(proposal_id, draft.title),
                     editorial_route=list(draft.editorial_route),
                     genre_tags=list(draft.genre_tags),
@@ -505,7 +546,13 @@ class LLMProgramProposalGenerator:
             "or playback reference. The application will independently resolve exact catalog "
             "identity and may reject the proposal. Duration is application-owned; do not emit "
             "duration numbers. Prefer an opening track that can immediately establish the "
-            "requested listening direction while leaving room for later research and curation.\n"
+            "requested listening direction while leaving room for later research and curation. "
+            "Also provide one short opening_host_note in the listener's language. It will be "
+            "spoken over the opening song after the application inserts the verified artist/title. "
+            "Keep it to one concise sentence, conversational rather than announcer-like, and use "
+            "only editorial listening guidance (why this is a good opening / what to notice). "
+            "Do not repeat artist or track names and do not make release-date, biography, chart, "
+            "causal, or other factual claims that would require research.\n"
             f"Duration intent: {request.duration_intent.value}\n"
             f"Taste context: {taste_context}\n"
             f"Listener request: {request.prompt.strip()}"
@@ -537,6 +584,10 @@ class DeterministicMockProgramProposalGenerator:
                     opening_track_title="Neon First Light",
                     opening_track_artist="Mira Fields",
                     opening_track_duration_seconds=22,
+                    opening_narration_text=(
+                        "我们先从 Mira Fields 的《Neon First Light》开始。"
+                        "先听一会儿这层明亮的合成器怎么把今晚的方向打开。"
+                    ),
                     cover=CoverParams(family=family, seed=seed % 1000, palette=palette),
                     editorial_route=list(route),
                     genre_tags=list(genres),
