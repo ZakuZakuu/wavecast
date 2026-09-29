@@ -1,6 +1,8 @@
 import asyncio
 
 import pytest
+from wavecast.audio_timing import TimingInterval, TrackTimingProfile
+from wavecast.intelligence.models import ResolvedTrack
 from wavecast.providers.contracts import AudioAsset, AudioAssetType, TrackMetadata
 from wavecast.providers.errors import ProviderConfigurationError, ProviderInvalidResponseError
 from wavecast.providers.registry import MusicProviderRegistry
@@ -214,6 +216,52 @@ def test_retrieved_track_version_parser_is_conservative() -> None:
     assert RetrievedTrack.version_for("Song (Acoustic)", {})[0] is VersionKind.ACOUSTIC
     assert RetrievedTrack.version_for("Song (Radio Edit)", {})[0] is VersionKind.RADIO_EDIT
     assert RetrievedTrack.version_for("Song", {"soundtrack": "Persona 4 OST"})[0] is VersionKind.OST
+
+
+def test_registry_fetches_playback_and_timing_concurrently() -> None:
+    class ConcurrentTimingProvider(FixtureMusicProvider):
+        def __init__(self) -> None:
+            super().__init__(
+                "netease",
+                [metadata("netease:track-1", "Artist", "Song")],
+            )
+            self.playback_started = asyncio.Event()
+            self.timing_started = asyncio.Event()
+
+        async def get_playback_asset(self, resolved_track: object) -> AudioAsset:
+            self.playback_started.set()
+            await asyncio.wait_for(self.timing_started.wait(), timeout=0.1)
+            return await super().get_playback_asset(resolved_track)
+
+        async def get_timing_profile(self, track_ref: str) -> TrackTimingProfile:
+            assert track_ref == "netease:track-1"
+            self.timing_started.set()
+            await asyncio.wait_for(self.playback_started.wait(), timeout=0.1)
+            return TrackTimingProfile(
+                source_duration_seconds=180,
+                lyric_timestamps_available=True,
+                lyric_lines=(TimingInterval(start_seconds=4, end_seconds=8),),
+                vocal_intervals=(TimingInterval(start_seconds=4, end_seconds=8),),
+            )
+
+    provider = ConcurrentTimingProvider()
+    registry = MusicProviderRegistry({"netease": provider})
+    asset = asyncio.run(
+        registry.get_playback_asset(
+            ResolvedTrack(
+                track_ref="netease:track-1",
+                canonical_artist="Artist",
+                canonical_title="Song",
+            )
+        )
+    )
+
+    assert asset.provider == "netease"
+    timing = asset.metadata["timing_profile"]
+    assert timing["source_duration_seconds"] == 180
+    assert timing["vocal_intervals"] == [
+        {"start_seconds": 4.0, "end_seconds": 8.0}
+    ]
 
 
 def test_registry_orders_providers_and_routes_provider_qualified_playback() -> None:
