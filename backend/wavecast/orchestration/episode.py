@@ -89,6 +89,18 @@ class InMemoryEpisodeRepository:
         episode.last_heartbeat_at = at
         return episode
 
+    def touch_program_playback(
+        self,
+        episode_id: str,
+        position_seconds: float,
+        at: datetime,
+    ) -> LiveEpisode:
+        episode = self.get(episode_id)
+        episode.program_transport_active = True
+        episode.program_playback_position_seconds = position_seconds
+        episode.last_activity_at = at
+        return episode
+
     def get(self, episode_id: str) -> LiveEpisode:
         try:
             return self._episodes[episode_id]
@@ -667,15 +679,16 @@ class EpisodeOrchestrator:
         episode_id: str,
         position_seconds: float,
     ) -> LiveEpisode:
-        """Persist single-source listener progress without changing programme content."""
+        """Persist listener cursor metadata without competing with structure writes."""
 
-        episode = self._active_episode(episode_id)
+        self._active_episode(episode_id)
         if position_seconds < 0:
             raise EpisodeRuntimeError("programme playback checkpoint cannot be negative")
-        episode.program_transport_active = True
-        episode.program_playback_position_seconds = position_seconds
-        episode.last_activity_at = self.now()
-        return self.repository.save(episode)
+        return self.repository.touch_program_playback(
+            episode_id,
+            position_seconds,
+            self.now(),
+        )
 
 
     def arm_handoff(self, episode_id: str, segment_id: str) -> LiveEpisode:
@@ -802,7 +815,18 @@ class EpisodeOrchestrator:
         if not pending:
             return episode
 
-        generated = await author_fast(episode.model_copy(deep=True))
+        try:
+            generated = await author_fast(episode.model_copy(deep=True))
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.warning(
+                "narration_enrichment_failed episode_id=%s "
+                "stage=fast_bridge_authoring error_type=%s",
+                episode_id,
+                type(error).__name__,
+            )
+            generated = None
         return await asyncio.to_thread(
             self._finish_fast_successor_narration,
             episode_id,
@@ -993,7 +1017,7 @@ class EpisodeOrchestrator:
         materialized: NarrationSegment | None,
     ) -> LiveEpisode:
         """Attach one finished asset, or skip failed speculative narration safely."""
-        for attempt in range(2):
+        for attempt in range(5):
             episode = self.repository.get(episode_id)
             if (
                 not episode.is_listener_active
@@ -1020,7 +1044,7 @@ class EpisodeOrchestrator:
             try:
                 return self.repository.save(episode)
             except EpisodeConcurrencyError:
-                if attempt == 0:
+                if attempt < 4:
                     continue
                 raise
         return self.repository.get(episode_id)
@@ -1259,10 +1283,55 @@ class EpisodeOrchestrator:
         try:
             return await asyncio.to_thread(self.repository.save, latest)
         except EpisodeConcurrencyError:
+            # Playback metadata and other non-structural writes may race with
+            # expensive Research/Curator work. Preserve that paid result when
+            # the durable timeline anchor is still identical.
             reloaded = await asyncio.to_thread(self.repository.get, episode_id)
             if reloaded.progressive_session is not None:
                 return reloaded
-            raise
+            if (
+                not reloaded.is_listener_active
+                and reloaded.generation_mode is not GenerationMode.FULL
+            ):
+                raise EpisodeRuntimeError(
+                    "listener session is inactive; discard prepared session"
+                )
+            if reloaded.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+                raise EpisodeRuntimeError("episode is no longer progressively writable")
+            reloaded_signature = tuple(
+                (segment.id, segment.order, segment.chapter_id)
+                for segment in reloaded.ordered_segments
+            )
+            if reloaded_signature != snapshot.structural_signature:
+                raise EpisodeRuntimeError(
+                    "progressive session preparation anchor is stale"
+                )
+            retried_prepared = prepared
+            if any(
+                isinstance(segment, NarrationSegment)
+                and segment.chapter_id == "chapter-2"
+                and segment.state is not SegmentState.PLANNED
+                for segment in reloaded.ordered_segments
+            ) and "chapter-2" not in retried_prepared.narration_authored_chapter_ids:
+                retried_prepared = retried_prepared.model_copy(
+                    update={
+                        "narration_authored_chapter_ids": [
+                            *retried_prepared.narration_authored_chapter_ids,
+                            "chapter-2",
+                        ]
+                    }
+                )
+            reloaded.progressive_session = retried_prepared
+            try:
+                return await asyncio.to_thread(self.repository.save, reloaded)
+            except EpisodeConcurrencyError:
+                latest_retry = await asyncio.to_thread(
+                    self.repository.get,
+                    episode_id,
+                )
+                if latest_retry.progressive_session is not None:
+                    return latest_retry
+                raise
 
     async def _runtime_for_generation(
         self, episode_id: str, episode: LiveEpisode
