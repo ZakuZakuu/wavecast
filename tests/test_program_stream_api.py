@@ -11,8 +11,6 @@ from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
-
-import services.api.main as api_module
 from wavecast.models.episode import (
     EpisodeState,
     GenerationMode,
@@ -24,6 +22,8 @@ from wavecast.models.episode import (
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import InMemoryEpisodeRepository
 from wavecast.storage import LocalObjectStorageProvider
+
+import services.api.main as api_module
 
 
 class EventLoopRejectingEpisodeRepository(InMemoryEpisodeRepository):
