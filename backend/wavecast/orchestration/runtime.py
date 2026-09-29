@@ -345,6 +345,11 @@ class StagedProgressiveRuntimeAdapter:
                 locked_successor=locked_successor,
             )
         except EpisodeAssemblyError as error:
+            if error.reason_code == "insufficient_progressive_resolved_tracks":
+                # A two-track long-form route is not a finished programme.
+                # Let the generation worker retry planning/resolution instead of
+                # turning the FastStart prefix into a false final/outro.
+                raise
             if (
                 locked_successor is not None
                 and episode.generation_mode is GenerationMode.PROGRESSIVE
