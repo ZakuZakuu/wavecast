@@ -342,6 +342,36 @@ def test_terminal_full_generation_failure_restores_progressive_episode() -> None
     assert job.last_error_code == "provider_configuration"
 
 
+def test_incomplete_progressive_route_is_retryable() -> None:
+    class RouteIncompleteError(RuntimeError):
+        stage = "resolution"
+        reason_code = "insufficient_progressive_resolved_tracks"
+
+    class RouteIncompleteRuntime(EpisodeOrchestrator):
+        async def ensure_buffer_async(
+            self,
+            episode_id: str,
+            *,
+            target_chapters: int = 2,
+            target_ahead_seconds: int = 300,
+        ):
+            del episode_id, target_chapters, target_ahead_seconds
+            raise RouteIncompleteError("synthetic underfilled route")
+
+    runtime = RouteIncompleteRuntime(InMemoryEpisodeRepository())
+    episode = runtime.start(_seed())
+    jobs = InMemoryGenerationJobRepository()
+    jobs.request(episode.id)
+    worker = GenerationWorker(jobs, runtime, worker_id="worker-route-retry")
+
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
+
+    job = jobs.get_for_episode(episode.id)
+    assert job is not None
+    assert job.status is GenerationJobStatus.PENDING
+    assert job.last_error_code == "route_incomplete"
+
+
 def test_non_retryable_provider_failure_is_sanitized_and_terminal() -> None:
     class ConfigurationFailingRuntime(EpisodeOrchestrator):
         async def ensure_buffer_async(
