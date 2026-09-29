@@ -115,6 +115,7 @@ class StagedProgressiveRuntimeAdapter:
         from wavecast.presentation import HostMode
         from wavecast.providers.contracts import AudioAsset, AudioAssetType
         from wavecast.providers.errors import ProviderError
+        from wavecast.providers.profiles import InferenceProfile
 
         if episode.presentation_intent.host_mode is HostMode.NONE:
             return None
@@ -218,6 +219,7 @@ class StagedProgressiveRuntimeAdapter:
                 output_language=OutputLanguage.AUTO,
                 topic=episode.topic,
                 slot_contexts=[slot],
+                inference_profile=InferenceProfile.FAST,
             )
             radio_script, _ = _assemble_writer_scripts(
                 [script],
