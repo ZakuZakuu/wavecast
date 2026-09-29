@@ -252,6 +252,30 @@ class GenerationWorker:
         if callable(fast_start):
             await fast_start(job.episode_id)
 
+        # The first host bridge must not wait for full Research/Curator route
+        # planning. FastStart has already made the successor durable, so Writer
+        # can use the concrete A -> B playback identities immediately; TTS then
+        # resolves the placeholder before background route planning continues.
+        fast_bridge = getattr(
+            self.orchestrator,
+            "author_fast_successor_narration_async",
+            None,
+        )
+        if callable(fast_bridge):
+            try:
+                await fast_bridge(job.episode_id)
+                await self.orchestrator.materialize_pending_narration_async(
+                    job.episode_id,
+                    max_segments=1,
+                )
+            except Exception as error:
+                logger.warning(
+                    "narration_enrichment_failed episode_id=%s "
+                    "stage=fast_bridge error_type=%s",
+                    job.episode_id,
+                    type(error).__name__,
+                )
+
         first_buffer = await self.orchestrator.ensure_buffer_async(
             job.episode_id,
             target_chapters=1,
