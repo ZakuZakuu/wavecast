@@ -41,6 +41,18 @@ def _seed(*, opening_seconds: int = 300) -> EpisodeSeed:
     )
 
 
+
+async def _run_once_and_stop_enrichment(worker: GenerationWorker) -> bool:
+    try:
+        worked = await worker.run_once()
+        # Give detached narration one event-loop turn, then close worker-owned
+        # background tasks before asyncio.run() tears down the loop.
+        await asyncio.sleep(0)
+        return worked
+    finally:
+        await worker.stop_enrichment()
+
+
 def test_worker_logs_safe_generation_lifecycle(caplog) -> None:
     generator = DeterministicMockProgressiveGenerator()
     runtime = EpisodeOrchestrator(
@@ -53,7 +65,7 @@ def test_worker_logs_safe_generation_lifecycle(caplog) -> None:
     worker = GenerationWorker(jobs, runtime, worker_id="worker-observability")
     caplog.set_level("INFO", logger="wavecast.orchestration.worker")
 
-    assert asyncio.run(worker.run_once()) is True
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
 
     messages = [record.getMessage() for record in caplog.records]
     assert any(
@@ -133,7 +145,7 @@ def test_worker_prepares_successor_behind_long_opening() -> None:
     jobs.request(episode.id)
     worker = GenerationWorker(jobs, runtime, worker_id="worker-a")
 
-    assert asyncio.run(worker.run_once()) is True
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
 
     updated = runtime.get(episode.id)
     job = jobs.get_for_episode(episode.id)
@@ -165,7 +177,7 @@ def test_narration_enrichment_failure_does_not_fail_ready_music_job() -> None:
     jobs.request(episode.id)
     worker = GenerationWorker(jobs, runtime, worker_id="worker-narration-failure")
 
-    assert asyncio.run(worker.run_once()) is True
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
 
     updated = runtime.get(episode.id)
     job = jobs.get_for_episode(episode.id)
@@ -257,7 +269,7 @@ def test_worker_completes_when_full_planning_is_deferred_behind_ready_music() ->
     jobs.request(episode.id)
     worker = GenerationWorker(jobs, runtime, worker_id="worker-fast-bootstrap")
 
-    assert asyncio.run(worker.run_once()) is True
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
 
     updated = runtime.get(episode.id)
     job = jobs.get_for_episode(episode.id)
@@ -274,7 +286,7 @@ def test_worker_cancels_generation_for_inactive_listener() -> None:
     jobs.request(episode.id)
     worker = GenerationWorker(jobs, runtime, worker_id="worker-a")
 
-    assert asyncio.run(worker.run_once()) is True
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
 
     job = jobs.get_for_episode(episode.id)
     assert job is not None
@@ -294,7 +306,7 @@ def test_full_generation_continues_after_listener_leaves() -> None:
     jobs.request(episode.id, GenerationJobMode.FULL)
     worker = GenerationWorker(jobs, runtime, worker_id="worker-full")
 
-    assert asyncio.run(worker.run_once()) is True
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
 
     updated = runtime.get(episode.id)
     job = jobs.get_for_episode(episode.id)
@@ -319,7 +331,7 @@ def test_terminal_full_generation_failure_restores_progressive_episode() -> None
     jobs.request(episode.id, GenerationJobMode.FULL)
     worker = GenerationWorker(jobs, runtime, worker_id="worker-full-failure")
 
-    assert asyncio.run(worker.run_once()) is True
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
 
     updated = runtime.get(episode.id)
     job = jobs.get_for_episode(episode.id)
@@ -347,7 +359,7 @@ def test_non_retryable_provider_failure_is_sanitized_and_terminal() -> None:
     jobs.request("episode-provider-failure")
     worker = GenerationWorker(jobs, runtime, worker_id="worker-a")
 
-    assert asyncio.run(worker.run_once()) is True
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
 
     job = jobs.get_for_episode("episode-provider-failure")
     assert job is not None
@@ -388,7 +400,7 @@ def test_worker_cancels_inflight_generation_when_lease_is_lost() -> None:
     jobs.request("episode-lease-loss")
     worker = LeaseLosingWorker(jobs, runtime, worker_id="worker-lease-loss")
 
-    assert asyncio.run(worker.run_once()) is True
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
 
     job = jobs.get_for_episode("episode-lease-loss")
     assert runtime.cancelled.is_set()
