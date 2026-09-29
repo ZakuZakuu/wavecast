@@ -23,7 +23,6 @@ from wavecast.models.episode import (
 )
 from wavecast.presentation import HostMode
 from wavecast.providers import AudioProvider, MockAudioProvider
-from wavecast.providers.errors import ProviderError
 from wavecast.storage.episodes import (
     EpisodeConcurrencyError,
     EpisodeNotFoundError,
