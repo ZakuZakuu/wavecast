@@ -101,7 +101,6 @@ def test_sidecar_adapters_use_provider_neutral_http_contract(
     ]
 
 
-
 def test_netease_sidecar_exposes_optional_timing_profile() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/tracks/track-1/timing"
