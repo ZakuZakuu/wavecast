@@ -233,6 +233,8 @@ class _PreparedIntelligence:
 
 
 _ESTIMATED_TRACK_DURATION_SECONDS = 180
+_MIN_LONG_FORM_TRACK_COUNT = 3
+_LONG_FORM_DURATION_SECONDS = 20 * 60
 
 
 class LiveEpisodeAssemblyService:
@@ -1421,6 +1423,26 @@ def _build_progressive_session(
                 "resolved_future_track_count": future_music_count,
                 "unresolved_track_count": len(prepared.unresolved),
                 "required_future_track_count": 1,
+            },
+        )
+    required_total_tracks = (
+        _MIN_LONG_FORM_TRACK_COUNT
+        if (
+            request.max_tracks >= 5
+            or request.desired_duration_seconds >= _LONG_FORM_DURATION_SECONDS
+        )
+        else 2
+    )
+    resolved_total_tracks = 1 + future_music_count
+    if resolved_total_tracks < required_total_tracks:
+        raise EpisodeAssemblyError(
+            "progressive route is too short to be finalized",
+            stage="resolution",
+            reason_code="insufficient_progressive_resolved_tracks",
+            diagnostics={
+                "resolved_track_count": resolved_total_tracks,
+                "unresolved_track_count": len(prepared.unresolved),
+                "required_resolved_track_count": required_total_tracks,
             },
         )
     timing_plan = build_program_timing_plan(
