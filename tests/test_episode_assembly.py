@@ -555,6 +555,62 @@ def test_progressive_preparation_counts_application_opening_as_first_resolved_tr
     ]
 
 
+def test_long_form_progressive_route_rejects_two_track_finalization(tmp_path) -> None:
+    class OneFutureTrackLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                item = self._tracks[1]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(item),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="only one future track resolved",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="fixture",
+                        )
+                    ],
+                    estimated_duration_seconds=1200,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, OneFutureTrackLLM())
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    with pytest.raises(
+        EpisodeAssemblyError,
+        match="too short to be finalized",
+    ) as failure:
+        asyncio.run(
+            assembly.prepare_progressive_session(
+                LiveEpisodeAssemblyRequest(
+                    topic="fixture",
+                    desired_duration_seconds=1200,
+                    max_tracks=5,
+                ),
+                opening_track=opening,
+            )
+        )
+
+    assert failure.value.reason_code == "insufficient_progressive_resolved_tracks"
+    assert failure.value.diagnostics == {
+        "resolved_track_count": 2,
+        "unresolved_track_count": 0,
+        "required_resolved_track_count": 3,
+    }
+
+
 def test_progressive_resolution_uses_alternate_when_primary_repeats_opening_song(
     tmp_path,
 ) -> None:
