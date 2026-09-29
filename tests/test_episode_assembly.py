@@ -700,7 +700,11 @@ def test_progressive_resolution_uses_alternate_when_primary_repeats_opening_song
 
     session = asyncio.run(
         assembly.prepare_progressive_session(
-            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3),
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            ),
             opening_track=opening,
         )
     )
@@ -754,7 +758,11 @@ def test_progressive_preparation_uses_ranked_alternate_before_skipping_slot(tmp_
 
     session = asyncio.run(
         assembly.prepare_progressive_session(
-            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3),
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            ),
             opening_track=opening,
         )
     )
@@ -818,7 +826,11 @@ def test_progressive_preparation_skips_unresolved_selected_music_slot(tmp_path) 
 
     session = asyncio.run(
         assembly.prepare_progressive_session(
-            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3),
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            ),
             opening_track=opening,
         )
     )
