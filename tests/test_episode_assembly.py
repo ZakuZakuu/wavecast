@@ -1545,7 +1545,11 @@ def test_unresolved_proposal_is_reported_but_narrative_is_still_written(tmp_path
 
     llm = MixedLLM()
     result = asyncio.run(
-        service(tmp_path, llm).assemble(LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3))
+        service(tmp_path, llm).assemble(LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            ))
     )
 
     assert len(result.resolved_tracks) == 2
@@ -1818,7 +1822,11 @@ def test_narrative_only_chapter_survives_writer_and_assembly(tmp_path) -> None:
     llm = NarrativeOnlyLLM()
     result = asyncio.run(
         service(tmp_path, llm).assemble(
-            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3)
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            )
         )
     )
 
@@ -2177,7 +2185,11 @@ def test_middle_unresolved_chapter_keeps_narrative_writer_order(tmp_path) -> Non
 
     llm = ExplicitIndexLLM()
     result = asyncio.run(
-        service(tmp_path, llm).assemble(LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3))
+        service(tmp_path, llm).assemble(LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            ))
     )
 
     writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
