@@ -1,7 +1,7 @@
 from wavecast.audio_timing import (
+    TimingInterval,
     TrackSectionKind,
     TrackTimingProfile,
-    TimingInterval,
     safe_incoming_music_overlap_seconds,
     safe_outgoing_narration_overlap_seconds,
     track_timing_profile_from_payload,
