@@ -355,13 +355,14 @@ def test_non_retryable_provider_failure_is_sanitized_and_terminal() -> None:
             raise ProviderConfigurationError("secret provider detail must not persist")
 
     runtime = ConfigurationFailingRuntime(InMemoryEpisodeRepository())
+    episode = runtime.start(_seed())
     jobs = InMemoryGenerationJobRepository()
-    jobs.request("episode-provider-failure")
+    jobs.request(episode.id)
     worker = GenerationWorker(jobs, runtime, worker_id="worker-a")
 
     assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
 
-    job = jobs.get_for_episode("episode-provider-failure")
+    job = jobs.get_for_episode(episode.id)
     assert job is not None
     assert job.status is GenerationJobStatus.FAILED
     assert job.last_error_code == "provider_configuration"
@@ -396,13 +397,14 @@ def test_worker_cancels_inflight_generation_when_lease_is_lost() -> None:
             lease_lost.set()
 
     runtime = SlowRuntime()
+    episode = runtime.start(_seed())
     jobs = InMemoryGenerationJobRepository()
-    jobs.request("episode-lease-loss")
+    jobs.request(episode.id)
     worker = LeaseLosingWorker(jobs, runtime, worker_id="worker-lease-loss")
 
     assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
 
-    job = jobs.get_for_episode("episode-lease-loss")
+    job = jobs.get_for_episode(episode.id)
     assert runtime.cancelled.is_set()
     assert job is not None
     assert job.status is GenerationJobStatus.RUNNING
@@ -431,8 +433,9 @@ def test_external_worker_cancellation_does_not_leave_generation_running() -> Non
                 raise
 
     runtime = SlowRuntime()
+    episode = runtime.start(_seed())
     jobs = InMemoryGenerationJobRepository()
-    jobs.request("episode-worker-stop")
+    jobs.request(episode.id)
     worker = GenerationWorker(jobs, runtime, worker_id="worker-stop")
 
     async def run() -> None:
@@ -530,8 +533,9 @@ def test_worker_serve_stop_cancels_inflight_generation() -> None:
                 raise
 
     runtime = SlowRuntime()
+    episode = runtime.start(_seed())
     jobs = InMemoryGenerationJobRepository()
-    jobs.request("episode-serve-stop")
+    jobs.request(episode.id)
     worker = GenerationWorker(jobs, runtime, worker_id="worker-serve-stop")
 
     async def run() -> None:
