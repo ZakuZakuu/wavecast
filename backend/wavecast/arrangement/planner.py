@@ -108,7 +108,16 @@ def _opening_host_offset_seconds(
 ) -> float | None:
     profile = _timing_profile(music)
     if profile is None:
-        return None
+        # Preliminary radio fallback: an opening host should stay an opening.
+        # If timing metadata is unavailable, prefer one short early talk-over
+        # rather than semantically moving an introduction to the song tail.
+        return config.opening_host_lead_in_seconds
+
+    if not profile.vocal_intervals:
+        # A timing profile with no detected vocals is positive evidence for an
+        # instrumental track, not missing data. Treat the opening as freely
+        # talk-over-able and keep the host near the start.
+        return config.opening_host_lead_in_seconds
 
     preferred_kinds = (
         TrackSectionKind.INTRO_INSTRUMENTAL,
@@ -129,7 +138,10 @@ def _opening_host_offset_seconds(
             )
             if earliest <= latest_start:
                 return earliest
-    return None
+    # Timing exists but exposes no sufficiently long non-vocal section.
+    # Keep the opening beat early rather than falling through to the generic
+    # outgoing-song bridge placement at the end of the track.
+    return config.opening_host_lead_in_seconds
 
 
 def _incoming_voice_overlap_seconds(
