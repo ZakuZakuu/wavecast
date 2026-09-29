@@ -7,6 +7,7 @@ JSON shape at configurable endpoints.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -22,6 +23,9 @@ from .playback import ResolvedPlaybackRequest
 
 if TYPE_CHECKING:
     from wavecast.intelligence.models import ResolvedTrack
+
+
+TIMING_PROFILE_TIMEOUT_SECONDS = 1.5
 
 
 class SidecarMusicProvider(MusicProvider):
@@ -84,10 +88,11 @@ class SidecarMusicProvider(MusicProvider):
             return None
         provider_id = _provider_id(track_ref, self.track_ref_prefix)
         try:
-            payload = await self._request(
-                f"/tracks/{quote(provider_id, safe='')}/timing"
+            payload = await asyncio.wait_for(
+                self._request(f"/tracks/{quote(provider_id, safe='')}/timing"),
+                timeout=TIMING_PROFILE_TIMEOUT_SECONDS,
             )
-        except ProviderError:
+        except (TimeoutError, ProviderError):
             return None
         return track_timing_profile_from_payload(payload)
 
