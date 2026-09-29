@@ -345,6 +345,11 @@ class StagedProgressiveRuntimeAdapter:
                 locked_successor=locked_successor,
             )
         except EpisodeAssemblyError as error:
+            if error.reason_code == "insufficient_progressive_duration_coverage":
+                # An underfilled route is not editorially complete. Let the
+                # generation worker retry Research/Curator/resolution instead of
+                # converting the playable prefix into a false final/outro.
+                raise
             if (
                 locked_successor is not None
                 and episode.generation_mode is GenerationMode.PROGRESSIVE

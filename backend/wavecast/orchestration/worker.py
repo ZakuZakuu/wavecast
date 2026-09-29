@@ -184,18 +184,25 @@ class GenerationWorker:
                 # in durable state or operational diagnostics.
                 stage = getattr(error, "stage", None) or "unknown"
                 reason_code = getattr(error, "reason_code", None) or "unknown"
+                route_incomplete = (
+                    reason_code == "insufficient_progressive_duration_coverage"
+                )
+                error_code = (
+                    "route_incomplete" if route_incomplete else "generation_internal"
+                )
                 logger.warning(
                     "generation_job_execution_failed episode_id=%s "
-                    "error_code=generation_internal error_type=%s stage=%s reason_code=%s",
+                    "error_code=%s error_type=%s stage=%s reason_code=%s",
                     job.episode_id,
+                    error_code,
                     type(error).__name__,
                     stage,
                     reason_code,
                 )
                 await self._retry_or_fail(
                     job,
-                    "generation_internal",
-                    retryable=False,
+                    error_code,
+                    retryable=route_incomplete,
                 )
             else:
                 if lease_lost.is_set():
