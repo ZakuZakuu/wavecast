@@ -3,7 +3,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from wavecast.intelligence.models import OutputLanguage, ResolvedTrack
-from wavecast.models.episode import GenerationMode, LiveEpisode, MusicSegment, NarrationSegment
+from wavecast.models.episode import (
+    GenerationMode,
+    LiveEpisode,
+    MusicSegment,
+    NarrationSegment,
+    SegmentState,
+)
 from wavecast.models.progressive import ProgressiveAssemblySession
 from wavecast.orchestration.generation import GeneratedChapter, ProgressiveChapterGenerator
 
@@ -143,22 +149,32 @@ class StagedProgressiveRuntimeAdapter:
                 for segment in episode.ordered_segments
                 if segment.chapter_id == "chapter-2"
                 and isinstance(segment, NarrationSegment)
-                and segment.state.value == "PLANNED"
+                and segment.state is SegmentState.PLANNED
             ),
             None,
         )
         if opening is None or successor is None or pending is None or not episode.topic:
             return None
 
+        opening_track_ref = opening.track_ref
+        opening_artist = opening.artist
+        opening_title = opening.title
+        successor_track_ref = successor.track_ref
+        successor_artist = successor.artist
+        successor_title = successor.title
+        successor_url = successor.audio_source_url
+        assert opening_track_ref and opening_artist and opening_title
+        assert successor_track_ref and successor_artist and successor_title and successor_url
+
         opening_track = ResolvedTrack(
-            track_ref=opening.track_ref,
-            canonical_artist=opening.artist,
-            canonical_title=opening.title,
+            track_ref=opening_track_ref,
+            canonical_artist=opening_artist,
+            canonical_title=opening_title,
         )
         successor_track = ResolvedTrack(
-            track_ref=successor.track_ref,
-            canonical_artist=successor.artist,
-            canonical_title=successor.title,
+            track_ref=successor_track_ref,
+            canonical_artist=successor_artist,
+            canonical_title=successor_title,
         )
         chapter = ChapterPlan(
             index=1,
@@ -213,18 +229,22 @@ class StagedProgressiveRuntimeAdapter:
             )
             if not radio_script.blocks:
                 return None
-            metadata = {}
-            if successor.timing_profile is not None:
-                metadata["timing_profile"] = successor.timing_profile.model_dump(
-                    mode="json"
-                )
+            metadata = (
+                {
+                    "timing_profile": successor.timing_profile.model_dump(
+                        mode="json"
+                    )
+                }
+                if successor.timing_profile is not None
+                else {}
+            )
             prepared = PreparedMusicAsset(
                 track=successor_track,
                 asset=AudioAsset(
                     asset_id=successor.asset_ref or f"persisted:{successor.track_ref}",
                     asset_type=AudioAssetType.MUSIC,
                     provider="persisted",
-                    playback_url=successor.audio_source_url,
+                    playback_url=successor_url,
                     duration=successor.duration_seconds,
                     metadata=metadata,
                 ),
