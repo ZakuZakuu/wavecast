@@ -159,6 +159,41 @@ def test_writer_uses_synthesis_profile() -> None:
     assert recorder.kwargs["stage"] == "writer"
 
 
+def test_writer_allows_fast_profile_for_latency_sensitive_first_bridge() -> None:
+    class ProfileRecorder(RadioWriterFixture):
+        def __init__(self) -> None:
+            self.kwargs: dict[str, object] = {}
+
+        async def structured(
+            self,
+            _prompt: str,
+            _output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            self.kwargs = kwargs
+            return RadioScript.from_blocks([], intended_duration_seconds=1)
+
+    recorder = ProfileRecorder()
+    chapter = ChapterPlan(
+        index=1,
+        track=None,
+        narrative_role=NarrativeRole.BRIDGE,
+        reason="fast bridge",
+        narration_goal="connect",
+    )
+
+    asyncio.run(
+        WriterService(recorder).write(
+            chapter,
+            [],
+            inference_profile=InferenceProfile.FAST,
+        )
+    )
+
+    assert recorder.kwargs["profile"] is InferenceProfile.FAST
+    assert recorder.kwargs["stage"] == "writer"
+
+
 def test_writer_receives_resolved_slot_context_and_strips_numeric_placement() -> None:
     class PlacementFixture:
         def __init__(self) -> None:
