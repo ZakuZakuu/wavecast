@@ -76,6 +76,7 @@ class EpisodeSeed(BaseModel):
     opening_track_artist: str
     opening_track_duration_seconds: int | None = Field(default=None, gt=0)
     opening_track_timing_profile: TrackTimingProfile | None = None
+    opening_narration_text: str | None = Field(default=None, max_length=320)
     cover: CoverParams
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     generation_profile: str = "balanced"
