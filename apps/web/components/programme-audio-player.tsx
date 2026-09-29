@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef } from "react";
 
 const HLS_MIME = "application/vnd.apple.mpegurl";
-const FRONTIER_WAKE_SECONDS = 12;
+const FRONTIER_WAKE_SECONDS = 45;
 const FRONTIER_SEEK_EPSILON_SECONDS = 0.05;
 const POSITION_EMIT_INTERVAL_MS = 200;
 
@@ -57,6 +57,7 @@ export function ProgrammeAudioPlayer({
   const appliedSeekTargetRef = useRef<number | null>(null);
   const suppressPositionUntilRef = useRef(0);
   const playGenerationRef = useRef(0);
+  const previousFrontierRef = useRef(renderedFrontierSeconds);
 
   const onPositionChangeRef = useRef(onPositionChange);
   const onPlayingChangeRef = useRef(onPlayingChange);
@@ -265,6 +266,36 @@ export function ProgrammeAudioPlayer({
     // streamUrl is the source identity. Callback props deliberately live in
     // refs so progress renders never tear down the persistent HLS session.
   }, [applyPendingSeek, playIfDesired, streamUrl]);
+
+  useEffect(() => {
+    const previousFrontier = previousFrontierRef.current;
+    previousFrontierRef.current = renderedFrontierSeconds;
+    if (
+      renderedFrontierSeconds <= previousFrontier + FRONTIER_SEEK_EPSILON_SECONDS
+    ) return;
+
+    const audio = audioRef.current;
+    if (
+      !audio
+      || hlsRef.current
+      || !audio.canPlayType(HLS_MIME)
+      || !desiredPlayingRef.current
+      || (!audio.paused && !audio.ended)
+    ) return;
+
+    // Safari's native HLS can stop at the end of the currently-known EVENT
+    // playlist and fail to notice newly appended chunks. Preserve the listener
+    // position, reload the same stream URL, then let the existing metadata/
+    // canplay listeners re-apply the seek and resume playback.
+    pendingSeekRef.current = Math.max(0, audio.currentTime || positionSeconds);
+    appliedSeekTargetRef.current = null;
+    onBufferingChangeRef.current?.(true);
+    try {
+      audio.load();
+    } catch {
+      // A failed wake is non-fatal; the normal frontier polling path remains.
+    }
+  }, [positionSeconds, renderedFrontierSeconds]);
 
   useEffect(() => {
     const audio = audioRef.current;
