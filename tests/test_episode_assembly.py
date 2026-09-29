@@ -141,7 +141,6 @@ def service(tmp_path, llm: RecordingAssemblyLLM | None = None) -> LiveEpisodeAss
     )
 
 
-
 def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     llm = RecordingAssemblyLLM()
@@ -235,7 +234,6 @@ def test_music_only_fast_successor_has_no_narration_segment(tmp_path, monkeypatc
     assert len(bootstrap.segments) == 1
     assert isinstance(bootstrap.segments[0], MusicSegment)
     assert bootstrap.segments[0].is_audio_ready
-
 
 
 def test_default_light_fast_successor_is_music_only(tmp_path, monkeypatch) -> None:
@@ -1131,7 +1129,6 @@ def test_duplicate_before_track_intro_blocks_collapse_into_final_slots() -> None
         RadioScriptBlockKind.OUTRO,
     ]
     assert script.blocks[1].text == "duplicate intro final outro"
-
 
 
 def test_host_mode_filters_narration_density_after_gap_ownership() -> None:
