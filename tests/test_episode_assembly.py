@@ -49,7 +49,7 @@ from wavecast.intelligence.models import (
 from wavecast.intelligence.research import BackgroundResearchService, FastResearchService
 from wavecast.intelligence.writer import WriterService
 from wavecast.materialization import NarrationMaterializer
-from wavecast.models.episode import MusicSegment
+from wavecast.models.episode import MusicSegment, NarrationSegment, SegmentState
 from wavecast.presentation import HostMode, PresentationIntent
 from wavecast.providers.fakes import FakeSearchProvider, MockMusicProvider, MockTTSProvider
 from wavecast.providers.registry import MusicProviderRegistry
@@ -167,8 +167,10 @@ def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypa
 
     assert bootstrap is not None
     assert bootstrap.chapter_id == "chapter-2"
-    assert len(bootstrap.segments) == 1
-    successor = bootstrap.segments[0]
+    assert len(bootstrap.segments) == 2
+    placeholder, successor = bootstrap.segments
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.PLANNED
     assert isinstance(successor, MusicSegment)
     assert successor.track_ref == "mock:bridge"
     assert successor.title == "Midnight Transfer"
@@ -234,7 +236,9 @@ def test_music_only_fast_successor_has_no_narration_segment(tmp_path, monkeypatc
     assert bootstrap.segments[0].is_audio_ready
 
 
-def test_default_light_fast_successor_is_music_only(tmp_path, monkeypatch) -> None:
+def test_default_light_fast_successor_reserves_pending_host_seam(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     assembly = service(tmp_path)
     opening = ResolvedTrack(
@@ -254,9 +258,13 @@ def test_default_light_fast_successor_is_music_only(tmp_path, monkeypatch) -> No
     )
 
     assert bootstrap is not None
-    assert len(bootstrap.segments) == 1
-    assert isinstance(bootstrap.segments[0], MusicSegment)
-    assert bootstrap.segments[0].is_audio_ready
+    assert len(bootstrap.segments) == 2
+    placeholder, music = bootstrap.segments
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.PLANNED
+    assert placeholder.audio_source_url is None
+    assert isinstance(music, MusicSegment)
+    assert music.is_audio_ready
 
 
 def test_song_identity_collapses_catalog_aliases_without_merging_unrelated_covers() -> None:
