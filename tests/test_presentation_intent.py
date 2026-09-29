@@ -31,7 +31,6 @@ def test_full_track_request_preserves_song_and_default_light_host() -> None:
     assert intent.transition_style is TransitionStyle.RADIO
 
 
-
 def test_host_modes_have_distinct_narration_density() -> None:
     none = narration_ratio_for_host_mode(HostMode.NONE)
     light = narration_ratio_for_host_mode(HostMode.LIGHT)
