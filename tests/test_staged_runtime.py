@@ -253,6 +253,39 @@ def test_fast_bridge_failure_skips_placeholder_and_keeps_music_ready() -> None:
     assert music.is_audio_ready
 
 
+def test_skipped_fast_placeholder_is_not_marked_as_authored_after_session_attach() -> None:
+    staged = _PlaceholderBootstrapRuntime()
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
+    episode = runtime.start(_seed())
+
+    asyncio.run(runtime.ensure_fast_start_async(episode.id))
+    skipped = repository.get(episode.id)
+    placeholder = skipped.segment("chapter-2:narration:0")
+    assert isinstance(placeholder, NarrationSegment)
+    placeholder.state = SegmentState.SKIPPED
+    repository.save(skipped)
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            runtime.ensure_buffer_async(
+                episode.id,
+                target_chapters=1,
+                target_ahead_seconds=300,
+            )
+        )
+        await asyncio.wait_for(staged.started.wait(), timeout=1)
+        staged.release.set()
+        completed = await task
+        assert completed.progressive_session is not None
+        assert (
+            "chapter-2"
+            not in completed.progressive_session.narration_authored_chapter_ids
+        )
+
+    asyncio.run(run())
+
+
 def test_planned_fast_placeholder_is_not_marked_as_authored() -> None:
     staged = _PlaceholderBootstrapRuntime()
     repository = InMemoryEpisodeRepository()
