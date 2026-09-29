@@ -21,6 +21,7 @@ from wavecast.models.episode import (
     SegmentState,
     utc_now,
 )
+from wavecast.presentation import HostMode
 from wavecast.providers import AudioProvider, MockAudioProvider
 from wavecast.providers.errors import ProviderError
 from wavecast.storage.episodes import (
@@ -790,7 +791,7 @@ class EpisodeOrchestrator:
             return await asyncio.to_thread(self.repository.get, episode_id)
 
         episode = await asyncio.to_thread(self.repository.get, episode_id)
-        if episode.presentation_intent.host_mode.value == "none":
+        if episode.presentation_intent.host_mode is HostMode.NONE:
             return episode
         pending = any(
             isinstance(segment, NarrationSegment)
