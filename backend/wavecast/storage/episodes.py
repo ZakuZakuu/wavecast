@@ -41,6 +41,13 @@ class EpisodeRepository(Protocol):
 
     def touch_heartbeat(self, episode_id: str, at: datetime) -> LiveEpisode: ...
 
+    def touch_program_playback(
+        self,
+        episode_id: str,
+        position_seconds: float,
+        at: datetime,
+    ) -> LiveEpisode: ...
+
     def get(self, episode_id: str) -> LiveEpisode: ...
 
     def find_by_listener_seed(self, listener_id: str, seed_id: str) -> LiveEpisode | None: ...
@@ -100,6 +107,26 @@ class PostgresEpisodeRepository:
 
     def touch_heartbeat(self, episode_id: str, at: datetime) -> LiveEpisode:
         episode = cast(LiveEpisode | None, self._run(self._touch_heartbeat(episode_id, at)))
+        if episode is None:
+            raise EpisodeNotFoundError(episode_id)
+        return episode
+
+    def touch_program_playback(
+        self,
+        episode_id: str,
+        position_seconds: float,
+        at: datetime,
+    ) -> LiveEpisode:
+        episode = cast(
+            LiveEpisode | None,
+            self._run(
+                self._touch_program_playback(
+                    episode_id,
+                    position_seconds,
+                    at,
+                )
+            ),
+        )
         if episode is None:
             raise EpisodeNotFoundError(episode_id)
         return episode
@@ -179,6 +206,30 @@ class PostgresEpisodeRepository:
         patch = {
             "last_activity_at": heartbeat_value,
             "last_heartbeat_at": heartbeat_value,
+        }
+        statement = (
+            update(episodes_table)
+            .where(episodes_table.c.id == episode_id)
+            .values(
+                payload=episodes_table.c.payload.op("||")(literal(patch, type_=JSONB)),
+                updated_at=datetime.now(UTC),
+            )
+            .returning(episodes_table.c.payload, episodes_table.c.owner_user_id)
+        )
+        async with self.engine.begin() as connection:
+            row = (await connection.execute(statement)).first()
+        return _episode_from_row(row) if row else None
+
+    async def _touch_program_playback(
+        self,
+        episode_id: str,
+        position_seconds: float,
+        at: datetime,
+    ) -> LiveEpisode | None:
+        patch = {
+            "program_transport_active": True,
+            "program_playback_position_seconds": position_seconds,
+            "last_activity_at": at.isoformat(),
         }
         statement = (
             update(episodes_table)
