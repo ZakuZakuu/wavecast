@@ -41,6 +41,7 @@ from wavecast.models.episode import (
     GenerationMode,
     LiveEpisode,
     MusicSegment,
+    NarrationRole,
     NarrationSegment,
     PlayableEpisode,
     SegmentKind,
@@ -1306,21 +1307,77 @@ async def create_program_proposals(
         raise
 
 
+async def _prepare_opening_host(
+    episode: LiveEpisode,
+    seed: EpisodeSeed,
+) -> LiveEpisode:
+    """Materialize one proposal-owned opening host beat before first render."""
+
+    text = seed.opening_narration_text
+    if (
+        not text
+        or seed.presentation_intent.host_mode is HostMode.NONE
+        or any(segment.id == "segment-opening-host" for segment in episode.segments)
+        or len(episode.segments) != 1
+        or episode.program_playback_position_seconds > 0
+        or episode.playback_position_seconds > 0
+    ):
+        return episode
+
+    narration = NarrationSegment(
+        id="segment-opening-host",
+        chapter_id="chapter-1",
+        order=1,
+        state=SegmentState.SCRIPT_READY,
+        planned_duration_seconds=8,
+        title="Track Intro",
+        narration_text=text,
+        narration_role=NarrationRole.INTRO,
+    )
+    try:
+        materialized = await narration_materializer.materialize(narration)
+    except Exception as error:
+        # The opening host is a quality enhancement, never a playback gate.
+        logger.warning(
+            "opening_narration_skipped episode_id=%s error_type=%s",
+            episode.id,
+            type(error).__name__,
+        )
+        return episode
+
+    try:
+        return await to_thread.run_sync(
+            orchestrator.attach_opening_narration,
+            episode.id,
+            materialized,
+        )
+    except EpisodeConcurrencyError:
+        return await to_thread.run_sync(orchestrator.get, episode.id)
+
+
 @app.post("/api/episodes/from-seed/{seed_id}", response_model=LiveEpisode)
-def create_episode(seed_id: str, request: Request) -> LiveEpisode:
+async def create_episode(seed_id: str, request: Request) -> LiveEpisode:
     actor = principal(request)
     seed = _static_seed(seed_id)
     if seed is None:
-        proposal = _proposal_for_program(seed_id, actor)
+        proposal = await to_thread.run_sync(_proposal_for_program, seed_id, actor)
         seed = proposal.to_episode_seed() if proposal is not None else None
     if seed is None:
         raise HTTPException(status_code=404, detail="Episode seed not found")
     try:
-        episode = orchestrator.start_or_resume(seed, actor.listener_id, actor.user_id)
-        return _queue_progressive_generation(
-            episode,
-            force=True,
-            retry_failed=True,
+        episode = await to_thread.run_sync(
+            orchestrator.start_or_resume,
+            seed,
+            actor.listener_id,
+            actor.user_id,
+        )
+        episode = await _prepare_opening_host(episode, seed)
+        return await to_thread.run_sync(
+            lambda: _queue_progressive_generation(
+                episode,
+                force=True,
+                retry_failed=True,
+            )
         )
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode creation raced; retry") from error
