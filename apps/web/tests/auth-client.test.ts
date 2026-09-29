@@ -38,6 +38,24 @@ describe("API auth token cache", () => {
     expect(tokenRequest).toHaveBeenCalledTimes(2);
   });
 
+  it("falls back to guest when the auth client throws", async () => {
+    tokenRequest.mockRejectedValue(new Error("Request failed"));
+
+    await expect(getApiAuthToken()).resolves.toBeUndefined();
+    await expect(getApiAuthToken()).resolves.toBeUndefined();
+    expect(tokenRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to guest for non-numeric auth service errors", async () => {
+    tokenRequest.mockResolvedValue({
+      data: null,
+      error: { status: "SERVICE_UNAVAILABLE" },
+    });
+
+    await expect(getApiAuthToken()).resolves.toBeUndefined();
+    expect(tokenRequest).toHaveBeenCalledTimes(1);
+  });
+
   it("binds an authenticated request token to the expected JWT subject", async () => {
     const payload = btoa(JSON.stringify({ sub: "account-two", exp: Date.now() / 1000 + 3600 }))
       .replace(/=/g, "")
