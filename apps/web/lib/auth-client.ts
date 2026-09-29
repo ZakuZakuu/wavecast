@@ -15,16 +15,22 @@ export async function getApiAuthToken(): Promise<string | undefined> {
   if (tokenRequest) return tokenRequest;
 
   tokenRequest = (async () => {
-    const { data, error } = await authClient.token();
+    let result: Awaited<ReturnType<typeof authClient.token>>;
+    try {
+      result = await authClient.token();
+    } catch {
+      cachedToken = undefined;
+      tokenExpiresAt = 0;
+      authUnavailableUntil = Date.now() + 30_000;
+      return undefined;
+    }
+
+    const { data, error } = result;
     if (error) {
-      const status = (error as { status?: number }).status;
-      if (status === 401 || status === 503) {
-        cachedToken = undefined;
-        tokenExpiresAt = 0;
-        authUnavailableUntil = Date.now() + 30_000;
-        return undefined;
-      }
-      throw new Error("Could not verify the signed-in session");
+      cachedToken = undefined;
+      tokenExpiresAt = 0;
+      authUnavailableUntil = Date.now() + 30_000;
+      return undefined;
     }
     if (!data?.token) {
       authUnavailableUntil = Date.now() + 30_000;
