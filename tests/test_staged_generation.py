@@ -378,10 +378,13 @@ def test_tts_is_not_called_before_ready_music_is_published(tmp_path) -> None:
 
     assert generated is not None
     assert generated.chapter_id == "chapter-2"
-    assert len(generated.segments) == 1
-    assert isinstance(generated.segments[0], MusicSegment)
-    assert generated.segments[0].track_ref == "mock:bridge"
-    assert generated.segments[0].is_audio_ready
+    assert len(generated.segments) == 2
+    placeholder, music = generated.segments
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.PLANNED
+    assert isinstance(music, MusicSegment)
+    assert music.track_ref == "mock:bridge"
+    assert music.is_audio_ready
 
 
 def test_music_only_chunk_skips_writer_and_tts(tmp_path) -> None:
