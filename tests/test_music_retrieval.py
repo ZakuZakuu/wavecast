@@ -264,6 +264,31 @@ def test_registry_fetches_playback_and_timing_concurrently() -> None:
     ]
 
 
+def test_registry_timing_failure_does_not_fail_playback_asset() -> None:
+    class FailingTimingProvider(FixtureMusicProvider):
+        async def get_timing_profile(self, track_ref: str) -> TrackTimingProfile:
+            del track_ref
+            raise RuntimeError("synthetic timing failure")
+
+    provider = FailingTimingProvider(
+        "netease",
+        [metadata("netease:track-1", "Artist", "Song")],
+    )
+    registry = MusicProviderRegistry({"netease": provider})
+    asset = asyncio.run(
+        registry.get_playback_asset(
+            ResolvedTrack(
+                track_ref="netease:track-1",
+                canonical_artist="Artist",
+                canonical_title="Song",
+            )
+        )
+    )
+
+    assert asset.provider == "netease"
+    assert "timing_profile" not in asset.metadata
+
+
 def test_registry_orders_providers_and_routes_provider_qualified_playback() -> None:
     qqmusic = FixtureMusicProvider(
         "qqmusic", [metadata("qqmusic:track-1", "Artist", "Song")]
