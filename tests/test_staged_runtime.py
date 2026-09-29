@@ -10,6 +10,7 @@ from wavecast.models.episode import (
     EpisodeSeed,
     EpisodeState,
     MusicSegment,
+    NarrationSegment,
     SegmentState,
 )
 from wavecast.orchestration.episode import (
@@ -196,6 +197,66 @@ class _BootstrapRuntime(_FakeRuntime):
                 ],
             }
         )
+
+
+class _PlaceholderBootstrapRuntime(_BootstrapRuntime):
+    async def prepare_fast_successor(self, episode):
+        del episode
+        self.fast_calls += 1
+        return GeneratedChapter(
+            chapter_id="chapter-2",
+            segments=[
+                NarrationSegment(
+                    id="chapter-2:narration:0",
+                    chapter_id="chapter-2",
+                    order=1,
+                    state=SegmentState.PLANNED,
+                    planned_duration_seconds=12,
+                    title="Pending host bridge",
+                ),
+                MusicSegment(
+                    id="chapter-2:music:0",
+                    chapter_id="chapter-2",
+                    order=2,
+                    state=SegmentState.AUDIO_READY,
+                    planned_duration_seconds=180,
+                    actual_duration_seconds=180,
+                    track_ref=self.fast_track.track_ref,
+                    audio_source_url="/api/audio/mock/fast-successor",
+                    title=self.fast_track.canonical_title,
+                    artist=self.fast_track.canonical_artist,
+                ),
+            ],
+        )
+
+
+def test_planned_fast_placeholder_is_not_marked_as_authored() -> None:
+    staged = _PlaceholderBootstrapRuntime()
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
+    episode = runtime.start(_seed())
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            runtime.ensure_buffer_async(
+                episode.id,
+                target_chapters=1,
+                target_ahead_seconds=300,
+            )
+        )
+        await asyncio.wait_for(staged.started.wait(), timeout=1)
+        staged.release.set()
+        completed = await task
+        assert completed.progressive_session is not None
+        assert (
+            "chapter-2"
+            not in completed.progressive_session.narration_authored_chapter_ids
+        )
+        placeholder = completed.segment("chapter-2:narration:0")
+        assert isinstance(placeholder, NarrationSegment)
+        assert placeholder.state is SegmentState.PLANNED
+
+    asyncio.run(run())
 
 
 def test_fast_successor_is_durable_before_full_session_finishes() -> None:
