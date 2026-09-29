@@ -555,6 +555,108 @@ def test_progressive_preparation_counts_application_opening_as_first_resolved_tr
     ]
 
 
+def test_progressive_route_rejects_severely_underfilled_duration(tmp_path) -> None:
+    class OneFutureTrackLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                item = self._tracks[1]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(item),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="only one future track resolved",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="fixture",
+                        )
+                    ],
+                    estimated_duration_seconds=22 * 60,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, OneFutureTrackLLM())
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    with pytest.raises(
+        EpisodeAssemblyError,
+        match="duration coverage is too short",
+    ) as failure:
+        asyncio.run(
+            assembly.prepare_progressive_session(
+                LiveEpisodeAssemblyRequest(
+                    topic="fixture",
+                    desired_duration_seconds=22 * 60,
+                    max_tracks=5,
+                ),
+                opening_track=opening,
+            )
+        )
+
+    assert failure.value.reason_code == "insufficient_progressive_duration_coverage"
+    assert failure.value.diagnostics["estimated_resolved_music_seconds"] == 360
+    assert failure.value.diagnostics["required_resolved_music_seconds"] > 360
+
+
+def test_progressive_route_allows_two_tracks_when_duration_target_is_short(
+    tmp_path,
+) -> None:
+    class OneFutureTrackLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                item = self._tracks[1]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(item),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="one future track is enough for a short target",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="fixture",
+                        )
+                    ],
+                    estimated_duration_seconds=5 * 60,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, OneFutureTrackLLM())
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=5,
+            ),
+            opening_track=opening,
+        )
+    )
+
+    assert len([chapter for chapter in session.chapters if chapter.resolved_track]) == 1
+
+
 def test_progressive_resolution_uses_alternate_when_primary_repeats_opening_song(
     tmp_path,
 ) -> None:
