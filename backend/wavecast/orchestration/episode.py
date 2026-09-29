@@ -1269,7 +1269,14 @@ class EpisodeOrchestrator:
         if any(
             isinstance(segment, NarrationSegment)
             and segment.chapter_id == "chapter-2"
-            and segment.state is not SegmentState.PLANNED
+            and segment.state
+            in {
+                SegmentState.SCRIPT_READY,
+                SegmentState.AUDIO_GENERATING,
+                SegmentState.AUDIO_READY,
+                SegmentState.COMMITTED,
+                SegmentState.PLAYED,
+            }
             for segment in latest.ordered_segments
         ) and "chapter-2" not in prepared.narration_authored_chapter_ids:
             prepared = prepared.model_copy(
@@ -1311,7 +1318,14 @@ class EpisodeOrchestrator:
             if any(
                 isinstance(segment, NarrationSegment)
                 and segment.chapter_id == "chapter-2"
-                and segment.state is not SegmentState.PLANNED
+                and segment.state
+                in {
+                    SegmentState.SCRIPT_READY,
+                    SegmentState.AUDIO_GENERATING,
+                    SegmentState.AUDIO_READY,
+                    SegmentState.COMMITTED,
+                    SegmentState.PLAYED,
+                }
                 for segment in reloaded.ordered_segments
             ) and "chapter-2" not in retried_prepared.narration_authored_chapter_ids:
                 retried_prepared = retried_prepared.model_copy(
