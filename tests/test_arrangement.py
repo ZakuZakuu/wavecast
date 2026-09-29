@@ -84,7 +84,6 @@ def test_final_outro_overlays_last_music_tail() -> None:
     assert outro.timeline_start_seconds < last_music.timeline_end_seconds
 
 
-
 def _music(identifier: str, order: int, duration: int) -> MusicSegment:
     return MusicSegment(
         id=identifier,
@@ -290,7 +289,6 @@ def test_music_gain_automation_stays_bounded_for_role_aware_gap() -> None:
     )
     for clip in plan.clips:
         assert all(0 <= point.gain <= 1 for point in clip.gain_automation)
-
 
 
 def _timing_profile(
