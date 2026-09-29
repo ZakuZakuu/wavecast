@@ -106,9 +106,9 @@ class StagedProgressiveRuntimeAdapter:
         from wavecast.composer import PreparedMusicAsset
         from wavecast.intelligence.models import (
             ChapterPlan,
-            NarrativeRole,
             NarrationSlotContext,
             NarrationSlotPlacement,
+            NarrativeRole,
             RadioScriptBlockKind,
             TrackProposal,
         )
