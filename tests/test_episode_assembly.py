@@ -545,7 +545,11 @@ def test_progressive_preparation_counts_application_opening_as_first_resolved_tr
 
     session = asyncio.run(
         assembly.prepare_progressive_session(
-            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=4),
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=4,
+            ),
             opening_track=opening,
         )
     )
