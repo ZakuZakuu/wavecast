@@ -196,7 +196,22 @@ def _finish_authoring(
         )
 
         replacement: list[MusicSegment | NarrationSegment] | None = None
-        if generated is not None and not exposed:
+        if generated is None:
+            # A placeholder reserves the immutable render seam while Writer/TTS
+            # are pending. Once authoring degrades, persist that editorial
+            # decision as SKIPPED so music can continue and the renderer may
+            # safely freeze through the gap.
+            replacement = [
+                (
+                    segment.model_copy(update={"state": SegmentState.SKIPPED})
+                    if isinstance(segment, NarrationSegment)
+                    and not segment.is_audio_ready
+                    and segment.state is not SegmentState.SKIPPED
+                    else segment
+                )
+                for segment in existing
+            ]
+        elif not exposed:
             existing_music = [
                 segment for segment in existing if isinstance(segment, MusicSegment)
             ]
