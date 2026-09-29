@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from wavecast.arrangement.models import AudioClip, GainPoint, MixPlan
 from wavecast.audio_timing import (
+    TrackSectionKind,
     TrackTimingProfile,
     safe_incoming_music_overlap_seconds,
     safe_outgoing_narration_overlap_seconds,
@@ -40,6 +41,7 @@ class ArrangementDefaults:
     duck_release_seconds: float = 1.5
     lyric_aware_outgoing_overlap_seconds: float = 12.0
     lyric_guard_seconds: float = 0.75
+    opening_host_lead_in_seconds: float = 6.0
 
 
 def _active_segments(episode: PlayableEpisode) -> list[Segment]:
@@ -80,6 +82,56 @@ def _timing_profile(segment: Segment) -> TrackTimingProfile | None:
     return segment.timing_profile if isinstance(segment, MusicSegment) else None
 
 
+def _is_opening_host_overlay(segment: Segment) -> bool:
+    # This is the single preliminary-round opening host beat prepared before
+    # playback. Keep the special case narrow so historical Writer INTRO blocks
+    # retain their existing bridge semantics.
+    return (
+        segment.kind is SegmentKind.NARRATION
+        and segment.id == "segment-opening-host"
+    )
+
+
+def _only_opening_overlay_between(
+    segments: list[Segment],
+    left_index: int,
+    right_index: int,
+) -> bool:
+    between = segments[left_index + 1 : right_index]
+    return bool(between) and all(_is_opening_host_overlay(item) for item in between)
+
+
+def _opening_host_offset_seconds(
+    music: Segment,
+    narration_duration: float,
+    config: ArrangementDefaults,
+) -> float | None:
+    profile = _timing_profile(music)
+    if profile is None:
+        return None
+
+    preferred_kinds = (
+        TrackSectionKind.INTRO_INSTRUMENTAL,
+        TrackSectionKind.INSTRUMENTAL_GAP,
+    )
+    for kind in preferred_kinds:
+        for section in profile.sections:
+            if section.kind is not kind:
+                continue
+            earliest = max(
+                config.opening_host_lead_in_seconds,
+                section.start_seconds + config.lyric_guard_seconds,
+            )
+            latest_start = (
+                section.end_seconds
+                - config.lyric_guard_seconds
+                - narration_duration
+            )
+            if earliest <= latest_start:
+                return earliest
+    return None
+
+
 def _incoming_voice_overlap_seconds(
     segment: Segment,
     config: ArrangementDefaults,
@@ -112,7 +164,7 @@ def _narration_run_after(segments: list[Segment], index: int) -> list[int]:
 
 def _bridge_run_before(segments: list[Segment], index: int) -> list[int]:
     run = _narration_run_before(segments, index)
-    if not run:
+    if not run or any(_is_opening_host_overlay(segments[item]) for item in run):
         return []
     previous_index = run[0] - 1
     if previous_index >= 0 and segments[previous_index].kind is SegmentKind.MUSIC:
@@ -122,7 +174,7 @@ def _bridge_run_before(segments: list[Segment], index: int) -> list[int]:
 
 def _bridge_run_after(segments: list[Segment], index: int) -> list[int]:
     run = _narration_run_after(segments, index)
-    if not run:
+    if not run or any(_is_opening_host_overlay(segments[item]) for item in run):
         return []
     next_index = run[-1] + 1
     if next_index < len(segments) and segments[next_index].kind is SegmentKind.MUSIC:
@@ -456,6 +508,22 @@ def plan_episode_mix(
                     duration,
                 )
                 start = max(0.0, previous_start + previous_duration - overlap)
+            elif (
+                prior_music_index is not None
+                and _only_opening_overlay_between(
+                    segments,
+                    prior_music_index,
+                    index,
+                )
+            ):
+                prior_start = starts_by_index[prior_music_index]
+                prior_duration = _duration(segments[prior_music_index])
+                overlap = min(
+                    config.crossfade_seconds,
+                    prior_duration,
+                    duration,
+                )
+                start = max(0.0, prior_start + prior_duration - overlap)
             elif previous and previous.kind is SegmentKind.NARRATION:
                 start = _semantic_incoming_music_start(
                     segments=segments,
@@ -469,6 +537,17 @@ def plan_episode_mix(
                 start = cursor
         elif previous and previous.kind is SegmentKind.MUSIC:
             previous_end = starts_by_index[index - 1] + _duration(previous)
+            opening_offset = (
+                _opening_host_offset_seconds(previous, duration, config)
+                if _is_opening_host_overlay(segment)
+                else None
+            )
+            if opening_offset is not None:
+                start = starts_by_index[index - 1] + opening_offset
+                starts_by_index[index] = start
+                starts[segment.id] = start
+                cursor = max(cursor, start + duration)
+                continue
             fallback_overlap = min(
                 config.outgoing_voice_overlap_seconds,
                 duration / 2,
@@ -554,12 +633,29 @@ def plan_episode_mix(
             starts_by_index=starts_by_index,
         )
 
+        previous_music_index = _music_before(segments, index)
+        next_music_index = _music_after(segments, index)
         previous_is_music = bool(
-            index > 0 and segments[index - 1].kind is SegmentKind.MUSIC
+            previous_music_index is not None
+            and (
+                previous_music_index == index - 1
+                or _only_opening_overlay_between(
+                    segments,
+                    previous_music_index,
+                    index,
+                )
+            )
         )
         next_is_music = bool(
-            index + 1 < len(segments)
-            and segments[index + 1].kind is SegmentKind.MUSIC
+            next_music_index is not None
+            and (
+                next_music_index == index + 1
+                or _only_opening_overlay_between(
+                    segments,
+                    index,
+                    next_music_index,
+                )
+            )
         )
 
         fade_in = (
