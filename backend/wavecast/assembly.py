@@ -1429,9 +1429,7 @@ def _build_progressive_session(
             chapter=item.writer_chapter,
             resolved_track=item.track,
             slot_contexts=future_slots[index],
-            target_narration_seconds=max(
-                1, timing_plan.chapter_budgets[index].target_narration_seconds
-            ),
+            target_narration_seconds=timing_plan.chapter_budgets[index].target_narration_seconds,
         )
         for index, item in enumerate(future)
     ]
