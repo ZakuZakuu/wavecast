@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 from wavecast.assembly import StagedProgressiveChapterGenerator
 from wavecast.composer import EpisodeComposer
@@ -25,8 +26,10 @@ from wavecast.models.episode import (
     MusicSegment,
     NarrationSegment,
     SegmentState,
+    utc_now,
 )
 from wavecast.orchestration.episode import EpisodeOrchestrator, InMemoryEpisodeRepository
+from wavecast.orchestration.narration_enrichment import _finish_authoring
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
     ProgressiveAssemblySession,
@@ -274,6 +277,42 @@ def test_writer_failure_returns_no_authored_copy_before_orchestrator_degrades_ga
     placeholder = episode.segment("chapter-2:narration:0")
     assert isinstance(placeholder, NarrationSegment)
     assert placeholder.state is SegmentState.PLANNED
+
+
+def test_degraded_writer_marks_pending_host_seam_skipped(tmp_path) -> None:
+    track = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Bridge Artist",
+        canonical_title="Bridge Track",
+    )
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    generator = StagedProgressiveChapterGenerator(
+        session=_session(track),
+        writer=_Writer(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+    )
+    repository = InMemoryEpisodeRepository()
+    episode = _episode()
+    episode.progressive_session = _session(track)
+    generated = asyncio.run(generator.generate_next(episode))
+    assert generated is not None
+    episode.segments.extend(generated.segments)
+    repository.save(episode)
+
+    updated = _finish_authoring(
+        SimpleNamespace(repository=repository, now=utc_now),
+        episode.id,
+        "chapter-2",
+        None,
+    )
+
+    placeholder = updated.segment("chapter-2:narration:0")
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.SKIPPED
+    music = updated.segment("chapter-2:music:0")
+    assert isinstance(music, MusicSegment)
+    assert music.is_audio_ready
 
 
 def test_writer_enrichment_adds_script_ready_narration_without_repreparing_music(
