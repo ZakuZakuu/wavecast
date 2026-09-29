@@ -66,6 +66,55 @@ Do not push incremental edits to `integration`. After the whole checkpoint is
 accepted and validation is available, merge/deploy the sidecar once, then move
 WaveCast `integration` once. Railway Agent is not required.
 
+
+**Validation fallback while hosted Actions is blocked**
+
+- A rerun on 2026-09-29 reproduced the same behavior: every GitHub-hosted job
+  queued, then failed within seconds with zero runner steps and no job log.
+- Historical Actions data shows the last observed successful hosted run at
+  2026-09-27T11:05:03Z; subsequent runs from 11:05:18Z onward consistently fail
+  before steps begin. This strongly suggests an account-level hosted-runner
+  usage/budget/billing block rather than a repository test failure, but the
+  GitHub API available to this session cannot read the account billing page.
+- Do not burn commits trying to fix CI YAML unless a run actually reaches steps.
+  Either restore hosted Actions allowance, use a self-hosted runner, or execute
+  the exact workflow commands locally.
+
+WaveCast local equivalent:
+
+```bash
+uv sync --all-groups
+uv run alembic upgrade head
+uv run ruff check .
+uv run mypy
+uv run pytest
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm test:web
+WAVECAST_INTERNAL_API_URL=https://api.example.test pnpm build
+python3 scripts/vercel_rewrite_smoke.py --expected https://api.example.test/api/:path*
+```
+
+The deployment smoke remains:
+
+```bash
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+uv run python scripts/deployment_smoke.py --restart-api --compose-file docker-compose.prod.yml
+docker compose -f docker-compose.prod.yml down -v
+```
+
+Sidecar local equivalent:
+
+```bash
+uv sync --all-groups
+uv run ruff check .
+uv run mypy
+uv run pytest -q
+```
+
+
 ---
 
 ## How to use this handoff
