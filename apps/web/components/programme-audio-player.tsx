@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef } from "react";
 const HLS_MIME = "application/vnd.apple.mpegurl";
 const FRONTIER_WAKE_SECONDS = 45;
 const FRONTIER_SEEK_EPSILON_SECONDS = 0.05;
+const FRONTIER_RELOAD_EPSILON_SECONDS = 2;
 const POSITION_EMIT_INTERVAL_MS = 200;
 
 type ProgrammeAudioPlayerProps = {
@@ -280,8 +281,13 @@ export function ProgrammeAudioPlayer({
       || hlsRef.current
       || !audio.canPlayType(HLS_MIME)
       || !desiredPlayingRef.current
-      || (!audio.paused && !audio.ended)
     ) return;
+
+    const atOldFrontier = (
+      Math.max(0, audio.currentTime || 0)
+      >= Math.max(0, previousFrontier - FRONTIER_RELOAD_EPSILON_SECONDS)
+    );
+    if (!atOldFrontier) return;
 
     // Safari's native HLS can stop at the end of the currently-known EVENT
     // playlist and fail to notice newly appended chunks. Preserve the listener
