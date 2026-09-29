@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -13,7 +14,7 @@ class TimingInterval(BaseModel):
     end_seconds: float = Field(gt=0)
 
     @model_validator(mode="after")
-    def validate_interval(self) -> "TimingInterval":
+    def validate_interval(self) -> TimingInterval:
         if self.end_seconds <= self.start_seconds:
             raise ValueError("timing interval end must be after start")
         return self
@@ -46,7 +47,7 @@ class TrackTimingProfile(BaseModel):
     sections: tuple[TrackSection, ...] = ()
 
     @model_validator(mode="after")
-    def validate_bounds(self) -> "TrackTimingProfile":
+    def validate_bounds(self) -> TrackTimingProfile:
         for interval in (*self.lyric_lines, *self.vocal_intervals):
             if interval.end_seconds > self.source_duration_seconds + 1e-6:
                 raise ValueError("timing interval exceeds source duration")
