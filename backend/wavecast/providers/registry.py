@@ -76,11 +76,21 @@ class MusicProviderRegistry:
 
     async def get_playback_asset(self, resolved_track: ResolvedTrack) -> AudioAsset:
         provider = self.provider_for_track_ref(resolved_track.track_ref)
-        # Timing is optional enrichment. Start it alongside playback resolution so
-        # its bounded sidecar lookup does not add serial latency to music readiness.
+
+        async def optional_timing() -> TrackTimingProfile | None:
+            try:
+                return await self.get_timing_profile(resolved_track)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Timing is quality enrichment, never a music-readiness requirement.
+                return None
+
+        # Timing starts alongside playback resolution so its bounded sidecar
+        # lookup does not add serial latency to music readiness.
         asset, timing = await asyncio.gather(
             provider.get_playback_asset(resolved_track),
-            self.get_timing_profile(resolved_track),
+            optional_timing(),
         )
         if timing is None:
             return asset
