@@ -349,9 +349,18 @@ class LiveEpisodeAssemblyService:
                 or narration
             ):
                 return None
+            segments: list[MusicSegment | NarrationSegment] = []
+            if request.presentation_intent.host_mode is not HostMode.NONE:
+                segments.append(
+                    _pending_narration_placeholder(
+                        "chapter-2",
+                        planned_duration_seconds=1,
+                    )
+                )
+            segments.extend(music)
             return _generated_runtime_chapter(
                 "chapter-2",
-                playable.segments,
+                segments,
                 base_order=1,
             )
 
@@ -2124,9 +2133,21 @@ class StagedProgressiveChapterGenerator:
                 stage="progressive_chunk",
                 reason_code="missing_playable_music",
             )
+        segments: list[MusicSegment | NarrationSegment] = []
+        if (
+            self.session.presentation_intent.host_mode is not HostMode.NONE
+            and chapter.slot_contexts
+        ):
+            segments.append(
+                _pending_narration_placeholder(
+                    chapter.chapter_id,
+                    planned_duration_seconds=max(1, chapter.target_narration_seconds),
+                )
+            )
+        segments.extend(music)
         return _generated_runtime_chapter(
             chapter.chapter_id,
-            music,
+            segments,
             base_order=episode.ordered_segments[-1].order + 1,
         )
 
@@ -2275,6 +2296,23 @@ class StagedProgressiveChapterGenerator:
             list(playable.segments),
             base_order=chapter_start_order,
         )
+
+
+def _pending_narration_placeholder(
+    chapter_id: str,
+    *,
+    planned_duration_seconds: int,
+) -> NarrationSegment:
+    """Reserve an unfrozen host seam without putting Writer/TTS on FastStart."""
+
+    return NarrationSegment(
+        id=f"{chapter_id}:narration:pending",
+        chapter_id=chapter_id,
+        order=0,
+        state=SegmentState.PLANNED,
+        planned_duration_seconds=max(1, planned_duration_seconds),
+        title="Pending host bridge",
+    )
 
 
 def _generated_runtime_chapter(
