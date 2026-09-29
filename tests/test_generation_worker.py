@@ -218,7 +218,6 @@ def test_progressive_job_completes_while_narration_enrichment_is_still_running()
     asyncio.run(run())
 
 
-
 def test_worker_completes_when_full_planning_is_deferred_behind_ready_music() -> None:
     class DeferredPlanningRuntime:
         async def prepare_fast_successor(self, episode):
