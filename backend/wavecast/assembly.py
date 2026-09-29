@@ -233,6 +233,8 @@ class _PreparedIntelligence:
 
 
 _ESTIMATED_TRACK_DURATION_SECONDS = 180
+_MIN_PROGRESSIVE_DURATION_COVERAGE_NUMERATOR = 3
+_MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR = 4
 
 
 class LiveEpisodeAssemblyService:
@@ -1423,12 +1425,42 @@ def _build_progressive_session(
                 "required_future_track_count": 1,
             },
         )
+
+    target_narration_ratio = narration_ratio_for_host_mode(
+        request.presentation_intent.host_mode,
+        full_ratio=narration_ratio,
+    )
+    requested_music_seconds = int(
+        request.desired_duration_seconds * (1.0 - target_narration_ratio)
+    )
+    bounded_music_target_seconds = min(
+        requested_music_seconds,
+        request.max_tracks * _ESTIMATED_TRACK_DURATION_SECONDS,
+    )
+    required_resolved_music_seconds = (
+        bounded_music_target_seconds * _MIN_PROGRESSIVE_DURATION_COVERAGE_NUMERATOR
+        + _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR
+        - 1
+    ) // _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR
+    estimated_resolved_music_seconds = (
+        1 + future_music_count
+    ) * _ESTIMATED_TRACK_DURATION_SECONDS
+    if estimated_resolved_music_seconds < required_resolved_music_seconds:
+        raise EpisodeAssemblyError(
+            "progressive route duration coverage is too short to be finalized",
+            stage="resolution",
+            reason_code="insufficient_progressive_duration_coverage",
+            diagnostics={
+                "estimated_resolved_music_seconds": estimated_resolved_music_seconds,
+                "required_resolved_music_seconds": required_resolved_music_seconds,
+                "desired_duration_seconds": request.desired_duration_seconds,
+                "unresolved_track_count": len(prepared.unresolved),
+            },
+        )
+
     timing_plan = build_program_timing_plan(
         desired_total_seconds=request.desired_duration_seconds,
-        target_narration_ratio=narration_ratio_for_host_mode(
-            request.presentation_intent.host_mode,
-            full_ratio=narration_ratio,
-        ),
+        target_narration_ratio=target_narration_ratio,
         resolved_music_seconds=future_music_count * _ESTIMATED_TRACK_DURATION_SECONDS,
         chapter_slot_counts=[len(contexts) for contexts in future_slots],
     )
