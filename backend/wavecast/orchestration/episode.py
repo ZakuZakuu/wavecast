@@ -986,7 +986,9 @@ class EpisodeOrchestrator:
             detached = candidate.model_copy(deep=True)
             try:
                 materialized = await materialize(detached)
-            except ProviderError as error:
+            except Exception as error:
+                # TTS is optional enrichment. Any non-cancellation failure must
+                # release the speculative seam so music continuity wins.
                 logger.warning(
                     "narration_enrichment_failed episode_id=%s segment_id=%s "
                     "stage=tts error_type=%s",
