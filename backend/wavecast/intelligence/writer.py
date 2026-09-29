@@ -49,6 +49,7 @@ class WriterService:
         topic: str = "",
         slot_context: NarrationSlotContext | None = None,
         slot_contexts: Sequence[NarrationSlotContext] | None = None,
+        inference_profile: InferenceProfile = InferenceProfile.SYNTHESIS,
     ) -> RadioScript | NarrationScript:
         scoped = [item for item in evidence if item.id in set(chapter.evidence_ids)]
         selected_language = resolve_output_language(output_language, topic or chapter.reason)
@@ -133,7 +134,7 @@ class WriterService:
             prompt,
             RadioScript,
             transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
-            profile=InferenceProfile.SYNTHESIS,
+            profile=inference_profile,
             stage="writer",
         )
         if not isinstance(result, (RadioScript, NarrationScript)):

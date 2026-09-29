@@ -14,6 +14,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Final
 
+from wavecast.models.episode import NarrationSegment, SegmentState
 from wavecast.orchestration.episode import EpisodeOrchestrator, EpisodeRuntimeError
 from wavecast.providers.errors import (
     ProviderConfigurationError,
@@ -251,6 +252,37 @@ class GenerationWorker:
         fast_start = getattr(self.orchestrator, "ensure_fast_start_async", None)
         if callable(fast_start):
             await fast_start(job.episode_id)
+
+        # The first host bridge must not wait for full Research/Curator route
+        # planning. FastStart has already made the successor durable, so Writer
+        # can use the concrete A -> B playback identities immediately; TTS then
+        # resolves the placeholder before background route planning continues.
+        fast_bridge = getattr(
+            self.orchestrator,
+            "author_fast_successor_narration_async",
+            None,
+        )
+        if callable(fast_bridge):
+            try:
+                fast_bridge_episode = await fast_bridge(job.episode_id)
+                has_fast_script = any(
+                    isinstance(segment, NarrationSegment)
+                    and segment.chapter_id == "chapter-2"
+                    and segment.state is SegmentState.SCRIPT_READY
+                    for segment in fast_bridge_episode.ordered_segments
+                )
+                if has_fast_script:
+                    await self.orchestrator.materialize_pending_narration_async(
+                        job.episode_id,
+                        max_segments=1,
+                    )
+            except Exception as error:
+                logger.warning(
+                    "narration_enrichment_failed episode_id=%s "
+                    "stage=fast_bridge error_type=%s",
+                    job.episode_id,
+                    type(error).__name__,
+                )
 
         first_buffer = await self.orchestrator.ensure_buffer_async(
             job.episode_id,
