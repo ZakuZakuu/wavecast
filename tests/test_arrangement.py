@@ -391,6 +391,42 @@ def test_opening_host_uses_safe_instrumental_window_without_breaking_crossfade()
     assert second.fade_in_seconds == pytest.approx(10.0)
 
 
+def test_opening_host_on_instrumental_timing_profile_is_free_talk_over() -> None:
+    opening = _music("a", 0, 60).model_copy(
+        update={
+            "timing_profile": TrackTimingProfile(
+                source_duration_seconds=60,
+                lyric_timestamps_available=False,
+                lyric_lines=(),
+                vocal_intervals=(),
+                sections=(),
+            )
+        }
+    )
+    opening_host = _voice(
+        "segment-opening-host",
+        1,
+        8,
+        NarrationRole.INTRO,
+    )
+    next_music = _music("b", 2, 35)
+
+    plan = plan_episode_mix(_episode(opening, opening_host, next_music))
+
+    voice = next(
+        clip for clip in plan.clips if clip.segment_id == "segment-opening-host"
+    )
+    first = next(clip for clip in plan.clips if clip.segment_id == "a")
+
+    assert voice.timeline_start_seconds == pytest.approx(6.0)
+    assert voice.timeline_end_seconds < 20
+    assert any(
+        point.offset_seconds == pytest.approx(6.0)
+        and point.gain == pytest.approx(0.30)
+        for point in first.gain_automation
+    )
+
+
 def test_opening_host_without_timing_stays_near_start_instead_of_song_tail() -> None:
     opening = _music("a", 0, 60)
     opening_host = _voice(
