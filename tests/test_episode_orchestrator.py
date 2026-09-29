@@ -419,6 +419,37 @@ def test_narration_enrichment_attaches_audio_after_ready_music_is_persisted(
     assert enriched.segment("chapter-2:music:0").is_audio_ready
 
 
+class _UnexpectedNarrationEnrichmentRuntime(_NarrationEnrichmentRuntime):
+    async def materialize_narration(
+        self, segment: NarrationSegment
+    ) -> NarrationSegment:
+        self.calls += 1
+        del segment
+        raise RuntimeError("synthetic unexpected TTS failure")
+
+
+def test_unexpected_tts_failure_also_skips_only_speculative_narration(
+    seed: EpisodeSeed,
+) -> None:
+    enrichment = _UnexpectedNarrationEnrichmentRuntime()
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(
+        repository,
+        progressive_runtime=enrichment,  # type: ignore[arg-type]
+    )
+    episode = runtime.start(seed)
+    _append_script_ready_narration_with_ready_music(runtime, episode.id)
+
+    enriched = asyncio.run(
+        runtime.materialize_pending_narration_async(episode.id, max_segments=1)
+    )
+
+    assert enrichment.calls == 1
+    assert enriched.segment("chapter-2:narration:0").state is SegmentState.SKIPPED
+    assert enriched.segment("chapter-2:music:0").is_audio_ready
+    assert enriched.has_ready_successor is True
+
+
 def test_tts_failure_skips_only_speculative_narration(
     seed: EpisodeSeed,
 ) -> None:
