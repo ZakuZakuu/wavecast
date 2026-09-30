@@ -627,6 +627,228 @@ class LiveEpisodeAssemblyService:
                 return candidate, proposal, "same_artist_catalog"
         return None
 
+    async def _extend_underfilled_route_with_curator(
+        self,
+        request: LiveEpisodeAssemblyRequest,
+        *,
+        bundle: ResearchBundle,
+        fast_plan: FastStartPlan,
+        opening_track: ResolvedTrack,
+        locked_successor: ResolvedTrack,
+        resolved_chapters: list[_ResolvedChapter],
+        used_tracks: list[ResolvedTrack],
+        trace: GenerationTrace,
+    ) -> tuple[list[_ResolvedChapter], list[UnresolvedAssemblyProposal]]:
+        """Ask Curator once for topic-driven continuation before emergency catalog fill."""
+
+        normalized = _normalize_progressive_route(
+            request=request,
+            resolved_chapters=resolved_chapters,
+            opening_track=opening_track,
+            locked_successor=locked_successor,
+        )
+        required_track_count = _required_progressive_track_count(
+            request,
+            self.narration_ratio,
+        )
+        current_track_count = sum(item.track is not None for item in normalized)
+        if (
+            current_track_count >= required_track_count
+            or current_track_count >= request.max_tracks
+            or len(normalized) >= request.max_chapters
+        ):
+            return resolved_chapters, []
+
+        if not any(
+            _same_song_identity(locked_successor, item)
+            for item in used_tracks
+        ):
+            used_tracks.append(locked_successor)
+
+        committed: list[ChapterPlan] = []
+        for item in normalized:
+            if item.track is None:
+                continue
+            proposal = TrackProposal(
+                artist=item.track.canonical_artist,
+                title=item.track.canonical_title,
+                reasons=["Already committed playable programme route."],
+                similarity_dimensions=(
+                    list(item.chapter.track.similarity_dimensions)
+                    if item.chapter.track is not None
+                    else []
+                ),
+                evidence_ids=list(item.chapter.evidence_ids),
+                confidence=1.0,
+                novelty_distance=(
+                    item.chapter.novelty_distance or NoveltyDistance.CLOSE
+                ),
+            )
+            committed.append(
+                item.writer_chapter.model_copy(
+                    update={
+                        "index": len(committed),
+                        "track": proposal,
+                        "track_alternates": [],
+                    }
+                )
+            )
+
+        trace.mark(
+            "curator_continuation_started",
+            committed_track_count=len(committed),
+            required_track_count=required_track_count,
+        )
+        try:
+            continuation = await self.background_pipeline.curator.curate(
+                bundle,
+                fast_plan,
+                desired_duration_seconds=request.desired_duration_seconds,
+                max_tracks=request.max_tracks,
+                max_chapters=request.max_chapters,
+                committed_chapters=committed,
+                output_language=resolve_output_language(
+                    request.output_language,
+                    request.topic,
+                ),
+                topic=request.topic,
+                trace=trace,
+            )
+        except (CuratorContractError, ProviderError) as error:
+            trace.mark(
+                "curator_continuation_failed",
+                error_type=type(error).__name__,
+            )
+            return resolved_chapters, []
+
+        additions = [
+            chapter
+            for chapter in continuation.chapters
+            if chapter.index >= len(committed)
+        ]
+        if not additions:
+            trace.mark("curator_continuation_empty")
+            return resolved_chapters, []
+
+        continuation_unresolved: list[UnresolvedAssemblyProposal] = []
+        added_count = 0
+        for continuation_chapter in additions:
+            normalized_now = _normalize_progressive_route(
+                request=request,
+                resolved_chapters=resolved_chapters,
+                opening_track=opening_track,
+                locked_successor=locked_successor,
+            )
+            if (
+                sum(item.track is not None for item in normalized_now)
+                >= required_track_count
+            ):
+                break
+
+            chapter = continuation_chapter.model_copy(
+                update={"index": len(resolved_chapters)}
+            )
+            resolved: ResolvedTrack | None = None
+            selected_proposal: TrackProposal | None = None
+            replacement_kind: str | None = None
+            if chapter.track is not None:
+                candidates = [chapter.track, *chapter.track_alternates]
+                attempted = {_proposal_identity_key(item) for item in candidates}
+                last_resolution_reason = "no exact playable catalog match"
+                for candidate_rank, proposal in enumerate(candidates):
+                    try:
+                        candidate = await resolve_track_proposal_across_providers(
+                            self.retrieval,
+                            proposal,
+                        )
+                    except ProviderError as error:
+                        candidate = None
+                        last_resolution_reason = (
+                            f"resolution provider failed: {type(error).__name__}"
+                        )
+                    if candidate is None:
+                        continue
+                    if any(
+                        _same_song_identity(candidate, used)
+                        for used in used_tracks
+                    ):
+                        last_resolution_reason = "duplicate episode song identity"
+                        continue
+                    resolved = candidate
+                    selected_proposal = proposal
+                    used_tracks.append(candidate)
+                    if candidate_rank > 0:
+                        trace.mark(
+                            "curator_continuation_alternate_resolved",
+                            candidate_rank=candidate_rank + 1,
+                        )
+                    break
+
+                if resolved is None:
+                    replacement = await self._resolve_catalog_replacement(
+                        chapter,
+                        bundle,
+                        fast_plan,
+                        attempted=attempted,
+                        used_tracks=used_tracks,
+                    )
+                    if replacement is not None:
+                        resolved, selected_proposal, replacement_kind = replacement
+                        used_tracks.append(resolved)
+                    else:
+                        continuation_unresolved.append(
+                            UnresolvedAssemblyProposal(
+                                chapter_index=chapter.index,
+                                proposal=chapter.track,
+                                reason=last_resolution_reason,
+                            )
+                        )
+
+            route_chapter = chapter
+            if replacement_kind is not None and selected_proposal is not None:
+                route_chapter = chapter.model_copy(
+                    update={
+                        "track": selected_proposal,
+                        "track_alternates": [],
+                        "connection_from_previous_track": None,
+                        "reason": (
+                            "Use a catalog-resolved continuation while preserving "
+                            "the topic-driven editorial role."
+                        ),
+                        "novelty_distance": selected_proposal.novelty_distance,
+                        "evidence_ids": list(selected_proposal.evidence_ids),
+                        "claim_support": [],
+                        "narration_goal": (
+                            "Connect this playable continuation to the programme "
+                            "theme without unsupported song-specific claims."
+                        ),
+                    }
+                )
+
+            resolved_chapters.append(
+                _ResolvedChapter(
+                    chapter=route_chapter,
+                    writer_chapter=route_chapter.model_copy(
+                        update={
+                            "index": len(resolved_chapters),
+                            "track": selected_proposal,
+                            "track_alternates": [],
+                        }
+                    ),
+                    track=resolved,
+                    music_index=None,
+                )
+            )
+            if resolved is not None:
+                added_count += 1
+
+        trace.mark(
+            "curator_continuation_ready",
+            added_track_count=added_count,
+            unresolved_track_count=len(continuation_unresolved),
+        )
+        return resolved_chapters, continuation_unresolved
+
     async def _extend_underfilled_locked_route_from_catalog(
         self,
         request: LiveEpisodeAssemblyRequest,
