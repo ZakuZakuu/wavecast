@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from wavecast.arrangement import plan_episode_mix
 from wavecast.models.episode import (
     CoverParams,
     EpisodeSeed,
     EpisodeState,
+    PlayableEpisode,
     SegmentState,
 )
 from wavecast.orchestration.episode import (
@@ -19,6 +21,8 @@ from wavecast.orchestration.generation import (
     GeneratedChapter,
 )
 from wavecast.orchestration.scheduler import InlineGenerationScheduler
+from wavecast.rendering import slice_mix_plan
+from wavecast.rendering.fingerprint import mix_plan_fingerprint
 
 
 def make_seed() -> EpisodeSeed:
@@ -74,6 +78,49 @@ def test_long_opening_still_prepares_a_future_chapter() -> None:
     assert generator.calls == 1
     assert buffered.segment("segment-narration-1").is_audio_ready
     assert buffered.segment("segment-bridge").is_audio_ready
+
+
+@pytest.mark.parametrize("target_chapters", [1, 2])
+def test_programme_refills_after_third_track_without_lifecycle_handoff(target_chapters: int) -> None:
+    class LongTrackGenerator(DeterministicMockProgressiveGenerator):
+        async def generate_next(self, episode):
+            chapter = await super().generate_next(episode)
+            if chapter is not None:
+                for segment in chapter.segments:
+                    if segment.kind.value == "MUSIC":
+                        segment.actual_duration_seconds = 240
+            return chapter
+
+    generator = LongTrackGenerator()
+    runtime, _ = make_runtime(generator)
+    episode = runtime.start(make_seed().model_copy(
+        update={"opening_track_duration_seconds": 300}
+    ))
+    # Three real-length tracks are durable, while the HLS transport keeps the
+    # lifecycle cursor at the opening. No completed/handoff endpoint is used.
+    for _ in range(2):
+        snapshot = runtime.capture_generation_snapshot(episode.id)
+        chapter = asyncio.run(generator.generate_next(snapshot.episode))
+        assert chapter is not None
+        episode = runtime.append_generated_chapter(episode.id, chapter, snapshot)
+    plan = plan_episode_mix(PlayableEpisode(id=episode.id, segments=episode.timeline_segments))
+    runtime.checkpoint_program_playback(episode.id, plan.duration_seconds - 15)
+    frozen_segments = [segment.model_dump_json() for segment in episode.ordered_segments]
+    frozen_windows = range(0, int(plan.duration_seconds - 30) // 6 * 6, 6)
+    fingerprints = [mix_plan_fingerprint(slice_mix_plan(plan, start, start + 6)) for start in frozen_windows]
+
+    refilled = asyncio.run(runtime.ensure_buffer_async(
+        episode.id, target_chapters=target_chapters, target_ahead_seconds=180,
+    ))
+
+    assert refilled.segment("segment-finale").is_audio_ready
+    assert refilled.current_segment_id == "segment-opening"
+    assert refilled.segment("segment-bridge").state is SegmentState.AUDIO_READY
+    assert refilled.segment("segment-resolution").state is SegmentState.AUDIO_READY
+    assert [segment.model_dump_json() for segment in refilled.ordered_segments[:len(frozen_segments)]] == frozen_segments
+    extended = plan_episode_mix(PlayableEpisode(id=refilled.id, segments=refilled.timeline_segments))
+    assert extended.duration_seconds > plan.duration_seconds
+    assert [mix_plan_fingerprint(slice_mix_plan(extended, start, start + 6)) for start in frozen_windows] == fingerprints
 
 
 def test_scheduler_appends_complete_ready_chapters_within_bound() -> None:

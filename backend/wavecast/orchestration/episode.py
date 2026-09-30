@@ -6,8 +6,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from time import monotonic
+from typing import cast
 from urllib.parse import urlsplit
 
+from wavecast.arrangement import plan_episode_mix
 from wavecast.models.episode import (
     EpisodeSeed,
     EpisodeState,
@@ -1523,6 +1525,27 @@ class EpisodeOrchestrator:
 
     @staticmethod
     def _ready_future_chapter_count(episode: LiveEpisode) -> int:
+        if episode.program_transport_active:
+            # HLS checkpoints intentionally never advance current_segment_id.
+            # Count music still ahead of the programme cursor, using the same
+            # arrangement geometry as playback (including voice overlays and
+            # crossfades), rather than counting already-consumed chapters.
+            ready_segments: list[MusicSegment | NarrationSegment] = []
+            for segment in episode.timeline_segments:
+                if segment.is_audio_ready:
+                    ready_segments.append(cast(MusicSegment | NarrationSegment, segment))
+                elif segment.kind is SegmentKind.MUSIC:
+                    break
+            if not ready_segments:
+                return 0
+            plan = plan_episode_mix(PlayableEpisode(id=episode.id, segments=ready_segments))
+            chapters = {segment.id: segment.chapter_id for segment in ready_segments}
+            return len({
+                chapters[clip.segment_id]
+                for clip in plan.clips
+                if clip.lane == "MUSIC"
+                and clip.timeline_start_seconds > episode.program_playback_position_seconds
+            })
         current = EpisodeOrchestrator._current_segment(episode)
         if current is None:
             return 0

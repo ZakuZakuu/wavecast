@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentAtPosition, segmentOffset, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
+import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, musicChaptersForEpisode, nextProgramMusicStart, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentAtPosition, segmentOffset, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
+import type { MixPlan } from "../lib/mix-timeline";
 import type { LiveEpisode } from "../lib/types";
 
 const episode: LiveEpisode = {
@@ -16,6 +17,42 @@ const episode: LiveEpisode = {
 };
 
 describe("generated-frontier player behavior", () => {
+  it("does not count a standalone transition or outro as another song", () => {
+    const withVoiceChapters: LiveEpisode = {
+      ...episode,
+      segments: [
+        episode.segments[0],
+        { ...episode.segments[1], chapter_id: "standalone-transition", state: "AUDIO_READY" },
+        episode.segments[2],
+        { ...episode.segments[1], id: "outro", chapter_id: "final-outro", order: 3, state: "AUDIO_READY" },
+      ],
+    };
+    const chapters = musicChaptersForEpisode(withVoiceChapters);
+    expect(chapters.map((chapter) => chapter.id)).toEqual(["one", "two"]);
+    expect(chapters[1].segments.map((segment) => segment.id)).toEqual(["narration", "bridge", "outro"]);
+    expect(musicChaptersForEpisode({
+      ...withVoiceChapters,
+      segments: withVoiceChapters.segments.map((segment) => segment.kind === "NARRATION"
+        ? { ...segment, state: "SKIPPED" }
+        : segment),
+    })[1].segments.map((segment) => segment.id)).toEqual(["bridge"]);
+  });
+
+  it("next goes to the upcoming music clip, rather than its voice bridge", () => {
+    const plan: MixPlan = {
+      schemaVersion: 1, episodeId: episode.id, durationSeconds: 60,
+      segmentStarts: { opening: 0, narration: 18, bridge: 25 },
+      clips: [
+        { id: "opening", segmentId: "opening", lane: "MUSIC", timelineStartSeconds: 0, sourceUrl: "/a", sourceOffsetSeconds: 0, playableDurationSeconds: 22, gain: 1, fadeInSeconds: 0, fadeOutSeconds: 0, gainAutomation: [] },
+        { id: "voice", segmentId: "narration", lane: "VOICE", timelineStartSeconds: 18, sourceUrl: "/v", sourceOffsetSeconds: 0, playableDurationSeconds: 10, gain: 1, fadeInSeconds: 0, fadeOutSeconds: 0, gainAutomation: [] },
+        { id: "bridge", segmentId: "bridge", lane: "MUSIC", timelineStartSeconds: 25, sourceUrl: "/b", sourceOffsetSeconds: 0, playableDurationSeconds: 35, gain: 1, fadeInSeconds: 0, fadeOutSeconds: 0, gainAutomation: [] },
+      ],
+    };
+    expect(nextProgramMusicStart(plan, 17)).toBe(25);
+    expect(nextProgramMusicStart(plan, 20)).toBe(25);
+    expect(nextProgramMusicStart(plan, 26)).toBeUndefined();
+  });
+
   it("does not allow a listener to seek into ungenerated future", () => {
     expect(isSeekAllowed(episode, 22)).toBe(true);
     expect(isSeekAllowed(episode, 23)).toBe(false);

@@ -142,6 +142,7 @@ class _FakeGenerator:
                     planned_duration_seconds=1,
                     actual_duration_seconds=1,
                     track_ref=f"mock:{chapter.chapter_id}",
+                    audio_source_url=f"/api/audio/mock/music/{chapter.chapter_id}",
                     title=chapter.chapter_id,
                     artist="Fixture Artist",
                 )
