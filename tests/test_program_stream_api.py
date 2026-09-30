@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
-from wavecast.arrangement import plan_episode_mix
+from wavecast.arrangement import MixPlan, plan_episode_mix
 from wavecast.models.episode import (
     EpisodeState,
     GenerationMode,
@@ -68,27 +68,27 @@ def _wav_bytes(duration_seconds: float, frequency: float) -> bytes:
 
 
 def _manifest_for_plan_prefix(
-    plan,
+    plan: MixPlan,
     *,
     end_seconds: float,
 ) -> ProgramRenderManifest:
     sliced = slice_mix_plan(plan, 0, end_seconds)
     chunk = ProgramRenderChunk(
         index=0,
-        startSeconds=0,
-        durationSeconds=end_seconds,
-        planFingerprint=mix_plan_fingerprint(sliced),
-        contentSha256="0" * 64,
-        assetKey="program-renders/test/chunk.ts",
-        audioUrl="/api/assets/audio/program-renders/test/chunk.ts",
+        start_seconds=0,
+        duration_seconds=end_seconds,
+        plan_fingerprint=mix_plan_fingerprint(sliced),
+        content_sha256="0" * 64,
+        asset_key="program-renders/test/chunk.ts",
+        audio_url="/api/assets/audio/program-renders/test/chunk.ts",
     )
     return ProgramRenderManifest(
-        episodeId=plan.episode_id,
-        chunkDurationSeconds=end_seconds,
-        holdbackSeconds=0,
-        renderedFrontierSeconds=end_seconds,
+        episode_id=plan.episode_id,
+        chunk_duration_seconds=end_seconds,
+        holdback_seconds=0,
+        rendered_frontier_seconds=end_seconds,
         chunks=(chunk,),
-        streamUrl=f"/api/program-streams/{plan.episode_id}.m3u8",
+        stream_url=f"/api/program-streams/{plan.episode_id}.m3u8",
     )
 
 
@@ -500,22 +500,22 @@ def test_program_render_continuity_deadline_skips_pending_host_before_ready_musi
     )
     repository.save(episode)
     manifest = ProgramRenderManifest(
-        episodeId=episode.id,
-        chunkDurationSeconds=120,
-        holdbackSeconds=30,
-        renderedFrontierSeconds=120,
+        episode_id=episode.id,
+        chunk_duration_seconds=120,
+        holdback_seconds=30,
+        rendered_frontier_seconds=120,
         chunks=(
             ProgramRenderChunk(
                 index=0,
-                startSeconds=0,
-                durationSeconds=120,
-                planFingerprint="previous-plan",
-                contentSha256="0" * 64,
-                assetKey="program-renders/test/chunk.ts",
-                audioUrl="/api/assets/audio/program-renders/test/chunk.ts",
+                start_seconds=0,
+                duration_seconds=120,
+                plan_fingerprint="previous-plan",
+                content_sha256="0" * 64,
+                asset_key="program-renders/test/chunk.ts",
+                audio_url="/api/assets/audio/program-renders/test/chunk.ts",
             ),
         ),
-        streamUrl=f"/api/program-streams/{episode.id}.m3u8",
+        stream_url=f"/api/program-streams/{episode.id}.m3u8",
     )
 
     skipped = api_module._skip_blocking_optional_narration_for_continuity(
