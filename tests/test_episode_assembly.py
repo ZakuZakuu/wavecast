@@ -1591,6 +1591,12 @@ def test_probe_asset_url_redacts_external_tokens() -> None:
 def test_unresolved_proposal_is_reported_but_narrative_is_still_written(tmp_path) -> None:
     class MixedLLM(RecordingAssemblyLLM):
         async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+            if output_type is FastStartPlan:
+                plan = await super().structured(prompt, output_type, **kwargs)
+                assert isinstance(plan, FastStartPlan)
+                return plan.model_copy(
+                    update={"next_candidates": [], "selected_next_track": None}
+                )
             if output_type is ProgramSkeleton:
                 known = self._tracks[0]
                 unknown = ("Event Listing", "Festival doors 8-9-2026", NoveltyDistance.CLOSE)
@@ -2198,6 +2204,12 @@ def test_assembly_explicit_english_overrides_chinese_topic(tmp_path) -> None:
 def test_middle_unresolved_chapter_keeps_narrative_writer_order(tmp_path) -> None:
     class ExplicitIndexLLM(RecordingAssemblyLLM):
         async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+            if output_type is FastStartPlan:
+                plan = await super().structured(prompt, output_type, **kwargs)
+                assert isinstance(plan, FastStartPlan)
+                return plan.model_copy(
+                    update={"next_candidates": [], "selected_next_track": None}
+                )
             self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
             if output_type is ProgramSkeleton:
                 known = self._tracks[0]
