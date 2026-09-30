@@ -51,6 +51,7 @@ from wavecast.intelligence.writer import WriterService
 from wavecast.materialization import NarrationMaterializer
 from wavecast.models.episode import MusicSegment, NarrationSegment, SegmentState
 from wavecast.presentation import HostMode, PresentationIntent
+from wavecast.providers.contracts import TrackMetadata
 from wavecast.providers.fakes import FakeSearchProvider, MockMusicProvider, MockTTSProvider
 from wavecast.providers.registry import MusicProviderRegistry
 from wavecast.providers.retrieval import MusicRetrievalService
@@ -113,7 +114,11 @@ class RecordingAssemblyLLM(MockEpisodeAssemblyLLM):
         return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
 
 
-def service(tmp_path, llm: RecordingAssemblyLLM | None = None) -> LiveEpisodeAssemblyService:
+def service(
+    tmp_path,
+    llm: RecordingAssemblyLLM | None = None,
+    music: MockMusicProvider | None = None,
+) -> LiveEpisodeAssemblyService:
     ledger = UsageLedger()
     llm = llm or RecordingAssemblyLLM()
     discovery = FakeSearchProvider()
@@ -129,7 +134,7 @@ def service(tmp_path, llm: RecordingAssemblyLLM | None = None) -> LiveEpisodeAss
         curator=CuratorService(llm),
         writer=WriterService(llm),
     )
-    music = MockMusicProvider()
+    music = music or MockMusicProvider()
     storage = LocalObjectStorageProvider(tmp_path / "audio")
     return LiveEpisodeAssemblyService(
         fast_path=fast_path,
@@ -701,6 +706,123 @@ def test_locked_progressive_route_catalog_continuation_fills_duration_coverage(
         "Afterimage Avenue",
     }
     assert continuation.chapter.claim_support == []
+
+
+def test_locked_progressive_route_emergency_fill_reuses_confirmed_artist_catalog(
+    tmp_path,
+) -> None:
+    class EmergencyFillLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                locked = self._tracks[1]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(locked),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="keep the prepared successor",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="continue from the opening",
+                        ),
+                        ChapterPlan(
+                            index=1,
+                            track=TrackProposal(
+                                artist="Missing Artist",
+                                title="Missing Song",
+                                confidence=0.9,
+                                novelty_distance=NoveltyDistance.BRIDGE,
+                            ),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="force the editorial route to underfill",
+                            novelty_distance=NoveltyDistance.BRIDGE,
+                            narration_goal="continue safely",
+                        ),
+                    ],
+                    estimated_duration_seconds=22 * 60,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    music = MockMusicProvider()
+    music._tracks.update(
+        {
+            "mock:bridge-2": TrackMetadata(
+                track_ref="mock:bridge-2",
+                title="Signal Garden Two",
+                artist="Signal Garden",
+                duration_seconds=24,
+                playable=True,
+            ),
+            "mock:bridge-3": TrackMetadata(
+                track_ref="mock:bridge-3",
+                title="Signal Garden Three",
+                artist="Signal Garden",
+                duration_seconds=24,
+                playable=True,
+            ),
+            "mock:bridge-4": TrackMetadata(
+                track_ref="mock:bridge-4",
+                title="Signal Garden Four",
+                artist="Signal Garden",
+                duration_seconds=24,
+                playable=True,
+            ),
+        }
+    )
+    assembly = service(tmp_path, EmergencyFillLLM(), music)
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    locked = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Signal Garden",
+        canonical_title="Midnight Transfer",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=22 * 60,
+                max_tracks=5,
+                max_chapters=8,
+            ),
+            opening_track=opening,
+            locked_successor=locked,
+        )
+    )
+
+    resolved = [
+        chapter.resolved_track
+        for chapter in session.chapters
+        if chapter.resolved_track is not None
+    ]
+    assert resolved[0].canonical_title == "Midnight Transfer"
+    assert len(resolved) >= 3
+    assert len({track.canonical_title for track in resolved}) == len(resolved)
+    assert {
+        track.canonical_title for track in resolved[1:]
+    }.issubset(
+        {"Signal Garden Two", "Signal Garden Three", "Signal Garden Four"}
+    )
+    assert all(track.canonical_artist == "Signal Garden" for track in resolved)
+    emergency_chapters = [
+        chapter
+        for chapter in session.chapters
+        if chapter.chapter.track is not None
+        and chapter.chapter.track.reasons
+        == ["Emergency catalog continuation for live playback."]
+    ]
+    assert len(emergency_chapters) >= 1
+    assert all(chapter.chapter.claim_support == [] for chapter in emergency_chapters)
 
 
 def test_progressive_route_allows_two_tracks_when_duration_target_is_short(
