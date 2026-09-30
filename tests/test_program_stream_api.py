@@ -29,6 +29,7 @@ from wavecast.rendering.fingerprint import mix_plan_fingerprint
 from wavecast.storage import LocalObjectStorageProvider
 
 import services.api.main as api_module
+from tests.test_staged_intelligence import _session
 
 
 class EventLoopRejectingEpisodeRepository(InMemoryEpisodeRepository):
@@ -49,6 +50,86 @@ class EventLoopRejectingEpisodeRepository(InMemoryEpisodeRepository):
     def save(self, episode: LiveEpisode) -> LiveEpisode:
         self._assert_outside_running_loop()
         return super().save(episode)
+
+
+@pytest.mark.parametrize("host_state", [SegmentState.AUDIO_READY, SegmentState.SKIPPED])
+def test_progressive_route_closes_only_after_final_host_settles(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, host_state: SegmentState,
+) -> None:
+    async def arrange() -> LocalObjectStorageProvider:
+        storage = LocalObjectStorageProvider(tmp_path / "audio")
+        await storage.put("music.wav", _wav_bytes(24, 220), "audio/wav")
+        await storage.put("outro.wav", _wav_bytes(4, 440), "audio/wav")
+        return storage
+
+    storage = asyncio.run(arrange())
+    repository = EventLoopRejectingEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository)
+    monkeypatch.setattr(api_module, "repository", repository)
+    monkeypatch.setattr(api_module, "orchestrator", runtime)
+    monkeypatch.setattr(api_module, "audio_storage", storage)
+    session = _session()
+    session.narration_authored_chapter_ids = ["chapter-2", "chapter-3"]
+    episode = LiveEpisode(
+        seed_id="closure", listener_id="listener-a", state=EpisodeState.STREAMING,
+        program_estimated_duration_seconds=900,
+        progressive_session=session, current_segment_id="music-1",
+        segments=[
+            MusicSegment(
+                id=f"music-{index}", chapter_id=f"chapter-{index}", order=index - 1,
+                state=SegmentState.AUDIO_READY, planned_duration_seconds=24,
+                actual_duration_seconds=24, track_ref=f"mock:music-{index}",
+                audio_source_url="/api/assets/audio/music.wav", title=f"Music {index}",
+            ) for index in range(1, 4)
+        ] + [NarrationSegment(
+            id="outro", chapter_id="chapter-3", order=3, title="Outro",
+            state=SegmentState.SCRIPT_READY, planned_duration_seconds=4,
+            narration_text="The programme ends here.", narration_role=NarrationRole.OUTRO,
+        )],
+    )
+    repository.save(episode)
+    client = TestClient(api_module.app)
+    headers = {"X-Wavecast-Listener": "listener-a"}
+    first = client.post(f"/api/episodes/{episode.id}/program-render", headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["complete"] is False
+    assert first.json()["chunks"]
+    assert "#EXT-X-ENDLIST" not in client.get(first.json()["streamUrl"]).text
+
+    # Writer/TTS succeeds or explicitly degrades. Both outcomes release the
+    # genuine ending; no listener action to request FULL is necessary.
+    settled = repository.get(episode.id)
+    outro = settled.segment("outro")
+    outro.state = host_state
+    if host_state is SegmentState.AUDIO_READY:
+        outro.audio_source_url = "/api/assets/audio/outro.wav"
+        outro.actual_duration_seconds = 4
+    repository.save(settled)
+    final = client.post(f"/api/episodes/{episode.id}/program-render", headers=headers)
+    assert final.status_code == 200, final.text
+    assert final.json()["complete"] is True
+    assert final.json()["chunks"][:len(first.json()["chunks"])] == first.json()["chunks"]
+    assert final.json()["renderedFrontierSeconds"] > first.json()["renderedFrontierSeconds"]
+    assert "#EXT-X-ENDLIST" in client.get(final.json()["streamUrl"]).text
+    frozen = repository.get(episode.id)
+    assert frozen.state is EpisodeState.MATERIALIZED
+    assert frozen.current_segment_id == "music-1"
+    again = client.post(f"/api/episodes/{episode.id}/program-render", headers=headers)
+    assert again.json() == final.json()
+
+
+def test_missing_route_or_unattempted_host_cannot_close_a_programme() -> None:
+    episode = LiveEpisode(seed_id="unfinished", program_estimated_duration_seconds=900, segments=[])
+    assert not api_module._progressive_programme_ready_to_close(episode)
+    episode.progressive_session = _session()
+    assert not api_module._progressive_programme_ready_to_close(episode)
+    episode.segments = [MusicSegment(
+        id=f"music-{index}", chapter_id=f"chapter-{index}", order=index - 1,
+        state=SegmentState.AUDIO_READY, planned_duration_seconds=24,
+        track_ref=f"mock:music-{index}", title=f"Music {index}",
+        audio_source_url="/api/assets/audio/music.wav",
+    ) for index in range(1, 4)]
+    assert not api_module._progressive_programme_ready_to_close(episode)
 
 
 def _wav_bytes(duration_seconds: float, frequency: float) -> bytes:

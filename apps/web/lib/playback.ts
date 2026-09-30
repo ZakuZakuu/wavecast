@@ -1,4 +1,39 @@
 import type { LiveEpisode, Segment } from "./types";
+import type { MixPlan } from "./mix-timeline";
+
+export type MusicChapter = { id: string; segments: Segment[] };
+
+export function musicChaptersForEpisode(episode: LiveEpisode): MusicChapter[] {
+  const active = [...episode.segments]
+    .filter((segment) => segment.state !== "SKIPPED")
+    .sort((left, right) => left.order - right.order);
+  const chapters: MusicChapter[] = [];
+  for (const music of active.filter((segment) => segment.kind === "MUSIC")) {
+    if (!chapters.some((chapter) => chapter.id === music.chapter_id)) {
+      chapters.push({ id: music.chapter_id, segments: [] });
+    }
+  }
+  for (const segment of active) {
+    // A standalone host bridge belongs with its incoming music in the UI;
+    // an outro belongs with the final music. Neither increments song numbering.
+    const chapter = chapters.find((item) => item.id === segment.chapter_id)
+      ?? chapters.find((item) => active.some((music) => (
+        music.kind === "MUSIC"
+        && music.chapter_id === item.id
+        && music.order > segment.order
+      )))
+      ?? chapters.at(-1);
+    chapter?.segments.push(segment);
+  }
+  return chapters;
+}
+
+export function nextProgramMusicStart(plan: MixPlan, positionSeconds: number): number | undefined {
+  return plan.clips
+    .filter((clip) => clip.lane === "MUSIC" && clip.timelineStartSeconds > positionSeconds + 0.05)
+    .map((clip) => clip.timelineStartSeconds)
+    .sort((left, right) => left - right)[0];
+}
 
 
 const PLAYBACK_READY_STATES = new Set(["AUDIO_READY", "COMMITTED", "PLAYED"]);

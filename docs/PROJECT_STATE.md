@@ -1,6 +1,34 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-29
+**Last updated:** 2026-09-30
+
+## Active Listening P0 checkpoint — programme cursor refill
+
+- Hosted baseline: PR #152 merged into `integration` at
+  `0af1fb7f2c9bf833ba7d040712624c76594c7374`; Vercel READY and Railway API
+  SUCCESS were observed at that exact commit.
+- Human listening reached a third, different-artist track, but the published
+  HLS prefix remained at 714.005 seconds without ENDLIST. This is not proof of
+  complete programme generation, and Listening P0 remains open.
+- A credential-free regression reproduced the next blocker: HLS checkpoints
+  leave `current_segment_id` at the opening, while the refill loop counted
+  consumed second/third music chapters as ready future chapters and stopped.
+- The pending fix counts future music using canonical MixPlan starts and the
+  programme checkpoint, without changing segment lifecycle or rendered audio.
+  Regression coverage advances to the third track's tail, appends the fourth,
+  and verifies all prior segments and frozen chunk-slice fingerprints remain
+  unchanged for both one- and two-chapter buffer policies.
+- The same checkpoint groups standalone host bridges/outros with music in the
+  listener timeline, labels active narration as host speech, and makes Next
+  seek to a future music clip rather than a standalone transition chapter.
+- Genuine closure now also requires an exhausted durable route, completed
+  Writer attempts, and ready/skipped host audio. The renderer can then release
+  the final holdback and publish ENDLIST; only after immutable-prefix acceptance
+  does the API persist MATERIALIZED. Deferred/underfilled routes cannot close.
+- Repeated opening-track selection/rotation remains follow-up work. Keep the
+  immediate priority on a complete continuous programme before UI P0.
+- No paid live probe has been run for this pending fix. Do not equate the
+  offline regression or deployment readiness with hosted listening acceptance.
 
 ## Product reminder
 

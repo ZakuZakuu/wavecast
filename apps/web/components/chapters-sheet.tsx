@@ -1,25 +1,8 @@
-import type { LiveEpisode, Segment } from "../lib/types";
+import { musicChaptersForEpisode, type MusicChapter } from "../lib/playback";
+import type { LiveEpisode } from "../lib/types";
 import { WaveIcon } from "./wave-icon";
 
-type Chapter = {
-  id: string;
-  segments: Segment[];
-};
-
-function chaptersForEpisode(episode: LiveEpisode): Chapter[] {
-  const result: Chapter[] = [];
-  for (const segment of episode.segments) {
-    let chapter = result.find((item) => item.id === segment.chapter_id);
-    if (!chapter) {
-      chapter = { id: segment.chapter_id, segments: [] };
-      result.push(chapter);
-    }
-    chapter.segments.push(segment);
-  }
-  return result;
-}
-
-function chapterTitle(chapter: Chapter, index: number): string {
+function chapterTitle(chapter: MusicChapter, index: number): string {
   const narration = chapter.segments.find(
     (segment) =>
       segment.kind === "NARRATION"
@@ -27,7 +10,7 @@ function chapterTitle(chapter: Chapter, index: number): string {
       && segment.state !== "SKIPPED"
       && Boolean(segment.narration_text),
   );
-  if (narration && narration.title && narration.title !== "Track Intro") return narration.title;
+  if (narration && narration.title && !["Track Intro", "Transition", "Outro"].includes(narration.title)) return narration.title;
   const fallback = ["开场", "夜色开始变暖", "从旋律走进城市", "另一面的节奏", "慢慢收回来"];
   return fallback[index] ?? "Chapter " + (index + 1);
 }
@@ -44,7 +27,7 @@ export function ChaptersSheet({
   onClose: () => void;
 }) {
   if (!open) return null;
-  const chapters = chaptersForEpisode(episode);
+  const chapters = musicChaptersForEpisode(episode);
   const activeSegmentId = currentSegmentId ?? episode.current_segment_id;
   const currentIndex = chapters.findIndex((chapter) =>
     chapter.segments.some((segment) => segment.id === activeSegmentId),

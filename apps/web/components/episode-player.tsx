@@ -15,7 +15,7 @@ import {
   triggerMixdownDownload,
   type MixdownArtifact,
 } from "../lib/episode-export";
-import { formatSeconds, nextVisibleSegment } from "../lib/playback";
+import { formatSeconds, musicChaptersForEpisode, nextProgramMusicStart, nextVisibleSegment } from "../lib/playback";
 import {
   activeMixClipsAt,
   mixPlanSignature,
@@ -933,12 +933,10 @@ export function EpisodePlayer({
     ),
   );
   const remaining = Math.max(0, maxSeekPosition - displayedPosition);
-  const chapterIds = Array.from(
-    new Set(localEpisode.segments.map((segment) => segment.chapter_id)),
-  );
+  const chapters = musicChaptersForEpisode(localEpisode);
   const currentChapterIndex = Math.max(
     0,
-    chapterIds.indexOf(current?.chapter_id ?? chapterIds[0]),
+    chapters.findIndex((chapter) => chapter.segments.some((segment) => segment.id === current?.id)),
   );
   const chapterTitle = CHAPTER_TITLES[currentChapterIndex]
     ?? "Chapter " + (currentChapterIndex + 1);
@@ -952,21 +950,12 @@ export function EpisodePlayer({
   };
 
   const nextPlayback = () => {
-    if (!mixPlan || currentChapterIndex + 1 >= chapterIds.length) {
+    if (!mixPlan) {
       setError("下一章节还没有准备好");
       return;
     }
-    const nextChapterId = chapterIds[currentChapterIndex + 1];
-    const starts = localEpisode.segments
-      .filter((segment) => (
-        segment.chapter_id === nextChapterId
-        && segment.state !== "SKIPPED"
-      ))
-      .map((segment) => mixPlan.segmentStarts[segment.id])
-      .filter((value): value is number => typeof value === "number")
-      .sort((left, right) => left - right);
-    const target = starts[0];
-    if (target === undefined || target > maxSeekPosition) {
+    const target = nextProgramMusicStart(mixPlan, browserPositionRef.current);
+    if (target === undefined || target >= maxSeekPosition) {
       setError("下一章节还在准备中");
       return;
     }
@@ -1076,12 +1065,14 @@ export function EpisodePlayer({
         <p className="program-kicker">WAVECAST PROGRAM</p>
         <h1>{localEpisode.title ?? "正在播放"}</h1>
         <p className="chapter-line">
-          Chapter {currentChapterIndex + 1} · {chapterTitle}
+          {current?.kind === "NARRATION"
+            ? "主持串联"
+            : `Chapter ${currentChapterIndex + 1} · ${chapterTitle}`}
         </p>
         <p className="track-line">
           {current?.kind === "MUSIC"
             ? [current.artist, current.title].filter(Boolean).join(" — ")
-            : current?.title ?? "主持人正在串联"}
+            : "主持人正在串联"}
         </p>
       </section>
 

@@ -1618,6 +1618,50 @@ def canonical_render_plan_for_episode(episode_id: str) -> MixPlan:
     return _canonical_render_plan(orchestrator.get(episode_id))
 
 
+def _progressive_programme_ready_to_close(episode: LiveEpisode) -> bool:
+    """A durable, exhausted route with settled host beats is a genuine ending."""
+    session = episode.progressive_session
+    if episode.generation_mode is not GenerationMode.PROGRESSIVE or session is None:
+        return False
+    if session.next_chapter(episode) is not None:
+        return False
+    authored = set(session.narration_authored_chapter_ids)
+    if any(chapter.chapter_id not in authored for chapter in session.chapters):
+        return False
+    return all(
+        segment.is_audio_ready
+        or (
+            segment.kind is SegmentKind.NARRATION
+            and episode.presentation_intent.host_mode is HostMode.NONE
+        )
+        for segment in episode.timeline_segments
+    )
+
+
+def _finish_rendered_progressive_programme(episode_id: str, fingerprint: str) -> None:
+    # Freeze lifecycle only after the immutable renderer has accepted the final
+    # plan. Late-host recovery must still be possible before that acceptance.
+    for _ in range(5):
+        episode = repository.get(episode_id).model_copy(deep=True)
+        if episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+            return
+        if not _progressive_programme_ready_to_close(episode):
+            return
+        if mix_plan_fingerprint(_canonical_render_plan(episode)) != fingerprint:
+            return
+        if episode.presentation_intent.host_mode is HostMode.NONE:
+            for segment in episode.timeline_segments:
+                if segment.kind is SegmentKind.NARRATION and not segment.is_audio_ready:
+                    segment.state = SegmentState.SKIPPED
+        episode.state = EpisodeState.MATERIALIZED
+        episode.last_activity_at = datetime.now(UTC)
+        try:
+            repository.save(episode)
+            return
+        except EpisodeConcurrencyError:
+            continue
+
+
 def _skip_blocking_optional_narration_for_continuity(
     episode_id: str,
     manifest: ProgramRenderManifest,
@@ -1907,15 +1951,20 @@ async def render_program_stream(
 
         current = await to_thread.run_sync(orchestrator.get, episode_id)
         plan = await to_thread.run_sync(canonical_render_plan_for_episode, episode_id)
-        complete = current.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
+        complete = (
+            current.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
+            or _progressive_programme_ready_to_close(current)
+        )
         try:
-            return await render_program_prefix(
+            rendered = await render_program_prefix(
                 plan,
                 audio_storage,
                 complete=complete,
             )
         except ProgramImmutabilityError:
-            if manifest is None or complete:
+            if manifest is None or manifest.complete or current.state in {
+                EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED,
+            }:
                 raise
             skipped_late = await to_thread.run_sync(
                 _recover_late_optional_narration_for_frozen_prefix,
@@ -1935,15 +1984,22 @@ async def render_program_stream(
                 canonical_render_plan_for_episode,
                 episode_id,
             )
-            complete = current.state in {
-                EpisodeState.MATERIALIZED,
-                EpisodeState.PUBLISHED,
-            }
-            return await render_program_prefix(
+            complete = (
+                current.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
+                or _progressive_programme_ready_to_close(current)
+            )
+            rendered = await render_program_prefix(
                 plan,
                 audio_storage,
                 complete=complete,
             )
+        if rendered.complete:
+            await to_thread.run_sync(
+                _finish_rendered_progressive_programme,
+                episode_id,
+                mix_plan_fingerprint(plan),
+            )
+        return rendered
     except HTTPException:
         raise
     except EpisodeConcurrencyError as error:
