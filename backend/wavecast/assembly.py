@@ -1282,9 +1282,27 @@ class LiveEpisodeAssemblyService:
                     music_index=None,
                 )
             )
-        if locked_successor is not None:
+        if locked_successor is not None and reserved_tracks:
+            opening_track = reserved_tracks[0]
+            continuation_started = perf_counter()
+            resolved_chapters, continuation_unresolved = (
+                await self._extend_underfilled_route_with_curator(
+                    request,
+                    bundle=bundle,
+                    fast_plan=fast_result.plan,
+                    opening_track=opening_track,
+                    locked_successor=locked_successor,
+                    resolved_chapters=resolved_chapters,
+                    used_tracks=used_tracks,
+                    trace=trace,
+                )
+            )
+            curator_ms += _elapsed_ms(continuation_started)
+            unresolved.extend(continuation_unresolved)
+
             resolved_chapters = await self._extend_underfilled_locked_route_from_catalog(
                 request,
+                opening_track=opening_track,
                 locked_successor=locked_successor,
                 resolved_chapters=resolved_chapters,
                 used_tracks=used_tracks,
