@@ -661,6 +661,71 @@ def test_progressive_route_allows_two_tracks_when_duration_target_is_short(
     assert len([chapter for chapter in session.chapters if chapter.resolved_track]) == 1
 
 
+def test_progressive_resolution_uses_catalog_aware_replacement_after_slot_candidates_fail(
+    tmp_path,
+) -> None:
+    class CatalogReplacementLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                missing = TrackProposal(
+                    artist="Missing Artist",
+                    title="Definitely Not In Catalog",
+                    confidence=0.9,
+                    novelty_distance=NoveltyDistance.CLOSE,
+                )
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=missing,
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="an intentionally unresolved curator choice",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="fixture",
+                        )
+                    ],
+                    estimated_duration_seconds=5 * 60,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, CatalogReplacementLLM())
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            ),
+            opening_track=opening,
+        )
+    )
+
+    assert len(session.chapters) == 1
+    chapter = session.chapters[0]
+    assert chapter.resolved_track is not None
+    assert chapter.resolved_track.canonical_title == "Midnight Transfer"
+    assert chapter.chapter.track is not None
+    assert chapter.chapter.track.title == "Midnight Transfer"
+    assert chapter.chapter.connection_from_previous_track is None
+    assert chapter.chapter.claim_support == []
+    assert not any(
+        diagnostic.code == "unresolved_track"
+        for diagnostic in session.diagnostics
+    )
+
+
 def test_progressive_resolution_uses_alternate_when_primary_repeats_opening_song(
     tmp_path,
 ) -> None:
@@ -1526,6 +1591,12 @@ def test_probe_asset_url_redacts_external_tokens() -> None:
 def test_unresolved_proposal_is_reported_but_narrative_is_still_written(tmp_path) -> None:
     class MixedLLM(RecordingAssemblyLLM):
         async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+            if output_type is FastStartPlan:
+                plan = await super().structured(prompt, output_type, **kwargs)
+                assert isinstance(plan, FastStartPlan)
+                return plan.model_copy(
+                    update={"next_candidates": [], "selected_next_track": None}
+                )
             if output_type is ProgramSkeleton:
                 known = self._tracks[0]
                 unknown = ("Event Listing", "Festival doors 8-9-2026", NoveltyDistance.CLOSE)
@@ -2133,6 +2204,12 @@ def test_assembly_explicit_english_overrides_chinese_topic(tmp_path) -> None:
 def test_middle_unresolved_chapter_keeps_narrative_writer_order(tmp_path) -> None:
     class ExplicitIndexLLM(RecordingAssemblyLLM):
         async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+            if output_type is FastStartPlan:
+                plan = await super().structured(prompt, output_type, **kwargs)
+                assert isinstance(plan, FastStartPlan)
+                return plan.model_copy(
+                    update={"next_candidates": [], "selected_next_track": None}
+                )
             self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
             if output_type is ProgramSkeleton:
                 known = self._tracks[0]

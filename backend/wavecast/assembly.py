@@ -235,6 +235,73 @@ class _PreparedIntelligence:
 _ESTIMATED_TRACK_DURATION_SECONDS = 180
 _MIN_PROGRESSIVE_DURATION_COVERAGE_NUMERATOR = 3
 _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR = 4
+_CATALOG_REPLACEMENT_LIMIT = 3
+
+
+_NOVELTY_RANK = {
+    NoveltyDistance.VERY_CLOSE: 0,
+    NoveltyDistance.CLOSE: 1,
+    NoveltyDistance.BRIDGE: 2,
+    NoveltyDistance.DISCOVERY: 3,
+    NoveltyDistance.SURPRISE: 4,
+}
+
+
+def _proposal_identity_key(proposal: TrackProposal) -> tuple[str, str]:
+    return (
+        " ".join(proposal.artist.casefold().split()),
+        " ".join(proposal.title.casefold().split()),
+    )
+
+
+def _catalog_replacement_pool(
+    chapter: ChapterPlan,
+    bundle: ResearchBundle,
+    fast_plan: FastStartPlan,
+    attempted: set[tuple[str, str]],
+) -> list[TrackProposal]:
+    """Rank already-researched candidates for one unresolved editorial slot."""
+
+    pool: list[TrackProposal] = []
+    if fast_plan.selected_next_track is not None:
+        pool.append(fast_plan.selected_next_track)
+    pool.extend(fast_plan.next_candidates)
+    pool.extend(bundle.candidates)
+
+    target_rank = (
+        _NOVELTY_RANK[chapter.novelty_distance]
+        if chapter.novelty_distance is not None
+        else None
+    )
+    chapter_evidence = set(chapter.evidence_ids)
+    scored: list[tuple[int, int, float, tuple[str, str], TrackProposal]] = []
+    seen = set(attempted)
+    for proposal in pool:
+        key = _proposal_identity_key(proposal)
+        if key in seen:
+            continue
+        seen.add(key)
+        distance = (
+            abs(_NOVELTY_RANK[proposal.novelty_distance] - target_rank)
+            if target_rank is not None
+            else 0
+        )
+        # A replacement is still the same editorial slot, so do not jump more
+        # than one novelty step merely to make catalog resolution succeed.
+        if distance > 1:
+            continue
+        evidence_overlap = len(chapter_evidence.intersection(proposal.evidence_ids))
+        scored.append(
+            (
+                distance,
+                -evidence_overlap,
+                -proposal.confidence,
+                key,
+                proposal,
+            )
+        )
+    scored.sort(key=lambda item: item[:4])
+    return [item[4] for item in scored[:_CATALOG_REPLACEMENT_LIMIT]]
 
 
 class LiveEpisodeAssemblyService:
@@ -434,6 +501,97 @@ class LiveEpisodeAssemblyService:
             materializer=self.materializer,
         )
 
+    async def _resolve_catalog_replacement(
+        self,
+        chapter: ChapterPlan,
+        bundle: ResearchBundle,
+        fast_plan: FastStartPlan,
+        *,
+        attempted: set[tuple[str, str]],
+        used_tracks: list[ResolvedTrack],
+    ) -> tuple[ResolvedTrack, TrackProposal, str] | None:
+        """Recover one unresolved speculative slot without weakening identity safety."""
+
+        for proposal in _catalog_replacement_pool(
+            chapter,
+            bundle,
+            fast_plan,
+            attempted,
+        ):
+            try:
+                candidate = await resolve_track_proposal_across_providers(
+                    self.retrieval,
+                    proposal,
+                )
+            except ProviderError:
+                continue
+            if candidate is None or any(
+                _same_song_identity(candidate, used) for used in used_tracks
+            ):
+                continue
+            return candidate, proposal, "researched_candidate"
+
+        # Final bounded recovery: keep the Curator-selected artist but use a
+        # different real playable song from that exact artist. The replacement
+        # receives its own canonical title and generic narration metadata; it is
+        # never treated as the unresolved original song.
+        artists: list[str] = []
+        artist_proposals: list[TrackProposal] = []
+        if chapter.track is not None:
+            artist_proposals.append(chapter.track)
+        artist_proposals.extend(chapter.track_alternates)
+        for candidate_proposal in artist_proposals:
+            normalized = " ".join(candidate_proposal.artist.casefold().split())
+            if normalized and normalized not in {
+                " ".join(item.casefold().split()) for item in artists
+            }:
+                artists.append(candidate_proposal.artist)
+        for artist in artists[:_CATALOG_REPLACEMENT_LIMIT]:
+            try:
+                alternatives = await self.retrieval.search(
+                    artist,
+                    requested_artist=artist,
+                    limit=5,
+                )
+            except ProviderError:
+                continue
+            artist_key = " ".join(artist.casefold().split())
+            for alternative in alternatives:
+                if not alternative.playable:
+                    continue
+                if " ".join(alternative.artist.casefold().split()) != artist_key:
+                    continue
+                candidate = ResolvedTrack(
+                    track_ref=alternative.track_ref,
+                    canonical_artist=alternative.artist,
+                    canonical_title=alternative.title,
+                )
+                if any(_same_song_identity(candidate, used) for used in used_tracks):
+                    continue
+                proposal = TrackProposal(
+                    artist=alternative.artist,
+                    title=alternative.title,
+                    reasons=[
+                        "Catalog-aware replacement for an unresolved editorial slot."
+                    ],
+                    similarity_dimensions=(
+                        list(chapter.track.similarity_dimensions)
+                        if chapter.track is not None
+                        else []
+                    ),
+                    confidence=0.5,
+                    novelty_distance=(
+                        chapter.novelty_distance
+                        or (
+                            chapter.track.novelty_distance
+                            if chapter.track is not None
+                            else NoveltyDistance.CLOSE
+                        )
+                    ),
+                )
+                return candidate, proposal, "same_artist_catalog"
+        return None
+
     async def _prepare_intelligence(
         self,
         request: LiveEpisodeAssemblyRequest,
@@ -550,8 +708,10 @@ class LiveEpisodeAssemblyService:
         for chapter in chapters:
             resolved: ResolvedTrack | None = None
             selected_proposal: TrackProposal | None = None
+            replacement_kind: str | None = None
             if chapter.track is not None:
                 candidates = [chapter.track, *chapter.track_alternates]
+                attempted = {_proposal_identity_key(item) for item in candidates}
                 last_resolution_reason = "no exact playable catalog match"
                 for candidate_rank, proposal in enumerate(candidates):
                     try:
@@ -588,22 +748,58 @@ class LiveEpisodeAssemblyService:
                         )
                     break
                 if resolved is None:
-                    unresolved.append(
-                        UnresolvedAssemblyProposal(
+                    replacement = await self._resolve_catalog_replacement(
+                        chapter,
+                        bundle,
+                        fast_result.plan,
+                        attempted=attempted,
+                        used_tracks=used_tracks,
+                    )
+                    if replacement is not None:
+                        resolved, selected_proposal, replacement_kind = replacement
+                        used_tracks.append(resolved)
+                        trace.mark(
+                            "track_catalog_replacement_resolved",
                             chapter_index=chapter.index,
-                            proposal=chapter.track,
-                            reason=last_resolution_reason,
+                            replacement_kind=replacement_kind,
                         )
-                    )
-                    trace.mark(
-                        "track_slot_unresolved",
-                        chapter_index=chapter.index,
-                        candidate_count=len(candidates),
-                    )
+                    else:
+                        unresolved.append(
+                            UnresolvedAssemblyProposal(
+                                chapter_index=chapter.index,
+                                proposal=chapter.track,
+                                reason=last_resolution_reason,
+                            )
+                        )
+                        trace.mark(
+                            "track_slot_unresolved",
+                            chapter_index=chapter.index,
+                            candidate_count=len(candidates),
+                        )
+            route_chapter = chapter
+            if replacement_kind is not None and selected_proposal is not None:
+                route_chapter = chapter.model_copy(
+                    update={
+                        "track": selected_proposal,
+                        "track_alternates": [],
+                        "connection_from_previous_track": None,
+                        "reason": (
+                            "Use a catalog-resolved replacement while preserving "
+                            "this chapter's editorial role."
+                        ),
+                        "novelty_distance": selected_proposal.novelty_distance,
+                        "evidence_ids": list(selected_proposal.evidence_ids),
+                        "claim_support": [],
+                        "narration_goal": (
+                            "Connect this playable replacement to the programme "
+                            "direction without unsupported song-specific claims."
+                        ),
+                    }
+                )
             resolved_chapters.append(
                 _ResolvedChapter(
-                    chapter=chapter,
-                    writer_chapter=chapter.model_copy(
+                    chapter=route_chapter,
+                    writer_chapter=route_chapter.model_copy(
                         update={
                             "index": len(resolved_chapters),
                             "track": selected_proposal,
