@@ -612,6 +612,93 @@ def test_progressive_route_rejects_severely_underfilled_duration(tmp_path) -> No
     assert failure.value.diagnostics["required_resolved_music_seconds"] > 360
 
 
+def test_locked_progressive_route_catalog_continuation_fills_duration_coverage(
+    tmp_path,
+) -> None:
+    class UnderfilledLockedRouteLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                locked = self._tracks[1]
+                missing = TrackProposal(
+                    artist="Southbound FM",
+                    title="Definitely Not In Catalog",
+                    confidence=0.9,
+                    novelty_distance=NoveltyDistance.BRIDGE,
+                )
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(locked),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="preserve the already prepared successor",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="connect the opening to the locked successor",
+                        ),
+                        ChapterPlan(
+                            index=1,
+                            track=missing,
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="force same-artist catalog recovery first",
+                            novelty_distance=NoveltyDistance.BRIDGE,
+                            narration_goal="continue the route safely",
+                        ),
+                    ],
+                    estimated_duration_seconds=22 * 60,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, UnderfilledLockedRouteLLM())
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    locked = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Signal Garden",
+        canonical_title="Midnight Transfer",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=22 * 60,
+                max_tracks=5,
+                max_chapters=8,
+            ),
+            opening_track=opening,
+            locked_successor=locked,
+        )
+    )
+
+    titles = [
+        chapter.resolved_track.canonical_title
+        for chapter in session.chapters
+        if chapter.resolved_track is not None
+    ]
+    assert titles == [
+        "Midnight Transfer",
+        "Daybreak in Stereo",
+        "Afterimage Avenue",
+    ]
+    assert session.chapters[-1].chapter.track is not None
+    assert session.chapters[-1].chapter.track.title == "Afterimage Avenue"
+    assert session.chapters[-1].chapter.claim_support == []
+    assert (
+        session.chapters[-1].chapter.narration_goal
+        == "Connect this catalog-backed continuation to the programme direction "
+        "without unsupported song-specific claims."
+    )
+
+
 def test_progressive_route_allows_two_tracks_when_duration_target_is_short(
     tmp_path,
 ) -> None:
