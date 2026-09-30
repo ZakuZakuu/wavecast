@@ -726,19 +726,7 @@ class LiveEpisodeAssemblyService:
                 return False
 
             for alternative in alternatives:
-                if not alternative.playable:
-                    continue
                 if " ".join(alternative.artist.casefold().split()) != artist_key:
-                    continue
-                candidate = ResolvedTrack(
-                    track_ref=alternative.track_ref,
-                    canonical_artist=alternative.artist,
-                    canonical_title=alternative.title,
-                )
-                if any(
-                    _same_song_identity(candidate, used)
-                    for used in effective_used
-                ):
                     continue
 
                 proposal = TrackProposal(
@@ -758,6 +746,28 @@ class LiveEpisodeAssemblyService:
                     ),
                     evidence_ids=list(seed.evidence_ids),
                 )
+                if alternative.playable:
+                    candidate = ResolvedTrack(
+                        track_ref=alternative.track_ref,
+                        canonical_artist=alternative.artist,
+                        canonical_title=alternative.title,
+                    )
+                else:
+                    try:
+                        candidate = await resolve_track_proposal_across_providers(
+                            self.retrieval,
+                            proposal,
+                            limit=10,
+                        )
+                    except ProviderError:
+                        candidate = None
+                    if candidate is None:
+                        continue
+                if any(
+                    _same_song_identity(candidate, used)
+                    for used in effective_used
+                ):
+                    continue
                 chapter = ChapterPlan(
                     index=len(resolved_chapters),
                     track=proposal,
