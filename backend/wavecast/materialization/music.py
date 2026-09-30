@@ -253,14 +253,30 @@ class MusicSnapshotStore:
         track_ref: str,
         duration_seconds: int = 1,
     ) -> StoredMusicAsset:
+        expected_digest: str | None = None
         if source.kind is MusicSourceKind.OWNED_ASSET:
-            return StoredMusicAsset(
-                asset_ref=source.identity,
-                playback_url=source.source_url,
-                content_type="audio/mpeg",
-                duration_seconds=1,
-                reused=True,
+            exists = getattr(self.storage, "exists", None)
+            present = (
+                exists(source.identity) if callable(exists)
+                else await self.storage.get(source.identity) is not None
             )
+            if present:
+                return StoredMusicAsset(
+                    asset_ref=source.identity,
+                    playback_url=source.source_url,
+                    content_type="audio/mpeg",
+                    duration_seconds=duration_seconds,
+                    reused=True,
+                )
+            metadata_for = getattr(self.storage, "metadata_for", None)
+            metadata = metadata_for(source.identity) if callable(metadata_for) else {}
+            restored_source = recoverable_music_source(metadata, source.identity)
+            if restored_source is None or metadata.get("track_ref") != track_ref:
+                raise MusicSnapshotError("owned_snapshot_missing")
+            expected_digest = metadata.get("content_sha256")
+            if not isinstance(expected_digest, str) or len(expected_digest) != 64:
+                raise MusicSnapshotError("owned_snapshot_checksum_missing")
+            source = restored_source
         if source.kind not in {MusicSourceKind.SIDECAR_PROXY, MusicSourceKind.AUDIUS_PROXY}:
             raise MusicSnapshotError(source.reason_code or "unsupported_music_source")
         provider = source.provider or "unknown"
@@ -283,12 +299,17 @@ class MusicSnapshotStore:
         except Exception as exc:
             raise MusicSnapshotError("snapshot_fetch_failed") from exc
         self._validate_snapshot(snapshot)
+        digest = hashlib.sha256(snapshot.content).hexdigest()
+        if expected_digest is not None and digest != expected_digest:
+            raise MusicSnapshotError("snapshot_content_changed")
         metadata = {
             "provider": provider,
             "track_ref": track_ref,
             "content_type": snapshot.content_type,
             "duration_seconds": snapshot.duration_seconds,
             "snapshot_version": 1,
+            "source_url": source.source_url,
+            "content_sha256": digest,
         }
         try:
             await self.storage.put(key, snapshot.content, snapshot.content_type, metadata)
@@ -334,6 +355,36 @@ class MusicSnapshotStore:
             raise MusicSnapshotError("snapshot_size_limit_exceeded")
 
     def _cache_key(self, source: MusicSourceClassification, track_ref: str) -> str:
-        identity = "\0".join(("wavecast-music-snapshot-v1", source.kind.value, source.identity, track_ref))
-        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-        return f"music/{source.provider or 'unknown'}/{digest}.audio"
+        return music_snapshot_key(source, track_ref)
+
+
+def music_snapshot_key(source: MusicSourceClassification, track_ref: str) -> str:
+    identity = "\0".join(("wavecast-music-snapshot-v1", source.kind.value, source.identity, track_ref))
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return f"music/{source.provider or 'unknown'}/{digest}.audio"
+
+
+def recoverable_music_source(
+    metadata: dict[str, Any], key: str,
+) -> MusicSourceClassification | None:
+    """Validate an owned cache's safe provider identity before eviction/refetch."""
+    if metadata.get("snapshot_version") != 1:
+        return None
+    track_ref = metadata.get("track_ref")
+    provider = metadata.get("provider")
+    source_url = metadata.get("source_url")
+    if not isinstance(track_ref, str) or not isinstance(provider, str):
+        return None
+    # Older snapshots stored provider + canonical track_ref, but no source URL.
+    if source_url is None and track_ref.startswith(f"{provider}:"):
+        track_id = track_ref.removeprefix(f"{provider}:")
+        source_url = (
+            f"/api/audio/audius/{track_id}" if provider == "audius"
+            else f"/api/audio/sidecar/{provider}/{track_id}"
+        )
+    if not isinstance(source_url, str):
+        return None
+    source = classify_music_source(source_url)
+    if source.kind not in {MusicSourceKind.SIDECAR_PROXY, MusicSourceKind.AUDIUS_PROXY}:
+        return None
+    return source if music_snapshot_key(source, track_ref) == key else None

@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 from wavecast.arrangement import MixPlan, plan_episode_mix
+from wavecast.materialization import MusicSnapshotStore, classify_music_source
 from wavecast.models.episode import (
     EpisodeState,
     GenerationMode,
@@ -29,6 +30,7 @@ from wavecast.rendering.fingerprint import mix_plan_fingerprint
 from wavecast.storage import LocalObjectStorageProvider
 
 import services.api.main as api_module
+from tests.test_music_snapshot import FakeFetcher
 from tests.test_staged_intelligence import _session
 
 
@@ -50,6 +52,64 @@ class EventLoopRejectingEpisodeRepository(InMemoryEpisodeRepository):
     def save(self, episode: LiveEpisode) -> LiveEpisode:
         self._assert_outside_running_loop()
         return super().save(episode)
+
+
+def test_gc_reclaims_source_bytes_without_hls_cache_and_protects_live_audio(tmp_path, monkeypatch):
+    storage = LocalObjectStorageProvider(tmp_path)
+    async def create():
+        store = MusicSnapshotStore(storage, FakeFetcher())
+        old = await store.snapshot(classify_music_source("/api/audio/sidecar/netease/1"), track_ref="netease:1")
+        cached = await storage.get(old.asset_ref)
+        metadata = storage.metadata_for(old.asset_ref)
+        metadata.pop("source_url")
+        metadata.pop("content_sha256")
+        await storage.put(old.asset_ref, cached.content, cached.content_type, metadata)
+        live = await store.snapshot(classify_music_source("/api/audio/sidecar/netease/2"), track_ref="netease:2")
+        await storage.put("narration/paid.mp3", b"paid", "audio/mpeg")
+        return old, live
+    old, live = asyncio.run(create())
+    repo = InMemoryEpisodeRepository()
+    repo.save(LiveEpisode(
+        id="current", seed_id="seed", title="Radio", topic="Music",
+        program_estimated_duration_seconds=900,
+        segments=[MusicSegment(
+            id="music", chapter_id="one", order=0, title="Music", track_ref="netease:2",
+            planned_duration_seconds=240, state=SegmentState.AUDIO_READY,
+            audio_source_url=live.playback_url,
+        )],
+    ))
+    old_path = tmp_path / old.asset_ref
+    orphan = tmp_path / ".orphan.audio.abcdefgh"
+    orphan.write_bytes(b"unpublished")
+    os.utime(orphan, (10, 10))
+    monkeypatch.setattr(api_module, "repository", repo)
+    monkeypatch.setattr(api_module, "AUDIO_ROOT", str(tmp_path))
+    monkeypatch.setattr(api_module, "PROGRAM_RENDER_GC_LOW_WATERMARK_BYTES", 100)
+    monkeypatch.setattr(api_module, "PROGRAM_RENDER_GC_TARGET_FREE_BYTES", 200)
+    monkeypatch.setattr(api_module.shutil, "disk_usage", lambda _:
+        shutil._ntuple_diskusage(1000, 950 if old_path.exists() else 750, 50 if old_path.exists() else 250))
+    _, free = api_module._gc_program_render_cache("current")
+    assert free == 250
+    assert not old_path.exists()
+    assert len(storage.metadata_for(old.asset_ref)["content_sha256"]) == 64
+    assert (tmp_path / live.asset_ref).exists()
+    assert (tmp_path / "narration/paid.mp3").exists()
+    assert not orphan.exists()
+    # A resumed historical episode still has an owned URL in its persisted
+    # timeline. The API must restore its cache before the renderer sees it.
+    resumed = repo.get("current").model_copy(deep=True)
+    resumed.id = "resumed"
+    resumed.segments[0].track_ref = "netease:1"
+    resumed.segments[0].audio_source_url = old.playback_url
+    resumed.segments[0].asset_ref = old.asset_ref
+    repo.save(resumed)
+    monkeypatch.setattr(api_module, "audio_storage", storage)
+    monkeypatch.setattr(api_module, "music_snapshot_store", MusicSnapshotStore(storage, FakeFetcher()))
+    monkeypatch.setattr(api_module, "orchestrator", EpisodeOrchestrator(repo))
+    prepared = asyncio.run(api_module._prepare_owned_music_assets("resumed", ready_only=True))
+    assert prepared.ready
+    assert old_path.exists()
+    assert repo.get("resumed").segments[0].audio_source_url == old.playback_url
 
 
 @pytest.mark.parametrize("host_state", [SegmentState.AUDIO_READY, SegmentState.SKIPPED])
@@ -343,12 +403,16 @@ def test_program_stream_renders_idempotent_single_feed_without_mutating_episode(
 
 
 def test_progressive_render_snapshot_ignores_unready_future_music(
+    tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository = EventLoopRejectingEpisodeRepository()
     orchestrator = EpisodeOrchestrator(repository)
     monkeypatch.setattr(api_module, "repository", repository)
     monkeypatch.setattr(api_module, "orchestrator", orchestrator)
+    storage = LocalObjectStorageProvider(tmp_path)
+    asyncio.run(storage.put("music/a.wav", _wav_bytes(1, 220), "audio/wav"))
+    monkeypatch.setattr(api_module, "audio_storage", storage)
 
     episode = LiveEpisode(
         id="program-render-ready-only",

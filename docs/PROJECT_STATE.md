@@ -2,7 +2,34 @@
 
 **Last updated:** 2026-09-30
 
-## Active Listening P0 checkpoint — programme cursor refill
+## Active Listening P0 checkpoint — storage pressure and published runway
+
+- PR #153 deployed to integration at
+  `9261b425516bfeb6e1e4194573518d2a4ae518dd`, with CI green and matching
+  Railway SUCCESS / Vercel READY. Human listening still stalled after track two.
+- The 16:28 Shanghai test episode `36d44f7e-88d9-4d12-b20b-da606bfa49eb`
+  exposed the direct blocker: repeated render ENOSPC, only 4096 free bytes on
+  the approximately 500 MB Railway volume. Timeline metadata already contained
+  tracks three/four; audio publication failed. This is not a phone-cache diagnosis.
+- Existing GC covered old HLS directories only. The pending checkpoint also
+  reclaims stale failed atomic writes and recoverable, inactive music snapshots,
+  preserving provider identity and pinned content checksums. Active/current
+  sources and paid narration are protected. Resumed owned URLs restore exact
+  original bytes or fail closed if the provider's content changes.
+- Programme refill now uses the successfully published frontier and combines
+  generation/publication latency. Its cold trigger is 300 seconds (180-second
+  safety runway + 120-second lead); observed slower pipelines raise the target
+  up to 600 seconds. The bounded chapter buffer remains in place, and an already
+  prepared publication backlog does not enqueue redundant music generation.
+- Credential-free targeted tests cover low-space GC without old HLS directories,
+  legacy snapshot migration/restoration, disk-full temporary cleanup, unchanged
+  published bytes/lifecycle, and earlier programme refill. Paid live calls have
+  not been run for this checkpoint. Hosted listening acceptance remains open.
+- Keep the next action narrow: deploy one coherent integration checkpoint,
+  verify reclaimed headroom and exact backend SHA, then one human SHORT listen.
+  After continuous playback with a genuine ending is credible, move to UI P0.
+
+## Previous checkpoint — programme cursor refill
 
 - Hosted baseline: PR #152 merged into `integration` at
   `0af1fb7f2c9bf833ba7d040712624c76594c7374`; Vercel READY and Railway API

@@ -110,6 +110,8 @@ export type LiveEpisode = {
   playback_position_seconds: number;
   program_playback_position_seconds?: number;
   program_transport_active?: boolean;
+  program_rendered_frontier_seconds?: number | null;
+  program_publication_latency_seconds?: number;
   is_listener_active: boolean;
   is_playing: boolean;
   program_estimated_duration_seconds: number;
