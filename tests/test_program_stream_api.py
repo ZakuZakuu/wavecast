@@ -11,16 +11,21 @@ from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from wavecast.arrangement import plan_episode_mix
 from wavecast.models.episode import (
     EpisodeState,
     GenerationMode,
     LiveEpisode,
     MusicSegment,
+    NarrationRole,
     NarrationSegment,
+    PlayableEpisode,
     SegmentState,
 )
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.episode import InMemoryEpisodeRepository
+from wavecast.rendering import ProgramRenderChunk, ProgramRenderManifest, slice_mix_plan
+from wavecast.rendering.fingerprint import mix_plan_fingerprint
 from wavecast.storage import LocalObjectStorageProvider
 
 import services.api.main as api_module
@@ -60,6 +65,31 @@ def _wav_bytes(duration_seconds: float, frequency: float) -> bytes:
         output.setframerate(sample_rate)
         output.writeframes(bytes(samples))
     return buffer.getvalue()
+
+
+def _manifest_for_plan_prefix(
+    plan,
+    *,
+    end_seconds: float,
+) -> ProgramRenderManifest:
+    sliced = slice_mix_plan(plan, 0, end_seconds)
+    chunk = ProgramRenderChunk(
+        index=0,
+        startSeconds=0,
+        durationSeconds=end_seconds,
+        planFingerprint=mix_plan_fingerprint(sliced),
+        contentSha256="0" * 64,
+        assetKey="program-renders/test/chunk.ts",
+        audioUrl="/api/assets/audio/program-renders/test/chunk.ts",
+    )
+    return ProgramRenderManifest(
+        episodeId=plan.episode_id,
+        chunkDurationSeconds=end_seconds,
+        holdbackSeconds=0,
+        renderedFrontierSeconds=end_seconds,
+        chunks=(chunk,),
+        streamUrl=f"/api/program-streams/{plan.episode_id}.m3u8",
+    )
 
 
 def test_program_render_gc_deletes_oldest_cache_until_target(
@@ -409,3 +439,162 @@ def test_render_plan_waits_for_unready_host_instead_of_skipping_it(
 
     assert {clip.segment_id for clip in plan.clips} == {"music-a"}
     assert plan.duration_seconds == 120
+
+
+def test_program_render_continuity_deadline_skips_pending_host_before_ready_music(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = InMemoryEpisodeRepository()
+    orchestrator = EpisodeOrchestrator(repository)
+    monkeypatch.setattr(api_module, "repository", repository)
+    monkeypatch.setattr(api_module, "orchestrator", orchestrator)
+
+    episode = LiveEpisode(
+        id="program-render-continuity-deadline",
+        seed_id="seed",
+        title="Continuity deadline",
+        topic="Optional host must not strand ready music",
+        listener_id="listener-a",
+        state=EpisodeState.STREAMING,
+        generation_mode=GenerationMode.PROGRESSIVE,
+        program_estimated_duration_seconds=360,
+        program_transport_active=True,
+        program_playback_position_seconds=100,
+        segments=[
+            MusicSegment(
+                id="music-a",
+                chapter_id="chapter-a",
+                order=0,
+                state=SegmentState.AUDIO_READY,
+                planned_duration_seconds=120,
+                actual_duration_seconds=120,
+                track_ref="track-a",
+                audio_source_url="/api/assets/audio/music-a.wav",
+                title="A",
+                artist="Artist A",
+            ),
+            NarrationSegment(
+                id="host-b",
+                chapter_id="chapter-b",
+                order=1,
+                state=SegmentState.SCRIPT_READY,
+                planned_duration_seconds=12,
+                title="Pending host",
+                narration_text="A late optional bridge.",
+                narration_role=NarrationRole.TRACK_INTRO,
+            ),
+            MusicSegment(
+                id="music-b",
+                chapter_id="chapter-b",
+                order=2,
+                state=SegmentState.AUDIO_READY,
+                planned_duration_seconds=120,
+                actual_duration_seconds=120,
+                track_ref="track-b",
+                audio_source_url="/api/assets/audio/music-b.wav",
+                title="B",
+                artist="Artist B",
+            ),
+        ],
+        current_segment_id="music-a",
+    )
+    repository.save(episode)
+    manifest = ProgramRenderManifest(
+        episodeId=episode.id,
+        chunkDurationSeconds=120,
+        holdbackSeconds=30,
+        renderedFrontierSeconds=120,
+        chunks=(
+            ProgramRenderChunk(
+                index=0,
+                startSeconds=0,
+                durationSeconds=120,
+                planFingerprint="previous-plan",
+                contentSha256="0" * 64,
+                assetKey="program-renders/test/chunk.ts",
+                audioUrl="/api/assets/audio/program-renders/test/chunk.ts",
+            ),
+        ),
+        streamUrl=f"/api/program-streams/{episode.id}.m3u8",
+    )
+
+    skipped = api_module._skip_blocking_optional_narration_for_continuity(
+        episode.id,
+        manifest,
+    )
+
+    assert skipped == ["host-b"]
+    assert repository.get(episode.id).segment("host-b").state is SegmentState.SKIPPED
+
+
+def test_program_render_recovers_only_when_late_narration_removal_restores_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = InMemoryEpisodeRepository()
+    orchestrator = EpisodeOrchestrator(repository)
+    monkeypatch.setattr(api_module, "repository", repository)
+    monkeypatch.setattr(api_module, "orchestrator", orchestrator)
+
+    music = MusicSegment(
+        id="music-a",
+        chapter_id="chapter-a",
+        order=0,
+        state=SegmentState.AUDIO_READY,
+        planned_duration_seconds=120,
+        actual_duration_seconds=120,
+        track_ref="track-a",
+        audio_source_url="/api/assets/audio/music-a.wav",
+        title="A",
+        artist="Artist A",
+    )
+    previous = plan_episode_mix(
+        PlayableEpisode(
+            id="program-render-late-host",
+            segments=[music],
+        )
+    )
+    manifest = _manifest_for_plan_prefix(previous, end_seconds=6)
+
+    episode = LiveEpisode(
+        id=previous.episode_id,
+        seed_id="seed",
+        title="Late host",
+        topic="Frozen prefix admission",
+        listener_id="listener-a",
+        state=EpisodeState.STREAMING,
+        generation_mode=GenerationMode.PROGRESSIVE,
+        program_estimated_duration_seconds=240,
+        segments=[
+            NarrationSegment(
+                id="late-host",
+                chapter_id="chapter-a",
+                order=0,
+                state=SegmentState.AUDIO_READY,
+                planned_duration_seconds=8,
+                actual_duration_seconds=8,
+                audio_source_url="/api/assets/audio/late-host.wav",
+                title="Late Track Intro",
+                narration_text="This arrived after the programme had already published.",
+                narration_role=NarrationRole.TRACK_INTRO,
+            ),
+            music.model_copy(update={"order": 1}),
+        ],
+        current_segment_id="music-a",
+    )
+    repository.save(episode)
+
+    current_plan = api_module.canonical_render_plan_for_episode(episode.id)
+    assert not api_module.frozen_prefix_is_compatible(current_plan, manifest)
+
+    skipped = api_module._recover_late_optional_narration_for_frozen_prefix(
+        episode.id,
+        manifest,
+    )
+
+    assert skipped == ["late-host"]
+    recovered = repository.get(episode.id)
+    assert recovered.segment("late-host").state is SegmentState.SKIPPED
+    assert api_module.frozen_prefix_is_compatible(
+        api_module.canonical_render_plan_for_episode(episode.id),
+        manifest,
+    )
