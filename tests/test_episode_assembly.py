@@ -22,6 +22,7 @@ from wavecast.assembly import (
     _mock_writer_chapter_index,
     _mock_writer_slot_contexts,
     _normalize_opening_resolved_route,
+    _normalize_progressive_route,
     _reindex_resolved_chapters,
     _ResolvedChapter,
     _same_song_identity,
@@ -1340,6 +1341,99 @@ def test_progressive_opening_dedupes_exact_identity_and_keeps_other_tracks() -> 
     ]
     assert [item.chapter.index for item in normalized] == [0, 1]
     assert normalized[1].track == different
+
+def test_progressive_route_prunes_unresolved_music_before_chapter_bounds() -> None:
+    def chapter(
+        index: int,
+        proposal: TrackProposal,
+        track: ResolvedTrack | None,
+    ) -> _ResolvedChapter:
+        plan = ChapterPlan(
+            index=index,
+            track=proposal,
+            narrative_role=NarrativeRole.BRIDGE,
+            reason="fixture",
+            narration_goal="fixture",
+        )
+        return _ResolvedChapter(
+            chapter=plan,
+            writer_chapter=plan,
+            track=track,
+            music_index=None,
+        )
+
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    locked = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Signal Garden",
+        canonical_title="Midnight Transfer",
+    )
+    later = ResolvedTrack(
+        track_ref="mock:later",
+        canonical_artist="Maribou State",
+        canonical_title="Glasshouse Drift",
+    )
+    route = [
+        chapter(
+            0,
+            TrackProposal(
+                artist=opening.canonical_artist,
+                title=opening.canonical_title,
+                confidence=1.0,
+            ),
+            opening,
+        ),
+        chapter(
+            1,
+            TrackProposal(
+                artist=locked.canonical_artist,
+                title=locked.canonical_title,
+                confidence=1.0,
+            ),
+            locked,
+        ),
+        chapter(
+            2,
+            TrackProposal(
+                artist="Missing Artist",
+                title="Missing Song",
+                confidence=0.9,
+            ),
+            None,
+        ),
+        chapter(
+            3,
+            TrackProposal(
+                artist=later.canonical_artist,
+                title=later.canonical_title,
+                confidence=0.9,
+            ),
+            later,
+        ),
+    ]
+
+    normalized = _normalize_progressive_route(
+        request=LiveEpisodeAssemblyRequest(
+            topic="chill电子乐",
+            max_tracks=4,
+            max_chapters=3,
+        ),
+        resolved_chapters=route,
+        opening_track=opening,
+        locked_successor=locked,
+    )
+
+    assert [item.track.track_ref for item in normalized if item.track is not None] == [
+        "mock:opening",
+        "mock:bridge",
+        "mock:later",
+    ]
+    assert len(normalized) == 3
+
 
 def test_progressive_opening_insertion_reapplies_track_and_chapter_bounds() -> None:
     def chapter(index: int, track: ResolvedTrack) -> _ResolvedChapter:
