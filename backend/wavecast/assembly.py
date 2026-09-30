@@ -983,6 +983,7 @@ class LiveEpisodeAssemblyService:
                     ),
                     evidence_ids=list(seed.evidence_ids),
                 )
+                candidate: ResolvedTrack | None
                 if alternative.playable:
                     candidate = ResolvedTrack(
                         track_ref=alternative.track_ref,
