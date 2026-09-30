@@ -536,14 +536,16 @@ class LiveEpisodeAssemblyService:
         # receives its own canonical title and generic narration metadata; it is
         # never treated as the unresolved original song.
         artists: list[str] = []
-        for proposal in [chapter.track, *chapter.track_alternates]:
-            if proposal is None:
-                continue
-            normalized = " ".join(proposal.artist.casefold().split())
+        artist_proposals: list[TrackProposal] = []
+        if chapter.track is not None:
+            artist_proposals.append(chapter.track)
+        artist_proposals.extend(chapter.track_alternates)
+        for candidate_proposal in artist_proposals:
+            normalized = " ".join(candidate_proposal.artist.casefold().split())
             if normalized and normalized not in {
                 " ".join(item.casefold().split()) for item in artists
             }:
-                artists.append(proposal.artist)
+                artists.append(candidate_proposal.artist)
         for artist in artists[:_CATALOG_REPLACEMENT_LIMIT]:
             try:
                 alternatives = await self.retrieval.search(
