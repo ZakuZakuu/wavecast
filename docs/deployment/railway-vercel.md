@@ -1,6 +1,69 @@
-# WaveCast hosted deployment baseline
+# WaveCast hosted deployment workflow
 
-This credential-free baseline prepares the portable Compose contracts for:
+This document is the canonical hosted branch/deployment contract for active
+WaveCast development. The original deployment baseline assumed direct deployment
+from `main`; that is now a **release baseline**, not the routine development
+workflow.
+
+## Branch roles
+
+~~~text
+feature branch / PR
+        |
+        v
+integration  = hosted human-test / staging checkpoint
+  |-- Vercel Preview -> apps/web
+  \-- Railway API   -> Dockerfile.api   (during active hackathon testing)
+
+accepted integration checkpoint
+        |
+        v
+main         = public/release branch
+  |-- Vercel Production -> apps/web
+  \-- Railway API       -> Dockerfile.api   (before public release)
+~~~
+
+Rules:
+
+- Do not advance `main` for routine iteration, debugging, or listening tests.
+- Merge a feature PR into `integration` only when it forms a coherent hosted
+  checkpoint worth human testing; batch small related fixes rather than
+  deploying every edit.
+- A human listening result is meaningful only when Preview Web and Railway API
+  represent the intended matching checkpoint. Generate a **fresh** programme
+  after structural generation/arrangement changes; old episodes are immutable
+  and do not retroactively acquire fixes.
+- Before a public release, promote the accepted `integration` checkpoint to
+  `main`, switch/confirm Railway's source branch as `main`, and deploy that
+  accepted release SHA.
+- Vercel Production branch remains `main`. Vercel deployments from
+  `integration` are Preview deployments used for hosted testing.
+- During active preliminary testing, Railway may intentionally track
+  `integration` so API behavior matches the Vercel Preview.
+
+## Platform incident rule
+
+A platform incident is not an application failure. In particular, if Railway
+shows API degradation, slow/stuck deployments, or
+`Limited Access — Deploys have been paused temporarily`:
+
+1. keep the last healthy running API in place;
+2. stop issuing repeated variable kicks/redeploys that only create duplicate
+   queued deployments;
+3. do not reconnect the GitHub source or switch `integration`/`main` merely
+   to work around the incident;
+4. resume with one fresh deployment after Railway restores deploy access;
+5. verify deployment SUCCESS, application startup, and `GET /api/health` 200
+   before declaring the checkpoint testable.
+
+When diagnosing source state, do not interpret a serialized
+`source.commitSha` field alone as proof of a deliberate pin. Confirm the
+configured repo/branch in Service Source and use actual deployment metadata
+(`commitHash`, branch, status) as the authority for what code is running.
+
+## Release baseline
+
+For a public/release deployment, the topology remains:
 
 ~~~text
 GitHub main
@@ -8,13 +71,15 @@ GitHub main
 └─ Railway -> API + Postgres + Persistent Volume
 ~~~
 
-Initial hosted provider mode remains mock. Do not create platform resources,
-store credentials, enable live providers, or add music sidecars in this step.
+The sections below describe service configuration. Where they say `main`, read
+that as the **release** configuration; active hosted development may temporarily
+bind Railway to `integration` according to the branch workflow above.
 
 ## Railway API
 
-Connect ZakuZakuu/wavecast on main and select Dockerfile.api. Enable public
-networking and use GET /api/health as the health check. Attach one Persistent
+Connect `ZakuZakuu/wavecast` and select `Dockerfile.api`. Use `integration`
+during active hosted testing and `main` for the accepted release. Enable public
+networking and use `GET /api/health` as the health check. Attach one Persistent
 Volume. Set the first service run UID to 0 because volume ownership may be
 root-owned; the image does not silently chmod or chown unknown mounts.
 

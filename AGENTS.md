@@ -46,9 +46,11 @@ Read these before making non-trivial changes:
    and the explicit preliminary-round scope/priority order
 3. `docs/PROJECT_STATE.md` for the current milestone, branch/main state, and
    immediate next task
-4. `docs/CODEX_HANDOFF.md` for the long-lived product and architecture contract
-5. Any relevant ADRs under `docs/adr/`
-6. Existing tests and schemas
+4. `docs/DEVELOPMENT_WORKFLOWS.md` for Browser ChatGPT vs local-agent
+   execution ownership, C2C handoff, and hosted-checkpoint discipline
+5. `docs/CODEX_HANDOFF.md` for the long-lived product and architecture contract
+6. Any relevant ADRs under `docs/adr/`
+7. Existing tests and schemas
 
 If implementation and docs disagree, do not silently redefine the product. Preserve established domain semantics and either:
 

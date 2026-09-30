@@ -1,6 +1,6 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-29
+**Last updated:** 2026-09-30
 
 ## Product reminder
 
@@ -49,28 +49,59 @@ Current product decision:
   expanding playback and move to **UI P0**. The intended UI pass is roughly one
   focused day before submission.
 
-Hosted/code state at this product reset:
+Hosted/code state at the current checkpoint:
 
-- `integration` is at `1c1ecaa734301313bfacc144a04afd057d8d132f`
-  (PR #140 merged); CI #544 was fully green and the corresponding hosted
-  checkpoint was deployed successfully.
-- Human listening confirmed that music continuity works and later narration/TTS
-  can play, but the observed programme incorrectly reached an `Outro` after
-  only the second song and the opening host behavior still does not match the
-  desired radio experience.
-- PR #141 (`fix/progressive-route-completeness`) was opened during debugging
-  with a “long-form requires at least 3 resolved tracks” guard. **Do not merge
-  that approach as-is.** The new product target explicitly rejects hard song-count
-  rules as the definition of programme completeness. Re-evaluate or supersede
-  the PR using the product target above.
-- Coding/testing is intentionally paused at this checkpoint until the product
-  target is treated as the governing contract for the next implementation step.
+- **Branch contract:** `integration` is the hosted human-test/staging branch;
+  `main` is the release branch. Routine preliminary iteration must not advance
+  `main`. Feature PRs merge to `integration` only when they form a coherent
+  hosted checkpoint.
+- PR #143 added proposal-ready opening host copy and early in-track placement.
+  Human listening confirmed the host can enter naturally within the first
+  tens of seconds instead of waiting for song 1 to finish.
+- PR #144 fixed guest tuning so transient Preview auth failures do not block
+  anonymous programme creation.
+- PR #145 hardened the preliminary listening path: no-vocal timing is treated
+  as safe talk-over, opening-host fallback stays near the start, render wake-up
+  begins earlier, and Safari native HLS can recover when a previously known
+  programme frontier grows. Human listening confirmed the opening-host behavior
+  improved and ordinary music-only transitions remain acceptable.
+- PR #146 replaces the rejected hard "minimum 3 tracks" idea with
+  **duration-completeness**. A route that is obviously too short for the user's
+  requested programme duration cannot acquire final/Outro semantics merely
+  because one future song resolved. Underfilled routes are retryable through
+  the existing generation worker. Two tracks remain legal when the requested
+  programme is genuinely short.
+- PR #146 is merged to `integration` at
+  `ac570267ce3d5622ece63457c82af2fafe347aeb`; CI #556 was fully green
+  (backend, Web, and deployment-smoke).
+- Vercel Preview for the #146 integration commit reached READY, but Railway
+  displayed platform-wide **Limited Access / Deploys have been paused
+  temporarily** together with an API-degradation incident. Therefore the API
+  remains on the previously verified #145 checkpoint
+  `0f4ed5708844a1b682513997d45304d12a5e310e`.
+- Do **not** treat the current hosted environment as a valid #146 end-to-end
+  test while Web and API are on different checkpoints. Do not reconnect the
+  GitHub source, switch branches, or manufacture repeated deploy triggers while
+  Railway has deployment access paused.
+- Railway's deployment pause blocks hosted acceptance, **not development**.
+  New implementation work may continue in the local-agent workflow on feature
+  branches with local lint/type/test/build validation. Browser ChatGPT should
+  remain the planning/review layer and avoid overlapping edits while a local
+  agent owns execution. See `docs/DEVELOPMENT_WORKFLOWS.md`.
 
-The next engineering session should first map the desired radio experience onto
-the existing capabilities before changing architecture. In particular, determine
-the smallest way to support an opening host beat and flexible in-track/talk-over
-placement using the existing timing + MixPlan/programme stream rather than
-starting another runtime rewrite.
+Immediate next step after Railway restores deployment access:
+
+1. deploy the existing `integration` head
+   `ac570267ce3d5622ece63457c82af2fafe347aeb` to the Railway API;
+2. verify deployment SUCCESS, API startup, and `GET /api/health` 200;
+3. use a fresh programme (never an old immutable episode) for one focused
+   human listen;
+4. verify the programme does not falsely end after an underfilled two-track
+   prefix and that playback still crosses later generated frontiers;
+5. if that passes, stop expanding Listening P0 and move to **UI P0**.
+
+See `docs/deployment/railway-vercel.md` for the canonical hosted branch and
+deployment workflow.
 
 ### Narration P0 — historical implementation notes (superseded by the product freeze above)
 

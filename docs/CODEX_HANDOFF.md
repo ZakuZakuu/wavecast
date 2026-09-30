@@ -11,6 +11,43 @@ state is maintained in `docs/PROJECT_STATE.md`.
 **Target:** Hackathon prototype with production-minded architecture  
 **Primary objective:** Build the smallest end-to-end product that proves the listening experience, streaming generation model, and research/curation intelligence.
 
+## Current hosted branch/deployment contract
+
+This section overrides older deployment-baseline language elsewhere in the
+handoff. The canonical operational details live in
+`docs/deployment/railway-vercel.md`.
+
+- `integration` is the **hosted human-test/staging branch** during active
+  preliminary development. Coherent feature PRs are merged there for matched
+  Web/API listening checkpoints.
+- `main` is the **release branch**. Do not advance it for routine iteration or
+  hosted debugging. Promote an accepted `integration` checkpoint to `main`
+  only when preparing the public/release build.
+- Vercel production remains tied to `main`; `integration` is used through
+  Vercel Preview deployments.
+- During active hackathon testing the Railway API may track `integration` so
+  the backend matches the Preview Web. Before a public release, switch Railway
+  back to `main` and deploy the accepted release SHA.
+- A hosted checkpoint is valid only when the Web and API are on the intended
+  matching code checkpoint and the deployment/health signals were actually
+  observed. Never validate a new backend behavior against an old Railway API.
+- If Railway reports platform-wide deployment degradation or
+  `Limited Access — Deploys have been paused temporarily`, stop issuing repeated
+  deploy triggers. Keep the last healthy service running and wait for platform
+  deployment access to return; do not reconnect GitHub or change branch policy
+  merely to work around a platform incident.
+- Treat a serialized source `commitSha` field as diagnostic metadata, not by
+  itself proof that a service is intentionally pinned. Confirm branch binding
+  with the service settings and confirm deployed code from deployment metadata.
+
+Current execution status still belongs in `docs/PROJECT_STATE.md`, not here.
+
+For execution ownership, read `docs/DEVELOPMENT_WORKFLOWS.md`. In short:
+Browser ChatGPT is the cloud planning/review/orchestration layer; local
+Codex/agents are the preferred execution layer for substantial implementation
+and local test/debug loops; C2C combines the two without changing Git or tests
+as the source of truth.
+
 ---
 
 ## Historical handoff: Narration P0
@@ -84,7 +121,12 @@ accepted and validation is available, merge/deploy the sidecar once, then move
 WaveCast `integration` once. Railway Agent is not required.
 
 
-**Validation fallback while hosted Actions is blocked**
+**Historical validation fallback — hosted Actions blocker resolved**
+
+> Historical only. GitHub-hosted CI later resumed and, at the current #146
+> checkpoint, CI #556 completed successfully. Do not use the incident below as
+> evidence that Actions is presently unavailable.
+
 
 - A rerun on 2026-09-29 reproduced the same behavior: every GitHub-hosted job
   queued, then failed within seconds with zero runner steps and no job log.
