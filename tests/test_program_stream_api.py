@@ -598,3 +598,60 @@ def test_program_render_recovers_only_when_late_narration_removal_restores_prefi
         api_module.canonical_render_plan_for_episode(episode.id),
         manifest,
     )
+
+
+def test_program_render_does_not_drop_narration_already_in_frozen_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = InMemoryEpisodeRepository()
+    orchestrator = EpisodeOrchestrator(repository)
+    monkeypatch.setattr(api_module, "repository", repository)
+    monkeypatch.setattr(api_module, "orchestrator", orchestrator)
+
+    narration = NarrationSegment(
+        id="frozen-host",
+        chapter_id="chapter-a",
+        order=0,
+        state=SegmentState.AUDIO_READY,
+        planned_duration_seconds=8,
+        actual_duration_seconds=8,
+        audio_source_url="/api/assets/audio/frozen-host.wav",
+        title="Frozen Track Intro",
+        narration_text="This host beat is already part of published audio.",
+        narration_role=NarrationRole.TRACK_INTRO,
+    )
+    music = MusicSegment(
+        id="music-a",
+        chapter_id="chapter-a",
+        order=1,
+        state=SegmentState.AUDIO_READY,
+        planned_duration_seconds=120,
+        actual_duration_seconds=120,
+        track_ref="track-a",
+        audio_source_url="/api/assets/audio/music-a.wav",
+        title="A",
+        artist="Artist A",
+    )
+    episode = LiveEpisode(
+        id="program-render-frozen-host",
+        seed_id="seed",
+        title="Frozen host",
+        topic="Already published narration stays immutable",
+        listener_id="listener-a",
+        state=EpisodeState.STREAMING,
+        generation_mode=GenerationMode.PROGRESSIVE,
+        program_estimated_duration_seconds=240,
+        segments=[narration, music],
+        current_segment_id="music-a",
+    )
+    repository.save(episode)
+    frozen_plan = api_module.canonical_render_plan_for_episode(episode.id)
+    manifest = _manifest_for_plan_prefix(frozen_plan, end_seconds=6)
+
+    skipped = api_module._recover_late_optional_narration_for_frozen_prefix(
+        episode.id,
+        manifest,
+    )
+
+    assert skipped == []
+    assert repository.get(episode.id).segment("frozen-host").state is SegmentState.AUDIO_READY
