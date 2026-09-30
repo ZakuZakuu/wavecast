@@ -22,6 +22,7 @@ from wavecast.assembly import (
     _mock_writer_chapter_index,
     _mock_writer_slot_contexts,
     _normalize_opening_resolved_route,
+    _normalize_progressive_route,
     _reindex_resolved_chapters,
     _ResolvedChapter,
     _same_song_identity,
@@ -708,6 +709,160 @@ def test_locked_progressive_route_catalog_continuation_fills_duration_coverage(
     assert continuation.chapter.claim_support == []
 
 
+def test_locked_progressive_route_uses_topic_continuation_before_same_artist_emergency(
+    tmp_path,
+) -> None:
+    class ThemeContinuationLLM(RecordingAssemblyLLM):
+        def __init__(self) -> None:
+            super().__init__()
+            self.skeleton_calls = 0
+
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                self.skeleton_calls += 1
+                locked = self._proposal(self._tracks[1])
+                if self.skeleton_calls == 1:
+                    return ProgramSkeleton(
+                        thesis="Start the chill-electronic route but leave it underfilled.",
+                        chapters=[
+                            ChapterPlan(
+                                index=0,
+                                track=locked,
+                                narrative_role=NarrativeRole.BRIDGE,
+                                reason="keep the prepared successor",
+                                novelty_distance=NoveltyDistance.CLOSE,
+                                narration_goal="continue the chill-electronic theme",
+                            ),
+                            ChapterPlan(
+                                index=1,
+                                track=TrackProposal(
+                                    artist="Missing Artist",
+                                    title="Missing Song",
+                                    confidence=0.8,
+                                    novelty_distance=NoveltyDistance.BRIDGE,
+                                ),
+                                narrative_role=NarrativeRole.BRIDGE,
+                                reason="force the first route to underfill",
+                                novelty_distance=NoveltyDistance.BRIDGE,
+                                narration_goal="continue the theme",
+                            ),
+                        ],
+                        estimated_duration_seconds=22 * 60,
+                    )
+                return ProgramSkeleton(
+                    thesis="Continue the chill-electronic station across distinct artists.",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(self._tracks[0]),
+                            narrative_role=NarrativeRole.ANCHOR,
+                            reason="committed opening placeholder",
+                            novelty_distance=NoveltyDistance.VERY_CLOSE,
+                            narration_goal="preserve the committed opening",
+                        ),
+                        ChapterPlan(
+                            index=1,
+                            track=locked,
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="committed successor placeholder",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="preserve the committed successor",
+                        ),
+                        ChapterPlan(
+                            index=2,
+                            track=TrackProposal(
+                                artist="Maribou State",
+                                title="Glasshouse Drift",
+                                confidence=0.9,
+                                novelty_distance=NoveltyDistance.BRIDGE,
+                            ),
+                            narrative_role=NarrativeRole.DISCOVERY,
+                            reason="widen the chill-electronic palette",
+                            novelty_distance=NoveltyDistance.BRIDGE,
+                            narration_goal="move into a warmer downtempo texture",
+                        ),
+                        ChapterPlan(
+                            index=3,
+                            track=TrackProposal(
+                                artist="Kiasmos",
+                                title="Soft Current",
+                                confidence=0.9,
+                                novelty_distance=NoveltyDistance.DISCOVERY,
+                            ),
+                            narrative_role=NarrativeRole.RESOLUTION,
+                            reason="resolve the route with a different electronic scene",
+                            novelty_distance=NoveltyDistance.DISCOVERY,
+                            narration_goal="close the arc without repeating an artist",
+                        ),
+                    ],
+                    estimated_duration_seconds=22 * 60,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    music = MockMusicProvider()
+    music._tracks.update(
+        {
+            "mock:maribou": TrackMetadata(
+                track_ref="mock:maribou",
+                title="Glasshouse Drift",
+                artist="Maribou State",
+                duration_seconds=24,
+                playable=True,
+            ),
+            "mock:kiasmos": TrackMetadata(
+                track_ref="mock:kiasmos",
+                title="Soft Current",
+                artist="Kiasmos",
+                duration_seconds=24,
+                playable=True,
+            ),
+        }
+    )
+    llm = ThemeContinuationLLM()
+    assembly = service(tmp_path, llm, music)
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    locked = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Signal Garden",
+        canonical_title="Midnight Transfer",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="chill电子乐",
+                desired_duration_seconds=22 * 60,
+                max_tracks=5,
+                max_chapters=8,
+            ),
+            opening_track=opening,
+            locked_successor=locked,
+        )
+    )
+
+    resolved = [
+        chapter.resolved_track
+        for chapter in session.chapters
+        if chapter.resolved_track is not None
+    ]
+    assert llm.skeleton_calls == 2
+    assert [track.canonical_artist for track in resolved] == [
+        "Signal Garden",
+        "Maribou State",
+        "Kiasmos",
+    ]
+    assert len({track.canonical_artist for track in resolved}) == len(resolved)
+
+
 def test_locked_progressive_route_emergency_fill_reuses_confirmed_artist_catalog(
     tmp_path,
 ) -> None:
@@ -749,7 +904,20 @@ def test_locked_progressive_route_emergency_fill_reuses_confirmed_artist_catalog
                 )
             return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
 
-    music = MockMusicProvider()
+    class MetadataOnlySearchMusicProvider(MockMusicProvider):
+        async def search(
+            self,
+            query: str,
+            *,
+            limit: int = 5,
+        ) -> list[TrackMetadata]:
+            results = await super().search(query, limit=limit)
+            return [
+                item.model_copy(update={"playable": False})
+                for item in results
+            ]
+
+    music = MetadataOnlySearchMusicProvider()
     music._tracks.update(
         {
             "mock:bridge-2": TrackMetadata(
@@ -1173,6 +1341,99 @@ def test_progressive_opening_dedupes_exact_identity_and_keeps_other_tracks() -> 
     ]
     assert [item.chapter.index for item in normalized] == [0, 1]
     assert normalized[1].track == different
+
+def test_progressive_route_prunes_unresolved_music_before_chapter_bounds() -> None:
+    def chapter(
+        index: int,
+        proposal: TrackProposal,
+        track: ResolvedTrack | None,
+    ) -> _ResolvedChapter:
+        plan = ChapterPlan(
+            index=index,
+            track=proposal,
+            narrative_role=NarrativeRole.BRIDGE,
+            reason="fixture",
+            narration_goal="fixture",
+        )
+        return _ResolvedChapter(
+            chapter=plan,
+            writer_chapter=plan,
+            track=track,
+            music_index=None,
+        )
+
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    locked = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Signal Garden",
+        canonical_title="Midnight Transfer",
+    )
+    later = ResolvedTrack(
+        track_ref="mock:later",
+        canonical_artist="Maribou State",
+        canonical_title="Glasshouse Drift",
+    )
+    route = [
+        chapter(
+            0,
+            TrackProposal(
+                artist=opening.canonical_artist,
+                title=opening.canonical_title,
+                confidence=1.0,
+            ),
+            opening,
+        ),
+        chapter(
+            1,
+            TrackProposal(
+                artist=locked.canonical_artist,
+                title=locked.canonical_title,
+                confidence=1.0,
+            ),
+            locked,
+        ),
+        chapter(
+            2,
+            TrackProposal(
+                artist="Missing Artist",
+                title="Missing Song",
+                confidence=0.9,
+            ),
+            None,
+        ),
+        chapter(
+            3,
+            TrackProposal(
+                artist=later.canonical_artist,
+                title=later.canonical_title,
+                confidence=0.9,
+            ),
+            later,
+        ),
+    ]
+
+    normalized = _normalize_progressive_route(
+        request=LiveEpisodeAssemblyRequest(
+            topic="chill电子乐",
+            max_tracks=4,
+            max_chapters=3,
+        ),
+        resolved_chapters=route,
+        opening_track=opening,
+        locked_successor=locked,
+    )
+
+    assert [item.track.track_ref for item in normalized if item.track is not None] == [
+        "mock:opening",
+        "mock:bridge",
+        "mock:later",
+    ]
+    assert len(normalized) == 3
+
 
 def test_progressive_opening_insertion_reapplies_track_and_chapter_bounds() -> None:
     def chapter(index: int, track: ResolvedTrack) -> _ResolvedChapter:
