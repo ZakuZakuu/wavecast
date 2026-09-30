@@ -238,6 +238,28 @@ _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR = 4
 _CATALOG_REPLACEMENT_LIMIT = 3
 
 
+def _required_progressive_music_seconds(
+    request: LiveEpisodeAssemblyRequest,
+    narration_ratio: float,
+) -> int:
+    target_narration_ratio = narration_ratio_for_host_mode(
+        request.presentation_intent.host_mode,
+        full_ratio=narration_ratio,
+    )
+    requested_music_seconds = int(
+        request.desired_duration_seconds * (1.0 - target_narration_ratio)
+    )
+    bounded_music_target_seconds = min(
+        requested_music_seconds,
+        request.max_tracks * _ESTIMATED_TRACK_DURATION_SECONDS,
+    )
+    return (
+        bounded_music_target_seconds * _MIN_PROGRESSIVE_DURATION_COVERAGE_NUMERATOR
+        + _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR
+        - 1
+    ) // _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR
+
+
 _NOVELTY_RANK = {
     NoveltyDistance.VERY_CLOSE: 0,
     NoveltyDistance.CLOSE: 1,
@@ -592,6 +614,155 @@ class LiveEpisodeAssemblyService:
                 return candidate, proposal, "same_artist_catalog"
         return None
 
+    async def _extend_underfilled_locked_route_from_catalog(
+        self,
+        request: LiveEpisodeAssemblyRequest,
+        *,
+        locked_successor: ResolvedTrack,
+        resolved_chapters: list[_ResolvedChapter],
+        used_tracks: list[ResolvedTrack],
+        trace: GenerationTrace,
+    ) -> list[_ResolvedChapter]:
+        """Boundedly fill a live route from Curator-mentioned artists.
+
+        FastStart already owns the second-song continuity promise. When the
+        slower route resolves too little music for the duration gate, use real
+        playable catalog tracks from artists Curator already mentioned rather
+        than discarding every resolved future chapter. Each continuation keeps
+        its own canonical identity and generic narration metadata.
+        """
+
+        required_music_seconds = _required_progressive_music_seconds(
+            request,
+            self.narration_ratio,
+        )
+        required_track_count = (
+            required_music_seconds + _ESTIMATED_TRACK_DURATION_SECONDS - 1
+        ) // _ESTIMATED_TRACK_DURATION_SECONDS
+
+        effective_used = list(used_tracks)
+        if not any(
+            _same_song_identity(locked_successor, item)
+            for item in effective_used
+        ):
+            effective_used.append(locked_successor)
+        if len(effective_used) >= required_track_count:
+            return resolved_chapters
+
+        locked_in_route = any(
+            _same_resolved_track(item.track, locked_successor)
+            for item in resolved_chapters
+        )
+        surviving_chapter_count = 1 + sum(
+            item.chapter.track is None or item.track is not None
+            for item in resolved_chapters
+        )
+        if not locked_in_route:
+            surviving_chapter_count += 1
+
+        artist_seeds: list[TrackProposal] = []
+        speculative = [
+            item
+            for item in resolved_chapters
+            if item.chapter.track is not None and item.track is None
+        ]
+        playable = [
+            item
+            for item in resolved_chapters
+            if item.chapter.track is not None and item.track is not None
+        ]
+        for item in [*speculative, *playable]:
+            if item.chapter.track is not None:
+                artist_seeds.append(item.chapter.track)
+            artist_seeds.extend(item.chapter.track_alternates)
+
+        seen_artists: set[str] = set()
+        for seed in artist_seeds:
+            if (
+                len(effective_used) >= required_track_count
+                or len(effective_used) >= request.max_tracks
+                or surviving_chapter_count >= request.max_chapters
+            ):
+                break
+            artist_key = " ".join(seed.artist.casefold().split())
+            if not artist_key or artist_key in seen_artists:
+                continue
+            seen_artists.add(artist_key)
+            try:
+                alternatives = await self.retrieval.search(
+                    seed.artist,
+                    requested_artist=seed.artist,
+                    limit=5,
+                )
+            except ProviderError:
+                continue
+
+            for alternative in alternatives:
+                if not alternative.playable:
+                    continue
+                if " ".join(alternative.artist.casefold().split()) != artist_key:
+                    continue
+                candidate = ResolvedTrack(
+                    track_ref=alternative.track_ref,
+                    canonical_artist=alternative.artist,
+                    canonical_title=alternative.title,
+                )
+                if any(
+                    _same_song_identity(candidate, used)
+                    for used in effective_used
+                ):
+                    continue
+
+                proposal = TrackProposal(
+                    artist=alternative.artist,
+                    title=alternative.title,
+                    reasons=[
+                        "Catalog-aware continuation for an underfilled live route."
+                    ],
+                    similarity_dimensions=list(seed.similarity_dimensions),
+                    confidence=0.5,
+                    novelty_distance=(
+                        seed.novelty_distance or NoveltyDistance.CLOSE
+                    ),
+                    evidence_ids=list(seed.evidence_ids),
+                )
+                chapter = ChapterPlan(
+                    index=len(resolved_chapters),
+                    track=proposal,
+                    narrative_role=NarrativeRole.BRIDGE,
+                    reason=(
+                        "Continue the programme with a real playable track from "
+                        "an artist already selected by the editorial route."
+                    ),
+                    novelty_distance=proposal.novelty_distance,
+                    evidence_ids=list(proposal.evidence_ids),
+                    claim_support=[],
+                    narration_goal=(
+                        "Connect this catalog-backed continuation to the programme "
+                        "direction without unsupported song-specific claims."
+                    ),
+                )
+                resolved_chapters.append(
+                    _ResolvedChapter(
+                        chapter=chapter,
+                        writer_chapter=chapter,
+                        track=candidate,
+                        music_index=None,
+                    )
+                )
+                effective_used.append(candidate)
+                surviving_chapter_count += 1
+                trace.mark(
+                    "track_catalog_continuation_resolved",
+                    resolved_track_count=len(effective_used),
+                    required_track_count=required_track_count,
+                )
+                # Prefer route diversity: add at most one continuation per
+                # Curator-mentioned artist before considering the next artist.
+                break
+
+        return resolved_chapters
+
     async def _prepare_intelligence(
         self,
         request: LiveEpisodeAssemblyRequest,
@@ -809,6 +980,14 @@ class LiveEpisodeAssemblyService:
                     track=resolved,
                     music_index=None,
                 )
+            )
+        if locked_successor is not None:
+            resolved_chapters = await self._extend_underfilled_locked_route_from_catalog(
+                request,
+                locked_successor=locked_successor,
+                resolved_chapters=resolved_chapters,
+                used_tracks=used_tracks,
+                trace=trace,
             )
         resolved_chapters = _reindex_resolved_chapters(resolved_chapters)
         resolution_ms = _elapsed_ms(resolution_started)
@@ -1626,18 +1805,10 @@ def _build_progressive_session(
         request.presentation_intent.host_mode,
         full_ratio=narration_ratio,
     )
-    requested_music_seconds = int(
-        request.desired_duration_seconds * (1.0 - target_narration_ratio)
+    required_resolved_music_seconds = _required_progressive_music_seconds(
+        request,
+        narration_ratio,
     )
-    bounded_music_target_seconds = min(
-        requested_music_seconds,
-        request.max_tracks * _ESTIMATED_TRACK_DURATION_SECONDS,
-    )
-    required_resolved_music_seconds = (
-        bounded_music_target_seconds * _MIN_PROGRESSIVE_DURATION_COVERAGE_NUMERATOR
-        + _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR
-        - 1
-    ) // _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR
     estimated_resolved_music_seconds = (
         1 + future_music_count
     ) * _ESTIMATED_TRACK_DURATION_SECONDS
