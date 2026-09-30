@@ -7,6 +7,7 @@ import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from io import BytesIO
+from itertools import combinations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
@@ -99,6 +100,7 @@ from wavecast.rendering import (
     MixSourceUnavailableError,
     ProgramImmutabilityError,
     ProgramRenderManifest,
+    frozen_prefix_is_compatible,
     hls_playlist,
     load_program_manifest,
     render_mix,
@@ -1583,16 +1585,9 @@ def canonical_mix_plan_for_episode(episode_id: str, actor: AuthPrincipal) -> Mix
     return plan_episode_mix(PlayableEpisode(id=current.id, segments=ready_segments))
 
 
-def canonical_render_plan_for_episode(episode_id: str) -> MixPlan:
-    """Build only the prefix whose editorial inputs are safe to freeze.
+def _canonical_render_plan(current: LiveEpisode) -> MixPlan:
+    """Build the renderable prefix from one immutable Episode snapshot."""
 
-    Unlike realtime fallback playback, the immutable programme renderer must not
-    skip an unfinished host segment and then publish later music. A pending
-    narration therefore closes the renderable prefix unless the programme is
-    explicitly music-only.
-    """
-
-    current = orchestrator.get(episode_id)
     ready_segments: list[MusicSegment | NarrationSegment] = []
     for segment in current.timeline_segments:
         if segment.is_audio_ready:
@@ -1609,6 +1604,143 @@ def canonical_render_plan_for_episode(episode_id: str) -> MixPlan:
     if not ready_segments:
         raise ValueError("program render plan is not ready")
     return plan_episode_mix(PlayableEpisode(id=current.id, segments=ready_segments))
+
+
+def canonical_render_plan_for_episode(episode_id: str) -> MixPlan:
+    """Build only the prefix whose editorial inputs are safe to freeze.
+
+    Unlike realtime fallback playback, the immutable programme renderer must not
+    skip an unfinished host segment and then publish later music. A pending
+    narration therefore closes the renderable prefix unless the programme is
+    explicitly music-only.
+    """
+
+    return _canonical_render_plan(orchestrator.get(episode_id))
+
+
+def _skip_blocking_optional_narration_for_continuity(
+    episode_id: str,
+    manifest: ProgramRenderManifest,
+) -> list[str]:
+    """Let ready music pass when optional narration is consuming the live buffer."""
+
+    if manifest.complete:
+        return []
+
+    for attempt in range(5):
+        episode = repository.get(episode_id).model_copy(deep=True)
+        if (
+            episode.generation_mode is not GenerationMode.PROGRESSIVE
+            or episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
+        ):
+            return []
+
+        target_seconds = buffer_decision(
+            episode,
+            baseline_seconds=generation_worker.policy.target_ahead_seconds,
+            max_chapters=generation_worker.policy.target_chapters,
+        ).target_seconds
+        rendered_ahead = max(
+            0.0,
+            manifest.rendered_frontier_seconds
+            - episode.program_playback_position_seconds,
+        )
+        if rendered_ahead >= target_seconds:
+            return []
+
+        timeline = episode.timeline_segments
+        skipped: list[str] = []
+        for index, segment in enumerate(timeline):
+            if (
+                not isinstance(segment, NarrationSegment)
+                or segment.id == "segment-opening-host"
+                or segment.is_audio_ready
+                or segment.state is SegmentState.SKIPPED
+            ):
+                continue
+            later_ready_music = any(
+                isinstance(later, MusicSegment) and later.is_audio_ready
+                for later in timeline[index + 1 :]
+            )
+            if not later_ready_music:
+                continue
+            segment.state = SegmentState.SKIPPED
+            skipped.append(segment.id)
+            break
+
+        if not skipped:
+            return []
+
+        episode.last_activity_at = datetime.now(UTC)
+        try:
+            repository.save(episode)
+            return skipped
+        except EpisodeConcurrencyError:
+            if attempt < 4:
+                continue
+            raise
+    return []
+
+
+def _recover_late_optional_narration_for_frozen_prefix(
+    episode_id: str,
+    manifest: ProgramRenderManifest,
+) -> list[str]:
+    """Drop only narration whose removal exactly restores the frozen programme."""
+
+    if manifest.complete:
+        return []
+
+    for attempt in range(5):
+        episode = repository.get(episode_id).model_copy(deep=True)
+        if (
+            episode.generation_mode is not GenerationMode.PROGRESSIVE
+            or episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
+        ):
+            return []
+
+        candidates = [
+            segment
+            for segment in reversed(episode.timeline_segments)
+            if (
+                isinstance(segment, NarrationSegment)
+                and segment.id != "segment-opening-host"
+                and segment.state is SegmentState.AUDIO_READY
+                and not segment.is_committed
+            )
+        ]
+        if not candidates:
+            return []
+
+        retry = False
+        for count in range(1, min(3, len(candidates)) + 1):
+            for subset in combinations(candidates, count):
+                working = episode.model_copy(deep=True)
+                skipped_ids = [segment.id for segment in subset]
+                for segment_id in skipped_ids:
+                    candidate = working.segment(segment_id)
+                    assert isinstance(candidate, NarrationSegment)
+                    candidate.state = SegmentState.SKIPPED
+                try:
+                    plan = _canonical_render_plan(working)
+                except ValueError:
+                    continue
+                if not frozen_prefix_is_compatible(plan, manifest):
+                    continue
+
+                working.last_activity_at = datetime.now(UTC)
+                try:
+                    repository.save(working)
+                except EpisodeConcurrencyError:
+                    retry = True
+                    break
+                return skipped_ids
+            if retry:
+                break
+        if retry and attempt < 4:
+            continue
+        return []
+    return []
 
 
 async def _prepare_owned_music_assets(
@@ -1758,14 +1890,60 @@ async def render_program_stream(
                 status_code=409,
                 detail="Program render music source is unavailable",
             )
+        manifest = await load_program_manifest(audio_storage, episode_id)
+        if manifest is not None:
+            skipped_pending = await to_thread.run_sync(
+                _skip_blocking_optional_narration_for_continuity,
+                episode_id,
+                manifest,
+            )
+            if skipped_pending:
+                logger.info(
+                    "program_render_narration_degraded episode_id=%s "
+                    "reason=continuity_deadline skipped_count=%s",
+                    episode_id,
+                    len(skipped_pending),
+                )
+
         current = await to_thread.run_sync(orchestrator.get, episode_id)
         plan = await to_thread.run_sync(canonical_render_plan_for_episode, episode_id)
         complete = current.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
-        return await render_program_prefix(
-            plan,
-            audio_storage,
-            complete=complete,
-        )
+        try:
+            return await render_program_prefix(
+                plan,
+                audio_storage,
+                complete=complete,
+            )
+        except ProgramImmutabilityError:
+            if manifest is None or complete:
+                raise
+            skipped_late = await to_thread.run_sync(
+                _recover_late_optional_narration_for_frozen_prefix,
+                episode_id,
+                manifest,
+            )
+            if not skipped_late:
+                raise
+            logger.warning(
+                "program_render_narration_degraded episode_id=%s "
+                "reason=frozen_prefix_conflict skipped_count=%s",
+                episode_id,
+                len(skipped_late),
+            )
+            current = await to_thread.run_sync(orchestrator.get, episode_id)
+            plan = await to_thread.run_sync(
+                canonical_render_plan_for_episode,
+                episode_id,
+            )
+            complete = current.state in {
+                EpisodeState.MATERIALIZED,
+                EpisodeState.PUBLISHED,
+            }
+            return await render_program_prefix(
+                plan,
+                audio_storage,
+                complete=complete,
+            )
     except HTTPException:
         raise
     except EpisodeConcurrencyError as error:

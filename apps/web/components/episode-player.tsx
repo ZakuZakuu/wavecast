@@ -257,7 +257,9 @@ export function EpisodePlayer({
     signature: null,
     count: 0,
   });
+  const programManifestRef = useRef<ProgramRenderManifest | null>(bootstrapManifest);
   const frontierWakeAtRef = useRef(0);
+  programManifestRef.current = programManifest;
 
   const localEpisode = episode
     && (episodeId ? episode.id === episodeId : episode.seed_id === seedId)
@@ -347,11 +349,25 @@ export function EpisodePlayer({
             return;
           }
         }
+        if (
+          reason instanceof ApiRequestError
+          && [409, 502, 503].includes(reason.status)
+          && programManifestRef.current
+        ) {
+          // The published programme prefix remains authoritative. A failed
+          // background extension must never replace working playback with an
+          // internal renderer error; frontier wake/polling may try again later.
+          setRenderState("ready");
+          setError(null);
+          return;
+        }
         setRenderState("error");
         setError(
-          reason instanceof Error
-            ? reason.message
-            : "节目音频暂时没有准备好",
+          reason instanceof ApiRequestError
+            ? "节目音频暂时没有准备好"
+            : reason instanceof Error
+              ? reason.message
+              : "节目音频暂时没有准备好",
         );
       })
       .finally(() => {
