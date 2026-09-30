@@ -273,6 +273,19 @@ def _verify_frozen_prefix(plan: MixPlan, manifest: ProgramRenderManifest) -> Non
             raise ProgramImmutabilityError("new plan rewrites frozen programme audio")
 
 
+def frozen_prefix_is_compatible(
+    plan: MixPlan,
+    manifest: ProgramRenderManifest,
+) -> bool:
+    """Whether a candidate plan preserves every already-published programme chunk."""
+
+    try:
+        _verify_frozen_prefix(plan, manifest)
+    except ProgramImmutabilityError:
+        return False
+    return True
+
+
 def _candidate_prefix(
     segments: tuple[HlsRenderedSegment, ...],
     *,
@@ -456,6 +469,7 @@ __all__ = [
     "ProgramRenderChunk",
     "ProgramRenderManifest",
     "committable_frontier",
+    "frozen_prefix_is_compatible",
     "hls_playlist",
     "load_program_manifest",
     "manifest_key",
