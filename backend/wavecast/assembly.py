@@ -623,13 +623,13 @@ class LiveEpisodeAssemblyService:
         used_tracks: list[ResolvedTrack],
         trace: GenerationTrace,
     ) -> list[_ResolvedChapter]:
-        """Boundedly fill a live route from Curator-mentioned artists.
+        """Boundedly fill an undercovered live route from the real catalog.
 
-        FastStart already owns the second-song continuity promise. When the
-        slower route resolves too little music for the duration gate, use real
-        playable catalog tracks from artists Curator already mentioned rather
-        than discarding every resolved future chapter. Each continuation keeps
-        its own canonical identity and generic narration metadata.
+        Preserve Curator diversity first. If that is still not enough to satisfy
+        the existing duration-coverage gate, continuity wins: reuse artists from
+        already-confirmed playable tracks and admit additional distinct songs
+        from those exact artists. Song identity and exact-artist checks remain
+        unchanged.
         """
 
         required_music_seconds = _required_progressive_music_seconds(
@@ -676,26 +676,54 @@ class LiveEpisodeAssemblyService:
                 artist_seeds.append(item.chapter.track)
             artist_seeds.extend(item.chapter.track_alternates)
 
+        # Emergency continuity fallback: artists whose music is already known
+        # playable are safer than abandoning the entire programme when Curator
+        # proposals cannot fill the requested runway.
+        for track in effective_used:
+            artist_seeds.append(
+                TrackProposal(
+                    artist=track.canonical_artist,
+                    title=track.canonical_title,
+                    reasons=["Confirmed playable programme artist."],
+                    confidence=0.5,
+                    novelty_distance=NoveltyDistance.CLOSE,
+                )
+            )
+
+        unique_seeds: list[TrackProposal] = []
         seen_artists: set[str] = set()
         for seed in artist_seeds:
-            if (
-                len(effective_used) >= required_track_count
-                or len(effective_used) >= request.max_tracks
-                or surviving_chapter_count >= request.max_chapters
-            ):
-                break
             artist_key = " ".join(seed.artist.casefold().split())
             if not artist_key or artist_key in seen_artists:
                 continue
             seen_artists.add(artist_key)
+            unique_seeds.append(seed)
+
+        def needs_more_music() -> bool:
+            return (
+                len(effective_used) < required_track_count
+                and len(effective_used) < request.max_tracks
+                and surviving_chapter_count < request.max_chapters
+            )
+
+        async def append_one_from_artist(
+            seed: TrackProposal,
+            *,
+            emergency: bool,
+        ) -> bool:
+            nonlocal surviving_chapter_count
+            if not needs_more_music():
+                return False
+
+            artist_key = " ".join(seed.artist.casefold().split())
             try:
                 alternatives = await self.retrieval.search(
                     seed.artist,
                     requested_artist=seed.artist,
-                    limit=5,
+                    limit=10,
                 )
             except ProviderError:
-                continue
+                return False
 
             for alternative in alternatives:
                 if not alternative.playable:
@@ -717,7 +745,11 @@ class LiveEpisodeAssemblyService:
                     artist=alternative.artist,
                     title=alternative.title,
                     reasons=[
-                        "Catalog-aware continuation for an underfilled live route."
+                        (
+                            "Emergency catalog continuation for live playback."
+                            if emergency
+                            else "Catalog-aware continuation for an underfilled live route."
+                        )
                     ],
                     similarity_dimensions=list(seed.similarity_dimensions),
                     confidence=0.5,
@@ -731,8 +763,8 @@ class LiveEpisodeAssemblyService:
                     track=proposal,
                     narrative_role=NarrativeRole.BRIDGE,
                     reason=(
-                        "Continue the programme with a real playable track from "
-                        "an artist already selected by the editorial route."
+                        "Keep the live programme moving with a real playable "
+                        "catalog track from an editorially relevant artist."
                     ),
                     novelty_distance=proposal.novelty_distance,
                     evidence_ids=list(proposal.evidence_ids),
@@ -753,12 +785,35 @@ class LiveEpisodeAssemblyService:
                 effective_used.append(candidate)
                 surviving_chapter_count += 1
                 trace.mark(
-                    "track_catalog_continuation_resolved",
+                    (
+                        "track_catalog_emergency_continuation_resolved"
+                        if emergency
+                        else "track_catalog_continuation_resolved"
+                    ),
                     resolved_track_count=len(effective_used),
                     required_track_count=required_track_count,
                 )
-                # Prefer route diversity: add at most one continuation per
-                # Curator-mentioned artist before considering the next artist.
+                return True
+            return False
+
+        # Pass 1: preserve route diversity by taking at most one continuation
+        # from each Curator/confirmed artist.
+        for seed in unique_seeds:
+            if not needs_more_music():
+                break
+            await append_one_from_artist(seed, emergency=False)
+
+        # Pass 2: continuity is the hard requirement. Round-robin through the
+        # same exact artists and take additional distinct songs until the
+        # existing coverage gate or configured programme bounds are satisfied.
+        while needs_more_music():
+            progress = False
+            for seed in unique_seeds:
+                if not needs_more_music():
+                    break
+                if await append_one_from_artist(seed, emergency=True):
+                    progress = True
+            if not progress:
                 break
 
         return resolved_chapters
