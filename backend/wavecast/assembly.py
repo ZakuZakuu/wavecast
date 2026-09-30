@@ -1804,6 +1804,35 @@ def _reindex_resolved_chapters(
     return indexed
 
 
+def _normalize_progressive_route(
+    *,
+    request: LiveEpisodeAssemblyRequest,
+    resolved_chapters: list[_ResolvedChapter],
+    opening_track: ResolvedTrack,
+    locked_successor: ResolvedTrack | None,
+) -> list[_ResolvedChapter]:
+    """Apply the exact route-shaping rules used by the live session builder."""
+
+    locked_route = _lock_successor_after_opening(
+        _normalize_opening_resolved_route(
+            resolved_chapters,
+            opening_track,
+        ),
+        locked_successor,
+    )
+    deduped_route = _dedupe_progressive_song_route(
+        locked_route,
+        protected_prefix=2 if locked_successor is not None else 1,
+    )
+    return _reindex_resolved_chapters(
+        _bound_progressive_resolved_route(
+            deduped_route,
+            max_tracks=request.max_tracks,
+            max_chapters=request.max_chapters,
+        )
+    )
+
+
 def _build_progressive_session(
     *,
     request: LiveEpisodeAssemblyRequest,
@@ -1814,23 +1843,11 @@ def _build_progressive_session(
 ) -> ProgressiveAssemblySession:
     """Build the pre-Writer session from route identities and slot contexts."""
 
-    locked_route = _lock_successor_after_opening(
-        _normalize_opening_resolved_route(
-            prepared.resolved_chapters,
-            opening_track,
-        ),
-        locked_successor,
-    )
-    deduped_route = _dedupe_progressive_song_route(
-        locked_route,
-        protected_prefix=2 if locked_successor is not None else 1,
-    )
-    normalized = _reindex_resolved_chapters(
-        _bound_progressive_resolved_route(
-            deduped_route,
-            max_tracks=request.max_tracks,
-            max_chapters=request.max_chapters,
-        )
+    normalized = _normalize_progressive_route(
+        request=request,
+        resolved_chapters=prepared.resolved_chapters,
+        opening_track=opening_track,
+        locked_successor=locked_successor,
     )
     try:
         all_slot_contexts = _apply_host_mode_to_slot_contexts(
