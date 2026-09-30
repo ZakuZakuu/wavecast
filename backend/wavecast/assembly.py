@@ -853,6 +853,7 @@ class LiveEpisodeAssemblyService:
         self,
         request: LiveEpisodeAssemblyRequest,
         *,
+        opening_track: ResolvedTrack,
         locked_successor: ResolvedTrack,
         resolved_chapters: list[_ResolvedChapter],
         used_tracks: list[ResolvedTrack],
@@ -867,13 +868,10 @@ class LiveEpisodeAssemblyService:
         unchanged.
         """
 
-        required_music_seconds = _required_progressive_music_seconds(
+        required_track_count = _required_progressive_track_count(
             request,
             self.narration_ratio,
         )
-        required_track_count = (
-            required_music_seconds + _ESTIMATED_TRACK_DURATION_SECONDS - 1
-        ) // _ESTIMATED_TRACK_DURATION_SECONDS
 
         effective_used = list(used_tracks)
         if not any(
@@ -881,19 +879,17 @@ class LiveEpisodeAssemblyService:
             for item in effective_used
         ):
             effective_used.append(locked_successor)
-        if len(effective_used) >= required_track_count:
+        normalized_initial = _normalize_progressive_route(
+            request=request,
+            resolved_chapters=resolved_chapters,
+            opening_track=opening_track,
+            locked_successor=locked_successor,
+        )
+        if (
+            sum(item.track is not None for item in normalized_initial)
+            >= required_track_count
+        ):
             return resolved_chapters
-
-        locked_in_route = any(
-            _same_resolved_track(item.track, locked_successor)
-            for item in resolved_chapters
-        )
-        surviving_chapter_count = 1 + sum(
-            item.chapter.track is None or item.track is not None
-            for item in resolved_chapters
-        )
-        if not locked_in_route:
-            surviving_chapter_count += 1
 
         artist_seeds: list[TrackProposal] = []
         speculative = [
@@ -935,10 +931,17 @@ class LiveEpisodeAssemblyService:
             unique_seeds.append(seed)
 
         def needs_more_music() -> bool:
+            normalized = _normalize_progressive_route(
+                request=request,
+                resolved_chapters=resolved_chapters,
+                opening_track=opening_track,
+                locked_successor=locked_successor,
+            )
+            route_track_count = sum(item.track is not None for item in normalized)
             return (
-                len(effective_used) < required_track_count
-                and len(effective_used) < request.max_tracks
-                and surviving_chapter_count < request.max_chapters
+                route_track_count < required_track_count
+                and route_track_count < request.max_tracks
+                and len(normalized) < request.max_chapters
             )
 
         async def append_one_from_artist(
@@ -946,7 +949,6 @@ class LiveEpisodeAssemblyService:
             *,
             emergency: bool,
         ) -> bool:
-            nonlocal surviving_chapter_count
             if not needs_more_music():
                 return False
 
@@ -1028,7 +1030,6 @@ class LiveEpisodeAssemblyService:
                     )
                 )
                 effective_used.append(candidate)
-                surviving_chapter_count += 1
                 trace.mark(
                     (
                         "track_catalog_emergency_continuation_resolved"
