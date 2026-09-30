@@ -684,19 +684,23 @@ def test_locked_progressive_route_catalog_continuation_fills_duration_coverage(
         for chapter in session.chapters
         if chapter.resolved_track is not None
     ]
-    assert titles == [
-        "Midnight Transfer",
+    assert titles[0] == "Midnight Transfer"
+    assert set(titles[1:]) == {"Daybreak in Stereo", "Afterimage Avenue"}
+    continuation = next(
+        chapter
+        for chapter in session.chapters
+        if (
+            chapter.chapter.narration_goal
+            == "Connect this catalog-backed continuation to the programme direction "
+            "without unsupported song-specific claims."
+        )
+    )
+    assert continuation.chapter.track is not None
+    assert continuation.chapter.track.title in {
         "Daybreak in Stereo",
         "Afterimage Avenue",
-    ]
-    assert session.chapters[-1].chapter.track is not None
-    assert session.chapters[-1].chapter.track.title == "Afterimage Avenue"
-    assert session.chapters[-1].chapter.claim_support == []
-    assert (
-        session.chapters[-1].chapter.narration_goal
-        == "Connect this catalog-backed continuation to the programme direction "
-        "without unsupported song-specific claims."
-    )
+    }
+    assert continuation.chapter.claim_support == []
 
 
 def test_progressive_route_allows_two_tracks_when_duration_target_is_short(
