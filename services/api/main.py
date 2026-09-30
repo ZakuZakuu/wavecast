@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -35,6 +36,7 @@ from wavecast.materialization import (
     ProviderPlaybackSnapshotFetcher,
     classify_music_source,
 )
+from wavecast.materialization.music import recoverable_music_source
 from wavecast.models.episode import (
     CoverParams,
     EpisodeSeed,
@@ -193,7 +195,7 @@ recommendation_repository: ProgramIdeaRepository = (
 
 
 def _gc_program_render_cache(current_episode_id: str) -> tuple[int, int | None]:
-    """Best-effort low-watermark GC for rebuildable programme HLS renders."""
+    """Reclaim rebuildable audio caches, never active sources or paid narration."""
 
     root = Path(AUDIO_ROOT)
     try:
@@ -209,15 +211,46 @@ def _gc_program_render_cache(current_episode_id: str) -> tuple[int, int | None]:
     if usage.free >= PROGRAM_RENDER_GC_LOW_WATERMARK_BYTES:
         return 0, usage.free
 
-    cache_root = root / "program-renders"
-    if not cache_root.is_dir():
-        return 0, usage.free
-
     safe_current_episode_id = re.sub(r"[^a-zA-Z0-9_-]", "_", current_episode_id)
+    protected_ids = {safe_current_episode_id}
+    protected_music: set[str] = set()
+    now = datetime.now(UTC).timestamp()
+    # A stale is_listener_active flag alone must not pin abandoned caches.
+    try:
+        episodes = repository.all()
+    except Exception:
+        logger.warning("program_render_gc_protection_unavailable")
+        return 0, usage.free
+    for episode in episodes:
+        if episode.id != current_episode_id and (
+            not episode.is_listener_active
+            or now - episode.last_heartbeat_at.timestamp() > 120
+        ):
+            continue
+        protected_ids.add(re.sub(r"[^a-zA-Z0-9_-]", "_", episode.id))
+        for segment in episode.timeline_segments:
+            if segment.kind is SegmentKind.MUSIC:
+                source = classify_music_source(segment.audio_source_url or "")
+                if source.kind is MusicSourceKind.OWNED_ASSET:
+                    protected_music.add(source.identity)
+
+    # Old failed atomic writes are not published assets. Avoid in-flight writes
+    # and preserve sidecar metadata (.json) needed to recover evicted music.
+    for path in root.rglob(".*"):
+        try:
+            if (
+                path.is_file() and re.fullmatch(r"\..+\.[a-zA-Z0-9_]{8}", path.name)
+                and now - path.stat().st_mtime > 300
+            ):
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+    cache_root = root / "program-renders"
     candidates: list[tuple[float, Path]] = []
     try:
-        for child in cache_root.iterdir():
-            if not child.is_dir() or child.name == safe_current_episode_id:
+        for child in cache_root.iterdir() if cache_root.is_dir() else []:
+            if not child.is_dir() or child.name in protected_ids:
                 continue
             try:
                 candidates.append((child.stat().st_mtime, child))
@@ -255,10 +288,47 @@ def _gc_program_render_cache(current_episode_id: str) -> tuple[int, int | None]:
         if free_bytes >= PROGRAM_RENDER_GC_TARGET_FREE_BYTES:
             break
 
-    logger.info(
-        "program_render_gc episode_id=%s deleted=%s free_bytes=%s",
+    # Source snapshots previously had no GC at all. Keep their tiny recovery
+    # metadata and evict bytes only when a validated provider identity exists.
+    source_deleted = 0
+    local_storage = LocalObjectStorageProvider(root)
+    music_root = root / "music"
+    sources: list[tuple[float, Path]] = []
+    for path in music_root.rglob("*.audio"):
+        try:
+            sources.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    for _, path in sorted(sources):
+        free_bytes = shutil.disk_usage(root).free
+        if free_bytes >= PROGRAM_RENDER_GC_TARGET_FREE_BYTES:
+            break
+        key = path.relative_to(root).as_posix()
+        if key in protected_music:
+            continue
+        metadata = local_storage.metadata_for(key)
+        if recoverable_music_source(metadata, key) is None:
+            continue
+        try:
+            # Pin old snapshots before eviction too: a provider must never
+            # silently replace historical programme audio on a later refetch.
+            if not metadata.get("content_sha256"):
+                with path.open("rb") as handle:
+                    metadata["content_sha256"] = hashlib.file_digest(handle, "sha256").hexdigest()
+                sidecar = path.with_name(f".{path.name}.json")
+                payload = json.loads(sidecar.read_text())
+                payload["metadata"] = metadata
+                local_storage._atomic_write(sidecar, json.dumps(payload).encode())
+            path.unlink(missing_ok=True)
+        except (OSError, ValueError):
+            continue
+        source_deleted += 1
+    free_bytes = shutil.disk_usage(root).free
+    logger.warning(
+        "program_render_gc episode_id=%s deleted=%s source_deleted=%s free_bytes=%s",
         current_episode_id,
         deleted,
+        source_deleted,
         free_bytes,
     )
     return deleted, free_bytes
@@ -509,6 +579,7 @@ app = FastAPI(title="Wavecast API", version="0.2.0")
 @app.on_event("startup")
 async def start_generation_worker() -> None:
     global _generation_worker_stop, _generation_worker_task
+    await to_thread.run_sync(_gc_program_render_cache, "")
     if not BACKGROUND_GENERATION_ENABLED or _generation_worker_task is not None:
         return
     _generation_worker_stop = asyncio.Event()
@@ -569,6 +640,14 @@ def _queue_progressive_generation(
             max_chapters=generation_worker.policy.target_chapters,
         ).needs_generation
         needs_catchup = orchestrator.needs_progressive_catchup(episode)
+        if (
+            needs_music
+            and orchestrator._ready_future_chapter_count(episode)
+            >= generation_worker.policy.target_chapters
+        ):
+            # A publication backlog needs snapshot/render work, not another
+            # paid generation job for already-prepared successor chapters.
+            needs_music = False
         if not force and not needs_music and not needs_catchup:
             return episode
 
@@ -1662,6 +1741,24 @@ def _finish_rendered_progressive_programme(episode_id: str, fingerprint: str) ->
             continue
 
 
+def _record_program_publication(episode_id: str, frontier: float, latency: float) -> None:
+    for _ in range(5):
+        episode = repository.get(episode_id).model_copy(deep=True)
+        if episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+            return
+        if episode.program_rendered_frontier_seconds == frontier:
+            return
+        episode.program_rendered_frontier_seconds = frontier
+        episode.program_publication_latency_seconds = min(
+            600, max(latency, episode.program_publication_latency_seconds * 0.8),
+        )
+        try:
+            repository.save(episode)
+            return
+        except EpisodeConcurrencyError:
+            continue
+
+
 def _skip_blocking_optional_narration_for_continuity(
     episode_id: str,
     manifest: ProgramRenderManifest,
@@ -1820,8 +1917,12 @@ async def _prepare_owned_music_assets(
                 continue
             classification = classify_music_source(segment.audio_source_url or "")
             if classification.kind is MusicSourceKind.OWNED_ASSET:
-                owned_count += 1
-                continue
+                if (
+                    isinstance(audio_storage, LocalObjectStorageProvider)
+                    and audio_storage.exists(classification.identity)
+                ):
+                    owned_count += 1
+                    continue
             if classification.kind is MusicSourceKind.UNSUPPORTED:
                 blocked.append(
                     BlockedMusicSource(
@@ -1923,6 +2024,7 @@ async def render_program_stream(
 
     actor = principal(request)
     await to_thread.run_sync(owned, episode_id, actor)
+    started_at = monotonic()
     await to_thread.run_sync(_gc_program_render_cache, episode_id)
     try:
         preparation = await _prepare_owned_music_assets(
@@ -1999,6 +2101,12 @@ async def render_program_stream(
                 episode_id,
                 mix_plan_fingerprint(plan),
             )
+        await to_thread.run_sync(
+            _record_program_publication,
+            episode_id,
+            rendered.rendered_frontier_seconds,
+            monotonic() - started_at,
+        )
         return rendered
     except HTTPException:
         raise

@@ -96,6 +96,16 @@ class LocalObjectStorageProvider:
     def exists(self, key: str) -> bool:
         return self._path(key).is_file()
 
+    def metadata_for(self, key: str) -> dict[str, Any]:
+        """Keep recoverable source identity even when cache bytes are evicted."""
+        path = self._path(key)
+        try:
+            payload = json.loads(path.with_name(f".{path.name}.json").read_text())
+        except (OSError, ValueError):
+            return {}
+        metadata = payload.get("metadata", {}) if isinstance(payload, dict) else {}
+        return metadata if isinstance(metadata, dict) else {}
+
     def _path(self, key: str) -> Path:
         if not key or Path(key).is_absolute() or any(part in {"", ".", ".."} for part in Path(key).parts):
             raise ValueError("storage key must be a relative path without traversal")
@@ -106,9 +116,14 @@ class LocalObjectStorageProvider:
 
     @staticmethod
     def _atomic_write(path: Path, content: bytes) -> None:
-        with NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
-            temporary = Path(handle.name)
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        temporary: Path | None = None
+        try:
+            with NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
+                temporary = Path(handle.name)
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)

@@ -190,6 +190,8 @@ class LiveEpisode(BaseModel):
     # segments or rewrite the immutable rendered programme.
     program_playback_position_seconds: float = Field(default=0, ge=0)
     program_transport_active: bool = False
+    program_rendered_frontier_seconds: float | None = Field(default=None, ge=0)
+    program_publication_latency_seconds: float = Field(default=0, ge=0, le=600)
     generation_latency_seconds: float = Field(default=0, ge=0, le=600)
     is_listener_active: bool = True
     is_playing: bool = True

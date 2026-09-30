@@ -13,6 +13,7 @@ from wavecast.materialization import (
     SnapshotBytes,
     classify_music_source,
 )
+from wavecast.materialization.music import recoverable_music_source
 from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.storage import LocalObjectStorageProvider
 
@@ -31,6 +32,36 @@ class FakeFetcher:
     ) -> SnapshotBytes:
         self.calls += 1
         return self.result
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_evicted_owned_music_is_restored_from_validated_identity(tmp_path, legacy) -> None:
+    async def run() -> None:
+        storage = LocalObjectStorageProvider(tmp_path)
+        fetcher = FakeFetcher()
+        store = MusicSnapshotStore(storage, fetcher)
+        source = classify_music_source("/api/audio/sidecar/netease/123")
+        first = await store.snapshot(source, track_ref="netease:123")
+        if legacy:
+            metadata = storage.metadata_for(first.asset_ref)
+            metadata.pop("source_url")
+            await storage.put(first.asset_ref, b"old", "audio/wav", metadata)
+        (tmp_path / first.asset_ref).unlink()
+        restored = await store.snapshot(
+            classify_music_source(first.playback_url), track_ref="netease:123",
+            duration_seconds=7,
+        )
+        assert restored.asset_ref == first.asset_ref
+        assert restored.playback_url == first.playback_url
+        assert (await storage.get(restored.asset_ref)).content == fetcher.result.content
+        assert fetcher.calls == 2
+        assert recoverable_music_source(storage.metadata_for(first.asset_ref), "music/bad.audio") is None
+        (tmp_path / first.asset_ref).unlink()
+        fetcher.result = fetcher.result.model_copy(update={"content": b"different audio"})
+        with pytest.raises(MusicSnapshotError, match="snapshot_content_changed"):
+            await store.snapshot(classify_music_source(first.playback_url), track_ref="netease:123")
+        assert not storage.exists(first.asset_ref)
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize(
