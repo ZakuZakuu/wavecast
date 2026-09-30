@@ -749,7 +749,20 @@ def test_locked_progressive_route_emergency_fill_reuses_confirmed_artist_catalog
                 )
             return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
 
-    music = MockMusicProvider()
+    class MetadataOnlySearchMusicProvider(MockMusicProvider):
+        async def search(
+            self,
+            query: str,
+            *,
+            limit: int = 5,
+        ) -> list[TrackMetadata]:
+            results = await super().search(query, limit=limit)
+            return [
+                item.model_copy(update={"playable": False})
+                for item in results
+            ]
+
+    music = MetadataOnlySearchMusicProvider()
     music._tracks.update(
         {
             "mock:bridge-2": TrackMetadata(
