@@ -259,6 +259,19 @@ def _required_progressive_music_seconds(
         - 1
     ) // _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR
 
+def _required_progressive_track_count(
+    request: LiveEpisodeAssemblyRequest,
+    narration_ratio: float,
+) -> int:
+    required_music_seconds = _required_progressive_music_seconds(
+        request,
+        narration_ratio,
+    )
+    return (
+        required_music_seconds + _ESTIMATED_TRACK_DURATION_SECONDS - 1
+    ) // _ESTIMATED_TRACK_DURATION_SECONDS
+
+
 
 _NOVELTY_RANK = {
     NoveltyDistance.VERY_CLOSE: 0,
