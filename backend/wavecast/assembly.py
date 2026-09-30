@@ -2062,8 +2062,13 @@ def _normalize_progressive_route(
         ),
         locked_successor,
     )
+    viable_route = [
+        item
+        for item in locked_route
+        if item.chapter.track is None or item.track is not None
+    ]
     deduped_route = _dedupe_progressive_song_route(
-        locked_route,
+        viable_route,
         protected_prefix=2 if locked_successor is not None else 1,
     )
     return _reindex_resolved_chapters(
