@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>雾面：节目路线</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@200;300;400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; font-family: -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif">
+<div aria-hidden="true" style="position: absolute; inset: 0">
+<dc-import name="Frost-Player" hint-size="390px,844px"></dc-import>
+</div>
+<span aria-hidden="true" style="position: absolute; inset: 0; background: rgba(0,0,0,0.35)"></span>
+
+<section role="dialog" aria-label="节目路线" style="position: absolute; left: 0; right: 0; bottom: 0; height: 640px; box-sizing: border-box; border-radius: 28px 28px 0 0; background: rgba(40,34,26,0.72); backdrop-filter: blur(40px) saturate(1.4); -webkit-backdrop-filter: blur(40px) saturate(1.4); border-top: 0.5px solid rgba(255,255,255,0.18); color: #FFFFFF; padding: 10px 20px 34px; display: flex; flex-direction: column">
+<span aria-hidden="true" style="align-self: center; width: 36px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.35)"></span>
+<div style="margin-top: 14px; display: flex; align-items: flex-end; justify-content: space-between">
+<div style="display: flex; flex-direction: column; gap: 2px">
+<h2 style="margin: 0; font-size: 22px; font-weight: 700">节目路线</h2>
+<span style="font-size: 13px; color: rgba(255,255,255,0.6)">方大同这些年，约 38 分钟</span>
+</div>
+<button type="button" aria-label="关闭" style="width: 32px; height: 32px; border: 0; border-radius: 50%; background: rgba(255,255,255,0.14); color: #FFFFFF; display: grid; place-items: center">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg>
+</button>
+</div>
+
+<ol style="list-style: none; margin: 20px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px">
+<sc-for list="{{chapters}}" as="c" hint-placeholder-count="4">
+<li style="border-radius: 16px; background: {{c.bg}}; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; opacity: {{c.op}}">
+<div style="display: flex; align-items: center; justify-content: space-between">
+<span style="display: flex; align-items: baseline; gap: 8px">
+<span style="font-size: 13px; font-weight: 300; color: rgba(255,255,255,0.6); font-variant-numeric: tabular-nums">{{c.time}}</span>
+<span style="font-size: 16px; font-weight: 600">{{c.title}}</span>
+</span>
+<span style="font-size: 12px; font-weight: 500; color: {{c.stateColor}}">{{c.state}}</span>
+</div>
+<sc-for list="{{c.tracks}}" as="t" hint-placeholder-count="2">
+<div style="display: flex; align-items: center; gap: 10px; font-size: 14px; color: {{t.color}}">
+<span aria-hidden="true" style="width: 14px; display: flex; align-items: flex-end; gap: 1.5px; height: 12px">
+<span style="width: 3px; height: {{t.b1}}px; border-radius: 1px; background: #FF6B2C"></span>
+<span style="width: 3px; height: {{t.b2}}px; border-radius: 1px; background: #FF6B2C"></span>
+<span style="width: 3px; height: {{t.b3}}px; border-radius: 1px; background: #FF6B2C"></span>
+</span>
+<span style="min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{t.name}}</span>
+</div>
+</sc-for>
+</li>
+</sc-for>
+</ol>
+
+<p style="margin: auto 0 0; font-size: 13px; line-height: 1.6; color: rgba(255,255,255,0.55)">后面的章节会在你听的时候准备好，曲目可能会微调。</p>
+</section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const track = (name, playing, dim) => ({
+      name,
+      color: playing ? '#FFFFFF' : dim ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.78)',
+      b1: playing ? 6 : 0, b2: playing ? 12 : 0, b3: playing ? 8 : 0,
+    });
+    const chapters = [
+      { time: '00:00', title: '开场', state: '正在播', stateColor: '#FF8A55', bg: 'rgba(255,255,255,0.12)', op: 1,
+        tracks: [track('方大同《春风吹》', true), track('Musiq Soulchild《Just Friends (Sunny)》', false)] },
+      { time: '09:30', title: 'R&B 的底子从哪来', state: '已准备', stateColor: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.05)', op: 1,
+        tracks: [track('方大同《爱爱爱》', false), track('D’Angelo《Lady》', false)] },
+      { time: '18:20', title: '翻唱与合作', state: '准备中', stateColor: 'rgba(255,255,255,0.5)', bg: 'transparent', op: 0.75,
+        tracks: [track('方大同《红豆》', false, true), track('曲目待定', false, true)] },
+      { time: '28:00', title: '最近几年', state: '准备中', stateColor: 'rgba(255,255,255,0.5)', bg: 'transparent', op: 0.6,
+        tracks: [track('曲目待定', false, true)] },
+    ];
+    return { chapters };
+  }
+}
+</script>
+</body>
+</html>
