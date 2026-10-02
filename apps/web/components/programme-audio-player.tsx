@@ -17,6 +17,8 @@ type ProgrammeAudioPlayerProps = {
   complete: boolean;
   title: string;
   artist?: string | null;
+  /** Optional lock-screen artwork (PNG URL). */
+  artwork?: string | null;
   onPositionChange: (positionSeconds: number) => void;
   onPlayingChange?: (playing: boolean) => void;
   onBufferingChange?: (buffering: boolean) => void;
@@ -37,6 +39,7 @@ export function ProgrammeAudioPlayer({
   complete,
   title,
   artist,
+  artwork,
   onPositionChange,
   onPlayingChange,
   onBufferingChange,
@@ -502,11 +505,14 @@ export function ProgrammeAudioPlayer({
         title,
         artist: artist || "WaveCast",
         album: "WaveCast",
+        ...(artwork
+          ? { artwork: [{ src: artwork, sizes: "512x512", type: "image/png" }] }
+          : {}),
       });
     } catch {
       // Older WebKit builds may expose mediaSession without MediaMetadata.
     }
-  }, [artist, title]);
+  }, [artist, artwork, title]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;

@@ -1,4 +1,4 @@
-import { LibraryPage } from "../../components/library-page";
+import { LibraryPage } from "../../components/library/library-page";
 
 export default function LibraryRoute() {
   return <LibraryPage />;

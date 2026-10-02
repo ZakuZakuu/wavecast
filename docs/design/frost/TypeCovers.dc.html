@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>标题一体的封面</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@200;300;400;500;700;900&amp;family=Noto+Serif+SC:wght@700;900&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1152px; height: 1400px; box-sizing: border-box; background: #F2F2F4; color: #1D1D1F; font-family: -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif; padding: 48px; display: flex; flex-direction: column; gap: 24px">
+<h2 style="margin: 0; font-size: 24px; font-weight: 700">先定标题的位置，再画图形</h2>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px 48px">
+<sc-for list="{{covers}}" as="c" hint-placeholder-count="9">
+<figure style="margin: 0; display: flex; flex-direction: column; gap: 12px">
+<div style="border-radius: 14px; overflow: hidden; box-shadow: 0 10px 28px rgba(29,29,31,0.1)">
+<dc-import name="TypeCover" template="{{c.template}}" heading="{{c.heading}}" station="{{c.station}}" freq="{{c.freq}}" seed="{{c.seed}}" bg="{{c.bg}}" p1="{{c.p1}}" p2="{{c.p2}}" ink="{{c.ink}}" radius="{{0}}" hint-size="320px,320px"></dc-import>
+</div>
+<figcaption style="display: flex; flex-direction: column; gap: 3px">
+<span style="font-size: 16px; font-weight: 600">{{c.name}}</span>
+<span style="font-size: 14px; line-height: 1.5; color: #6E6E73">{{c.note}}</span>
+</figcaption>
+</figure>
+</sc-for>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"seed":{"editor":"int","min":0,"max":500,"default":0},"$preview":{"width":1152,"height":1400}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const o = Number(this.props.seed ?? 0) || 0;
+    const covers = [
+      { name: '竖排', note: '左侧色条里竖排宋体标题，右侧是半调圆点。适合人物志。', template: 'column', heading: '方大同\n这些年', station: '人物志', freq: '97.4', seed: 3, bg: '#F1E9D8', p1: '#B0823A', p2: '#2E2A24', ink: '#2E2A24' },
+      { name: '唱片标签', note: '标题就是唱片中心的标签，唱纹围着它转。适合唱片行。', template: 'label', heading: '从方大同\n往外听', station: '唱片行', freq: '93.1', seed: 5, bg: '#173B36', p1: '#6FB5A6', p2: '#F0D9A6', ink: '#173B36' },
+      { name: '频段', note: '频率数字本身当作图形，标题在左上。适合随便听。', template: 'freq', heading: '雨天开车', station: '随便听', freq: '88.7', seed: 4, bg: '#F2C9A8', p1: '#B4542A', p2: '#FFFFFF', ink: '#3A1E10' },
+      { name: '地平线', note: '标题站在地平线上，太阳落在另一侧。适合夜里。', template: 'horizon', heading: '睡前半小时', station: '夜里', freq: '105.8', seed: 2, bg: '#1E1B3A', p1: '#6E62B6', p2: '#F3B8A0', ink: '#E9E6FF' },
+      { name: '等高线', note: '等高线在标题处自动断开，给字让出位置。适合来龙去脉。', template: 'contour', heading: 'UK Garage\n怎么来的', station: '来龙去脉', freq: '101.5', seed: 9, bg: '#E4E9F5', p1: '#5C7CE0', p2: '#1F2A4D', ink: '#1F2A4D' },
+      { name: '分割', note: '标题压在两块颜色的分界线上。通用，适合短标题。', template: 'split', heading: '周五下班路上', station: '随便听', freq: '88.7', seed: 7, bg: '#ECEFEC', p1: '#3E9C8C', p2: '#E8834A', ink: '#12302C' },
+      { name: '竖排：换标题', note: '同一模板，标题变短，字号自动放大。', template: 'column', heading: '夜里的城市', station: '人物志', freq: '97.4', seed: 11, bg: '#E3E8EE', p1: '#3F5FC4', p2: '#1F2A4D', ink: '#1F2A4D' },
+      { name: '唱片标签：英文标题', note: '中英混排时按视觉宽度计算字号。', template: 'label', heading: 'City Pop\n入门', station: '唱片行', freq: '93.1', seed: 14, bg: '#3A1F2B', p1: '#E59AB0', p2: '#F6E7C8', ink: '#3A1F2B' },
+      { name: '频段：换电台', note: '指针位置跟着频率走，每个台的封面自然不同。', template: 'freq', heading: '专注两小时', station: '夜里', freq: '105.8', seed: 8, bg: '#DCDDF0', p1: '#5A4FA0', p2: '#1D1D1F', ink: '#1D1D1F' },
+    ].map((c) => ({ ...c, seed: c.seed + o }));
+    return { covers };
+  }
+}
+</script>
+</body>
+</html>

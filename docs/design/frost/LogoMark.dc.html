@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WaveCast 图标</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 100%; aspect-ratio: 1 / 1">
+<svg viewBox="0 0 100 100" style="width: 100%; height: 100%; display: block" role="img" aria-label="WaveCast 图标">
+<rect x="0" y="0" width="100" height="100" rx="22.5" style="fill: {{bg}}"></rect>
+
+<sc-if value="{{v.arc}}" hint-placeholder-val="{{false}}">
+<path d="M18 70a32 32 0 0 1 64 0" style="fill: none; stroke: {{fg}}; stroke-opacity: 0.3; stroke-width: 4; stroke-linecap: round; stroke-dasharray: 0.1 8"></path>
+<path d="M50 70 63 43" style="fill: none; stroke: {{accent}}; stroke-width: 5; stroke-linecap: round"></path>
+<circle cx="50" cy="70" r="7" style="fill: {{fg}}"></circle>
+</sc-if>
+
+<sc-if value="{{v.window}}" hint-placeholder-val="{{false}}">
+<rect x="13" y="37" width="74" height="26" rx="13" style="fill: {{sub}}"></rect>
+<path d="{{ticks}}" style="fill: none; stroke: {{fg}}; stroke-opacity: 0.38; stroke-width: 1.6; stroke-linecap: round"></path>
+<path d="M60 28V72" style="fill: none; stroke: {{accent}}; stroke-width: 4.2; stroke-linecap: round"></path>
+</sc-if>
+
+<sc-if value="{{v.radio}}" hint-placeholder-val="{{false}}">
+<path d="M27 33 42 20" style="fill: none; stroke: {{fg}}; stroke-width: 3.2; stroke-linecap: round"></path>
+<circle cx="42" cy="20" r="3.6" style="fill: {{accent}}"></circle>
+<rect x="15" y="32" width="70" height="46" rx="12" style="fill: {{fg}}"></rect>
+<path d="{{grille}}" style="fill: {{bg}}"></path>
+<rect x="51" y="41" width="26" height="13" rx="4" style="fill: {{bg}}"></rect>
+<path d="M66 38V57" style="fill: none; stroke: {{accent}}; stroke-width: 3; stroke-linecap: round"></path>
+<circle cx="64" cy="66.5" r="5.5" style="fill: {{bg}}"></circle>
+</sc-if>
+
+<sc-if value="{{v.antenna}}" hint-placeholder-val="{{false}}">
+<path d="M73 45 85 19" style="fill: none; stroke: {{fg}}; stroke-width: 3.4; stroke-linecap: round"></path>
+<circle cx="85" cy="19" r="3.4" style="fill: {{fg}}"></circle>
+<rect x="11" y="44" width="78" height="27" rx="13.5" style="fill: {{sub}}"></rect>
+<path d="{{ticksLow}}" style="fill: none; stroke: {{fg}}; stroke-opacity: 0.38; stroke-width: 1.6; stroke-linecap: round"></path>
+<path d="M57 36V79" style="fill: none; stroke: {{accent}}; stroke-width: 4.2; stroke-linecap: round"></path>
+</sc-if>
+
+<sc-if value="{{v.wave}}" hint-placeholder-val="{{false}}">
+<path d="M17 33 33 62 50 38 67 62 83 33" style="fill: none; stroke: {{fg}}; stroke-width: 7.5; stroke-linecap: round; stroke-linejoin: round"></path>
+<path d="{{ticksBase}}" style="fill: none; stroke: {{fg}}; stroke-opacity: 0.38; stroke-width: 1.6; stroke-linecap: round"></path>
+<path d="M58 66V84" style="fill: none; stroke: {{accent}}; stroke-width: 4.2; stroke-linecap: round"></path>
+</sc-if>
+</svg>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"variant":{"editor":"enum","options":["arc","window","radio","antenna","wave"],"default":"radio"},"dark":{"editor":"boolean","default":false},"$preview":{"width":320,"height":320}}'>
+function tickRow(x0, x1, step, yMid, minor, major) {
+  let d = '';
+  let i = 0;
+  for (let x = x0; x <= x1 + 0.01; x += step, i++) {
+    const h = i % 4 === 0 ? major : minor;
+    d += 'M' + Math.round(x * 10) / 10 + ' ' + (yMid - h / 2) + 'V' + (yMid + h / 2);
+  }
+  return d;
+}
+
+class Component extends DCLogic {
+  renderVals() {
+    const variant = this.props.variant || 'antenna';
+    const dark = this.props.dark === true || this.props.dark === 'true';
+    const v = { arc: false, window: false, radio: false, antenna: false, wave: false };
+    v[variant in v ? variant : 'antenna'] = true;
+    let grille = '';
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        const cx = 27 + c * 8, cy = 46 + r * 9, rr = 2.5;
+        grille += 'M' + (cx - rr) + ' ' + cy + 'a' + rr + ' ' + rr + ' 0 1 0 ' + 2 * rr + ' 0a' + rr + ' ' + rr + ' 0 1 0 ' + -2 * rr + ' 0Z';
+      }
+    }
+    return {
+      v,
+      bg: dark ? '#1D1D1F' : '#FFFFFF',
+      fg: dark ? '#F5F5F7' : '#1D1D1F',
+      sub: dark ? '#2C2C2E' : '#EFEFF2',
+      accent: '#FF6B2C',
+      ticks: tickRow(22, 78, 4, 50, 6, 11),
+      ticksLow: tickRow(20, 80, 4, 57.5, 6, 11),
+      ticksBase: tickRow(20, 80, 4, 75, 4, 8),
+      grille,
+    };
+  }
+}
+</script>
+</body>
+</html>

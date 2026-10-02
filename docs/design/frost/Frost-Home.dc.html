@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>雾面：首页</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@200;300;400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #F2F2F4; color: #1D1D1F; font-family: -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif; position: relative; overflow: hidden">
+<span aria-hidden="true" style="position: absolute; left: -100px; top: -160px; width: 420px; height: 340px; border-radius: 50%; background: #5C7CE0; opacity: 0.14; filter: blur(80px)"></span>
+
+<div style="position: relative; padding: 58px 20px 0; display: flex; flex-direction: column; gap: 22px">
+<header style="display: flex; align-items: center; justify-content: space-between">
+<h1 style="margin: 0; font-size: 34px; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em">首页</h1>
+<a href="#" aria-label="账户" style="width: 36px; height: 36px; border-radius: 50%; background: #1D1D1F; color: #FFFFFF; display: grid; place-items: center; font-size: 15px; font-weight: 600; text-decoration: none">R</a>
+</header>
+
+<section aria-labelledby="fh-stations" style="display: flex; flex-direction: column; gap: 12px">
+<h2 id="fh-stations" style="margin: 0; font-size: 22px; font-weight: 700">电台</h2>
+<div style="display: flex; gap: 12px; margin-right: -20px; overflow: hidden">
+<sc-for list="{{stations}}" as="s" hint-placeholder-count="5">
+<a href="#" style="flex: 0 0 132px; height: 152px; box-sizing: border-box; border-radius: 20px; background: {{s.color}}; color: #FFFFFF; padding: 14px 16px 16px; display: flex; flex-direction: column; justify-content: space-between; text-decoration: none">
+<span style="font-size: 30px; font-weight: 200; line-height: 1; letter-spacing: -0.02em">{{s.freq}}</span>
+<span style="display: flex; flex-direction: column; gap: 3px">
+<span style="font-size: 17px; font-weight: 600">{{s.name}}</span>
+<span style="font-size: 12px; line-height: 1.4; opacity: 0.85">{{s.line}}</span>
+</span>
+</a>
+</sc-for>
+</div>
+</section>
+
+<section aria-labelledby="fh-picks" style="display: flex; flex-direction: column; gap: 12px">
+<h2 id="fh-picks" style="margin: 0; font-size: 22px; font-weight: 700">猜你想听</h2>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 14px">
+<sc-for list="{{programs}}" as="p" hint-placeholder-count="4">
+<a href="#" aria-label="{{p.aria}}" style="display: flex; flex-direction: column; gap: 8px; color: #1D1D1F; text-decoration: none">
+<div style="border-radius: 12px; overflow: hidden; box-shadow: 0 6px 18px rgba(29,29,31,0.08)">
+<dc-import name="TypeCover" template="{{p.template}}" heading="{{p.heading}}" station="{{p.station}}" freq="{{p.freq}}" seed="{{p.seed}}" bg="{{p.bg}}" p1="{{p.p1}}" p2="{{p.p2}}" ink="{{p.ink}}" radius="{{0}}" hint-size="168px,168px"></dc-import>
+</div>
+<span style="font-size: 13px; color: #6E6E73">{{p.meta}}</span>
+</a>
+</sc-for>
+</div>
+</section>
+</div>
+
+<div style="position: absolute; left: 10px; right: 10px; bottom: 92px; height: 60px; border-radius: 18px; background: rgba(250,250,252,0.8); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); border: 0.5px solid rgba(255,255,255,0.9); box-shadow: 0 10px 30px rgba(29,29,31,0.14); display: flex; align-items: center; gap: 4px; padding: 0 6px 0 10px; overflow: hidden">
+<span aria-hidden="true" style="position: absolute; left: 14px; right: 14px; bottom: 0; height: 2px; border-radius: 1px; background: rgba(29,29,31,0.08)"></span>
+<span aria-hidden="true" style="position: absolute; left: 14px; bottom: 0; height: 2px; width: 33%; border-radius: 1px; background: #1D1D1F"></span>
+<a href="#" aria-label="展开播放页" style="flex-grow: 1; min-width: 0; height: 60px; display: flex; align-items: center; gap: 12px; color: #1D1D1F; text-decoration: none">
+<div style="width: 42px; height: 42px; flex-shrink: 0; border-radius: 8px; overflow: hidden">
+<dc-import name="TypeCover" template="column" bare="{{true}}" seed="{{3}}" bg="#F1E9D8" p1="#B0823A" p2="#2E2A24" ink="#2E2A24" radius="{{0}}" hint-size="42px,42px"></dc-import>
+</div>
+<div style="min-width: 0; display: flex; flex-direction: column; gap: 1px">
+<span style="font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">春风吹</span>
+<span style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #6E6E73; white-space: nowrap">
+<span aria-hidden="true" style="width: 5px; height: 5px; border-radius: 50%; background: #FF6B2C"></span>
+FM 97.4 人物志
+</span>
+</div>
+</a>
+<button type="button" aria-label="暂停" style="width: 44px; height: 44px; flex-shrink: 0; border: 0; background: transparent; color: #1D1D1F; display: grid; place-items: center">
+<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4.5" width="4" height="15" rx="1.2"></rect><rect x="14" y="4.5" width="4" height="15" rx="1.2"></rect></svg>
+</button>
+<button type="button" aria-label="跳过这首" style="width: 44px; height: 44px; flex-shrink: 0; border: 0; background: transparent; color: #1D1D1F; display: grid; place-items: center">
+<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 5.8v12.4a.8.8 0 0 0 1.2.7l9.4-6.2a.8.8 0 0 0 0-1.4L5.2 5.1a.8.8 0 0 0-1.2.7z"></path><rect x="16.8" y="5" width="2.6" height="14" rx="1"></rect></svg>
+</button>
+</div>
+
+<nav aria-label="主导航" style="position: absolute; left: 0; right: 0; bottom: 0; height: 84px; box-sizing: border-box; padding: 8px 24px 26px; background: rgba(242,242,244,0.78); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border-top: 0.5px solid rgba(60,60,67,0.18); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr))">
+<a href="#" aria-current="page" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #1D1D1F; text-decoration: none; font-size: 11px; font-weight: 600">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z"></path></svg>
+首页
+</a>
+<a href="#" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #8E8E93; text-decoration: none; font-size: 11px; font-weight: 500">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="2.5" y="8" width="19" height="9" rx="4.5"></rect><path d="M6.5 12.5h.01M9.5 12.5h.01M17.5 12.5h.01"></path><path d="M13.5 5.5v13"></path></svg>
+调频
+</a>
+<a href="#" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #8E8E93; text-decoration: none; font-size: 11px; font-weight: 500">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="4" height="16" rx="1"></rect><rect x="10" y="4" width="4" height="16" rx="1"></rect><path d="m16 5.4 3.4-0.9 2.9 13.9-3.4 0.9z"></path></svg>
+节目库
+</a>
+</nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const programs = [
+      { heading: '从方大同\n往外听', station: '唱片行', freq: '93.1', template: 'label', seed: 5, bg: '#173B36', p1: '#6FB5A6', p2: '#F0D9A6', ink: '#173B36', meta: '唱片行，约 40 分钟' },
+      { heading: '雨天开车', station: '随便听', freq: '88.7', template: 'freq', seed: 4, bg: '#F2C9A8', p1: '#B4542A', p2: '#FFFFFF', ink: '#3A1E10', meta: '随便听，约 30 分钟' },
+      { heading: 'UK Garage\n怎么来的', station: '来龙去脉', freq: '101.5', template: 'contour', seed: 9, bg: '#E4E9F5', p1: '#5C7CE0', p2: '#1F2A4D', ink: '#1F2A4D', meta: '来龙去脉，约 45 分钟' },
+      { heading: '睡前半小时', station: '夜里', freq: '105.8', template: 'horizon', seed: 2, bg: '#1E1B3A', p1: '#6E62B6', p2: '#F3B8A0', ink: '#E9E6FF', meta: '夜里，约 30 分钟' },
+    ].map((p) => ({ ...p, aria: p.heading.replace('\n', '') + '，' + p.meta }));
+    return {
+      stations: [
+        { name: '随便听', freq: '88.7', color: '#B5562A', line: '音乐为主，偶尔说两句' },
+        { name: '唱片行', freq: '93.1', color: '#2E7D70', line: '挖你没听过的' },
+        { name: '人物志', freq: '97.4', color: '#8F6B25', line: '一位歌手的路' },
+        { name: '来龙去脉', freq: '101.5', color: '#3F5FC4', line: '一种风格的来历' },
+        { name: '夜里', freq: '105.8', color: '#5A4FA0', line: '几乎不说话' },
+      ],
+      programs,
+    };
+  }
+}
+</script>
+</body>
+</html>

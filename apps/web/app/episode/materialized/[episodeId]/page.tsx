@@ -1,4 +1,4 @@
-import { EpisodePlayer } from "../../../../components/episode-player";
+import { PlayerScreen } from "../../../../components/player/player-screen";
 
 export default async function MaterializedEpisodePage({
   params,
@@ -6,5 +6,5 @@ export default async function MaterializedEpisodePage({
   params: Promise<{ episodeId: string }>;
 }) {
   const { episodeId } = await params;
-  return <EpisodePlayer episodeId={episodeId} />;
+  return <PlayerScreen episodeId={episodeId} />;
 }

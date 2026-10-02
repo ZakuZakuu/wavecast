@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>雾面：开播中</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@200;300;400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #F2F2F4; color: #1D1D1F; font-family: -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif; position: relative; overflow: hidden">
+<span aria-hidden="true" style="position: absolute; left: -60px; top: 80px; width: 520px; height: 520px; border-radius: 50%; background: #C9A04A; opacity: 0.38; filter: blur(90px)"></span>
+
+<div style="position: relative; height: 100%; box-sizing: border-box; padding: 54px 20px 40px; display: flex; flex-direction: column">
+<div style="height: 44px; display: flex; align-items: center">
+<button type="button" style="height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: rgba(118,118,128,0.14); font-family: inherit; font-size: 15px; font-weight: 500; color: #1D1D1F">取消</button>
+</div>
+
+<section aria-label="正在对准电台" style="margin-top: 40px; border-radius: 28px; background: rgba(255,255,255,0.6); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); border: 0.5px solid rgba(255,255,255,0.8); box-shadow: 0 10px 30px rgba(29,29,31,0.06); padding: 22px 20px 26px; display: flex; flex-direction: column; align-items: center; gap: 0">
+<div aria-hidden="true" style="position: relative; width: 310px; height: 96px; border-radius: 18px; background: rgba(226,226,232,0.78); border: 0.5px solid rgba(29,29,31,0.08); box-shadow: inset 0 2px 6px rgba(29,29,31,0.16), inset 0 1px 1px rgba(29,29,31,0.08), 0 1px 0 rgba(255,255,255,0.95); overflow: hidden">
+<svg width="310" height="96" viewBox="0 0 310 96" style="position: absolute; left: 0; top: 0">
+<path d="{{minor}}" style="fill: none; stroke: rgba(29,29,31,0.2); stroke-width: 1; stroke-linecap: round"></path>
+<path d="{{major}}" style="fill: none; stroke: rgba(29,29,31,0.48); stroke-width: 1.2; stroke-linecap: round"></path>
+</svg>
+<span style="position: absolute; top: 10px; left: 115px; width: 80px; display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 12px; font-weight: 600; color: #1D1D1F"><span style="width: 5px; height: 5px; border-radius: 50%; background: #C9A04A"></span>人物志</span>
+<sc-for list="{{nums}}" as="n" hint-placeholder-count="4">
+<span style="position: absolute; top: 62px; left: {{n.x}}px; width: 32px; text-align: center; font-size: 12px; font-weight: 300; color: #8E8E93">{{n.t}}</span>
+</sc-for>
+<span style="position: absolute; left: 0; top: 0; bottom: 0; width: 48px; background: linear-gradient(90deg, rgba(228,228,234,0.96), rgba(228,228,234,0))"></span>
+<span style="position: absolute; right: 0; top: 0; bottom: 0; width: 48px; background: linear-gradient(270deg, rgba(228,228,234,0.96), rgba(228,228,234,0))"></span>
+<span style="position: absolute; left: 146px; top: 8px; bottom: 8px; width: 2px; border-radius: 1px; background: rgba(255,107,44,0.18)"></span>
+<span style="position: absolute; left: 162px; top: 8px; bottom: 8px; width: 2px; border-radius: 1px; background: rgba(255,107,44,0.18)"></span>
+<span style="position: absolute; left: 154px; top: 8px; bottom: 8px; width: 2px; border-radius: 1px; background: #FF6B2C; box-shadow: 0 0 10px rgba(255,107,44,0.6)"></span>
+</div>
+<div style="margin-top: 14px; display: flex; align-items: baseline; gap: 6px">
+<span style="font-size: 15px; font-weight: 500; color: #6E6E73">FM</span>
+<span style="font-size: 56px; font-weight: 200; line-height: 1; letter-spacing: -0.03em">97.4</span>
+</div>
+<span style="margin-top: 8px; font-size: 20px; font-weight: 600">人物志</span>
+<svg width="300" height="56" viewBox="0 0 300 56" aria-hidden="true" style="margin-top: 18px">
+<path d="{{wave}}" style="fill: none; stroke: #9A7426; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round"></path>
+</svg>
+</section>
+
+<ol aria-label="准备进度" style="list-style: none; margin: 28px 4px 0; padding: 0; display: flex; flex-direction: column; gap: 14px">
+<li style="display: flex; align-items: center; gap: 12px; font-size: 16px">
+<span aria-hidden="true" style="width: 22px; height: 22px; border-radius: 50%; background: #1D1D1F; color: #FFFFFF; display: grid; place-items: center; flex-shrink: 0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"></path></svg></span>
+听懂了：方大同这些年的歌
+</li>
+<li style="display: flex; align-items: center; gap: 12px; font-size: 16px">
+<span aria-hidden="true" style="width: 22px; height: 22px; border-radius: 50%; background: #1D1D1F; color: #FFFFFF; display: grid; place-items: center; flex-shrink: 0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"></path></svg></span>
+开场歌就位：方大同《春风吹》
+</li>
+<li style="display: flex; align-items: center; gap: 12px; font-size: 16px; color: #6E6E73">
+<span aria-hidden="true" style="width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid rgba(29,29,31,0.25); box-sizing: border-box; display: grid; place-items: center; flex-shrink: 0"><span style="width: 8px; height: 8px; border-radius: 50%; background: #FF6B2C"></span></span>
+正在排后面的曲目
+</li>
+</ol>
+
+<p style="margin: auto 0 0; text-align: center; font-size: 14px; line-height: 1.6; color: #6E6E73">音乐几秒内就会响起来，<br>后面的内容边播边准备。</p>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+const r2 = (n) => Math.round(n * 100) / 100;
+function rng(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+class Component extends DCLogic {
+  renderVals() {
+    const F = 97.4, W = 310, px = 38.75, lo = F - W / 2 / px;
+    let minor = '', major = '';
+    const nums = [];
+    for (let i = Math.ceil(lo * 5); i <= Math.floor((lo + W / px) * 5); i++) {
+      const f = i / 5, x = r2((f - lo) * px);
+      const isInt = i % 5 === 0, isHalf = !isInt && Math.abs(f * 2 - Math.round(f * 2)) < 0.001;
+      const h = isInt ? 18 : isHalf ? 12 : 7;
+      const seg = 'M' + x + ' ' + (52 - h) + 'V52';
+      if (isInt) { major += seg; if (i % 10 === 0) nums.push({ x: r2(x - 16), t: String(f) }); }
+      else minor += seg;
+    }
+    const R = rng(42);
+    let wave = '';
+    for (let x = 0; x <= 300; x += 2) {
+      const t = x / 300;
+      const y = 28 + (R() * 2 - 1) * 20 * Math.pow(1 - t, 1.6) + 12 * Math.pow(t, 0.7) * Math.sin(x * 0.12);
+      wave += (x ? 'L' : 'M') + x + ' ' + r2(y);
+    }
+    return { minor, major, nums, wave };
+  }
+}
+</script>
+</body>
+</html>

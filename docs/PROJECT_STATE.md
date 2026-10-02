@@ -1,6 +1,25 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-30
+**Last updated:** 2026-10-02
+
+## Active UI P0 checkpoint — frost redesign (`feat/ui-p0-frost`)
+
+- Implements `docs/design/frost/HANDOFF.md` in `apps/web`; PR targets
+  `integration`. No backend contract changes.
+- Playback runtime logic was moved verbatim into
+  `lib/use-programme-playback.ts`. `components/player/playback-provider.tsx`
+  keeps one host (and its `<audio>`) alive across routes, keyed by
+  programme, so the mini player keeps playing while browsing. UI consumes
+  the hook only.
+- Stations are a frontend constant (`lib/stations.ts`) with keyword
+  matching and a local programme→station map; covers come from the pure
+  `lib/cover/build-cover.ts` port. Both move to the backend in P1
+  (HANDOFF §9).
+- Known gap: in pure mock mode the backend programme renderer rejects mock
+  music URLs (`external_or_qualified_url`), so mock playback stops at
+  "preparing audio" (pre-existing). The UI surfaces error + retry.
+- Next: Vercel preview acceptance on iPhone Safari / Android Chrome, then
+  P1 station wiring.
 
 ## Active Listening P0 checkpoint — storage pressure and published runway
 
