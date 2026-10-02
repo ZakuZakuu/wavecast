@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { ComponentType } from "react";
 
-import { WaveIcon, type WaveIconName } from "./wave-icon";
+import { HomeIcon, LibraryIcon, TuneIcon } from "./icons";
 
-const ITEMS: Array<{ href: string; label: string; icon: WaveIconName }> = [
-  { href: "/", label: "为你", icon: "home" },
-  { href: "/tune", label: "调频", icon: "tune" },
-  { href: "/library", label: "节目库", icon: "library" },
+const ITEMS: Array<{ href: string; label: string; Icon: ComponentType<{ size?: number }> }> = [
+  { href: "/", label: "首页", Icon: HomeIcon },
+  { href: "/tune", label: "调频", Icon: TuneIcon },
+  { href: "/library", label: "节目库", Icon: LibraryIcon },
 ];
 
 export function BottomNav() {
@@ -16,17 +17,17 @@ export function BottomNav() {
 
   return (
     <nav className="bottom-nav" aria-label="主导航">
-      {ITEMS.map((item) => {
-        const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+      {ITEMS.map(({ href, label, Icon }) => {
+        const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
         return (
           <Link
-            href={item.href}
+            href={href}
             className={active ? "bottom-nav-item active" : "bottom-nav-item"}
             aria-current={active ? "page" : undefined}
-            key={item.href}
+            key={href}
           >
-            <WaveIcon name={item.icon} size={21} />
-            <span>{item.label}</span>
+            <Icon size={26} />
+            <span>{label}</span>
           </Link>
         );
       })}
