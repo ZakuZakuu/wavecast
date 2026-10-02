@@ -7,6 +7,8 @@ import { api } from "../../lib/api";
 import { isPlaybackReadySegment } from "../../lib/playback";
 import {
   DURATIONS,
+  FREQ_MAX,
+  FREQ_MIN,
   formatFreq,
   matchStation,
   rememberProgrammeStation,
@@ -21,6 +23,7 @@ import {
   freqAfterDrag,
   knurlPath,
   knurlPhaseForFreq,
+  PX_PER_MHZ,
   readTuner,
   stepStation,
 } from "../../lib/tuner";
@@ -29,20 +32,20 @@ import { recordCreatedProgram } from "../../lib/user-library";
 import { AppShell } from "../app-shell";
 import { useNowPlaying, usePlaybackControl } from "../player/playback-provider";
 import { useImmersiveOverlay } from "../../lib/chrome-visibility";
+import { easeStandard, prefersReducedMotion, tween } from "../../lib/motion/easing";
+import { VelocityTracker } from "../../lib/motion/gesture";
+import { animateSpring, type Cancel } from "../../lib/motion/spring";
 import { openPlayer } from "../../lib/player-nav";
 import { TuningInScreen, type TuningStep } from "./tuning-in";
 import { TuningWindow, useElementWidth } from "./tuning-window";
 
 const LAST_STATION_KEY = "wavecast-last-station-v1";
-const SNAP_MS = 300;
 const MATCH_SLIDE_MS = 500;
 
-function prefersReducedMotion(): boolean {
-  return typeof window !== "undefined"
-    && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-}
-
-const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+/** Inertia: velocity decays to 0.998× per ms (iOS normal scrolling). */
+const GLIDE_DECAY_PER_MS = 0.998;
+/** Below this speed (px/ms) the glide hands over to the snapping spring. */
+const GLIDE_STOP_SPEED = 0.05;
 
 type Phase =
   | { kind: "idle" }
@@ -62,7 +65,7 @@ export function TunePage() {
   const [duration, setDuration] = useState<DurationIntent>("STANDARD");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const requestRef = useRef(0);
-  const animRef = useRef<number | null>(null);
+  const animRef = useRef<Cancel | null>(null);
   const lastLockedRef = useRef<string | null>(null);
   const { ref: windowRef, width } = useElementWidth<HTMLDivElement>();
 
@@ -73,43 +76,88 @@ export function TunePage() {
   }, []);
 
   const stopAnimation = useCallback(() => {
-    if (animRef.current !== null) cancelAnimationFrame(animRef.current);
+    animRef.current?.();
     animRef.current = null;
   }, []);
 
-  const animateTo = useCallback((target: number, durationMs: number) => {
+  /** Slide the scale to a station (match, tap, keyboard, home card): 500ms ease-standard. */
+  const animateTo = useCallback((target: number, durationMs = MATCH_SLIDE_MS) => {
     stopAnimation();
     if (prefersReducedMotion()) {
       setFreq(target);
       return;
     }
-    const from = freqRef.current;
-    const start = performance.now();
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / durationMs);
-      setFreq(from + (target - from) * easeOut(t));
-      animRef.current = t < 1 ? requestAnimationFrame(tick) : null;
-    };
-    animRef.current = requestAnimationFrame(tick);
+    animRef.current = tween({
+      from: freqRef.current,
+      to: target,
+      duration: durationMs,
+      easing: easeStandard,
+      onUpdate: setFreq,
+      onComplete: () => { animRef.current = null; },
+    });
   }, [setFreq, stopAnimation]);
+
+  /** Spring onto the nearest station, carrying the release velocity (px/ms). */
+  const snapWithSpring = useCallback((velocityPx: number) => {
+    stopAnimation();
+    const target = readTuner(freqRef.current).station.freq;
+    if (prefersReducedMotion()) {
+      setFreq(target);
+      return;
+    }
+    animRef.current = animateSpring({
+      from: freqRef.current * PX_PER_MHZ,
+      to: target * PX_PER_MHZ,
+      velocity: velocityPx,
+      epsilon: 0.2,
+      onUpdate: (px) => setFreq(px / PX_PER_MHZ),
+      onComplete: () => { animRef.current = null; },
+    });
+  }, [setFreq, stopAnimation]);
+
+  /** Inertial glide, then spring snap once slower than GLIDE_STOP_SPEED. */
+  const glide = useCallback((initialVelocityPx: number) => {
+    stopAnimation();
+    let velocity = initialVelocityPx;
+    let last = performance.now();
+    let frame = requestAnimationFrame(function step(now) {
+      const dt = Math.min(64, now - last);
+      last = now;
+      const decayed = velocity * Math.pow(GLIDE_DECAY_PER_MS, dt);
+      // Distance covered while decaying exponentially over dt.
+      const travel = (velocity - decayed) / -Math.log(GLIDE_DECAY_PER_MS);
+      velocity = decayed;
+      const next = clampFreq(freqRef.current + travel / PX_PER_MHZ);
+      setFreq(next);
+      const atEdge = next <= FREQ_MIN || next >= FREQ_MAX;
+      if (Math.abs(velocity) < GLIDE_STOP_SPEED || atEdge) {
+        animRef.current = null;
+        snapWithSpring(atEdge ? 0 : velocity);
+        return;
+      }
+      frame = requestAnimationFrame(step);
+    });
+    animRef.current = () => cancelAnimationFrame(frame);
+  }, [setFreq, snapWithSpring, stopAnimation]);
 
   // Initial station: ?station= from a home card, else the last one tuned.
   useEffect(() => {
-    let initial: Station | null = null;
+    let fromQuery: Station | null = null;
+    let last: Station | null = null;
     try {
-      const fromQuery = new URLSearchParams(window.location.search).get("station");
-      initial = fromQuery ? stationById(fromQuery) : null;
+      const id = new URLSearchParams(window.location.search).get("station");
+      fromQuery = id ? stationById(id) : null;
       if (fromQuery) manualRef.current = true;
-      if (!initial) {
-        const last = window.localStorage.getItem(LAST_STATION_KEY);
-        initial = last ? stationById(last) : null;
-      }
+      const lastId = window.localStorage.getItem(LAST_STATION_KEY);
+      last = lastId ? stationById(lastId) : null;
     } catch {
-      initial = null;
+      fromQuery = null;
     }
-    if (initial) setFreq(initial.freq);
+    if (last) setFreq(last.freq);
+    // From a home station card: slide from where the dial was to that station.
+    if (fromQuery && Math.abs(fromQuery.freq - freqRef.current) > 0.01) animateTo(fromQuery.freq);
     return stopAnimation;
-  }, [setFreq, stopAnimation]);
+  }, [animateTo, setFreq, stopAnimation]);
 
   useImmersiveOverlay("tuning-in", phase.kind === "tuning");
 
@@ -142,13 +190,13 @@ export function TunePage() {
     const timer = window.setTimeout(() => {
       const target = stationById(matchStation(text));
       setMatched(true);
-      if (Math.abs(target.freq - freqRef.current) > 0.01) animateTo(target.freq, MATCH_SLIDE_MS);
+      if (Math.abs(target.freq - freqRef.current) > 0.01) animateTo(target.freq);
     }, 350);
     return () => window.clearTimeout(timer);
   }, [animateTo, text]);
 
   // --- Drag with inertia, then snap to the nearest station.
-  const dragState = useRef<{ x: number; freq: number; samples: Array<[number, number]>; label: string | null; moved: boolean } | null>(null);
+  const dragState = useRef<{ x: number; freq: number; tracker: VelocityTracker; label: string | null; moved: boolean } | null>(null);
 
   const markManual = () => {
     manualRef.current = true;
@@ -160,7 +208,9 @@ export function TunePage() {
     stopAnimation();
     event.currentTarget.setPointerCapture(event.pointerId);
     const label = (event.target as HTMLElement).closest?.("[data-station]")?.getAttribute("data-station") ?? null;
-    dragState.current = { x: event.clientX, freq: freqRef.current, samples: [[performance.now(), freqRef.current]], label, moved: false };
+    const tracker = new VelocityTracker();
+    tracker.reset(performance.now(), freqRef.current * PX_PER_MHZ);
+    dragState.current = { x: event.clientX, freq: freqRef.current, tracker, label, moved: false };
     setDragging(true);
   };
 
@@ -174,9 +224,7 @@ export function TunePage() {
     }
     const next = freqAfterDrag(drag.freq, dx);
     setFreq(next);
-    const now = performance.now();
-    drag.samples.push([now, next]);
-    while (drag.samples.length > 2 && now - drag.samples[0][0] > 90) drag.samples.shift();
+    drag.tracker.add(performance.now(), next * PX_PER_MHZ);
   };
 
   const onPointerUp = () => {
@@ -189,40 +237,26 @@ export function TunePage() {
       tapStation(stationById(drag.label));
       return;
     }
-    const [t0, f0] = drag.samples[0];
-    const [t1, f1] = drag.samples[drag.samples.length - 1];
-    let velocity = t1 > t0 ? (f1 - f0) / (t1 - t0) : 0; // MHz per ms
-    if (prefersReducedMotion() || Math.abs(velocity) < 0.0005) {
-      animateTo(readTuner(freqRef.current).station.freq, SNAP_MS);
+    // Velocity over the last 80ms, in px/ms of scale travel.
+    const velocity = drag.tracker.velocity(performance.now());
+    if (prefersReducedMotion()) {
+      snapWithSpring(0);
       return;
     }
-    let last = performance.now();
-    const glide = (now: number) => {
-      const dt = now - last;
-      last = now;
-      velocity *= Math.pow(0.92, dt / 16);
-      const next = clampFreq(freqRef.current + velocity * dt);
-      setFreq(next);
-      if (Math.abs(velocity) < 0.0004 || next <= 87.5 || next >= 108) {
-        animRef.current = null;
-        animateTo(readTuner(freqRef.current).station.freq, SNAP_MS);
-        return;
-      }
-      animRef.current = requestAnimationFrame(glide);
-    };
-    animRef.current = requestAnimationFrame(glide);
+    if (Math.abs(velocity) < GLIDE_STOP_SPEED) snapWithSpring(velocity);
+    else glide(velocity);
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     markManual();
-    animateTo(stepStation(freqRef.current, event.key === "ArrowRight" ? 1 : -1).freq, SNAP_MS);
+    animateTo(stepStation(freqRef.current, event.key === "ArrowRight" ? 1 : -1).freq);
   };
 
   const tapStation = (target: Station) => {
     markManual();
-    animateTo(target.freq, MATCH_SLIDE_MS);
+    animateTo(target.freq);
   };
 
   // --- Start: proposal -> play immediately, with the tuning-in screen meanwhile.
@@ -337,7 +371,7 @@ export function TunePage() {
       fixed
       background={(
         <>
-          <span className="glow" aria-hidden="true" style={{ left: -90, top: -140, width: 460, height: 420, background: glowColor, opacity: between ? 0.22 : 0.32 }} />
+          <span className="glow tune-glow" aria-hidden="true" style={{ left: -90, top: -140, width: 460, height: 420, background: glowColor, opacity: between ? 0.22 : 0.32 }} />
           <span className="glow" aria-hidden="true" style={{ right: -120, top: 140, width: 260, height: 260, background: "#E8834A", opacity: 0.12, filter: "blur(70px)" }} />
         </>
       )}
@@ -352,9 +386,12 @@ export function TunePage() {
               <span className="tuner-number tabular">{formatFreq(freq)}</span>
             </div>
             <span className="signal" role="img" aria-label={reading.locked ? "信号满格" : between ? "信号弱" : "信号一般"}>
-              {[6, 9, 12, 15, 18].map((h, index) => (
-                <span key={h} style={{ height: h }} className={index < reading.bars ? "is-lit" : undefined} />
-              ))}
+              {[6, 9, 12, 15, 18].map((h, index) => {
+                const lit = index < reading.bars;
+                // Bars light up left-to-right and go out right-to-left, 250ms in total.
+                const delay = (lit ? index : 4 - index) * 50;
+                return <span key={h} style={{ height: h, transitionDelay: `${delay}ms` }} className={lit ? "is-lit" : undefined} />;
+              })}
             </span>
           </div>
 

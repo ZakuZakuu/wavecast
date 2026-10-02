@@ -30,7 +30,7 @@
   width: 4px;
   border-radius: 1.5px;
   background: rgba(29, 29, 31, .15);
-  transition: background-color var(--t-state) var(--ease);
+  transition: background-color 50ms linear;
 }
 .signal span.is-lit { background: var(--ink); }
 
@@ -40,7 +40,7 @@
 .tuner-name {
   font-size: 20px;
   font-weight: 600;
-  animation: fade-in-plain var(--t-state) var(--ease) both;
+  animation: fade-in-plain var(--dur-fast) var(--ease-standard) both;
 }
 .tuner-name.is-between { color: var(--ink-3); }
 .match-badge {
@@ -70,10 +70,12 @@
 .tuning-window.is-dragging { cursor: grabbing; }
 .tuning-window.is-static { cursor: default; width: 100%; }
 .tuning-window:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.tw-layer { position: absolute; left: 0; top: 0; height: 96px; width: 0; will-change: transform; }
 .tw-scale { position: absolute; left: 0; top: 0; }
+.tw-noise-layer { position: absolute; left: 0; top: 0; pointer-events: none; }
 .tw-minor { fill: none; stroke: rgba(29, 29, 31, .2); stroke-width: 1; stroke-linecap: round; }
 .tw-major { fill: none; stroke: rgba(29, 29, 31, .48); stroke-width: 1.2; stroke-linecap: round; }
-.tw-noise { fill: rgba(29, 29, 31, .16); transition: opacity var(--t-state) var(--ease); }
+.tw-noise { fill: rgba(29, 29, 31, .16); }
 .tw-label {
   position: absolute;
   top: 0;
@@ -86,8 +88,11 @@
   gap: 4px;
   font-size: 13px;
   white-space: nowrap;
-  transition: color var(--t-state) var(--ease);
+  color: var(--ink-3);
+  font-weight: 400;
+  transition: color var(--dur-fast) var(--ease-standard);
 }
+.tw-label.is-active { color: var(--ink); font-weight: 600; }
 .tw-dot { width: 5px; height: 5px; border-radius: 50%; }
 .tw-number {
   position: absolute;
@@ -288,4 +293,11 @@
 @media (prefers-reduced-motion: reduce) {
   .step-dot { animation: none; }
   .is-done .step-mark svg { animation: fade-in-plain 150ms both; }
+}
+
+/* Glow colour follows the station smoothly (MOTION.md §4.7). */
+.tune-glow { transition: background-color 600ms var(--ease-standard), opacity 600ms var(--ease-standard); }
+
+@media (prefers-reduced-motion: reduce) {
+  .signal span { transition-delay: 0ms !important; }
 }

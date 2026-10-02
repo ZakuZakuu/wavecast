@@ -42,16 +42,22 @@ export type TunerReading = {
   between: boolean;
   /** Lit signal bars, 1..5. */
   bars: number;
-  /** Static noise layer opacity, 0..1 (only between stations). */
+  /** Static noise opacity, 0..1, rising continuously with distance from a station. */
   noise: number;
 };
+
+/** Noise grows smoothly from the lock range to ~1.2 MHz away (no on/off steps). */
+export function noiseForDistance(distance: number): number {
+  const t = Math.min(1, Math.max(0, (distance - LOCK_RANGE) / (1.2 - LOCK_RANGE)));
+  return t * t * (3 - 2 * t);
+}
 
 export function readTuner(freq: number): TunerReading {
   const { station, distance } = nearestStation(freq);
   const locked = distance <= LOCK_RANGE + 1e-9;
   const between = distance > BETWEEN_THRESHOLD + 1e-9;
   const bars = locked ? 5 : between ? 1 : 3;
-  const noise = between ? Math.min(1, (distance - BETWEEN_THRESHOLD) / 1.2 + 0.35) : 0;
+  const noise = noiseForDistance(distance);
   return { station, distance, locked, between, bars, noise };
 }
 
@@ -73,6 +79,24 @@ export function stepStation(freq: number, direction: 1 | -1): Station {
     return (direction > 0 ? candidates[0] : candidates.at(-1)) ?? station;
   }
   return STATIONS[Math.min(STATIONS.length - 1, Math.max(0, index + direction))];
+}
+
+/** Width in px of the whole 87.5–108 MHz scale. */
+export const FULL_SCALE_WIDTH = (FREQ_MAX - FREQ_MIN) * PX_PER_MHZ;
+
+/** X of a frequency on the full scale layer (0 at 87.5 MHz). */
+export function scaleX(freq: number): number {
+  return (freq - FREQ_MIN) * PX_PER_MHZ;
+}
+
+/** translateX of the full scale so `freq` sits under the window's centre. */
+export function scaleTranslate(freq: number, windowWidth: number): number {
+  return windowWidth / 2 - scaleX(freq);
+}
+
+/** The whole band drawn once (ticks + numbers), for a translateX-only layer. */
+export function fullScaleGeometry(): TickGeometry {
+  return tickGeometry((FREQ_MIN + FREQ_MAX) / 2, FULL_SCALE_WIDTH);
 }
 
 export type TickGeometry = {
