@@ -73,6 +73,17 @@ export function LibraryPage() {
   const [library, setLibrary] = useState<UserLibraryState>(emptyUserLibrary);
   const [created, setCreated] = useState<ProgramProposal[]>([]);
   const [now, setNow] = useState(() => Date.now());
+  // Only one row may show its delete button; any tap outside it closes it.
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!openKey) return;
+    const onDown = (event: PointerEvent) => {
+      const row = (event.target as Element | null)?.closest?.("[data-row-key]");
+      if (row?.getAttribute("data-row-key") !== openKey) setOpenKey(null);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [openKey]);
 
   useEffect(() => {
     const refresh = () => {
@@ -173,7 +184,14 @@ export function LibraryPage() {
         {visible.length ? (
           <ul className="lib-list">
             {visible.map((row) => (
-              <SwipeRow key={row.key} onDelete={row.onDelete} deleteLabel={row.deleteLabel}>
+              <SwipeRow
+                key={row.key}
+                rowKey={row.key}
+                onDelete={row.onDelete}
+                deleteLabel={row.deleteLabel}
+                open={openKey === row.key}
+                onOpenChange={(next) => setOpenKey(next ? row.key : null)}
+              >
                 <Link
                   href={row.href}
                   className="lib-link"

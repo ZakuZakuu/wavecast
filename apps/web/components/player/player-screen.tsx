@@ -264,8 +264,7 @@ export function PlayerScreen({
             disabled={!audioReady}
             onPreview={np.updateSeekPreview}
             onCommit={np.commitSeek}
-            onOvershoot={() => toast.show("这部分还在准备")}
-          />
+            />
 
           <div className="transport" aria-label="播放控制">
             <button type="button" className="transport-side" aria-label="后退 15 秒" onClick={() => np.nudgeSeek(-15)} disabled={!audioReady}>

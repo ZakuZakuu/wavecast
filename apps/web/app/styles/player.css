@@ -201,7 +201,22 @@
 @keyframes voice { from { transform: scaleY(.45); } to { transform: scaleY(1); } }
 
 /* Progress (three layers) */
-.progress { margin-top: 18px; display: flex; flex-direction: column; gap: 8px; }
+.progress { position: relative; margin-top: 18px; display: flex; flex-direction: column; gap: 8px; }
+.progress-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -19px;
+  height: 16px;
+  font-size: 13px;
+  line-height: 16px;
+  text-align: center;
+  color: rgba(255, 255, 255, .7);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-standard);
+  pointer-events: none;
+}
+.progress-hint.is-visible { opacity: 1; }
 .progress-hit {
   height: 24px;
   margin: -9px 0;
@@ -216,7 +231,7 @@
   width: 100%;
   height: 6px;
   border-radius: 3px;
-  overflow: hidden;
+  overflow: visible;
   transition: transform var(--t-micro) var(--ease);
 }
 .progress-track > .progress-pending {
@@ -225,9 +240,9 @@
 }
 .progress-track.dragging { transform: scaleY(1.5); }
 .progress-track > span { position: absolute; left: 0; top: 0; bottom: 0; }
+.progress-prepared, .progress-played { width: 100%; transform-origin: 0 50%; border-radius: 3px; }
 .progress-prepared { background: rgba(255, 255, 255, .32); }
-.progress-overshoot { background: rgba(255, 255, 255, .12); }
-.progress-played { background: #FFFFFF; transition: width var(--t-micro) linear; }
+.progress-played { background: #FFFFFF; transition: transform var(--dur-fast) linear; }
 .progress-track.dragging .progress-played { transition: none; }
 .progress-times {
   display: flex;
