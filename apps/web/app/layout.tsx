@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
 
 import { LibraryIdentityBridge } from "../components/library-identity-bridge";
+import { DesktopStage } from "../components/desktop-stage";
 import { GlobalChrome } from "../components/global-chrome";
+import { KeyboardShortcuts } from "../components/keyboard-shortcuts";
 import { PlaybackProvider } from "../components/player/playback-provider";
 import { PlayerOverlay } from "../components/player/player-overlay";
 import "./styles/tokens.css";
@@ -10,6 +12,7 @@ import "./styles/player.css";
 import "./styles/tune.css";
 import "./styles/home.css";
 import "./styles/overlays.css";
+import "./styles/desktop.css";
 
 export const metadata: Metadata = {
   title: "WaveCast",
@@ -42,6 +45,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body>
         <LibraryIdentityBridge>
           <PlaybackProvider>
+            <DesktopStage />
+            <KeyboardShortcuts />
             <div className="app-root">
               {children}
               <PlayerOverlay />

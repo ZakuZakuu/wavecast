@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 
 import { approach, cleanTarget, swingOffset, waveformPathAt } from "../../lib/motion/ambient";
 import { prefersReducedMotion } from "../../lib/motion/easing";
+import { useOverlay } from "../../lib/overlay-stack";
 import { formatFreq, type Station } from "../../lib/stations";
 import { PX_PER_MHZ } from "../../lib/tuner";
 import { TuningWindow, useElementWidth } from "./tuning-window";
@@ -57,6 +58,8 @@ export function TuningInScreen({
     });
     return () => cancelAnimationFrame(frame);
   }, [ref]);
+
+  useOverlay(true, onCancel);
 
   const activeIndex = steps.findIndex((step) => !step.done);
 

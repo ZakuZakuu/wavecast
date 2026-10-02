@@ -10,6 +10,8 @@ export const SNOOZE_DAYS = 14;
 export type InstallContext = {
   platform: "ios-safari" | "installable" | "other";
   standalone: boolean;
+  /** Mouse-driven wide screen: the desktop side card offers a QR code instead. */
+  desktop?: boolean;
   visits: number;
   finishedProgramme: boolean;
   snoozedUntil: number;
@@ -18,7 +20,7 @@ export type InstallContext = {
 };
 
 export function shouldOfferInstall(context: InstallContext): boolean {
-  if (context.platform === "other" || context.standalone || context.acknowledged) return false;
+  if (context.platform === "other" || context.standalone || context.acknowledged || context.desktop) return false;
   if (context.now < context.snoozedUntil) return false;
   return context.finishedProgramme || context.visits >= 2;
 }
@@ -93,4 +95,10 @@ export function isStandalone(): boolean {
   if (typeof window === "undefined") return false;
   const nav = navigator as Navigator & { standalone?: boolean };
   return nav.standalone === true || window.matchMedia?.("(display-mode: standalone)").matches === true;
+}
+
+/** A computer: wide viewport with a hovering, precise pointer (not a phone or tablet). */
+export function isDesktopPointer(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  return window.matchMedia("(min-width: 768px) and (hover: hover) and (pointer: fine)").matches;
 }

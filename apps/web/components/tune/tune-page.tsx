@@ -20,6 +20,8 @@ import {
   PX_PER_MHZ,
   readTuner,
   stepStation,
+  WHEEL_SNAP_DELAY_MS,
+  wheelDeltaPx,
 } from "../../lib/tuner";
 import type { DurationIntent } from "../../lib/types";
 import { AppShell } from "../app-shell";
@@ -227,6 +229,30 @@ export function TunePage() {
     if (Math.abs(velocity) < GLIDE_STOP_SPEED) snapWithSpring(velocity);
     else glide(velocity);
   };
+
+  // Mouse wheel / trackpad: scroll moves the scale, snapping 150ms after it stops.
+  const markManualRef = useRef(markManual);
+  markManualRef.current = markManual;
+  useEffect(() => {
+    const element = windowRef.current;
+    if (!element) return;
+    let timer = 0;
+    const onWheel = (event: WheelEvent) => {
+      const delta = wheelDeltaPx(event, element.clientWidth);
+      if (!delta) return;
+      event.preventDefault();
+      stopAnimation();
+      markManualRef.current();
+      setFreq(freqRef.current + delta / PX_PER_MHZ);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => snapWithSpring(0), WHEEL_SNAP_DELAY_MS);
+    };
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      element.removeEventListener("wheel", onWheel);
+      window.clearTimeout(timer);
+    };
+  }, [setFreq, snapWithSpring, stopAnimation, windowRef]);
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;

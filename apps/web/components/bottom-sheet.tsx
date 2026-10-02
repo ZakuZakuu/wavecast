@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { attachDragDismiss, sheetTimings, type DragDismiss } from "../lib/motion/drag-dismiss";
 import { DUR, tween } from "../lib/motion/easing";
 import { scrimOpacityForOffset } from "../lib/motion/gesture";
+import { useOverlay } from "../lib/overlay-stack";
 import { Portal } from "./portal";
 
 /**
@@ -139,14 +140,8 @@ export function BottomSheet({
     };
   }, [panelNode, rendered]);
 
-  useEffect(() => {
-    if (!rendered) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCloseRef.current();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [rendered]);
+  // Esc (and, on Android, Back) closes the top-most overlay.
+  useOverlay(open, () => onCloseRef.current());
 
   if (!rendered) return null;
 

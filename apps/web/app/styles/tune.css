@@ -125,7 +125,7 @@
   background: linear-gradient(180deg, rgba(29, 29, 31, .07), rgba(255, 255, 255, .75) 50%, rgba(29, 29, 31, .09));
   box-shadow: inset 0 0 0 .5px rgba(29, 29, 31, .08);
   overflow: hidden;
-  cursor: ew-resize;
+  cursor: grab;
   touch-action: none;
 }
 .knurl svg { position: absolute; left: 0; top: 0; }

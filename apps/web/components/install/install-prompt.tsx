@@ -6,11 +6,13 @@ import {
   acknowledgeInstall,
   countVisit,
   detectPlatform,
+  isDesktopPointer,
   isStandalone,
   readInstallState,
   shouldOfferInstall,
   snoozeInstall,
 } from "../../lib/install";
+import { useOverlay } from "../../lib/overlay-stack";
 import { PlusSquareIcon, ShareIcon } from "../icons";
 import { LogoMark } from "../logo-mark";
 import { Portal } from "../portal";
@@ -35,11 +37,16 @@ export function InstallPrompt() {
     else setMode("none");
   };
 
+  useOverlay(mode === "ios" && !leaving, () => {
+    snoozeInstall();
+    dismiss();
+  });
+
   useEffect(() => {
     const visits = countVisit();
     const evaluate = () => {
       const platform = detectPlatform(navigator.userAgent, navigator.maxTouchPoints ?? 0, Boolean(deferredPrompt));
-      const show = shouldOfferInstall({ platform, standalone: isStandalone(), visits, ...readInstallState() });
+      const show = shouldOfferInstall({ platform, standalone: isStandalone(), desktop: isDesktopPointer(), visits, ...readInstallState() });
       setMode(show ? (platform === "ios-safari" ? "ios" : "banner") : "none");
     };
     const timer = window.setTimeout(evaluate, 1200);
