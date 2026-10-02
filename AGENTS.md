@@ -8,6 +8,33 @@ The product is **not** a generic chatbot, playlist generator, or one-shot podcas
 
 Your default behavior should be highly autonomous: inspect the repo, infer the next sensible implementation step from the current milestone and docs, implement it, test it, commit it, and continue. Do not stop for routine engineering decisions.
 
+## Preliminary-round priority gate
+
+**Before making any non-trivial change during the current hackathon preliminary stage, read `docs/PRELIMINARY_PRODUCT_TARGET.md`.**
+
+The current delivery order is intentionally narrow:
+
+> **Listening P0 -> UI P0 -> preliminary-round submission**
+
+Do not let historical architecture work, old ADRs, or implementation neatness expand this scope by default.
+
+For this milestone, prefer:
+
+1. a convincing listener-facing radio experience;
+2. uninterrupted playback and graceful degradation;
+3. natural narration/music arrangement;
+4. demo reliability and visible polish;
+5. only then broader architecture generality.
+
+In particular:
+
+- narration is **not** restricted to gaps between complete songs;
+- a temporary two-track or short generated prefix is **not automatically a complete programme**;
+- there is **no product requirement to hard-code a minimum song count** for a programme;
+- the preliminary P0 focuses on one polished, lightly hosted radio style rather than perfect parity across NONE/LIGHT/FULL;
+- avoid another broad player/runtime rewrite unless a concrete blocker makes it unavoidable;
+- if an existing implementation invariant conflicts with the current product target, do not silently optimize the invariant. Reconcile the conflict against the product target first.
+
 ---
 
 ## Source of truth
@@ -15,11 +42,13 @@ Your default behavior should be highly autonomous: inspect the repo, infer the n
 Read these before making non-trivial changes:
 
 1. `AGENTS.md`
-2. `docs/PROJECT_STATE.md` for the current milestone, branch/main state, and
+2. `docs/PRELIMINARY_PRODUCT_TARGET.md` for the current user-facing product goal
+   and the explicit preliminary-round scope/priority order
+3. `docs/PROJECT_STATE.md` for the current milestone, branch/main state, and
    immediate next task
-3. `docs/CODEX_HANDOFF.md` for the long-lived product and architecture contract
-4. Any relevant ADRs under `docs/adr/`
-5. Existing tests and schemas
+4. `docs/CODEX_HANDOFF.md` for the long-lived product and architecture contract
+5. Any relevant ADRs under `docs/adr/`
+6. Existing tests and schemas
 
 If implementation and docs disagree, do not silently redefine the product. Preserve established domain semantics and either:
 
@@ -205,7 +234,9 @@ Consumes the current future skeleton plus user feedback such as skip, like, "les
 - Home cards are cheap "program promises", not fully generated episodes.
 - A card should include at minimum title/topic, estimated duration, procedural cover parameters, and opening track information when possible.
 - Clicking a card should begin the opening track immediately or as close to immediately as platform constraints allow.
-- Expensive research, writing, and TTS start after the click.
+- The opening experience should have enough editorial context prepared that a short host introduction can arrive during an appropriate early instrumental/non-vocal window; it does not need to wait for the first song to finish.
+- Narration may be arranged inside a track, over an intro/break/outro, or around a transition. Do not model narration as inherently inter-track-only.
+- Expensive research, writing, and TTS may continue after the click, but the listener should perceive a continuous programme rather than generation stages.
 - Users may seek backward through generated/committed content.
 - Users may not seek beyond the generated frontier.
 - "Next" should skip to the next chapter/track; it must not block on unfinished narration if playable music is already known.
@@ -328,7 +359,7 @@ This project is self-funded. Avoid unnecessary paid calls in development.
 - Use `.env.example` with names only.
 - Keep generated private user data out of logs where possible.
 - Sanitize provider errors before returning them to clients.
-- Keep the repository private.
+- Do not change repository visibility without explicit user approval. Never expose credentials, private user data, or deployment secrets.
 
 ---
 
@@ -344,3 +375,43 @@ A milestone is not done merely because code was written. It is done when:
 - a PR summary explains what changed, what remains mocked, and what should be reviewed.
 
 When uncertain, optimize for maintainability, observable state, bounded cost, and a convincing listening experience.
+
+
+---
+
+## Hosted deployment discipline
+
+### CI selection
+
+PR checks are selected automatically; see `docs/deployment/ci.md`. Web checks
+always run. PRs limited to known Web/documentation paths skip the backend and
+Docker deployment jobs. Backend/shared/deployment/unknown paths, release PRs
+targeting `main`, pushes to `main`, and manual CI runs get full validation.
+Do not bypass CI with commit-message skip directives or workflow path filters.
+Use a manual CI run when a full-stack checkpoint is needed on a feature branch.
+
+### Hosted checkpoints
+
+WaveCast has constrained hosted deployment budgets. Treat deployments as explicit
+human-test checkpoints, not as a side effect of every code commit.
+
+- `main` is the release branch. Do not advance or deploy it for routine iteration.
+- `integration` is the single hosted integration branch used when a human needs
+  to test the current frontend/backend together.
+- During implementation, prefer local commits without pushing. When GitHub-side
+  editing is required, detached commits are acceptable; advance `integration`
+  only when a coherent testable checkpoint is ready.
+- Batch related fixes into one `integration` update. Do not push one hosted
+  deployment per small edit.
+- Vercel should deploy only `main` and `integration`, and should ignore commits
+  that do not affect the Web app or its root workspace dependencies.
+- During active hackathon development, the Railway API service may track
+  `integration` so one `integration` update deploys the matching backend
+  without Railway Agent. Before a public release, switch Railway back to `main`
+  and deploy the accepted release SHA.
+- Do not use Railway Agent for routine logs, metrics, variables, health checks, or
+  redeploys. Reserve it for operations that cannot be expressed with ordinary
+  Railway APIs/CLI.
+- A hosted checkpoint is complete only after the relevant deployment reaches a
+  successful state and its health/build signal is observed. Never claim tests
+  passed unless their output was actually observed.

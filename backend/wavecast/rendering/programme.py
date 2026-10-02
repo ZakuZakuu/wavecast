@@ -17,7 +17,6 @@ from wavecast.rendering.ffmpeg import HlsRenderedSegment, render_mix_hls_prefix
 from wavecast.rendering.fingerprint import mix_plan_fingerprint
 from wavecast.rendering.sources import resolve_mix_sources
 
-
 DEFAULT_PROGRAM_CHUNK_SECONDS = 6.0
 DEFAULT_RENDER_HOLDBACK_SECONDS = 30.0
 _MEDIA_TIMELINE_TOLERANCE_SECONDS = 0.15
@@ -59,7 +58,7 @@ class ProgramRenderManifest(BaseModel):
     stream_url: str = Field(min_length=1, serialization_alias="streamUrl")
 
     @model_validator(mode="after")
-    def validate_append_only_shape(self) -> "ProgramRenderManifest":
+    def validate_append_only_shape(self) -> ProgramRenderManifest:
         expected_start = 0.0
         for index, chunk in enumerate(self.chunks):
             if chunk.index != index:
@@ -274,6 +273,19 @@ def _verify_frozen_prefix(plan: MixPlan, manifest: ProgramRenderManifest) -> Non
             raise ProgramImmutabilityError("new plan rewrites frozen programme audio")
 
 
+def frozen_prefix_is_compatible(
+    plan: MixPlan,
+    manifest: ProgramRenderManifest,
+) -> bool:
+    """Whether a candidate plan preserves every already-published programme chunk."""
+
+    try:
+        _verify_frozen_prefix(plan, manifest)
+    except ProgramImmutabilityError:
+        return False
+    return True
+
+
 def _candidate_prefix(
     segments: tuple[HlsRenderedSegment, ...],
     *,
@@ -439,6 +451,7 @@ def hls_playlist(manifest: ProgramRenderManifest) -> str:
         f"#EXT-X-TARGETDURATION:{target}",
         "#EXT-X-MEDIA-SEQUENCE:0",
         "#EXT-X-PLAYLIST-TYPE:EVENT",
+        "#EXT-X-START:TIME-OFFSET=0.000,PRECISE=YES",
         "#EXT-X-INDEPENDENT-SEGMENTS",
     ]
     for chunk in manifest.chunks:
@@ -456,6 +469,7 @@ __all__ = [
     "ProgramRenderChunk",
     "ProgramRenderManifest",
     "committable_frontier",
+    "frozen_prefix_is_compatible",
     "hls_playlist",
     "load_program_manifest",
     "manifest_key",

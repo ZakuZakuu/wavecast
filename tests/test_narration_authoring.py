@@ -272,6 +272,67 @@ def test_late_trackless_writer_never_inserts_before_committed_future_music() -> 
     assert updated.progressive_session.narration_authored_chapter_ids == ["chapter-2"]
 
 
+class _ExplodingRuntime:
+    async def author_narration(
+        self,
+        episode: LiveEpisode,
+        chapter_id: str,
+    ) -> GeneratedChapter | None:
+        del episode, chapter_id
+        raise RuntimeError("synthetic writer crash")
+
+
+class _ExplodingHost(_Host):
+    def __init__(self, repository: InMemoryEpisodeRepository) -> None:
+        super().__init__(repository)
+        self.progressive_runtime = _ExplodingRuntime()
+
+
+def test_unexpected_writer_failure_skips_placeholder_and_marks_chapter_authored() -> None:
+    repository = InMemoryEpisodeRepository()
+    episode = _episode()
+    episode.segments.insert(
+        1,
+        NarrationSegment(
+            id="chapter-2:narration:pending",
+            chapter_id="chapter-2",
+            order=1,
+            state=SegmentState.PLANNED,
+            planned_duration_seconds=8,
+            title="Pending host bridge",
+        ),
+    )
+    episode.segment("chapter-2:music:0").order = 2
+    episode.segment("chapter-3:music:0").order = 3
+    episode.progressive_session = ProgressiveAssemblySession.model_construct(
+        narration_authored_chapter_ids=[],
+        chapters=[
+            ProgressiveAssemblyChapter.model_construct(
+                chapter_id="chapter-2",
+                chapter=ChapterPlan.model_construct(track=None),
+                resolved_track=None,
+                slot_contexts=[NarrationSlotContext.model_construct()],
+                target_narration_seconds=8,
+            )
+        ],
+    )
+    repository.save(episode)
+
+    updated = asyncio.run(
+        author_pending_narration(
+            _ExplodingHost(repository),
+            episode.id,
+            max_chapters=1,
+        )
+    )
+
+    placeholder = updated.segment("chapter-2:narration:pending")
+    assert placeholder.state is SegmentState.SKIPPED
+    assert updated.segment("chapter-2:music:0").is_audio_ready
+    assert updated.progressive_session is not None
+    assert updated.progressive_session.narration_authored_chapter_ids == ["chapter-2"]
+
+
 class _DegradingRuntime:
     async def author_narration(
         self,

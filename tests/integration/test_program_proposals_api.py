@@ -40,7 +40,11 @@ def test_program_proposal_can_be_created_viewed_and_started() -> None:
         episode = started.json()
         assert episode["seed_id"] == proposal["id"]
         assert episode["topic"] == proposal["topic"]
-        assert len(episode["segments"]) == 1
+        assert len(episode["segments"]) == 2
+        assert episode["segments"][0]["id"] == "segment-opening"
+        assert episode["segments"][1]["id"] == "segment-opening-host"
+        assert episode["segments"][1]["state"] == "AUDIO_READY"
+        assert episode["segments"][1]["narration_role"] == "INTRO"
         assert episode["segments"][0]["kind"] == "MUSIC"
     finally:
         api_module.proposal_repository = previous_repository

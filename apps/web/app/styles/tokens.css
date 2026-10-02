@@ -1,0 +1,92 @@
+/* Frost design tokens — docs/design/frost/HANDOFF.md §4. */
+:root {
+  color-scheme: light;
+  --bg: #F2F2F4;
+  --surface: #FFFFFF;
+  --ink: #1D1D1F;
+  --ink-2: #6E6E73;
+  --ink-3: #8E8E93;
+  --separator: rgba(60, 60, 67, 0.18);
+  --fill: rgba(118, 118, 128, 0.12);
+  --live: #FF6B2C;
+  --live-glow: rgba(255, 107, 44, 0.55);
+  --danger: #FF3B30;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  /* Thin frequency numerals: Android has Roboto Thin/Light but its CJK system
+     font (Noto Sans SC) often lacks weights below 400, so Roboto goes first. */
+  --font-numeric: -apple-system, "Roboto", "Noto Sans SC", sans-serif;
+  --font-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
+
+  --gutter: 20px;
+  --radius-tuner-card: 28px;
+  --radius-station-card: 20px;
+  --radius-group: 18px;
+  --radius-window: 18px;
+  --radius-input: 16px;
+  --radius-cover: 12px;
+  --radius-segment: 9px;
+
+  /* Motion (MOTION.md §2). */
+  --dur-instant: 100ms;
+  --dur-fast: 150ms;
+  --dur-base: 250ms;
+  --dur-slow: 350ms;
+  --dur-page: 400ms;
+  --ease-standard: cubic-bezier(.2, .8, .2, 1);
+  --ease-enter: cubic-bezier(.05, .7, .1, 1);
+  --ease-exit: cubic-bezier(.3, 0, .8, .15);
+  /* Older names, kept as aliases. */
+  --ease: var(--ease-standard);
+  --t-micro: var(--dur-fast);
+  --t-state: var(--dur-base);
+  --t-sheet: var(--dur-slow);
+
+  --nav-bottom-pad: max(env(safe-area-inset-bottom, 0px), 26px);
+  --nav-height: calc(58px + var(--nav-bottom-pad));
+  --mini-height: 60px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --frame-max: 430px;
+
+  /* Materials (§4.4). Dark mode is reserved for later; only tokens exist. */
+  --mat-card: rgba(255, 255, 255, .62);
+  --mat-card-border: rgba(255, 255, 255, .8);
+  --mat-nav: rgba(242, 242, 244, .78);
+  --mat-mini: rgba(250, 250, 252, .8);
+  --mat-on-art: rgba(255, 255, 255, .14);
+  --mat-sheet-dark: rgba(40, 34, 26, .72);
+  --mat-sheet-light: rgba(246, 246, 248, .94);
+  --blur-card: blur(30px);
+  --blur-nav: blur(24px);
+  --blur-sheet: blur(40px) saturate(1.4);
+
+  font-family: var(--font-ui);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --mat-card: rgba(255, 255, 255, .96);
+    --mat-nav: rgba(242, 242, 244, .97);
+    --mat-mini: rgba(250, 250, 252, .97);
+    --mat-on-art: rgba(80, 80, 86, .94);
+    --mat-sheet-dark: rgba(40, 34, 26, .96);
+    --mat-sheet-light: rgba(246, 246, 248, .98);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --mat-card: rgba(255, 255, 255, .96);
+    --mat-nav: rgba(242, 242, 244, .97);
+    --mat-mini: rgba(250, 250, 252, .97);
+    --mat-on-art: rgba(80, 80, 86, .94);
+    --mat-sheet-dark: rgba(40, 34, 26, .96);
+    --mat-sheet-light: rgba(246, 246, 248, .98);
+    --blur-card: none;
+    --blur-nav: none;
+    --blur-sheet: none;
+  }
+}

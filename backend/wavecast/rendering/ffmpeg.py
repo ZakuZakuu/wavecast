@@ -78,10 +78,25 @@ def build_filter_graph(plan: MixPlan) -> str:
         "".join(labels)
         + f"amix=inputs={len(plan.clips)}:duration=longest:normalize=0:"
         + "dropout_transition=0,"
+        # Source metadata is integer-second today and some provider assets end
+        # a few AAC frames before that declared duration. The canonical
+        # programme timeline is authoritative, so fill only a missing tail with
+        # deterministic silence instead of letting the mixed stream end early.
+        + f"apad=whole_dur={_number(plan.duration_seconds)},"
         + f"atrim=duration={_number(plan.duration_seconds)},"
         + "asetpts=PTS-STARTPTS[mixout]"
     )
     return ";".join(chains)
+
+
+def _stderr_summary(stderr: bytes | None) -> str:
+    if not stderr:
+        return "no ffmpeg stderr"
+    text = stderr.decode("utf-8", errors="replace").strip()
+    if not text:
+        return "empty ffmpeg stderr"
+    # Keep diagnostics compact and avoid dumping full command/source context.
+    return text.splitlines()[-1][-320:]
 
 
 def _ffmpeg_binary(binary: str) -> str:
@@ -315,12 +330,18 @@ def render_mix_hls_prefix(
     except OSError as error:
         raise MixRenderError("ffmpeg could not be started") from error
     if completed.returncode != 0:
-        raise MixRenderError("ffmpeg did not produce a valid HLS prefix")
+        raise MixRenderError(
+            "ffmpeg did not produce a valid HLS prefix: "
+            + _stderr_summary(completed.stderr)
+        )
 
     segments = _parse_hls_segments(playlist_path)
     duration = sum(segment.duration_seconds for segment in segments)
     if abs(duration - plan.duration_seconds) > 0.15:
-        raise MixRenderError("ffmpeg HLS duration diverges from the canonical plan")
+        raise MixRenderError(
+            "ffmpeg HLS duration diverges from the canonical plan: "
+            f"rendered={duration:.3f}s plan={plan.duration_seconds:.3f}s"
+        )
     return HlsRenderResult(
         playlist_path=playlist_path,
         segments=segments,

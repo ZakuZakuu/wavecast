@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "./app-shell";
+import { OnboardingSheet } from "./onboarding/onboarding-sheet";
 import { authClient, clearApiAuthToken } from "../lib/auth-client";
 
 type AuthAvailability = { enabled: boolean; providers: string[] };
@@ -15,6 +15,7 @@ export function AccountPage() {
     providers: [],
   });
   const [error, setError] = useState<string | null>(null);
+  const [editingTaste, setEditingTaste] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -45,48 +46,49 @@ export function AccountPage() {
 
   return (
     <AppShell>
-      <div className="page-header account-header">
-        <div><p className="program-kicker">YOUR WAVECAST</p><h1>账户</h1></div>
-        <span className="profile-dot" aria-hidden="true">{session?.user.name?.slice(0, 1) ?? "访"}</span>
+      <div className="account">
+        <header className="home-head">
+          <h1 className="page-title">账户</h1>
+          <span className="avatar" aria-hidden="true">
+            {session?.user?.name?.trim().slice(0, 1) || (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="9" r="3.6" /><path d="M5.5 19.5a6.5 6.5 0 0 1 13 0" /></svg>
+            )}
+          </span>
+        </header>
+
+        {isPending ? <p className="inline-note" role="status">正在读取账户状态…</p> : null}
+        {!isPending && session?.user ? (
+          <section className="account-group">
+            <div className="account-row">
+              <strong>{session.user.name}</strong>
+              {session.user.email ? <span>{session.user.email}</span> : null}
+            </div>
+            <p className="account-note">节目库已同步到账号，可以在其他设备继续听。</p>
+            <button type="button" className="account-action" onClick={() => setEditingTaste(true)}>修改收听偏好</button>
+            <button type="button" className="account-action is-danger" onClick={() => void signOut()}>退出登录</button>
+          </section>
+        ) : null}
+
+        {!isPending && !session?.user ? (
+          <section className="account-group">
+            <div className="account-row">
+              <strong>现在就可以开始听</strong>
+              <span>调频和收听都不需要登录。登录后可以把节目库带到其他设备。</span>
+            </div>
+            {availability.providers.includes("google") ? (
+              <button type="button" className="account-action" onClick={() => void signIn("google")}>使用 Google 继续</button>
+            ) : null}
+            {availability.providers.includes("github") ? (
+              <button type="button" className="account-action" onClick={() => void signIn("github")}>使用 GitHub 继续</button>
+            ) : null}
+            {availability.enabled && availability.providers.length === 0 ? (
+              <p className="account-note">登录方式暂未开放，可以继续以访客身份使用。</p>
+            ) : null}
+          </section>
+        ) : null}
+        {error ? <p className="inline-note is-error" role="alert">{error}</p> : null}
       </div>
-
-      {isPending ? <p className="account-status">正在读取账户状态…</p> : null}
-      {!isPending && session?.user ? (
-        <section className="account-card">
-          <p className="program-kicker">已登录</p>
-          <h2>{session.user.name}</h2>
-          {session.user.email ? <p>{session.user.email}</p> : null}
-          <p className="account-benefit">你的节目库已同步到账号，可在其他设备继续使用。</p>
-          <button type="button" className="account-secondary" onClick={() => void signOut()}>
-            退出登录
-          </button>
-        </section>
-      ) : null}
-
-      {!isPending && !session?.user ? (
-        <section className="account-card">
-          <p className="program-kicker">访客模式</p>
-          <h2>现在就可以开始听</h2>
-          <p className="account-benefit">
-            浏览、收藏、调频和收听都不需要登录。登录后可以把节目库带到其他设备。
-          </p>
-          {availability.providers.includes("google") ? (
-            <button type="button" className="account-primary" onClick={() => void signIn("google")}>
-              使用 Google 继续
-            </button>
-          ) : null}
-          {availability.providers.includes("github") ? (
-            <button type="button" className="account-secondary" onClick={() => void signIn("github")}>
-              使用 GitHub 继续
-            </button>
-          ) : null}
-          {availability.enabled && availability.providers.length === 0 ? (
-            <p className="account-status">登录方式暂未开放，你仍可继续以访客身份使用。</p>
-          ) : null}
-        </section>
-      ) : null}
-      {error ? <p className="inline-error" role="alert">{error}</p> : null}
-      <Link className="account-back" href="/">回到为你推荐</Link>
+      {editingTaste ? <OnboardingSheet force onFinished={() => setEditingTaste(false)} /> : null}
     </AppShell>
   );
 }

@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from wavecast.audio_timing import TrackTimingProfile
 from wavecast.intelligence.models import (
     NarrationScript,
     RadioScript,
@@ -164,6 +165,7 @@ class EpisodeComposer:
                     title=track.canonical_title,
                     artist=track.canonical_artist,
                     asset_ref=asset.asset_id,
+                    timing_profile=_asset_timing_profile(asset),
                 )
             )
             order += 1
@@ -255,3 +257,15 @@ def _narration_role(kind: RadioScriptBlockKind) -> NarrationRole:
         RadioScriptBlockKind.TRANSITION: NarrationRole.TRANSITION,
         RadioScriptBlockKind.OUTRO: NarrationRole.OUTRO,
     }[kind]
+
+
+def _asset_timing_profile(asset: AudioAsset) -> TrackTimingProfile | None:
+    raw = asset.metadata.get("timing_profile")
+    if isinstance(raw, TrackTimingProfile):
+        return raw
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return TrackTimingProfile.model_validate(raw)
+    except ValueError:
+        return None

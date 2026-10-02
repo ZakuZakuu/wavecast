@@ -1,0 +1,346 @@
+/* Tuner (Frost-Tune) and tuning-in (Frost-Tuning). */
+.tune {
+  height: 100%;
+  padding: calc(58px) var(--gutter) calc(var(--nav-height) + 12px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tuner-card {
+  border-radius: var(--radius-tuner-card);
+  background: var(--mat-card);
+  backdrop-filter: var(--blur-card);
+  -webkit-backdrop-filter: var(--blur-card);
+  border: .5px solid var(--mat-card-border);
+  box-shadow: 0 10px 30px rgba(29, 29, 31, .06);
+  padding: 20px 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tuner-readout { display: flex; align-items: flex-end; justify-content: space-between; }
+.tuner-freq { display: flex; align-items: baseline; gap: 6px; }
+.tuner-fm { font-size: 15px; font-weight: 500; color: var(--ink-2); }
+.tuner-number { font-family: var(--font-numeric); font-size: 56px; font-weight: 200; line-height: 1; letter-spacing: -0.03em; }
+
+.signal { display: flex; align-items: flex-end; gap: 3px; height: 18px; padding-bottom: 8px; box-sizing: content-box; }
+.signal span {
+  width: 4px;
+  border-radius: 1.5px;
+  background: rgba(29, 29, 31, .15);
+  transition: background-color 50ms linear;
+}
+.signal span.is-lit { background: var(--ink); }
+
+.tuner-station { display: flex; flex-direction: column; gap: 4px; min-height: 52px; }
+.tuner-station p { margin: 0; font-size: 15px; color: var(--ink-2); }
+.tuner-name-row { display: flex; align-items: center; gap: 8px; }
+.tuner-name {
+  font-size: 20px;
+  font-weight: 600;
+  animation: fade-in-plain var(--dur-fast) var(--ease-standard) both;
+}
+.tuner-name.is-between { color: var(--ink-3); }
+.match-badge {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 999px;
+  animation: fade-in-plain var(--t-state) var(--ease) both;
+}
+
+.tuning-window {
+  position: relative;
+  height: 96px;
+  border-radius: var(--radius-window);
+  background: rgba(226, 226, 232, .78);
+  border: .5px solid rgba(29, 29, 31, .08);
+  box-shadow:
+    inset 0 2px 6px rgba(29, 29, 31, .16),
+    inset 0 1px 1px rgba(29, 29, 31, .08),
+    0 1px 0 rgba(255, 255, 255, .95);
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tuning-window.is-dragging { cursor: grabbing; }
+.tuning-window.is-static { cursor: default; width: 100%; }
+.tuning-window:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.tw-layer { position: absolute; left: 0; top: 0; height: 96px; width: 0; will-change: transform; }
+.tw-scale { position: absolute; left: 0; top: 0; }
+.tw-noise-layer { position: absolute; left: 0; top: 0; pointer-events: none; }
+.tw-minor { fill: none; stroke: rgba(29, 29, 31, .2); stroke-width: 1; stroke-linecap: round; }
+.tw-major { fill: none; stroke: rgba(29, 29, 31, .48); stroke-width: 1.2; stroke-linecap: round; }
+.tw-noise { fill: rgba(29, 29, 31, .16); }
+.tw-label {
+  position: absolute;
+  top: 0;
+  width: 80px;
+  height: 36px;
+  padding-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 13px;
+  white-space: nowrap;
+  color: var(--ink-3);
+  font-weight: 400;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+.tw-label.is-active { color: var(--ink); font-weight: 600; }
+.tw-dot { width: 5px; height: 5px; border-radius: 50%; }
+.tw-number {
+  position: absolute;
+  top: 60px;
+  width: 32px;
+  text-align: center;
+  font-family: var(--font-numeric);
+  font-size: 13px;
+  font-weight: 300;
+  color: var(--ink-3);
+}
+.tw-fade { position: absolute; top: 0; bottom: 0; width: 48px; pointer-events: none; }
+.tw-fade-left { left: 0; background: linear-gradient(90deg, rgba(228, 228, 234, .96), rgba(228, 228, 234, 0)); }
+.tw-fade-right { right: 0; background: linear-gradient(270deg, rgba(228, 228, 234, .96), rgba(228, 228, 234, 0)); }
+.tw-pointer {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--live);
+  box-shadow: 0 0 8px var(--live-glow);
+  pointer-events: none;
+}
+.tw-ghost { position: absolute; top: 8px; bottom: 8px; width: 2px; border-radius: 1px; background: rgba(255, 107, 44, .18); }
+
+.knurl {
+  position: relative;
+  height: 26px;
+  border-radius: 13px;
+  background: linear-gradient(180deg, rgba(29, 29, 31, .07), rgba(255, 255, 255, .75) 50%, rgba(29, 29, 31, .09));
+  box-shadow: inset 0 0 0 .5px rgba(29, 29, 31, .08);
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+.knurl svg { position: absolute; left: 0; top: 0; }
+.knurl path { fill: none; stroke: rgba(29, 29, 31, .16); stroke-width: 1; }
+
+.tune-input { display: flex; }
+.tune-input input {
+  width: 100%;
+  height: 56px;
+  border: .5px solid rgba(255, 255, 255, .8);
+  border-radius: var(--radius-input);
+  background: rgba(255, 255, 255, .72);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  padding: 0 18px;
+  font-size: 17px;
+  color: var(--ink);
+  outline: none;
+}
+.tune-input input::placeholder { color: var(--ink-3); }
+.tune-input input:focus-visible { box-shadow: 0 0 0 2px rgba(29, 29, 31, .25); }
+
+.segmented {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 3px;
+  border-radius: var(--radius-cover);
+  background: var(--fill);
+}
+.segmented button {
+  min-height: 36px;
+  border: 0;
+  border-radius: var(--radius-segment);
+  background: transparent;
+  font-size: 15px;
+  color: var(--ink);
+  white-space: nowrap;
+  transition: transform var(--dur-fast) var(--ease-standard);
+  position: relative;
+  z-index: 1;
+}
+.segmented button::after { content: ""; position: absolute; inset: -4px 0; }
+.segmented button.is-selected { font-weight: 600; }
+.seg-thumb {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  bottom: 3px;
+  border-radius: var(--radius-segment);
+  background: #FFFFFF;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .1);
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+@media (prefers-reduced-motion: reduce) {
+  .seg-thumb { transition: none; }
+}
+
+.on-air {
+  min-height: 54px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #FFFFFF;
+  font-size: 17px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: opacity var(--dur-base) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
+}
+.on-air:active:not(:disabled) { transform: scale(.96); transition-duration: var(--dur-base), var(--dur-instant); }
+.on-air:disabled { opacity: .3; }
+.on-air-light { width: 8px; height: 8px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 4px rgba(255, 107, 44, .25); }
+
+/* Global mini player visible: reserve its height too. */
+.app-root:has(> .mini-player:not([hidden])) .tune {
+  padding-bottom: calc(var(--nav-height) + var(--mini-height) + 8px + 12px);
+}
+
+/* Short screens (375×667) must fit without scrolling. */
+@media (max-height: 760px) {
+  .tune { padding-top: 24px; gap: 12px; }
+  .tuner-card { padding: 16px 18px 14px; gap: 10px; }
+  .tuner-number { font-size: 48px; }
+  .tuner-station { min-height: 46px; }
+  .tune-input input { height: 50px; }
+  .on-air { min-height: 50px; }
+}
+/* Short screens with the mini player: tighten so the CTA stays clear of it. */
+@media (max-height: 760px) {
+  .app-root:has(> .mini-player:not([hidden])) .tune { padding-top: 12px; gap: 10px; }
+  .app-root:has(> .mini-player:not([hidden])) .tune .page-title { font-size: 28px; }
+  .app-root:has(> .mini-player:not([hidden])) .tuner-card { padding-top: 14px; padding-bottom: 12px; gap: 8px; }
+  .app-root:has(> .mini-player:not([hidden])) .tuner-number { font-size: 44px; }
+  .app-root:has(> .mini-player:not([hidden])) .tune-input input { height: 46px; }
+  .app-root:has(> .mini-player:not([hidden])) .on-air { min-height: 48px; }
+}
+@media (max-height: 680px) {
+  .tune .page-title { font-size: 28px; }
+  .tuner-station p { font-size: 14px; }
+  .tuning-window { height: 88px; }
+}
+
+/* ---------- Tuning-in ---------- */
+.tuning-in {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: var(--bg);
+  overflow: hidden;
+  animation: fade-in-plain var(--t-sheet) var(--ease) both;
+}
+.tuning-in-body {
+  position: relative;
+  height: 100%;
+  padding: calc(var(--safe-top) + 10px) var(--gutter) max(var(--safe-bottom), 24px);
+  display: flex;
+  flex-direction: column;
+}
+.tuning-in-top { height: 44px; display: flex; align-items: center; }
+.chip-button {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 15px;
+  font-weight: 500;
+  position: relative;
+}
+.chip-button::before { content: ""; position: absolute; inset: 4px 0; border-radius: 999px; background: rgba(118, 118, 128, .14); z-index: -1; }
+.chip-button { z-index: 0; }
+.tuning-in-card {
+  margin-top: 40px;
+  border-radius: var(--radius-tuner-card);
+  background: rgba(255, 255, 255, .6);
+  backdrop-filter: var(--blur-card);
+  -webkit-backdrop-filter: var(--blur-card);
+  border: .5px solid var(--mat-card-border);
+  box-shadow: 0 10px 30px rgba(29, 29, 31, .06);
+  padding: 22px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.tuning-in-freq { margin-top: 14px; }
+.tuning-in-name { margin-top: 8px; font-size: 20px; font-weight: 600; }
+.tuning-in-wave { margin-top: 18px; max-width: 100%; }
+.tuning-in-wave path { fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.tuning-steps { list-style: none; margin: 28px 4px 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.tuning-steps li { display: flex; align-items: center; gap: 12px; font-size: 17px; }
+.tuning-steps li.is-active, .tuning-steps li.is-waiting { color: var(--ink-2); }
+.step-mark {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid rgba(29, 29, 31, .25);
+  transition: background-color var(--t-state) var(--ease);
+}
+.is-done .step-mark { background: var(--ink); border-color: var(--ink); color: #FFFFFF; }
+/* Step completes: the tick grows in from .6 (200ms); the next dot breathes. */
+.is-done .step-mark svg { animation: tick-in 200ms var(--ease-enter) both; }
+@keyframes tick-in { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
+.step-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live); animation: dot-breathe 1.2s ease-in-out infinite; }
+@keyframes dot-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+.tuning-error { margin: 18px 4px 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tuning-error p { margin: 0; font-size: 15px; color: var(--danger); }
+.tuning-in-foot { margin: auto 0 0; text-align: center; font-size: 15px; line-height: 1.6; color: var(--ink-2); }
+
+@media (max-height: 700px) {
+  .tuning-in-card { margin-top: 16px; padding: 16px 18px 18px; }
+  .tuning-steps { margin-top: 18px; gap: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-dot { animation: none; }
+  .is-done .step-mark svg { animation: fade-in-plain 150ms both; }
+}
+
+/* Glow colour follows the station smoothly (MOTION.md §4.7). */
+.tune-glow { transition: background-color 600ms var(--ease-standard), opacity 600ms var(--ease-standard); }
+
+@media (prefers-reduced-motion: reduce) {
+  .signal span { transition-delay: 0ms !important; }
+}
+
+/* Soft keyboard open (lib/soft-keyboard.ts): the app is pinned to the visible
+   area; the field and the CTA stay above the keyboard, the dial gives way. */
+html.kb-open,
+html.kb-open body,
+html.kb-open .app-root { height: var(--kb-height); }
+html.kb-open .bottom-nav,
+html.kb-open .mini-player { display: none; }
+html.kb-open .tune {
+  /* Beats the mini-player/short-screen padding rules above. */
+  padding: 12px var(--gutter) 12px !important;
+  gap: 10px;
+  justify-content: flex-end;
+}
+html.kb-open .tune .page-title,
+html.kb-open .tune .tuner-station p,
+html.kb-open .tune .knurl { display: none; }
+html.kb-open .tune .tuner-card {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding-top: 14px;
+  padding-bottom: 14px;
+  gap: 10px;
+}
+html.kb-open .tune .tuner-station { min-height: 0; }
+html.kb-open .tune .tuner-number { font-size: 44px; }

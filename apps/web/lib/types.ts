@@ -20,6 +20,7 @@ export type Seed = {
   opening_track_ref: string;
   opening_track_title: string;
   opening_track_artist: string;
+  opening_narration_text?: string | null;
   cover: { family: string; seed: number; palette: [string, string] };
   presentation_intent?: PresentationIntent;
 };
@@ -41,6 +42,8 @@ export type ProposalGenerationRequest = {
   prompt: string;
   duration_intent: DurationIntent;
   count?: number;
+  /** Optional listener taste summary; accepted by the backend (≤1000 chars). */
+  taste_context?: string;
 };
 
 type SegmentBase = {
@@ -108,7 +111,11 @@ export type LiveEpisode = {
   current_segment_id: string | null;
   playback_position_seconds: number;
   program_playback_position_seconds?: number;
+  /** Server activity timestamp (ISO); bumped by playback checkpoints. */
+  last_activity_at?: string;
   program_transport_active?: boolean;
+  program_rendered_frontier_seconds?: number | null;
+  program_publication_latency_seconds?: number;
   is_listener_active: boolean;
   is_playing: boolean;
   program_estimated_duration_seconds: number;

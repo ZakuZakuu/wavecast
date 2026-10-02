@@ -16,10 +16,9 @@ from wavecast.models.episode import (
     SegmentState,
 )
 from wavecast.orchestration.generation import GeneratedChapter
-from wavecast.presentation import HostMode
 from wavecast.orchestration.runtime import StagedProgressiveRuntime
+from wavecast.presentation import HostMode
 from wavecast.storage.episodes import EpisodeConcurrencyError, EpisodeRepository
-
 
 logger = logging.getLogger(__name__)
 
@@ -113,10 +112,22 @@ async def author_pending_narration(
                 reason,
             )
         else:
-            generated = await runtime.author_narration(
-                episode.model_copy(deep=True),
-                chapter_id,
-            )
+            try:
+                generated = await runtime.author_narration(
+                    episode.model_copy(deep=True),
+                    chapter_id,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning(
+                    "narration_authoring_degraded episode_id=%s chapter_id=%s "
+                    "reason=writer_error error_type=%s",
+                    episode_id,
+                    chapter_id,
+                    type(error).__name__,
+                )
+                generated = None
             if generated is None:
                 logger.info(
                     "narration_authoring_degraded episode_id=%s chapter_id=%s "
@@ -137,13 +148,29 @@ async def author_pending_narration(
                     narration_count,
                 )
 
-        await asyncio.to_thread(
-            _finish_authoring,
-            host,
-            episode_id,
-            chapter_id,
-            generated,
-        )
+        try:
+            await asyncio.to_thread(
+                _finish_authoring,
+                host,
+                episode_id,
+                chapter_id,
+                generated,
+            )
+        except ValueError as error:
+            logger.warning(
+                "narration_authoring_degraded episode_id=%s chapter_id=%s "
+                "reason=validation_error error_type=%s",
+                episode_id,
+                chapter_id,
+                type(error).__name__,
+            )
+            await asyncio.to_thread(
+                _finish_authoring,
+                host,
+                episode_id,
+                chapter_id,
+                None,
+            )
         processed += 1
 
     return await asyncio.to_thread(host.repository.get, episode_id)
@@ -172,17 +199,20 @@ def _finish_authoring(
     generated: GeneratedChapter | None,
 ) -> LiveEpisode:
     """Insert SCRIPT_READY narration unless playback has exposed the chapter."""
-    for attempt in range(2):
+    for attempt in range(5):
         episode = host.repository.get(episode_id).model_copy(deep=True)
         session = episode.progressive_session
         if session is None or chapter_id in session.narration_authored_chapter_ids:
             return episode
 
-        existing = [
-            segment
-            for segment in episode.ordered_segments
-            if segment.chapter_id == chapter_id
-        ]
+        existing: list[MusicSegment | NarrationSegment] = sorted(
+            (
+                segment
+                for segment in episode.segments
+                if segment.chapter_id == chapter_id
+            ),
+            key=lambda segment: segment.order,
+        )
         if not existing:
             return episode
 
@@ -197,7 +227,22 @@ def _finish_authoring(
         )
 
         replacement: list[MusicSegment | NarrationSegment] | None = None
-        if generated is not None and not exposed:
+        if generated is None or exposed:
+            # A placeholder reserves the immutable render seam while Writer/TTS
+            # are pending. Once authoring degrades, or playback wins the race,
+            # persist that editorial decision as SKIPPED so music can continue
+            # and the renderer may safely freeze through the gap.
+            replacement = [
+                (
+                    segment.model_copy(update={"state": SegmentState.SKIPPED})
+                    if isinstance(segment, NarrationSegment)
+                    and not segment.is_audio_ready
+                    and segment.state is not SegmentState.SKIPPED
+                    else segment
+                )
+                for segment in existing
+            ]
+        else:
             existing_music = [
                 segment for segment in existing if isinstance(segment, MusicSegment)
             ]
@@ -256,7 +301,7 @@ def _finish_authoring(
         try:
             return host.repository.save(episode)
         except EpisodeConcurrencyError:
-            if attempt == 0:
+            if attempt < 4:
                 continue
             raise
 

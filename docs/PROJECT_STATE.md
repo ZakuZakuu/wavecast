@@ -1,6 +1,106 @@
 # WaveCast Project State
 
-**Last updated:** 2026-09-27
+**Last updated:** 2026-10-02
+
+## CI scope optimisation
+
+- `.github/workflows/ci.yml` selects backend/deployment checks from the full
+  cumulative PR diff. Known Web/docs-only PRs retain all Web checks but skip
+  the expensive backend pytest and Docker deployment jobs.
+- Unknown/shared/backend paths and release/manual runs retain full validation;
+  comparison failures also default to full CI. Existing check names and the
+  hosted `integration` deployment flow are preserved.
+- Developers, including Claude, need no new setup. See
+  `docs/deployment/ci.md` for the selection rules and manual full-run command.
+
+## Web follow-ups after the frost redesign
+
+- Merged to `integration`: NowLine status bar (#160), global mini player and
+  session restore (#161), motion and gestures per `docs/design/frost/MOTION.md`
+  (#162).
+- In review (`feat/featured-desktop-android`): guest home shows five featured
+  programme promises (`apps/web/lib/featured.ts`, one per station; the 人物志
+  artist is the single constant `FEATURED_PORTRAIT_ARTIST`), generated only on
+  click through the shared `components/tune/use-tune-start.ts` flow; desktop
+  (≥ 768px) keeps the 430px column on a station-coloured backdrop with a QR
+  side card at ≥ 1100px, plus wheel/keyboard control; Android back closes the
+  top-most overlay via `lib/overlay-stack.ts` (same-URL history entries),
+  `lib/soft-keyboard.ts` keeps the tuner CTA above the keyboard, and
+  MediaSession gains next track. Web-only; no backend change.
+
+## Active UI P0 checkpoint — frost redesign (`feat/ui-p0-frost`)
+
+- Implements `docs/design/frost/HANDOFF.md` in `apps/web`; PR targets
+  `integration`. No backend contract changes.
+- Playback runtime logic was moved verbatim into
+  `lib/use-programme-playback.ts`. `components/player/playback-provider.tsx`
+  keeps one host (and its `<audio>`) alive across routes, keyed by
+  programme, so the mini player keeps playing while browsing. UI consumes
+  the hook only.
+- Stations are a frontend constant (`lib/stations.ts`) with keyword
+  matching and a local programme→station map; covers come from the pure
+  `lib/cover/build-cover.ts` port. Both move to the backend in P1
+  (HANDOFF §9).
+- Known gap: in pure mock mode the backend programme renderer rejects mock
+  music URLs (`external_or_qualified_url`), so mock playback stops at
+  "preparing audio" (pre-existing). The UI surfaces error + retry.
+- Next: Vercel preview acceptance on iPhone Safari / Android Chrome, then
+  P1 station wiring.
+
+## Active Listening P0 checkpoint — storage pressure and published runway
+
+- PR #153 deployed to integration at
+  `9261b425516bfeb6e1e4194573518d2a4ae518dd`, with CI green and matching
+  Railway SUCCESS / Vercel READY. Human listening still stalled after track two.
+- The 16:28 Shanghai test episode `36d44f7e-88d9-4d12-b20b-da606bfa49eb`
+  exposed the direct blocker: repeated render ENOSPC, only 4096 free bytes on
+  the approximately 500 MB Railway volume. Timeline metadata already contained
+  tracks three/four; audio publication failed. This is not a phone-cache diagnosis.
+- Existing GC covered old HLS directories only. The pending checkpoint also
+  reclaims stale failed atomic writes and recoverable, inactive music snapshots,
+  preserving provider identity and pinned content checksums. Active/current
+  sources and paid narration are protected. Resumed owned URLs restore exact
+  original bytes or fail closed if the provider's content changes.
+- Programme refill now uses the successfully published frontier and combines
+  generation/publication latency. Its cold trigger is 300 seconds (180-second
+  safety runway + 120-second lead); observed slower pipelines raise the target
+  up to 600 seconds. The bounded chapter buffer remains in place, and an already
+  prepared publication backlog does not enqueue redundant music generation.
+- Credential-free targeted tests cover low-space GC without old HLS directories,
+  legacy snapshot migration/restoration, disk-full temporary cleanup, unchanged
+  published bytes/lifecycle, and earlier programme refill. Paid live calls have
+  not been run for this checkpoint. Hosted listening acceptance remains open.
+- Keep the next action narrow: deploy one coherent integration checkpoint,
+  verify reclaimed headroom and exact backend SHA, then one human SHORT listen.
+  After continuous playback with a genuine ending is credible, move to UI P0.
+
+## Previous checkpoint — programme cursor refill
+
+- Hosted baseline: PR #152 merged into `integration` at
+  `0af1fb7f2c9bf833ba7d040712624c76594c7374`; Vercel READY and Railway API
+  SUCCESS were observed at that exact commit.
+- Human listening reached a third, different-artist track, but the published
+  HLS prefix remained at 714.005 seconds without ENDLIST. This is not proof of
+  complete programme generation, and Listening P0 remains open.
+- A credential-free regression reproduced the next blocker: HLS checkpoints
+  leave `current_segment_id` at the opening, while the refill loop counted
+  consumed second/third music chapters as ready future chapters and stopped.
+- The pending fix counts future music using canonical MixPlan starts and the
+  programme checkpoint, without changing segment lifecycle or rendered audio.
+  Regression coverage advances to the third track's tail, appends the fourth,
+  and verifies all prior segments and frozen chunk-slice fingerprints remain
+  unchanged for both one- and two-chapter buffer policies.
+- The same checkpoint groups standalone host bridges/outros with music in the
+  listener timeline, labels active narration as host speech, and makes Next
+  seek to a future music clip rather than a standalone transition chapter.
+- Genuine closure now also requires an exhausted durable route, completed
+  Writer attempts, and ready/skipped host audio. The renderer can then release
+  the final holdback and publish ENDLIST; only after immutable-prefix acceptance
+  does the API persist MATERIALIZED. Deferred/underfilled routes cannot close.
+- Repeated opening-track selection/rotation remains follow-up work. Keep the
+  immediate priority on a complete continuous programme before UI P0.
+- No paid live probe has been run for this pending fix. Do not equate the
+  offline regression or deployment readiness with hosted listening acceptance.
 
 ## Product reminder
 
@@ -11,7 +111,122 @@ streaming runtime with bounded intelligence, not a chatbot or a static playlist.
 
 ## Current milestone and main state
 
-### Local Runtime v2 milestone: adaptive buffer policy (awaiting review)
+### Preliminary product freeze — listening P0, then UI P0
+
+**Mandatory product reference:** `docs/PRELIMINARY_PRODUCT_TARGET.md`
+
+The team has deliberately re-centered the preliminary-round work on the
+listener-facing product experience after several rounds of necessary low-level
+playback/runtime debugging.
+
+The immediate roadmap is now intentionally short:
+
+> **Listening P0 -> UI P0 -> preliminary-round submission**
+
+Current product decision:
+
+- Ship one convincing **light-hosted radio** experience first. Think casual
+  driving radio: music-led, occasional concise host commentary, natural
+  transitions, no requirement to narrate every song.
+- Narration is part of the programme arrangement and may occur **inside a
+  track** over a safe instrumental/non-vocal region, over an intro/break/outro,
+  or around a transition. It is not inherently an inter-track block.
+- The opening should start music quickly while an opening host beat is already
+  prepared or can be synthesized before an early safe musical window. The first
+  host appearance must not require the first song to finish.
+- The programme should have a coherent editorial beginning, middle, and genuine
+  ending, but **track count is flexible**. Do not encode a product rule such as
+  “minimum 3 tracks” merely to prevent a premature Outro.
+- Music continuity remains the fallback floor: late/failed Writer or TTS must
+  not stop playback.
+- Existing NONE/LIGHT/FULL concepts may remain, but only one polished default
+  light-radio mode is P0 now. Do not spend this stage making every mode equally
+  complete.
+- Avoid another broad player/runtime rewrite. Prefer the smallest product-correct
+  change that can deliver the target listening experience on the existing
+  programme-stream/timing/arrangement foundation.
+- Once the default programme can be listened through convincingly, stop
+  expanding playback and move to **UI P0**. The intended UI pass is roughly one
+  focused day before submission.
+
+Hosted/code state at this product reset:
+
+- `integration` is at `1c1ecaa734301313bfacc144a04afd057d8d132f`
+  (PR #140 merged); CI #544 was fully green and the corresponding hosted
+  checkpoint was deployed successfully.
+- Human listening confirmed that music continuity works and later narration/TTS
+  can play, but the observed programme incorrectly reached an `Outro` after
+  only the second song and the opening host behavior still does not match the
+  desired radio experience.
+- PR #141 (`fix/progressive-route-completeness`) was opened during debugging
+  with a “long-form requires at least 3 resolved tracks” guard. **Do not merge
+  that approach as-is.** The new product target explicitly rejects hard song-count
+  rules as the definition of programme completeness. Re-evaluate or supersede
+  the PR using the product target above.
+- Coding/testing is intentionally paused at this checkpoint until the product
+  target is treated as the governing contract for the next implementation step.
+
+The next engineering session should first map the desired radio experience onto
+the existing capabilities before changing architecture. In particular, determine
+the smallest way to support an opening host beat and flexible in-track/talk-over
+placement using the existing timing + MixPlan/programme stream rather than
+starting another runtime rewrite.
+
+### Narration P0 — historical implementation notes (superseded by the product freeze above)
+
+Active implementation branches:
+
+- WaveCast: `feat/narration-p0` (based on hosted `integration`)
+- NetEase sidecar: `feat/narration-timing-p0` (based on sidecar `main`)
+- Do **not** advance `integration` until the coherent P0 PR passes CI. Feature
+  branches are intentionally not hosted deployment checkpoints.
+
+Scope and decisions:
+
+- **Writer-owned first bridge:** FastStart prepares/persists the first playable
+  successor as music-only. The repeated deterministic “that was / up next”
+  sentence is removed from the normal path. Once one successor and the
+  progressive session are durable, the first Writer call runs under the
+  still-owned generation lease before the second buffer fill. This starts the
+  A -> B bridge early without putting Writer on the time-to-first-successor
+  critical path; TTS remains detached.
+- **Host density is real policy:** `NONE` owns no narration slots. `LIGHT`
+  (default) uses a lower spoken-time target and thins ordinary direct-track
+  bridges while preserving the first useful bridge, explicit narrative beats,
+  and final outro. `FULL` keeps all truthful owned slots and the existing
+  guided-listening density.
+- **Quality-first fallback:** a Writer failure in any host mode omits optional
+  narration rather than playing repeated catalog-template copy. Music
+  continuity wins over canned speech; FULL differs through richer slot density,
+  not through a lower-quality fallback sentence.
+- **TrackTimingProfile v1:** music may carry source duration, timestamp-only
+  lyric-line intervals, vocal intervals, and derived intro/gap/outro sections.
+  Raw lyric text is deliberately excluded from WaveCast's P0 model and from
+  Writer prompts.
+- **Provider seam:** the NetEase development sidecar adds best-effort
+  `GET /tracks/{id}/timing`, backed by conventional `/lyric` timestamps.
+  Failure degrades to duration-only timing and never makes a playable track
+  unusable.
+- **Lyric-aware arrangement:** when timed vocal information is available,
+  narration enters only after the final outgoing vocal (with a guard), and
+  incoming music is delayed so an early lead vocal does not sit underneath the
+  host. Tracks without timing data retain the existing fixed conservative
+  transition geometry.
+- The immutable programme feed's current 30-second render holdback still exceeds
+  this P0 lyric-aware narration lookback (bounded to 12 seconds), so the new
+  placement policy does not require rewriting already-published chunks.
+- **Explicitly P1:** TTS prosody/emotion/voice tuning requires human listening;
+  full lyric semantics, beat/downbeat analysis, and advanced adaptive DJ
+  transitions remain deferred.
+
+Validation status: implementation and tests are on the feature branches.
+GitHub Actions PR jobs currently terminate before runner steps begin (including
+unchanged Web/deployment-smoke jobs), with no job logs available through the
+GitHub API. This is treated as an Actions infrastructure/account blocker, not a
+test result. No live Narration P0 listening probe or hosted deployment has been
+claimed yet.
+
+### Local Runtime v2 milestone: adaptive buffer policy (historical)
 
 - Based on `53bdde72ab64d043d5b27d2f07055447959d494c`; no live/provider calls or deployment.
 - API refill signals and orchestrator share a deterministic buffer decision. A long opening still requires a playable successor; unfinished optional narration does not make ready music unhealthy.

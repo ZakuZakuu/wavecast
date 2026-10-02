@@ -112,6 +112,7 @@ def test_programme_checkpoint_never_mutates_lifecycle_timeline() -> None:
     before_current = episode.current_segment_id
     before_position = episode.playback_position_seconds
     before_states = [segment.state for segment in episode.ordered_segments]
+    before_version = episode.version
 
     checkpointed = runtime.checkpoint_program_playback(episode.id, 17.5)
 
@@ -119,6 +120,7 @@ def test_programme_checkpoint_never_mutates_lifecycle_timeline() -> None:
     assert checkpointed.program_playback_position_seconds == 17.5
     assert checkpointed.current_segment_id == before_current
     assert checkpointed.playback_position_seconds == before_position
+    assert checkpointed.version == before_version
     assert [segment.state for segment in checkpointed.ordered_segments] == before_states
 
 

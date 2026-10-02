@@ -8,8 +8,15 @@ import wave
 from pathlib import Path
 
 import pytest
-
+from wavecast.arrangement import plan_episode_mix
 from wavecast.arrangement.models import AudioClip, GainPoint, MixPlan
+from wavecast.models.episode import (
+    MusicSegment,
+    NarrationRole,
+    NarrationSegment,
+    PlayableEpisode,
+    SegmentState,
+)
 from wavecast.rendering import (
     ProgramImmutabilityError,
     hls_playlist,
@@ -145,6 +152,7 @@ def test_program_render_appends_immutable_chunks_and_reuses_frozen_prefix(
 
         playlist = hls_playlist(second)
         assert "#EXT-X-PLAYLIST-TYPE:EVENT" in playlist
+        assert "#EXT-X-START:TIME-OFFSET=0.000,PRECISE=YES" in playlist
         assert "#EXT-X-ENDLIST" not in playlist
         for chunk in second.chunks:
             assert chunk.audio_url in playlist
@@ -163,6 +171,31 @@ def test_program_render_appends_immutable_chunks_and_reuses_frozen_prefix(
         assert final.complete is True
         assert len(final.chunks) > len(second.chunks)
         assert "#EXT-X-ENDLIST" in hls_playlist(final)
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_program_render_pads_short_source_to_canonical_duration(
+    tmp_path: Path,
+) -> None:
+    async def run() -> None:
+        storage = LocalObjectStorageProvider(tmp_path / "audio")
+        # Provider duration metadata is integer-second today, while encoded
+        # media may end several AAC frames earlier. The programme renderer must
+        # preserve the canonical timeline by padding only that missing tail.
+        await storage.put("source.wav", _wav_bytes(5.55), "audio/wav")
+
+        rendered = await render_program_prefix(
+            _plan(6),
+            storage,
+            complete=True,
+            holdback_seconds=0,
+        )
+
+        assert rendered.complete is True
+        assert rendered.rendered_frontier_seconds == pytest.approx(6, abs=0.15)
+        assert rendered.chunks
 
     asyncio.run(run())
 
@@ -211,5 +244,82 @@ def test_program_render_rejects_rewrite_behind_frozen_frontier(tmp_path: Path) -
                 storage,
                 holdback_seconds=3,
             )
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_real_arrangement_can_append_future_host_and_music_without_rewriting_prefix(
+    tmp_path: Path,
+) -> None:
+    async def run() -> None:
+        storage = LocalObjectStorageProvider(tmp_path / "audio")
+        await storage.put("music-a.wav", _wav_bytes(36, 220), "audio/wav")
+        await storage.put("voice.wav", _wav_bytes(6, 440), "audio/wav")
+        await storage.put("music-b.wav", _wav_bytes(24, 330), "audio/wav")
+
+        music_a = MusicSegment(
+            id="music-a",
+            chapter_id="chapter-a",
+            order=0,
+            state=SegmentState.AUDIO_READY,
+            planned_duration_seconds=36,
+            actual_duration_seconds=36,
+            track_ref="track-a",
+            audio_source_url="/api/assets/audio/music-a.wav",
+            title="A",
+            artist="Artist A",
+        )
+        first_plan = plan_episode_mix(
+            PlayableEpisode(
+                id="real-arrangement-append",
+                segments=[music_a],
+            )
+        )
+        first = await render_program_prefix(
+            first_plan,
+            storage,
+            holdback_seconds=18,
+        )
+        assert first.chunks
+
+        bridge = NarrationSegment(
+            id="bridge",
+            chapter_id="chapter-b",
+            order=1,
+            state=SegmentState.AUDIO_READY,
+            planned_duration_seconds=6,
+            actual_duration_seconds=6,
+            audio_source_url="/api/assets/audio/voice.wav",
+            title="Track Intro",
+            narration_text="A short bridge into the next track.",
+            narration_role=NarrationRole.TRACK_INTRO,
+        )
+        music_b = MusicSegment(
+            id="music-b",
+            chapter_id="chapter-b",
+            order=2,
+            state=SegmentState.AUDIO_READY,
+            planned_duration_seconds=24,
+            actual_duration_seconds=24,
+            track_ref="track-b",
+            audio_source_url="/api/assets/audio/music-b.wav",
+            title="B",
+            artist="Artist B",
+        )
+        extended_plan = plan_episode_mix(
+            PlayableEpisode(
+                id="real-arrangement-append",
+                segments=[music_a, bridge, music_b],
+            )
+        )
+        extended = await render_program_prefix(
+            extended_plan,
+            storage,
+            holdback_seconds=18,
+        )
+
+        assert extended.chunks[: len(first.chunks)] == first.chunks
+        assert len(extended.chunks) > len(first.chunks)
 
     asyncio.run(run())

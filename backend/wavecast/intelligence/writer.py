@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 
+from wavecast.presentation import HostMode, host_mode_prompt_guidance
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 
@@ -25,7 +26,7 @@ ZH_CN_RADIO_WRITING_GUIDANCE = (
     "listen-for cue，但证据不足时宁可简单准确，不要编造听觉或事实细节。背景事实必须服务于当前听感 "
     "或下一首的连接。一个 block 只完成一个主要 editorial action；使用短分句、自然停顿和口语中文， "
     "减少论文腔与名词化。区分事实、听感和编辑判断，文化描述具体克制，避免宽泛的族群化概括。 "
-    "TRACK_INTRO/TRANSITION 要说明下一首为什么值得听；通常用 2–4 个短句、约 20–35 秒，先给 concrete listen-for 再给最多一个必要背景解释，编辑动作完成就停，不要扩写成 40–50 秒。OUTRO 回扣本期 thesis 或前面真实听到的细节；如果上下文提供了已经听过的中间 artist/track/listen-for detail，至少具体回扣其中一个再落回 thesis，不要用模板式总结。 "
+    "TRACK_INTRO/TRANSITION 要说明下一首为什么值得听；时长服从 presentation mode 和 application 给出的 target，先给 concrete listen-for 再给最多一个必要背景解释，编辑动作完成就停。OUTRO 回扣本期 thesis 或前面真实听到的细节；如果上下文提供了已经听过的中间 artist/track/listen-for detail，至少具体回扣其中一个再落回 thesis，不要用模板式总结。 "
     "不要用模板式总结。不要为了高级感强造比喻、大词或结论。"
 )
 
@@ -42,11 +43,13 @@ class WriterService:
         previous_committed_context: str = "",
         next_track_metadata: str = "",
         host_style: str = "warm, concise, spoken",
+        host_mode: HostMode = HostMode.LIGHT,
         target_duration_seconds: int | None = None,
         output_language: OutputLanguage = OutputLanguage.AUTO,
         topic: str = "",
         slot_context: NarrationSlotContext | None = None,
         slot_contexts: Sequence[NarrationSlotContext] | None = None,
+        inference_profile: InferenceProfile = InferenceProfile.SYNTHESIS,
     ) -> RadioScript | NarrationScript:
         scoped = [item for item in evidence if item.id in set(chapter.evidence_ids)]
         selected_language = resolve_output_language(output_language, topic or chapter.reason)
@@ -83,6 +86,7 @@ class WriterService:
             if selected_language is OutputLanguage.ZH_CN
             else ""
         )
+        presentation_guidance = host_mode_prompt_guidance(host_mode)
         prompt = (
             "Write a structured radio script for this chapter, not an article. Use only the "
             "scoped evidence; keep factual claims separately identified by evidence IDs, avoid "
@@ -123,13 +127,14 @@ class WriterService:
             "resolved slot context.\n"
             f"Next track metadata: {next_track_metadata[:500]}\n"
             f"Host style: {host_style}\n"
+            f"Presentation mode: {host_mode.value}. {presentation_guidance}\n"
             f"Target narration duration seconds: {target_duration_seconds or 'use chapter context'}"
         )
         result = await self.llm.structured(
             prompt,
             RadioScript,
             transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
-            profile=InferenceProfile.SYNTHESIS,
+            profile=inference_profile,
             stage="writer",
         )
         if not isinstance(result, (RadioScript, NarrationScript)):

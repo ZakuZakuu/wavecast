@@ -14,6 +14,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Final
 
+from wavecast.models.episode import NarrationSegment, SegmentState
 from wavecast.orchestration.episode import EpisodeOrchestrator, EpisodeRuntimeError
 from wavecast.providers.errors import (
     ProviderConfigurationError,
@@ -183,18 +184,25 @@ class GenerationWorker:
                 # in durable state or operational diagnostics.
                 stage = getattr(error, "stage", None) or "unknown"
                 reason_code = getattr(error, "reason_code", None) or "unknown"
+                route_incomplete = (
+                    reason_code == "insufficient_progressive_duration_coverage"
+                )
+                error_code = (
+                    "route_incomplete" if route_incomplete else "generation_internal"
+                )
                 logger.warning(
                     "generation_job_execution_failed episode_id=%s "
-                    "error_code=generation_internal error_type=%s stage=%s reason_code=%s",
+                    "error_code=%s error_type=%s stage=%s reason_code=%s",
                     job.episode_id,
+                    error_code,
                     type(error).__name__,
                     stage,
                     reason_code,
                 )
                 await self._retry_or_fail(
                     job,
-                    "generation_internal",
-                    retryable=False,
+                    error_code,
+                    retryable=route_incomplete,
                 )
             else:
                 if lease_lost.is_set():
@@ -252,6 +260,37 @@ class GenerationWorker:
         if callable(fast_start):
             await fast_start(job.episode_id)
 
+        # The first host bridge must not wait for full Research/Curator route
+        # planning. FastStart has already made the successor durable, so Writer
+        # can use the concrete A -> B playback identities immediately; TTS then
+        # resolves the placeholder before background route planning continues.
+        fast_bridge = getattr(
+            self.orchestrator,
+            "author_fast_successor_narration_async",
+            None,
+        )
+        if callable(fast_bridge):
+            try:
+                fast_bridge_episode = await fast_bridge(job.episode_id)
+                has_fast_script = any(
+                    isinstance(segment, NarrationSegment)
+                    and segment.chapter_id == "chapter-2"
+                    and segment.state is SegmentState.SCRIPT_READY
+                    for segment in fast_bridge_episode.ordered_segments
+                )
+                if has_fast_script:
+                    await self.orchestrator.materialize_pending_narration_async(
+                        job.episode_id,
+                        max_segments=1,
+                    )
+            except Exception as error:
+                logger.warning(
+                    "narration_enrichment_failed episode_id=%s "
+                    "stage=fast_bridge error_type=%s",
+                    job.episode_id,
+                    type(error).__name__,
+                )
+
         first_buffer = await self.orchestrator.ensure_buffer_async(
             job.episode_id,
             target_chapters=1,
@@ -262,10 +301,28 @@ class GenerationWorker:
             getattr(first_buffer, "progressive_session", None) is None
             and getattr(self.orchestrator, "progressive_runtime", None) is not None
         ):
-            # A ready FastStart successor/bridge may outlive a recoverable full
-            # route planning miss. Do not immediately repeat the same expensive
+            # A ready FastStart successor may outlive a recoverable full-route
+            # planning miss. Do not immediately repeat the same expensive
             # intelligence work in this job.
             return job.episode_id
+
+        # The successor is already durable, so Writer may now spend latency on
+        # the first A -> B bridge without being on the music-readiness critical
+        # path. Keep this inside the generation lease so a completion race
+        # cannot duplicate a paid Writer call. TTS remains detached after job
+        # completion.
+        try:
+            await self.orchestrator.author_pending_narration_async(
+                job.episode_id,
+                max_chapters=1,
+            )
+        except Exception as error:
+            logger.warning(
+                "narration_enrichment_failed episode_id=%s stage=first_writer "
+                "error_type=%s",
+                job.episode_id,
+                type(error).__name__,
+            )
 
         if self.policy.target_chapters > 1:
             await self.orchestrator.ensure_buffer_async(
@@ -273,8 +330,7 @@ class GenerationWorker:
                 target_chapters=self.policy.target_chapters,
                 target_ahead_seconds=self.policy.target_ahead_seconds,
             )
-        # Later Writer/TTS work remains detached after completion. The opening
-        # latency mask already owns chapter-2 narration.
+        # Residual Writer work and all TTS remain detached after completion.
         return job.episode_id
 
     def _schedule_narration_enrichment(self, episode_id: str) -> None:
@@ -296,9 +352,9 @@ class GenerationWorker:
         *,
         max_chapters: int | None = None,
     ) -> None:
-        # Music readiness remains the continuity floor. The first invocation may
-        # run inline immediately after one successor is durable; residual
-        # enrichment still runs detached after job completion.
+        # Music readiness remains the continuity floor. The first Writer slot
+        # may already have been authored under the generation lease; residual
+        # Writer work and TTS run detached after job completion.
         limit = self.policy.target_chapters if max_chapters is None else max_chapters
         try:
             authored = await self.orchestrator.author_pending_narration_async(

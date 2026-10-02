@@ -12,6 +12,7 @@ from wavecast.assembly import (
     LiveEpisodeAssemblyService,
     MockEpisodeAssemblyLLM,
     NarrationPlacementError,
+    _apply_host_mode_to_slot_contexts,
     _assemble_radio_script,
     _assemble_writer_scripts,
     _bound_progressive_resolved_route,
@@ -21,9 +22,10 @@ from wavecast.assembly import (
     _mock_writer_chapter_index,
     _mock_writer_slot_contexts,
     _normalize_opening_resolved_route,
+    _normalize_progressive_route,
     _reindex_resolved_chapters,
-    _same_song_identity,
     _ResolvedChapter,
+    _same_song_identity,
     create_episode_assembly_service,
 )
 from wavecast.composer import EpisodeComposer
@@ -50,6 +52,7 @@ from wavecast.intelligence.writer import WriterService
 from wavecast.materialization import NarrationMaterializer
 from wavecast.models.episode import MusicSegment, NarrationSegment, SegmentState
 from wavecast.presentation import HostMode, PresentationIntent
+from wavecast.providers.contracts import TrackMetadata
 from wavecast.providers.fakes import FakeSearchProvider, MockMusicProvider, MockTTSProvider
 from wavecast.providers.registry import MusicProviderRegistry
 from wavecast.providers.retrieval import MusicRetrievalService
@@ -112,7 +115,11 @@ class RecordingAssemblyLLM(MockEpisodeAssemblyLLM):
         return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
 
 
-def service(tmp_path, llm: RecordingAssemblyLLM | None = None) -> LiveEpisodeAssemblyService:
+def service(
+    tmp_path,
+    llm: RecordingAssemblyLLM | None = None,
+    music: MockMusicProvider | None = None,
+) -> LiveEpisodeAssemblyService:
     ledger = UsageLedger()
     llm = llm or RecordingAssemblyLLM()
     discovery = FakeSearchProvider()
@@ -128,7 +135,7 @@ def service(tmp_path, llm: RecordingAssemblyLLM | None = None) -> LiveEpisodeAss
         curator=CuratorService(llm),
         writer=WriterService(llm),
     )
-    music = MockMusicProvider()
+    music = music or MockMusicProvider()
     storage = LocalObjectStorageProvider(tmp_path / "audio")
     return LiveEpisodeAssemblyService(
         fast_path=fast_path,
@@ -138,7 +145,6 @@ def service(tmp_path, llm: RecordingAssemblyLLM | None = None) -> LiveEpisodeAss
         materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
         ledger=ledger,
     )
-
 
 
 def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypatch) -> None:
@@ -168,9 +174,9 @@ def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypa
     assert bootstrap is not None
     assert bootstrap.chapter_id == "chapter-2"
     assert len(bootstrap.segments) == 2
-    bridge, successor = bootstrap.segments
-    assert isinstance(bridge, NarrationSegment)
-    assert bridge.state is SegmentState.SCRIPT_READY
+    placeholder, successor = bootstrap.segments
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.PLANNED
     assert isinstance(successor, MusicSegment)
     assert successor.track_ref == "mock:bridge"
     assert successor.title == "Midnight Transfer"
@@ -234,6 +240,37 @@ def test_music_only_fast_successor_has_no_narration_segment(tmp_path, monkeypatc
     assert len(bootstrap.segments) == 1
     assert isinstance(bootstrap.segments[0], MusicSegment)
     assert bootstrap.segments[0].is_audio_ready
+
+
+def test_default_light_fast_successor_reserves_pending_host_seam(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assembly = service(tmp_path)
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    bootstrap = asyncio.run(
+        assembly.prepare_fast_successor(
+            LiveEpisodeAssemblyRequest(
+                topic="guided listening",
+                anchor_tracks=["Neon First Light"],
+            ),
+            opening_track=opening,
+        )
+    )
+
+    assert bootstrap is not None
+    assert len(bootstrap.segments) == 2
+    placeholder, music = bootstrap.segments
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.PLANNED
+    assert placeholder.audio_source_url is None
+    assert isinstance(music, MusicSegment)
+    assert music.is_audio_ready
 
 
 def test_song_identity_collapses_catalog_aliases_without_merging_unrelated_covers() -> None:
@@ -431,9 +468,9 @@ def test_writer_runs_only_after_resolution_and_receives_next_track_context(tmp_p
     )
 
     writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
-    assert len(writer_calls) == 3
+    assert writer_calls
     assert "\"canonical_title\": \"Midnight Transfer\"" in writer_calls[0]["prompt"]
-    assert "Previous context:" in writer_calls[1]["prompt"]
+    assert any("Previous context:" in call["prompt"] for call in writer_calls[1:])
     assert sum(block.kind is RadioScriptBlockKind.INTRO for block in result.radio_script.blocks) == 0
     assert sum(block.kind is RadioScriptBlockKind.OUTRO for block in result.radio_script.blocks) == 1
     assert all(
@@ -514,7 +551,11 @@ def test_progressive_preparation_counts_application_opening_as_first_resolved_tr
 
     session = asyncio.run(
         assembly.prepare_progressive_session(
-            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=4),
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=4,
+            ),
             opening_track=opening,
         )
     )
@@ -522,6 +563,548 @@ def test_progressive_preparation_counts_application_opening_as_first_resolved_tr
     assert [chapter.resolved_track.canonical_title for chapter in session.chapters if chapter.resolved_track] == [
         "Midnight Transfer"
     ]
+
+
+def test_progressive_route_rejects_severely_underfilled_duration(tmp_path) -> None:
+    class OneFutureTrackLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                item = self._tracks[1]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(item),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="only one future track resolved",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="fixture",
+                        )
+                    ],
+                    estimated_duration_seconds=22 * 60,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, OneFutureTrackLLM())
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    with pytest.raises(
+        EpisodeAssemblyError,
+        match="duration coverage is too short",
+    ) as failure:
+        asyncio.run(
+            assembly.prepare_progressive_session(
+                LiveEpisodeAssemblyRequest(
+                    topic="fixture",
+                    desired_duration_seconds=22 * 60,
+                    max_tracks=5,
+                ),
+                opening_track=opening,
+            )
+        )
+
+    assert failure.value.reason_code == "insufficient_progressive_duration_coverage"
+    assert failure.value.diagnostics["estimated_resolved_music_seconds"] == 360
+    assert failure.value.diagnostics["required_resolved_music_seconds"] > 360
+
+
+def test_locked_progressive_route_catalog_continuation_fills_duration_coverage(
+    tmp_path,
+) -> None:
+    class UnderfilledLockedRouteLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                locked = self._tracks[1]
+                missing = TrackProposal(
+                    artist="Southbound FM",
+                    title="Definitely Not In Catalog",
+                    confidence=0.9,
+                    novelty_distance=NoveltyDistance.BRIDGE,
+                )
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(locked),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="preserve the already prepared successor",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="connect the opening to the locked successor",
+                        ),
+                        ChapterPlan(
+                            index=1,
+                            track=missing,
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="force same-artist catalog recovery first",
+                            novelty_distance=NoveltyDistance.BRIDGE,
+                            narration_goal="continue the route safely",
+                        ),
+                    ],
+                    estimated_duration_seconds=22 * 60,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, UnderfilledLockedRouteLLM())
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    locked = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Signal Garden",
+        canonical_title="Midnight Transfer",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=22 * 60,
+                max_tracks=5,
+                max_chapters=8,
+            ),
+            opening_track=opening,
+            locked_successor=locked,
+        )
+    )
+
+    titles = [
+        chapter.resolved_track.canonical_title
+        for chapter in session.chapters
+        if chapter.resolved_track is not None
+    ]
+    assert titles[0] == "Midnight Transfer"
+    assert set(titles[1:]) == {"Daybreak in Stereo", "Afterimage Avenue"}
+    continuation = next(
+        chapter
+        for chapter in session.chapters
+        if (
+            chapter.chapter.narration_goal
+            == "Connect this catalog-backed continuation to the programme direction "
+            "without unsupported song-specific claims."
+        )
+    )
+    assert continuation.chapter.track is not None
+    assert continuation.chapter.track.title in {
+        "Daybreak in Stereo",
+        "Afterimage Avenue",
+    }
+    assert continuation.chapter.claim_support == []
+
+
+def test_locked_progressive_route_uses_topic_continuation_before_same_artist_emergency(
+    tmp_path,
+) -> None:
+    class ThemeContinuationLLM(RecordingAssemblyLLM):
+        def __init__(self) -> None:
+            super().__init__()
+            self.skeleton_calls = 0
+
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                self.skeleton_calls += 1
+                locked = self._proposal(self._tracks[1])
+                if self.skeleton_calls == 1:
+                    return ProgramSkeleton(
+                        thesis="Start the chill-electronic route but leave it underfilled.",
+                        chapters=[
+                            ChapterPlan(
+                                index=0,
+                                track=locked,
+                                narrative_role=NarrativeRole.BRIDGE,
+                                reason="keep the prepared successor",
+                                novelty_distance=NoveltyDistance.CLOSE,
+                                narration_goal="continue the chill-electronic theme",
+                            ),
+                            ChapterPlan(
+                                index=1,
+                                track=TrackProposal(
+                                    artist="Missing Artist",
+                                    title="Missing Song",
+                                    confidence=0.8,
+                                    novelty_distance=NoveltyDistance.BRIDGE,
+                                ),
+                                narrative_role=NarrativeRole.BRIDGE,
+                                reason="force the first route to underfill",
+                                novelty_distance=NoveltyDistance.BRIDGE,
+                                narration_goal="continue the theme",
+                            ),
+                        ],
+                        estimated_duration_seconds=22 * 60,
+                    )
+                return ProgramSkeleton(
+                    thesis="Continue the chill-electronic station across distinct artists.",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(self._tracks[0]),
+                            narrative_role=NarrativeRole.ANCHOR,
+                            reason="committed opening placeholder",
+                            novelty_distance=NoveltyDistance.VERY_CLOSE,
+                            narration_goal="preserve the committed opening",
+                        ),
+                        ChapterPlan(
+                            index=1,
+                            track=locked,
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="committed successor placeholder",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="preserve the committed successor",
+                        ),
+                        ChapterPlan(
+                            index=2,
+                            track=TrackProposal(
+                                artist="Maribou State",
+                                title="Glasshouse Drift",
+                                confidence=0.9,
+                                novelty_distance=NoveltyDistance.BRIDGE,
+                            ),
+                            narrative_role=NarrativeRole.DISCOVERY,
+                            reason="widen the chill-electronic palette",
+                            novelty_distance=NoveltyDistance.BRIDGE,
+                            narration_goal="move into a warmer downtempo texture",
+                        ),
+                        ChapterPlan(
+                            index=3,
+                            track=TrackProposal(
+                                artist="Kiasmos",
+                                title="Soft Current",
+                                confidence=0.9,
+                                novelty_distance=NoveltyDistance.DISCOVERY,
+                            ),
+                            narrative_role=NarrativeRole.RESOLUTION,
+                            reason="resolve the route with a different electronic scene",
+                            novelty_distance=NoveltyDistance.DISCOVERY,
+                            narration_goal="close the arc without repeating an artist",
+                        ),
+                    ],
+                    estimated_duration_seconds=22 * 60,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    music = MockMusicProvider()
+    music._tracks.update(
+        {
+            "mock:maribou": TrackMetadata(
+                track_ref="mock:maribou",
+                title="Glasshouse Drift",
+                artist="Maribou State",
+                duration_seconds=24,
+                playable=True,
+            ),
+            "mock:kiasmos": TrackMetadata(
+                track_ref="mock:kiasmos",
+                title="Soft Current",
+                artist="Kiasmos",
+                duration_seconds=24,
+                playable=True,
+            ),
+        }
+    )
+    llm = ThemeContinuationLLM()
+    assembly = service(tmp_path, llm, music)
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    locked = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Signal Garden",
+        canonical_title="Midnight Transfer",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="chill电子乐",
+                desired_duration_seconds=22 * 60,
+                max_tracks=5,
+                max_chapters=8,
+            ),
+            opening_track=opening,
+            locked_successor=locked,
+        )
+    )
+
+    resolved = [
+        chapter.resolved_track
+        for chapter in session.chapters
+        if chapter.resolved_track is not None
+    ]
+    assert llm.skeleton_calls == 2
+    assert [track.canonical_artist for track in resolved] == [
+        "Signal Garden",
+        "Maribou State",
+        "Kiasmos",
+    ]
+    assert len({track.canonical_artist for track in resolved}) == len(resolved)
+
+
+def test_locked_progressive_route_emergency_fill_reuses_confirmed_artist_catalog(
+    tmp_path,
+) -> None:
+    class EmergencyFillLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                locked = self._tracks[1]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(locked),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="keep the prepared successor",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="continue from the opening",
+                        ),
+                        ChapterPlan(
+                            index=1,
+                            track=TrackProposal(
+                                artist="Missing Artist",
+                                title="Missing Song",
+                                confidence=0.9,
+                                novelty_distance=NoveltyDistance.BRIDGE,
+                            ),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="force the editorial route to underfill",
+                            novelty_distance=NoveltyDistance.BRIDGE,
+                            narration_goal="continue safely",
+                        ),
+                    ],
+                    estimated_duration_seconds=22 * 60,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    class MetadataOnlySearchMusicProvider(MockMusicProvider):
+        async def search(
+            self,
+            query: str,
+            *,
+            limit: int = 5,
+        ) -> list[TrackMetadata]:
+            results = await super().search(query, limit=limit)
+            return [
+                item.model_copy(update={"playable": False})
+                for item in results
+            ]
+
+    music = MetadataOnlySearchMusicProvider()
+    music._tracks.update(
+        {
+            "mock:bridge-2": TrackMetadata(
+                track_ref="mock:bridge-2",
+                title="Signal Garden Two",
+                artist="Signal Garden",
+                duration_seconds=24,
+                playable=True,
+            ),
+            "mock:bridge-3": TrackMetadata(
+                track_ref="mock:bridge-3",
+                title="Signal Garden Three",
+                artist="Signal Garden",
+                duration_seconds=24,
+                playable=True,
+            ),
+            "mock:bridge-4": TrackMetadata(
+                track_ref="mock:bridge-4",
+                title="Signal Garden Four",
+                artist="Signal Garden",
+                duration_seconds=24,
+                playable=True,
+            ),
+        }
+    )
+    assembly = service(tmp_path, EmergencyFillLLM(), music)
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    locked = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Signal Garden",
+        canonical_title="Midnight Transfer",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=22 * 60,
+                max_tracks=5,
+                max_chapters=8,
+            ),
+            opening_track=opening,
+            locked_successor=locked,
+        )
+    )
+
+    resolved = [
+        chapter.resolved_track
+        for chapter in session.chapters
+        if chapter.resolved_track is not None
+    ]
+    assert resolved[0].canonical_title == "Midnight Transfer"
+    assert len(resolved) >= 3
+    assert len({track.canonical_title for track in resolved}) == len(resolved)
+    assert {
+        track.canonical_title for track in resolved[1:]
+    }.issubset(
+        {"Signal Garden Two", "Signal Garden Three", "Signal Garden Four"}
+    )
+    assert all(track.canonical_artist == "Signal Garden" for track in resolved)
+    emergency_chapters = [
+        chapter
+        for chapter in session.chapters
+        if chapter.chapter.track is not None
+        and chapter.chapter.track.reasons
+        == ["Emergency catalog continuation for live playback."]
+    ]
+    assert len(emergency_chapters) >= 1
+    assert all(chapter.chapter.claim_support == [] for chapter in emergency_chapters)
+
+
+def test_progressive_route_allows_two_tracks_when_duration_target_is_short(
+    tmp_path,
+) -> None:
+    class OneFutureTrackLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                item = self._tracks[1]
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=self._proposal(item),
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="one future track is enough for a short target",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="fixture",
+                        )
+                    ],
+                    estimated_duration_seconds=5 * 60,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, OneFutureTrackLLM())
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=5,
+            ),
+            opening_track=opening,
+        )
+    )
+
+    assert len([chapter for chapter in session.chapters if chapter.resolved_track]) == 1
+
+
+def test_progressive_resolution_uses_catalog_aware_replacement_after_slot_candidates_fail(
+    tmp_path,
+) -> None:
+    class CatalogReplacementLLM(RecordingAssemblyLLM):
+        async def structured(
+            self,
+            prompt: str,
+            output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            if output_type is ProgramSkeleton:
+                missing = TrackProposal(
+                    artist="Missing Artist",
+                    title="Definitely Not In Catalog",
+                    confidence=0.9,
+                    novelty_distance=NoveltyDistance.CLOSE,
+                )
+                return ProgramSkeleton(
+                    thesis="fixture",
+                    chapters=[
+                        ChapterPlan(
+                            index=0,
+                            track=missing,
+                            narrative_role=NarrativeRole.BRIDGE,
+                            reason="an intentionally unresolved curator choice",
+                            novelty_distance=NoveltyDistance.CLOSE,
+                            narration_goal="fixture",
+                        )
+                    ],
+                    estimated_duration_seconds=5 * 60,
+                )
+            return await super().structured(prompt, output_type, **kwargs)  # type: ignore[arg-type]
+
+    assembly = service(tmp_path, CatalogReplacementLLM())
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            ),
+            opening_track=opening,
+        )
+    )
+
+    assert len(session.chapters) == 1
+    chapter = session.chapters[0]
+    assert chapter.resolved_track is not None
+    assert chapter.resolved_track.canonical_title == "Midnight Transfer"
+    assert chapter.chapter.track is not None
+    assert chapter.chapter.track.title == "Midnight Transfer"
+    assert chapter.chapter.connection_from_previous_track is None
+    assert chapter.chapter.claim_support == []
+    assert not any(
+        diagnostic.code == "unresolved_track"
+        for diagnostic in session.diagnostics
+    )
 
 
 def test_progressive_resolution_uses_alternate_when_primary_repeats_opening_song(
@@ -563,7 +1146,11 @@ def test_progressive_resolution_uses_alternate_when_primary_repeats_opening_song
 
     session = asyncio.run(
         assembly.prepare_progressive_session(
-            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3),
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            ),
             opening_track=opening,
         )
     )
@@ -617,7 +1204,11 @@ def test_progressive_preparation_uses_ranked_alternate_before_skipping_slot(tmp_
 
     session = asyncio.run(
         assembly.prepare_progressive_session(
-            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3),
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            ),
             opening_track=opening,
         )
     )
@@ -681,7 +1272,11 @@ def test_progressive_preparation_skips_unresolved_selected_music_slot(tmp_path) 
 
     session = asyncio.run(
         assembly.prepare_progressive_session(
-            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3),
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            ),
             opening_track=opening,
         )
     )
@@ -746,6 +1341,99 @@ def test_progressive_opening_dedupes_exact_identity_and_keeps_other_tracks() -> 
     ]
     assert [item.chapter.index for item in normalized] == [0, 1]
     assert normalized[1].track == different
+
+def test_progressive_route_prunes_unresolved_music_before_chapter_bounds() -> None:
+    def chapter(
+        index: int,
+        proposal: TrackProposal,
+        track: ResolvedTrack | None,
+    ) -> _ResolvedChapter:
+        plan = ChapterPlan(
+            index=index,
+            track=proposal,
+            narrative_role=NarrativeRole.BRIDGE,
+            reason="fixture",
+            narration_goal="fixture",
+        )
+        return _ResolvedChapter(
+            chapter=plan,
+            writer_chapter=plan,
+            track=track,
+            music_index=None,
+        )
+
+    opening = ResolvedTrack(
+        track_ref="mock:opening",
+        canonical_artist="Mira Fields",
+        canonical_title="Neon First Light",
+    )
+    locked = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Signal Garden",
+        canonical_title="Midnight Transfer",
+    )
+    later = ResolvedTrack(
+        track_ref="mock:later",
+        canonical_artist="Maribou State",
+        canonical_title="Glasshouse Drift",
+    )
+    route = [
+        chapter(
+            0,
+            TrackProposal(
+                artist=opening.canonical_artist,
+                title=opening.canonical_title,
+                confidence=1.0,
+            ),
+            opening,
+        ),
+        chapter(
+            1,
+            TrackProposal(
+                artist=locked.canonical_artist,
+                title=locked.canonical_title,
+                confidence=1.0,
+            ),
+            locked,
+        ),
+        chapter(
+            2,
+            TrackProposal(
+                artist="Missing Artist",
+                title="Missing Song",
+                confidence=0.9,
+            ),
+            None,
+        ),
+        chapter(
+            3,
+            TrackProposal(
+                artist=later.canonical_artist,
+                title=later.canonical_title,
+                confidence=0.9,
+            ),
+            later,
+        ),
+    ]
+
+    normalized = _normalize_progressive_route(
+        request=LiveEpisodeAssemblyRequest(
+            topic="chill电子乐",
+            max_tracks=4,
+            max_chapters=3,
+        ),
+        resolved_chapters=route,
+        opening_track=opening,
+        locked_successor=locked,
+    )
+
+    assert [item.track.track_ref for item in normalized if item.track is not None] == [
+        "mock:opening",
+        "mock:bridge",
+        "mock:later",
+    ]
+    assert len(normalized) == 3
+
 
 def test_progressive_opening_insertion_reapplies_track_and_chapter_bounds() -> None:
     def chapter(index: int, track: ResolvedTrack) -> _ResolvedChapter:
@@ -1106,6 +1794,32 @@ def test_duplicate_before_track_intro_blocks_collapse_into_final_slots() -> None
     assert script.blocks[1].text == "duplicate intro final outro"
 
 
+def test_host_mode_filters_narration_density_after_gap_ownership() -> None:
+    full = _build_narration_slot_contexts(
+        [
+            _resolved_chapter(0, 0),
+            _resolved_chapter(1, 1),
+            _resolved_chapter(2, 2),
+            _resolved_chapter(3, 3),
+        ]
+    )
+
+    light = _apply_host_mode_to_slot_contexts(full, HostMode.LIGHT)
+    none = _apply_host_mode_to_slot_contexts(full, HostMode.NONE)
+    kept_light_slots = [
+        context.slot_id for contexts in light for context in contexts
+    ]
+
+    assert "chapter-1:before-track" in kept_light_slots
+    assert "chapter-2:before-track" not in kept_light_slots
+    assert "chapter-3:before-track" in kept_light_slots
+    assert "chapter-3:after-final" in kept_light_slots
+    assert all(not contexts for contexts in none)
+    assert sum(len(contexts) for contexts in light) < sum(
+        len(contexts) for contexts in full
+    )
+
+
 def test_direct_music_gap_has_one_slot_owner() -> None:
     contexts = _build_narration_slot_contexts(
         [_resolved_chapter(0, 0), _resolved_chapter(1, 1)]
@@ -1351,6 +2065,12 @@ def test_probe_asset_url_redacts_external_tokens() -> None:
 def test_unresolved_proposal_is_reported_but_narrative_is_still_written(tmp_path) -> None:
     class MixedLLM(RecordingAssemblyLLM):
         async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+            if output_type is FastStartPlan:
+                plan = await super().structured(prompt, output_type, **kwargs)
+                assert isinstance(plan, FastStartPlan)
+                return plan.model_copy(
+                    update={"next_candidates": [], "selected_next_track": None}
+                )
             if output_type is ProgramSkeleton:
                 known = self._tracks[0]
                 unknown = ("Event Listing", "Festival doors 8-9-2026", NoveltyDistance.CLOSE)
@@ -1370,7 +2090,11 @@ def test_unresolved_proposal_is_reported_but_narrative_is_still_written(tmp_path
 
     llm = MixedLLM()
     result = asyncio.run(
-        service(tmp_path, llm).assemble(LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3))
+        service(tmp_path, llm).assemble(LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            ))
     )
 
     assert len(result.resolved_tracks) == 2
@@ -1643,7 +2367,11 @@ def test_narrative_only_chapter_survives_writer_and_assembly(tmp_path) -> None:
     llm = NarrativeOnlyLLM()
     result = asyncio.run(
         service(tmp_path, llm).assemble(
-            LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3)
+            LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            )
         )
     )
 
@@ -1950,6 +2678,12 @@ def test_assembly_explicit_english_overrides_chinese_topic(tmp_path) -> None:
 def test_middle_unresolved_chapter_keeps_narrative_writer_order(tmp_path) -> None:
     class ExplicitIndexLLM(RecordingAssemblyLLM):
         async def structured(self, prompt: str, output_type: type[object], **kwargs: object) -> object:
+            if output_type is FastStartPlan:
+                plan = await super().structured(prompt, output_type, **kwargs)
+                assert isinstance(plan, FastStartPlan)
+                return plan.model_copy(
+                    update={"next_candidates": [], "selected_next_track": None}
+                )
             self.calls.append({"prompt": prompt, "output_type": output_type, **kwargs})
             if output_type is ProgramSkeleton:
                 known = self._tracks[0]
@@ -2002,7 +2736,11 @@ def test_middle_unresolved_chapter_keeps_narrative_writer_order(tmp_path) -> Non
 
     llm = ExplicitIndexLLM()
     result = asyncio.run(
-        service(tmp_path, llm).assemble(LiveEpisodeAssemblyRequest(topic="fixture", max_tracks=3))
+        service(tmp_path, llm).assemble(LiveEpisodeAssemblyRequest(
+                topic="fixture",
+                desired_duration_seconds=5 * 60,
+                max_tracks=3,
+            ))
     )
 
     writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]

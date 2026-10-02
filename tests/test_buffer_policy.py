@@ -158,3 +158,31 @@ def test_programme_cursor_does_not_require_current_segment_to_advance() -> None:
 
     assert current_id == "opening"
     assert decision.current_remaining_seconds == 240
+
+
+def test_programme_refills_before_three_minute_safety_runway_is_consumed() -> None:
+    value = episode(successor=True)
+    value.program_transport_active = True
+    value.program_rendered_frontier_seconds = 600
+    value.program_playback_position_seconds = 350
+    decision = buffer_decision(value)
+    assert decision.target_seconds == 300
+    assert decision.current_remaining_seconds == 250
+    assert decision.needs_generation
+    assert not decision.urgent
+    value.program_playback_position_seconds = 430
+    assert buffer_decision(value).urgent
+
+
+def test_programme_runway_uses_published_audio_and_full_pipeline_latency() -> None:
+    value = episode(successor=True)
+    value.program_transport_active = True
+    value.program_rendered_frontier_seconds = 120
+    value.program_playback_position_seconds = 100
+    value.generation_latency_seconds = 100
+    value.program_publication_latency_seconds = 60
+    restored = LiveEpisode.model_validate_json(value.model_dump_json())
+    decision = buffer_decision(restored)
+    assert decision.current_remaining_seconds == 20
+    assert decision.target_seconds == 450
+    assert decision.needs_generation and decision.urgent

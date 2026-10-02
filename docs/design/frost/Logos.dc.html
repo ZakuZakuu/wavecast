@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>图标候选</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1380px; height: 660px; box-sizing: border-box; background: #F2F2F4; color: #1D1D1F; font-family: -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif; padding: 48px 56px; display: flex; flex-direction: column; gap: 28px">
+<h2 style="margin: 0; font-size: 24px; font-weight: 700">图标候选</h2>
+<div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 40px">
+<sc-for list="{{marks}}" as="m" hint-placeholder-count="5">
+<figure style="margin: 0; display: flex; flex-direction: column; gap: 18px">
+<div style="position: relative; width: 176px; filter: drop-shadow(0 8px 18px rgba(29,29,31,0.14))">
+<dc-import name="LogoMark" variant="{{m.variant}}" hint-size="176px,176px"></dc-import>
+<sc-if value="{{m.pick}}" hint-placeholder-val="{{false}}">
+<span style="position: absolute; top: -10px; right: -16px; padding: 4px 10px; border-radius: 999px; background: #1D1D1F; color: #FFFFFF; font-size: 12px; font-weight: 600">推荐</span>
+</sc-if>
+</div>
+<div style="display: flex; align-items: flex-end; gap: 16px">
+<div style="width: 76px; filter: drop-shadow(0 4px 10px rgba(29,29,31,0.18))">
+<dc-import name="LogoMark" variant="{{m.variant}}" dark="{{true}}" hint-size="76px,76px"></dc-import>
+</div>
+<div style="width: 40px; filter: drop-shadow(0 2px 6px rgba(29,29,31,0.14))">
+<dc-import name="LogoMark" variant="{{m.variant}}" hint-size="40px,40px"></dc-import>
+</div>
+<div style="width: 20px">
+<dc-import name="LogoMark" variant="{{m.variant}}" hint-size="20px,20px"></dc-import>
+</div>
+</div>
+<figcaption style="display: flex; flex-direction: column; gap: 4px">
+<span style="font-size: 17px; font-weight: 700">{{m.name}}</span>
+<span style="font-size: 14px; line-height: 1.6; color: #6E6E73">{{m.note}}</span>
+</figcaption>
+</figure>
+</sc-for>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1380,"height":660}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      marks: [
+        { variant: 'arc', name: '弧形刻度（现在）', note: '弧线加指针是仪表盘的语言，第一眼像测速。', pick: false },
+        { variant: 'window', name: '调谐窗', note: '老收音机上那条横向刻度窗。直线刻度几乎只属于收音机。', pick: false },
+        { variant: 'radio', name: '小收音机', note: '机身、喇叭网、调谐窗、天线。喇叭网简化成 3×3，缩到 20px 仍然认得出。', pick: true },
+        { variant: 'antenna', name: '调谐窗加天线', note: '单独看不容易认出是收音机。', pick: false },
+        { variant: 'wave', name: 'W 波形', note: '品牌首字母和声波合一，但和收音机的联想最弱。', pick: false },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

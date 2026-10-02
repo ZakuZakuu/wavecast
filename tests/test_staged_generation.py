@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 from wavecast.assembly import StagedProgressiveChapterGenerator
 from wavecast.composer import EpisodeComposer
@@ -25,8 +26,10 @@ from wavecast.models.episode import (
     MusicSegment,
     NarrationSegment,
     SegmentState,
+    utc_now,
 )
 from wavecast.orchestration.episode import EpisodeOrchestrator, InMemoryEpisodeRepository
+from wavecast.orchestration.narration_enrichment import _finish_authoring
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
     ProgressiveAssemblySession,
@@ -178,10 +181,16 @@ def test_staged_generator_publishes_music_before_writer_or_tts(tmp_path) -> None
 
     assert generated is not None
     assert generated.chapter_id == "chapter-2"
-    assert [segment.id for segment in generated.segments] == ["chapter-2:music:0"]
-    assert isinstance(generated.segments[0], MusicSegment)
-    assert generated.segments[0].track_ref == "mock:bridge"
-    assert generated.segments[0].is_audio_ready
+    assert [segment.id for segment in generated.segments] == [
+        "chapter-2:narration:0",
+        "chapter-2:music:0",
+    ]
+    placeholder, music = generated.segments
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.PLANNED
+    assert isinstance(music, MusicSegment)
+    assert music.track_ref == "mock:bridge"
+    assert music.is_audio_ready
 
 def test_staged_generator_uses_unique_ids_through_append_seam(tmp_path) -> None:
     track = ResolvedTrack(
@@ -232,7 +241,9 @@ def test_staged_generator_uses_unique_ids_through_append_seam(tmp_path) -> None:
     }
 
 
-def test_writer_failure_falls_back_to_catalog_only_narration(tmp_path) -> None:
+def test_writer_failure_returns_no_authored_copy_before_orchestrator_degrades_gap(
+    tmp_path,
+) -> None:
     track = ResolvedTrack(
         track_ref="mock:bridge",
         canonical_artist="Bridge Artist",
@@ -259,18 +270,49 @@ def test_writer_failure_falls_back_to_catalog_only_narration(tmp_path) -> None:
 
     authored = asyncio.run(generator.author_narration(episode, "chapter-2"))
 
-    assert authored is not None
-    music = [segment for segment in authored.segments if isinstance(segment, MusicSegment)]
-    narration = [
-        segment for segment in authored.segments if isinstance(segment, NarrationSegment)
-    ]
-    assert len(music) == 1
-    assert music[0].audio_source_url == music_url
-    assert len(narration) == 2
-    assert all(segment.state is SegmentState.SCRIPT_READY for segment in narration)
-    fallback_text = narration[0].narration_text or ""
-    assert "Opening Artist" in fallback_text
-    assert "Bridge Artist" in fallback_text
+    assert authored is None
+    music = episode.segment("chapter-2:music:0")
+    assert isinstance(music, MusicSegment)
+    assert music.audio_source_url == music_url
+    placeholder = episode.segment("chapter-2:narration:0")
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.PLANNED
+
+
+def test_degraded_writer_marks_pending_host_seam_skipped(tmp_path) -> None:
+    track = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Bridge Artist",
+        canonical_title="Bridge Track",
+    )
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    generator = StagedProgressiveChapterGenerator(
+        session=_session(track),
+        writer=_Writer(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+    )
+    repository = InMemoryEpisodeRepository()
+    episode = _episode()
+    episode.progressive_session = _session(track)
+    generated = asyncio.run(generator.generate_next(episode))
+    assert generated is not None
+    episode.segments.extend(generated.segments)
+    repository.save(episode)
+
+    updated = _finish_authoring(
+        SimpleNamespace(repository=repository, now=utc_now),
+        episode.id,
+        "chapter-2",
+        None,
+    )
+
+    placeholder = updated.segment("chapter-2:narration:0")
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.SKIPPED
+    music = updated.segment("chapter-2:music:0")
+    assert isinstance(music, MusicSegment)
+    assert music.is_audio_ready
 
 
 def test_writer_enrichment_adds_script_ready_narration_without_repreparing_music(
@@ -336,10 +378,13 @@ def test_tts_is_not_called_before_ready_music_is_published(tmp_path) -> None:
 
     assert generated is not None
     assert generated.chapter_id == "chapter-2"
-    assert len(generated.segments) == 1
-    assert isinstance(generated.segments[0], MusicSegment)
-    assert generated.segments[0].track_ref == "mock:bridge"
-    assert generated.segments[0].is_audio_ready
+    assert len(generated.segments) == 2
+    placeholder, music = generated.segments
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.PLANNED
+    assert isinstance(music, MusicSegment)
+    assert music.track_ref == "mock:bridge"
+    assert music.is_audio_ready
 
 
 def test_music_only_chunk_skips_writer_and_tts(tmp_path) -> None:

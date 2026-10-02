@@ -26,12 +26,18 @@ def buffer_decision(
     target = max(baseline_seconds, min(600, ceil(episode.generation_latency_seconds * 1.5 + 30)))
     terminal = episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
     if episode.program_transport_active:
+        # Three minutes is the runway to preserve, not the instant to start
+        # work. Include cold-start and observed generation + publication cost.
+        latency = episode.generation_latency_seconds + episode.program_publication_latency_seconds
+        target = min(600, baseline_seconds + max(120, ceil(latency * 1.5 + 30)))
+        frontier = (
+            episode.program_rendered_frontier_seconds
+            if episode.program_rendered_frontier_seconds is not None
+            else episode.generated_frontier_seconds
+        )
         remaining = max(
             0,
-            int(
-                episode.generated_frontier_seconds
-                - episode.program_playback_position_seconds
-            ),
+            int(frontier - episode.program_playback_position_seconds),
         )
         needs = not terminal and (
             episode.generation_mode is GenerationMode.FULL
@@ -39,7 +45,7 @@ def buffer_decision(
         )
         return BufferDecision(
             needs_generation=needs,
-            urgent=needs and remaining <= 30,
+            urgent=needs and remaining < baseline_seconds,
             target_seconds=target,
             current_remaining_seconds=remaining,
         )

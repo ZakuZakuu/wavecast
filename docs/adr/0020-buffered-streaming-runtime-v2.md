@@ -418,41 +418,60 @@ or timestamp automation.
 Future loudness analysis may refine these values without changing Writer or
 Curator contracts.
 
-### 13. Preserve an audio-analysis extension seam
+### 13. Audio-analysis seam and Narration P0 timing policy
 
-This v2 does **not** add lyrics APIs or LLM lyrics reasoning.
+The provider-neutral timing/analysis seam is now partially active for Narration
+P0. Timed lyrics are treated as a **timing signal**, not as LLM content.
 
-It introduces or reserves a provider-neutral timing/analysis contract that may
-later include:
+The P0 contract is:
 
 ```text
 TrackTimingProfile {
   source_duration_seconds
-  beat_grid?
-  downbeats?
-  sections?
-  vocal_intervals?
+  sections? {
+    kind
+    start
+    end
+  }
+  vocal_intervals? {
+    start
+    end
+  }
   lyric_lines? {
     start
     end
-    text?
   }
-  energy_curve?
 }
 ```
 
-The Arrangement layer may consume this contract when present.
+Provider adapters may use a platform lyric endpoint to obtain timestamps, but
+raw lyric text is discarded at the provider boundary. WaveCast persists only
+the timing intervals needed for deterministic arrangement. The Writer does not
+receive the lyrics in this slice.
 
-Future capabilities can then include:
+When timing is present, Arrangement may:
 
-- do not cut in the middle of a lyric line;
-- prefer instrumental gaps;
-- avoid ducking a chorus or lead-vocal phrase;
-- align transitions to downbeats;
-- choose intro/outro/bridge windows;
-- reason about lyrics in a separate bounded intelligence layer later.
+- wait until the final outgoing vocal has ended before entering narration;
+- use a trailing instrumental outro for a longer, cleaner voice overlap;
+- delay incoming music so its first lead vocal does not begin under narration;
+- derive conservative intro, instrumental-gap, vocal, and outro sections.
 
-Lyrics semantics are explicitly outside this implementation round.
+When timing is absent or the provider call fails, playback remains valid and
+Arrangement falls back to the existing fixed conservative geometry.
+
+The P0 narration lookback is bounded to 12 seconds. This remains inside the
+immutable programme feed's current 30-second render holdback, so a timing-aware
+transition cannot require rewriting already-published chunks.
+
+Still deferred:
+
+- raw/full lyric text in WaveCast intelligence prompts;
+- LLM lyric semantics or quotation/reasoning;
+- beat grid/downbeat/energy analysis;
+- advanced adaptive DJ transition selection.
+
+This keeps timing deterministic and provider-neutral while leaving richer audio
+analysis as a later extension.
 
 ### 14. Frontiers remain useful, but they change meaning
 
@@ -566,9 +585,8 @@ Implement v2 incrementally while keeping the current stable browser transport.
 
 ### Deferred
 
-- lyrics API integration;
-- LLM lyrics semantics;
-- beat/section detection beyond optional provider-neutral metadata;
+- raw/full lyrics in intelligence prompts and LLM lyric semantics;
+- beat/downbeat/energy analysis beyond the P0 timestamp-only timing seam;
 - advanced adaptive DJ transition selection;
 - native apps;
 - generalized distributed workflow infrastructure.

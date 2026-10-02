@@ -10,6 +10,7 @@ from wavecast.models.episode import (
     EpisodeSeed,
     EpisodeState,
     MusicSegment,
+    NarrationSegment,
     SegmentState,
 )
 from wavecast.orchestration.episode import (
@@ -141,6 +142,7 @@ class _FakeGenerator:
                     planned_duration_seconds=1,
                     actual_duration_seconds=1,
                     track_ref=f"mock:{chapter.chapter_id}",
+                    audio_source_url=f"/api/audio/mock/music/{chapter.chapter_id}",
                     title=chapter.chapter_id,
                     artist="Fixture Artist",
                 )
@@ -196,6 +198,89 @@ class _BootstrapRuntime(_FakeRuntime):
                 ],
             }
         )
+
+
+class _PlaceholderBootstrapRuntime(_BootstrapRuntime):
+    async def prepare_fast_successor(self, episode):
+        del episode
+        self.fast_calls += 1
+        return GeneratedChapter(
+            chapter_id="chapter-2",
+            segments=[
+                NarrationSegment(
+                    id="chapter-2:narration:0",
+                    chapter_id="chapter-2",
+                    order=1,
+                    state=SegmentState.PLANNED,
+                    planned_duration_seconds=12,
+                    title="Pending host bridge",
+                ),
+                MusicSegment(
+                    id="chapter-2:music:0",
+                    chapter_id="chapter-2",
+                    order=2,
+                    state=SegmentState.AUDIO_READY,
+                    planned_duration_seconds=180,
+                    actual_duration_seconds=180,
+                    track_ref=self.fast_track.track_ref,
+                    audio_source_url="/api/audio/mock/fast-successor",
+                    title=self.fast_track.canonical_title,
+                    artist=self.fast_track.canonical_artist,
+                ),
+            ],
+        )
+
+
+class _ExplodingFastBridgeRuntime(_PlaceholderBootstrapRuntime):
+    async def author_fast_successor_narration(self, episode):
+        del episode
+        raise RuntimeError("synthetic fast bridge failure")
+
+
+def test_fast_bridge_failure_skips_placeholder_and_keeps_music_ready() -> None:
+    staged = _ExplodingFastBridgeRuntime()
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
+    episode = runtime.start(_seed())
+
+    asyncio.run(runtime.ensure_fast_start_async(episode.id))
+    degraded = asyncio.run(runtime.author_fast_successor_narration_async(episode.id))
+
+    placeholder = degraded.segment("chapter-2:narration:0")
+    music = degraded.segment("chapter-2:music:0")
+    assert isinstance(placeholder, NarrationSegment)
+    assert placeholder.state is SegmentState.SKIPPED
+    assert isinstance(music, MusicSegment)
+    assert music.is_audio_ready
+
+
+def test_planned_fast_placeholder_is_not_marked_as_authored() -> None:
+    staged = _PlaceholderBootstrapRuntime()
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
+    episode = runtime.start(_seed())
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            runtime.ensure_buffer_async(
+                episode.id,
+                target_chapters=1,
+                target_ahead_seconds=300,
+            )
+        )
+        await asyncio.wait_for(staged.started.wait(), timeout=1)
+        staged.release.set()
+        completed = await task
+        assert completed.progressive_session is not None
+        assert (
+            "chapter-2"
+            not in completed.progressive_session.narration_authored_chapter_ids
+        )
+        placeholder = completed.segment("chapter-2:narration:0")
+        assert isinstance(placeholder, NarrationSegment)
+        assert placeholder.state is SegmentState.PLANNED
+
+    asyncio.run(run())
 
 
 def test_fast_successor_is_durable_before_full_session_finishes() -> None:
@@ -425,6 +510,35 @@ def test_full_generation_never_accepts_progressive_planning_deferral() -> None:
 
     with pytest.raises(EpisodeRuntimeError, match="cannot defer"):
         asyncio.run(runtime.materialize_all_async(episode.id))
+
+def test_program_checkpoint_during_staged_preparation_does_not_stale_attach() -> None:
+    staged = _FakeRuntime(gated=True)
+    repository = InMemoryEpisodeRepository()
+    runtime = EpisodeOrchestrator(repository, progressive_runtime=staged)
+    episode = runtime.start(_seed())
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            runtime.ensure_buffer_async(
+                episode.id,
+                target_chapters=1,
+                target_ahead_seconds=300,
+            )
+        )
+        await staged.started.wait()
+        before_version = repository.get(episode.id).version
+        checkpointed = runtime.checkpoint_program_playback(episode.id, 5.5)
+        assert checkpointed.version == before_version
+        staged.release.set()
+        await task
+
+    asyncio.run(run())
+
+    restored = repository.get(episode.id)
+    assert staged.prepare_calls == 1
+    assert restored.progressive_session is not None
+    assert restored.segment("chapter-2:music").is_audio_ready
+
 
 def test_heartbeat_during_staged_preparation_does_not_stale_attach() -> None:
     staged = _FakeRuntime(gated=True)

@@ -122,7 +122,8 @@ def test_writer_radio_guidance_is_scoped_to_zh_cn() -> None:
     asyncio.run(WriterService(zh).write(chapter, [], output_language=OutputLanguage.ZH_CN))
     assert "先说具体可听的声音" in zh.prompt
     assert "证据不足时宁可简单准确" in zh.prompt
-    assert "20–35 秒" in zh.prompt
+    assert "LIGHT host mode" in zh.prompt
+    assert "8-18 seconds" in zh.prompt
     assert "已经听过的中间 artist/track/listen-for detail" in zh.prompt
     assert "OUTRO 回扣本期 thesis" in zh.prompt
 
@@ -155,6 +156,41 @@ def test_writer_uses_synthesis_profile() -> None:
 
     assert recorder.kwargs["transport"] is StructuredTransport.RESPONSES_JSON_SCHEMA
     assert recorder.kwargs["profile"] is InferenceProfile.SYNTHESIS
+    assert recorder.kwargs["stage"] == "writer"
+
+
+def test_writer_allows_fast_profile_for_latency_sensitive_first_bridge() -> None:
+    class ProfileRecorder(RadioWriterFixture):
+        def __init__(self) -> None:
+            self.kwargs: dict[str, object] = {}
+
+        async def structured(
+            self,
+            _prompt: str,
+            _output_type: type[object],
+            **kwargs: object,
+        ) -> object:
+            self.kwargs = kwargs
+            return RadioScript.from_blocks([], intended_duration_seconds=1)
+
+    recorder = ProfileRecorder()
+    chapter = ChapterPlan(
+        index=1,
+        track=None,
+        narrative_role=NarrativeRole.BRIDGE,
+        reason="fast bridge",
+        narration_goal="connect",
+    )
+
+    asyncio.run(
+        WriterService(recorder).write(
+            chapter,
+            [],
+            inference_profile=InferenceProfile.FAST,
+        )
+    )
+
+    assert recorder.kwargs["profile"] is InferenceProfile.FAST
     assert recorder.kwargs["stage"] == "writer"
 
 

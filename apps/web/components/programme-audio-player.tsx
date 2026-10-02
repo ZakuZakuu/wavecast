@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef } from "react";
 
 const HLS_MIME = "application/vnd.apple.mpegurl";
-const FRONTIER_WAKE_SECONDS = 12;
+const FRONTIER_WAKE_SECONDS = 45;
 const FRONTIER_SEEK_EPSILON_SECONDS = 0.05;
+const FRONTIER_RELOAD_EPSILON_SECONDS = 2;
 const POSITION_EMIT_INTERVAL_MS = 200;
 
 type ProgrammeAudioPlayerProps = {
@@ -16,6 +17,8 @@ type ProgrammeAudioPlayerProps = {
   complete: boolean;
   title: string;
   artist?: string | null;
+  /** Optional lock-screen artwork (PNG URL). */
+  artwork?: string | null;
   onPositionChange: (positionSeconds: number) => void;
   onPlayingChange?: (playing: boolean) => void;
   onBufferingChange?: (buffering: boolean) => void;
@@ -24,6 +27,8 @@ type ProgrammeAudioPlayerProps = {
   onPlayRequest: () => void;
   onPauseRequest: () => void;
   onSeekRequest: (positionSeconds: number) => void;
+  /** System "next track" (notification / lock screen): skip to the next song. */
+  onNextRequest?: () => void;
   onError: (message: string) => void;
 };
 
@@ -36,6 +41,7 @@ export function ProgrammeAudioPlayer({
   complete,
   title,
   artist,
+  artwork,
   onPositionChange,
   onPlayingChange,
   onBufferingChange,
@@ -44,6 +50,7 @@ export function ProgrammeAudioPlayer({
   onPlayRequest,
   onPauseRequest,
   onSeekRequest,
+  onNextRequest,
   onError,
 }: ProgrammeAudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -54,7 +61,10 @@ export function ProgrammeAudioPlayer({
   const completeRef = useRef(complete);
   const lastSeekTokenRef = useRef(seekToken);
   const lastEmitMsRef = useRef(0);
+  const appliedSeekTargetRef = useRef<number | null>(null);
+  const suppressPositionUntilRef = useRef(0);
   const playGenerationRef = useRef(0);
+  const previousFrontierRef = useRef(renderedFrontierSeconds);
 
   const onPositionChangeRef = useRef(onPositionChange);
   const onPlayingChangeRef = useRef(onPlayingChange);
@@ -64,6 +74,7 @@ export function ProgrammeAudioPlayer({
   const onPlayRequestRef = useRef(onPlayRequest);
   const onPauseRequestRef = useRef(onPauseRequest);
   const onSeekRequestRef = useRef(onSeekRequest);
+  const onNextRequestRef = useRef(onNextRequest);
   const onErrorRef = useRef(onError);
 
   desiredPlayingRef.current = playing;
@@ -77,6 +88,7 @@ export function ProgrammeAudioPlayer({
   onPlayRequestRef.current = onPlayRequest;
   onPauseRequestRef.current = onPauseRequest;
   onSeekRequestRef.current = onSeekRequest;
+  onNextRequestRef.current = onNextRequest;
   onErrorRef.current = onError;
 
   const applyPendingSeek = useCallback(() => {
@@ -87,9 +99,6 @@ export function ProgrammeAudioPlayer({
     let target = Math.max(0, pending);
     const frontier = Math.max(0, frontierRef.current);
 
-    // A restored listener position may be ahead of the currently published
-    // immutable prefix. Never "solve" that by rewinding the listener. Keep one
-    // pending target while generation/rendering catches the programme up.
     if (
       !completeRef.current
       && target > Math.max(0, frontier - FRONTIER_SEEK_EPSILON_SECONDS)
@@ -109,24 +118,48 @@ export function ProgrammeAudioPlayer({
         return;
       }
       if (target < first - FRONTIER_SEEK_EPSILON_SECONDS) {
-        target = first;
+        return;
       }
     }
 
-    try {
-      if (Math.abs(audio.currentTime - target) > FRONTIER_SEEK_EPSILON_SECONDS) {
-        audio.currentTime = target;
-      }
+    // MSE/hls.js can apply currentTime asynchronously. Keep the seek intent
+    // pending until the media element confirms the target instead of allowing
+    // one stale frame to overwrite the requested position.
+    if (
+      Math.abs(audio.currentTime - target) <= FRONTIER_SEEK_EPSILON_SECONDS
+      && !audio.seeking
+    ) {
       pendingSeekRef.current = null;
+      appliedSeekTargetRef.current = null;
       onPositionChangeRef.current(target);
-    } catch {
-      // loadedmetadata/canplay/progress/durationchange will retry this target.
+      return;
+    }
+
+    if (
+      !audio.seeking
+      && (
+        appliedSeekTargetRef.current === null
+        || Math.abs(appliedSeekTargetRef.current - target)
+          > FRONTIER_SEEK_EPSILON_SECONDS
+      )
+    ) {
+      try {
+        appliedSeekTargetRef.current = target;
+        audio.currentTime = target;
+      } catch {
+        appliedSeekTargetRef.current = null;
+      }
     }
   }, []);
 
   const playIfDesired = useCallback(() => {
     const audio = audioRef.current;
-    if (!audio || !desiredPlayingRef.current || !audio.paused) return;
+    if (
+      !audio
+      || !desiredPlayingRef.current
+      || !audio.paused
+      || pendingSeekRef.current !== null
+    ) return;
 
     const generation = playGenerationRef.current + 1;
     playGenerationRef.current = generation;
@@ -153,6 +186,7 @@ export function ProgrammeAudioPlayer({
     playGenerationRef.current += 1;
     audio.pause();
     pendingSeekRef.current = Math.max(0, positionSeconds);
+    appliedSeekTargetRef.current = null;
     onBufferingChangeRef.current?.(true);
 
     const wakeIfDesired = () => {
@@ -191,6 +225,7 @@ export function ProgrammeAudioPlayer({
             lowLatencyMode: false,
             backBufferLength: 600,
             maxBufferLength: 120,
+            startPosition: Math.max(0, positionSeconds),
           });
           hlsRef.current = hls;
           hls.attachMedia(audio);
@@ -230,6 +265,8 @@ export function ProgrammeAudioPlayer({
       detachNativeListeners?.();
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      suppressPositionUntilRef.current = 0;
+      appliedSeekTargetRef.current = null;
       playGenerationRef.current += 1;
       audio.pause();
       audio.removeAttribute("src");
@@ -240,12 +277,70 @@ export function ProgrammeAudioPlayer({
   }, [applyPendingSeek, playIfDesired, streamUrl]);
 
   useEffect(() => {
+    const previousFrontier = previousFrontierRef.current;
+    previousFrontierRef.current = renderedFrontierSeconds;
+    if (
+      renderedFrontierSeconds <= previousFrontier + FRONTIER_SEEK_EPSILON_SECONDS
+    ) return;
+
+    const audio = audioRef.current;
+    if (
+      !audio
+      || hlsRef.current
+      || !audio.canPlayType(HLS_MIME)
+      || !desiredPlayingRef.current
+    ) return;
+
+    const atOldFrontier = (
+      Math.max(0, audio.currentTime || 0)
+      >= Math.max(0, previousFrontier - FRONTIER_RELOAD_EPSILON_SECONDS)
+    );
+    if (!atOldFrontier) return;
+
+    // Safari's native HLS can stop at the end of the currently-known EVENT
+    // playlist and fail to notice newly appended chunks. Preserve the listener
+    // position, reload the same stream URL, then let the existing metadata/
+    // canplay listeners re-apply the seek and resume playback.
+    pendingSeekRef.current = Math.max(0, audio.currentTime || positionSeconds);
+    appliedSeekTargetRef.current = null;
+    onBufferingChangeRef.current?.(true);
+    try {
+      audio.load();
+    } catch {
+      // A failed wake is non-fatal; the normal frontier polling path remains.
+    }
+  }, [positionSeconds, renderedFrontierSeconds]);
+
+  useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
     if (lastSeekTokenRef.current === seekToken) return;
 
     lastSeekTokenRef.current = seekToken;
-    pendingSeekRef.current = Math.max(0, positionSeconds);
+    const target = Math.max(0, positionSeconds);
+
+    if (hlsRef.current && audio.readyState > 0) {
+      // hls.js/MSE owns an explicit user seek once playback is established.
+      // Keep playback controls live and only suppress stale currentTime frames
+      // while Chromium catches up to the requested timestamp.
+      pendingSeekRef.current = null;
+      appliedSeekTargetRef.current = target;
+      suppressPositionUntilRef.current = performance.now() + 1_500;
+      try {
+        audio.currentTime = target;
+        onPositionChangeRef.current(target);
+        if (desiredPlayingRef.current && audio.paused) playIfDesired();
+      } catch {
+        appliedSeekTargetRef.current = null;
+        suppressPositionUntilRef.current = 0;
+        pendingSeekRef.current = target;
+        applyPendingSeek();
+      }
+      return;
+    }
+
+    pendingSeekRef.current = target;
+    appliedSeekTargetRef.current = null;
     applyPendingSeek();
   }, [applyPendingSeek, positionSeconds, seekToken]);
 
@@ -289,6 +384,19 @@ export function ProgrammeAudioPlayer({
       onBufferingChangeRef.current?.(false);
     };
     const progress = () => applyPendingSeek();
+    const seeked = () => {
+      const actual = Math.max(0, audio.currentTime || 0);
+      if (appliedSeekTargetRef.current !== null) {
+        pendingSeekRef.current = null;
+        appliedSeekTargetRef.current = null;
+        suppressPositionUntilRef.current = 0;
+        onPositionChangeRef.current(actual);
+        onBufferingChangeRef.current?.(false);
+      } else {
+        applyPendingSeek();
+      }
+      playIfDesired();
+    };
     const ended = () => {
       markPaused();
       if (completeRef.current) {
@@ -306,6 +414,7 @@ export function ProgrammeAudioPlayer({
     audio.addEventListener("canplay", ready);
     audio.addEventListener("progress", progress);
     audio.addEventListener("durationchange", progress);
+    audio.addEventListener("seeked", seeked);
     audio.addEventListener("playing", markPlaying);
     audio.addEventListener("waiting", markBuffering);
     audio.addEventListener("stalled", markBuffering);
@@ -317,6 +426,8 @@ export function ProgrammeAudioPlayer({
     const tick = (now: number) => {
       if (
         !audio.paused
+        && pendingSeekRef.current === null
+        && now >= suppressPositionUntilRef.current
         && now - lastEmitMsRef.current >= POSITION_EMIT_INTERVAL_MS
       ) {
         lastEmitMsRef.current = now;
@@ -359,6 +470,7 @@ export function ProgrammeAudioPlayer({
       audio.removeEventListener("canplay", ready);
       audio.removeEventListener("progress", progress);
       audio.removeEventListener("durationchange", progress);
+      audio.removeEventListener("seeked", seeked);
       audio.removeEventListener("playing", markPlaying);
       audio.removeEventListener("waiting", markBuffering);
       audio.removeEventListener("stalled", markBuffering);
@@ -366,7 +478,29 @@ export function ProgrammeAudioPlayer({
       audio.removeEventListener("ended", ended);
       audio.removeEventListener("error", failed);
     };
-  }, [applyPendingSeek]);
+  }, [applyPendingSeek, playIfDesired]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const syncVisiblePosition = () => {
+      if (
+        document.visibilityState === "visible"
+        && pendingSeekRef.current === null
+        && audio.readyState > 0
+      ) {
+        onPositionChangeRef.current(Math.max(0, audio.currentTime || 0));
+      }
+    };
+
+    document.addEventListener("visibilitychange", syncVisiblePosition);
+    window.addEventListener("pageshow", syncVisiblePosition);
+    return () => {
+      document.removeEventListener("visibilitychange", syncVisiblePosition);
+      window.removeEventListener("pageshow", syncVisiblePosition);
+    };
+  }, []);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -376,11 +510,14 @@ export function ProgrammeAudioPlayer({
         title,
         artist: artist || "WaveCast",
         album: "WaveCast",
+        ...(artwork
+          ? { artwork: [{ src: artwork, sizes: "512x512", type: "image/png" }] }
+          : {}),
       });
     } catch {
       // Older WebKit builds may expose mediaSession without MediaMetadata.
     }
-  }, [artist, title]);
+  }, [artist, artwork, title]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -412,6 +549,7 @@ export function ProgrammeAudioPlayer({
       ["seekto", (details) => {
         if (typeof details.seekTime === "number") seekTo(details.seekTime);
       }],
+      ["nexttrack", onNextRequestRef.current ? () => onNextRequestRef.current?.() : null],
     ];
 
     for (const [action, handler] of handlers) {

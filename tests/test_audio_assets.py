@@ -27,3 +27,19 @@ def test_fake_tts_uses_the_same_audio_asset_contract() -> None:
     assert asset.provider == "fake-tts"
     assert asset.playback_url.startswith("fake-tts://")
     assert asset.duration > 0
+def test_failed_atomic_write_cleans_temporary_and_preserves_existing(tmp_path, monkeypatch):
+    import errno
+    import os
+
+    import pytest
+    from wavecast.storage import LocalObjectStorageProvider
+
+    destination = tmp_path / "audio.mp3"
+    destination.write_bytes(b"published")
+    def fail_fsync(_fd):
+        raise OSError(errno.ENOSPC, "No space left on device")
+    monkeypatch.setattr(os, "fsync", fail_fsync)
+    with pytest.raises(OSError, match="No space"):
+        LocalObjectStorageProvider._atomic_write(destination, b"new partial")
+    assert destination.read_bytes() == b"published"
+    assert list(tmp_path.iterdir()) == [destination]

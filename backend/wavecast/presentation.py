@@ -135,3 +135,37 @@ def infer_presentation_intent(text: str) -> PresentationIntent:
         opening_strategy=opening_strategy,
         transition_style=transition_style,
     )
+
+
+def narration_ratio_for_host_mode(
+    mode: HostMode,
+    *,
+    full_ratio: float = 0.15,
+) -> float:
+    """Map host density to a deterministic spoken-time target."""
+
+    if not 0 <= full_ratio <= 1:
+        raise ValueError("full narration ratio must be between 0 and 1")
+    if mode is HostMode.NONE:
+        return 0.0
+    if mode is HostMode.LIGHT:
+        # Keep LIGHT materially quieter than FULL while preserving enough room
+        # for a useful first bridge and final outro.
+        return min(full_ratio, max(0.04, full_ratio * 0.55))
+    return full_ratio
+
+
+def host_mode_prompt_guidance(mode: HostMode) -> str:
+    if mode is HostMode.NONE:
+        return "No host narration should be authored."
+    if mode is HostMode.LIGHT:
+        return (
+            "LIGHT host mode: speak only when the transition adds real listening value. "
+            "Prefer one compact editorial action, usually about 8-18 seconds, and stop "
+            "instead of filling the budget."
+        )
+    return (
+        "FULL host mode: provide a guided-listening explanation when evidence supports it. "
+        "A useful block is usually about 20-35 seconds, but still stop when the editorial "
+        "action is complete."
+    )

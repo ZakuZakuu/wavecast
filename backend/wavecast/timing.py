@@ -16,8 +16,8 @@ class ChapterNarrationBudget(BaseModel):
     """The deterministic spoken-time allocation for one chapter."""
 
     chapter_index: int = Field(ge=0)
-    slot_count: int = Field(ge=1)
-    target_narration_seconds: int = Field(ge=1)
+    slot_count: int = Field(ge=0)
+    target_narration_seconds: int = Field(ge=0)
 
 
 class ProgramTimingPlan(BaseModel):
@@ -85,18 +85,17 @@ def build_program_timing_plan(
     if any(count < 0 for count in chapter_slot_counts):
         raise ValueError("chapter slot counts cannot be negative")
 
-    normalized_slots = [max(1, count) for count in chapter_slot_counts]
+    normalized_slots = list(chapter_slot_counts)
     requested = max(0, round(desired_total_seconds * target_narration_ratio))
     available = max(0, desired_total_seconds - resolved_music_seconds)
-    minimum_narration_seconds = len(normalized_slots)
+    active_slot_chapters = sum(count > 0 for count in normalized_slots)
+    minimum_narration_seconds = active_slot_chapters
     feasible = (
-        not normalized_slots
-        and resolved_music_seconds < desired_total_seconds
-    ) or (
-        bool(normalized_slots)
-        and available >= minimum_narration_seconds
+        resolved_music_seconds < desired_total_seconds
+        if active_slot_chapters == 0
+        else available >= minimum_narration_seconds
     )
-    if not normalized_slots:
+    if active_slot_chapters == 0:
         allocated = 0
     elif feasible:
         allocated = min(requested, available)
@@ -155,18 +154,32 @@ def summarize_program_timing(
 def _weighted_budgets(weights: list[int], total: int) -> list[int]:
     if not weights:
         return []
-    minimum = len(weights)
+    active = [index for index, weight in enumerate(weights) if weight > 0]
+    if not active:
+        return [0] * len(weights)
+
+    minimum = len(active)
     total = max(total, minimum)
     remaining = total - minimum
-    weight_sum = sum(weights)
-    exact = [Decimal(remaining * weight) / Decimal(weight_sum) for weight in weights]
-    floors = [int(value.to_integral_value(rounding=ROUND_FLOOR)) for value in exact]
-    remainder = remaining - sum(floors)
+    weight_sum = sum(weights[index] for index in active)
+    exact = {
+        index: Decimal(remaining * weights[index]) / Decimal(weight_sum)
+        for index in active
+    }
+    floors = {
+        index: int(value.to_integral_value(rounding=ROUND_FLOOR))
+        for index, value in exact.items()
+    }
+    remainder = remaining - sum(floors.values())
     order = sorted(
-        range(len(weights)),
+        active,
         key=lambda index: (exact[index] - floors[index], -index),
         reverse=True,
     )
     for index in order[:remainder]:
         floors[index] += 1
-    return [1 + floor for floor in floors]
+
+    return [
+        0 if weight == 0 else 1 + floors[index]
+        for index, weight in enumerate(weights)
+    ]

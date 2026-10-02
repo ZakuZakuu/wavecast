@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
+from wavecast.audio_timing import TrackTimingProfile
 from wavecast.presentation import PresentationIntent
 
 
@@ -74,6 +75,8 @@ class EpisodeSeed(BaseModel):
     opening_track_title: str
     opening_track_artist: str
     opening_track_duration_seconds: int | None = Field(default=None, gt=0)
+    opening_track_timing_profile: TrackTimingProfile | None = None
+    opening_narration_text: str | None = Field(default=None, max_length=320)
     cover: CoverParams
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     generation_profile: str = "balanced"
@@ -129,6 +132,7 @@ class MusicSegment(Segment):
     kind: Literal[SegmentKind.MUSIC] = SegmentKind.MUSIC
     track_ref: str
     audio_source_url: str | None = None
+    timing_profile: TrackTimingProfile | None = None
 
 
 class NarrationSegment(Segment):
@@ -186,6 +190,8 @@ class LiveEpisode(BaseModel):
     # segments or rewrite the immutable rendered programme.
     program_playback_position_seconds: float = Field(default=0, ge=0)
     program_transport_active: bool = False
+    program_rendered_frontier_seconds: float | None = Field(default=None, ge=0)
+    program_publication_latency_seconds: float = Field(default=0, ge=0, le=600)
     generation_latency_seconds: float = Field(default=0, ge=0, le=600)
     is_listener_active: bool = True
     is_playing: bool = True

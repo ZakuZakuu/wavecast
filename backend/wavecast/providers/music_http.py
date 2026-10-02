@@ -7,14 +7,17 @@ JSON shape at configurable endpoints.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import httpx
 
+from wavecast.audio_timing import TrackTimingProfile, track_timing_profile_from_payload
+
 from .config import ProviderSettings
 from .contracts import AudioAsset, AudioAssetType, MusicProvider, TrackMetadata
-from .errors import ProviderConfigurationError, ProviderInvalidResponseError
+from .errors import ProviderConfigurationError, ProviderError, ProviderInvalidResponseError
 from .http import request_json
 from .playback import ResolvedPlaybackRequest
 
@@ -22,11 +25,15 @@ if TYPE_CHECKING:
     from wavecast.intelligence.models import ResolvedTrack
 
 
+TIMING_PROFILE_TIMEOUT_SECONDS = 1.5
+
+
 class SidecarMusicProvider(MusicProvider):
     """Provider-neutral adapter for a configured catalog HTTP sidecar."""
 
     provider_name: str
     track_ref_prefix: str
+    timing_profile_path_enabled: bool = False
 
     def __init__(
         self,
@@ -73,6 +80,21 @@ class SidecarMusicProvider(MusicProvider):
             duration=metadata.duration_seconds,
             metadata=_safe_metadata(metadata.metadata),
         )
+
+    async def get_timing_profile(
+        self, track_ref: str
+    ) -> TrackTimingProfile | None:
+        if not self.timing_profile_path_enabled:
+            return None
+        provider_id = _provider_id(track_ref, self.track_ref_prefix)
+        try:
+            payload = await asyncio.wait_for(
+                self._request(f"/tracks/{quote(provider_id, safe='')}/timing"),
+                timeout=TIMING_PROFILE_TIMEOUT_SECONDS,
+            )
+        except (TimeoutError, ProviderError):
+            return None
+        return track_timing_profile_from_payload(payload)
 
     async def resolve_upstream_playback_url(self, track_ref: str) -> str:
         """Resolve the current sidecar URL without exposing it to the browser."""
