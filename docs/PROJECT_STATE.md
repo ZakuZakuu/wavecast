@@ -2,6 +2,17 @@
 
 **Last updated:** 2026-10-02
 
+## CI scope optimisation
+
+- `.github/workflows/ci.yml` selects backend/deployment checks from the full
+  cumulative PR diff. Known Web/docs-only PRs retain all Web checks but skip
+  the expensive backend pytest and Docker deployment jobs.
+- Unknown/shared/backend paths and release/manual runs retain full validation;
+  comparison failures also default to full CI. Existing check names and the
+  hosted `integration` deployment flow are preserved.
+- Developers, including Claude, need no new setup. See
+  `docs/deployment/ci.md` for the selection rules and manual full-run command.
+
 ## Active UI P0 checkpoint — frost redesign (`feat/ui-p0-frost`)
 
 - Implements `docs/design/frost/HANDOFF.md` in `apps/web`; PR targets
