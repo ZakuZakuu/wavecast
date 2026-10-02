@@ -27,6 +27,7 @@ export function MoreSheet({
 
   return (
     <BottomSheet open={open} onClose={onClose} label="更多操作" tone="light">
+      <h2 className="visually-hidden">更多操作</h2>
       <div className="action-group">
         <button
           type="button"

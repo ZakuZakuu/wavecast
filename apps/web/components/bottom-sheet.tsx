@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
+import { attachDragDismiss, sheetTimings, type DragDismiss } from "../lib/motion/drag-dismiss";
+import { DUR, tween } from "../lib/motion/easing";
+import { scrimOpacityForOffset } from "../lib/motion/gesture";
 import { Portal } from "./portal";
 
-const CLOSE_DISTANCE = 96;
-
 /**
- * Frosted bottom sheet: slides up, closes on backdrop tap, Escape, or a
- * downward drag past the threshold (otherwise it springs back).
+ * Bottom sheet (MOTION.md §4.2): enters from translateY(100%) in 350ms
+ * (ease-enter), leaves in 250ms (ease-exit), drag-to-dismiss from anywhere
+ * (scrollable content hands over once it is at its top), interruptible.
+ * Focus moves to the sheet title and returns to the trigger on close.
  */
 export function BottomSheet({
   open,
@@ -27,70 +30,148 @@ export function BottomSheet({
   children: ReactNode;
   className?: string;
 }) {
-  const [drag, setDrag] = useState(0);
-  const startRef = useRef<number | null>(null);
+  const [rendered, setRendered] = useState(open);
   const panelRef = useRef<HTMLElement | null>(null);
+  // The panel mounts through a portal after a tick; effects key off the node.
+  const [panelNode, setPanelNode] = useState<HTMLElement | null>(null);
+  const scrimRef = useRef<HTMLDivElement | null>(null);
+  const controllerRef = useRef<DragDismiss | null>(null);
+  const exitingRef = useRef(false);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const cancelFadeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    panelRef.current?.focus();
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, open]);
-
-  useEffect(() => {
-    if (!open) setDrag(0);
+    if (open) {
+      exitingRef.current = false;
+      returnFocusRef.current = document.activeElement as HTMLElement | null;
+      setRendered(true);
+    }
   }, [open]);
 
-  if (!open) return null;
+  const panelHeight = () => panelRef.current?.offsetHeight || 600;
 
-  const onPointerDown = (event: React.PointerEvent) => {
-    startRef.current = event.clientY;
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  const render = (offset: number) => {
+    const panel = panelRef.current;
+    if (panel) panel.style.transform = offset ? `translate3d(0, ${offset}px, 0)` : "";
+    if (scrimRef.current) scrimRef.current.style.opacity = String(scrimOpacityForOffset(offset, panelHeight()));
   };
-  const onPointerMove = (event: React.PointerEvent) => {
-    if (startRef.current === null) return;
-    setDrag(Math.max(0, event.clientY - startRef.current));
+
+  const unmount = () => {
+    setRendered(false);
+    const target = returnFocusRef.current;
+    returnFocusRef.current = null;
+    if (target && document.contains(target)) target.focus({ preventScroll: true });
   };
-  const onPointerUp = () => {
-    if (startRef.current === null) return;
-    startRef.current = null;
-    if (drag > CLOSE_DISTANCE) onClose();
-    else setDrag(0);
+
+  const exit = (velocity = 0) => {
+    if (exitingRef.current) return;
+    exitingRef.current = true;
+    const timings = sheetTimings("sheet");
+    const controller = controllerRef.current;
+    if (!controller || timings.reduced) {
+      const panel = panelRef.current;
+      cancelFadeRef.current?.();
+      cancelFadeRef.current = tween({
+        from: 1,
+        to: 0,
+        duration: DUR.fast,
+        onUpdate: (value) => {
+          if (panel) panel.style.opacity = String(value);
+          if (scrimRef.current) scrimRef.current.style.opacity = String(value);
+        },
+        onComplete: unmount,
+      });
+      return;
+    }
+    if (velocity > 0) controller.animateTo(panelHeight(), { velocity }, unmount);
+    else controller.animateTo(panelHeight(), { duration: timings.exit.duration, easing: timings.exit.easing, spring: false }, unmount);
   };
+
+  // Parent closed it (button, Escape, scrim): animate out, then unmount.
+  useEffect(() => {
+    if (!open && rendered) exit();
+  }, [open]);
+
+  // Attach drag + run the enter animation once mounted.
+  useLayoutEffect(() => {
+    const panel = panelNode;
+    if (!rendered || !panel) return;
+    const controller = attachDragDismiss({
+      panel,
+      height: panelHeight,
+      render,
+      onDismiss: (velocity) => {
+        exit(Math.max(velocity, 0.01));
+        onCloseRef.current();
+      },
+    });
+    controllerRef.current = controller;
+    const timings = sheetTimings("sheet");
+    if (timings.reduced) {
+      panel.style.transform = "";
+      panel.style.opacity = "0";
+      cancelFadeRef.current = tween({
+        from: 0,
+        to: 1,
+        duration: DUR.fast,
+        onUpdate: (value) => {
+          panel.style.opacity = String(value);
+          if (scrimRef.current) scrimRef.current.style.opacity = String(value);
+        },
+      });
+    } else {
+      controller.setOffset(panelHeight());
+      controller.animateTo(0, { duration: timings.enter.duration, easing: timings.enter.easing, spring: false });
+    }
+    const title = panel.querySelector<HTMLElement>("h2, [data-sheet-title]");
+    if (title) {
+      if (!title.hasAttribute("tabindex")) title.setAttribute("tabindex", "-1");
+      title.focus({ preventScroll: true });
+    } else {
+      panel.focus({ preventScroll: true });
+    }
+    return () => {
+      cancelFadeRef.current?.();
+      controller.detach();
+      controllerRef.current = null;
+    };
+  }, [panelNode, rendered]);
+
+  useEffect(() => {
+    if (!rendered) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCloseRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [rendered]);
+
+  if (!rendered) return null;
 
   return (
     <Portal>
-    <div className="sheet-layer" role="presentation">
-      <div className="sheet-scrim" onClick={onClose} aria-hidden="true" />
-      <section
-        ref={panelRef}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-label={label}
-        className={`sheet sheet-${tone}${className ? " " + className : ""}`}
-        style={{
-          height,
-          transform: drag ? `translateY(${drag}px)` : undefined,
-          transition: startRef.current === null ? undefined : "none",
-        }}
-      >
-        <div
-          className="sheet-handle-zone"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
+      <div className="sheet-layer" role="presentation">
+        <div ref={scrimRef} className="sheet-scrim" style={{ opacity: 0 }} onClick={() => onCloseRef.current()} aria-hidden="true" />
+        <section
+          ref={(node) => {
+            panelRef.current = node;
+            setPanelNode(node);
+          }}
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="true"
+          aria-label={label}
+          className={`sheet sheet-${tone}${className ? " " + className : ""}`}
+          style={{ height, transform: "translate3d(0, 100%, 0)" }}
         >
-          <span className="sheet-handle" aria-hidden="true" />
-        </div>
-        {children}
-      </section>
-    </div>
+          <div className="sheet-handle-zone" data-drag-handle>
+            <span className="sheet-handle" aria-hidden="true" />
+          </div>
+          {children}
+        </section>
+      </div>
     </Portal>
   );
 }
