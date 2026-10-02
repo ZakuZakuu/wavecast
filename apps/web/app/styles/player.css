@@ -483,10 +483,22 @@ button.route-track { min-height: 44px; margin: -6px 0; }
   overflow: hidden;
 }
 .mini-player[hidden] { display: none; }
-.mini-player.is-entering { animation: fade-up-plain var(--t-sheet) var(--ease) both; }
+/* Entrance only for a new programme: translateY(16px) + fade, 300ms ease-enter. */
+.mini-player.is-entering { animation: mini-in 300ms var(--ease-enter) both; }
+@keyframes mini-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
 @keyframes fade-up-plain { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 .mini-progress { position: absolute; left: 14px; right: 14px; bottom: 0; height: 2px; border-radius: 1px; background: rgba(29, 29, 31, .08); }
-.mini-progress > span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 1px; background: var(--ink); }
+.mini-progress > span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  border-radius: 1px;
+  background: var(--ink);
+  transform-origin: 0 50%;
+  transition: transform 250ms linear;
+}
 .mini-main { flex: 1 1 auto; min-width: 0; height: 60px; display: flex; align-items: center; gap: 12px; }
 .mini-cover { width: 42px; height: 42px; flex: 0 0 auto; border-radius: 8px; overflow: hidden; view-transition-name: programme-cover; }
 .mini-copy { min-width: 0; display: flex; flex-direction: column; gap: 1px; }

@@ -146,10 +146,11 @@ h1, h2, h3, p { margin-top: 0; }
 
 .bottom-nav-item.active { color: var(--ink); font-weight: 600; }
 
-.page-enter { animation: page-enter var(--t-sheet) var(--ease) both; }
+/* Tab switches cross-fade only (MOTION.md §4.4); nav and mini player stay put. */
+.page-enter { animation: page-enter var(--dur-fast) var(--ease-standard) both; }
 @keyframes page-enter {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -157,5 +158,7 @@ h1, h2, h3, p { margin-top: 0; }
     transition-property: opacity, background-color, color, border-color !important;
   }
   .page-enter { animation-name: fade-in; }
+  /* No press scaling either; opacity/colour feedback only. */
+  button:active, .pressable:active, .station-card:active { transform: none !important; }
   @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 }

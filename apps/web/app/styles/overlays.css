@@ -51,8 +51,13 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  animation: sheet-up var(--t-sheet) var(--ease) both;
+  animation: dialog-in var(--dur-base) var(--ease-enter) both;
 }
+/* Centred dialog: scale(.96) + fade in 250ms; leave with a 150ms fade. */
+@keyframes dialog-in { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+.install-layer .sheet-scrim { animation: fade-in-plain var(--dur-base) var(--ease-standard) both; }
+.install-layer.is-leaving { animation: fade-out-plain var(--dur-fast) var(--ease-standard) both; }
+@keyframes fade-out-plain { from { opacity: 1; } to { opacity: 0; } }
 .install-logo { filter: drop-shadow(0 6px 16px rgba(29, 29, 31, .16)); line-height: 0; }
 .install-card h2 { margin: 16px 0 0; font-size: 22px; font-weight: 700; }
 .install-card p { margin: 8px 0 0; font-size: 15px; line-height: 1.6; color: var(--ink-2); }
@@ -117,5 +122,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .install-arrow { animation: none; }
-  .install-card, .install-banner { animation-name: fade-in-plain; }
+  .install-card, .install-banner { animation-name: fade-in-plain; animation-duration: var(--dur-fast); }
 }

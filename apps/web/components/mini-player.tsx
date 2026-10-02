@@ -54,7 +54,7 @@ export function MiniPlayer({ hidden = false }: { hidden?: boolean }) {
         swipeRef.current = null;
       }}
     >
-      <span className="mini-progress" aria-hidden="true"><span style={{ width: played + "%" }} /></span>
+      <span className="mini-progress" aria-hidden="true"><span style={{ transform: `scaleX(${played / 100})` }} /></span>
       <Link
         href={href}
         className="mini-main"
