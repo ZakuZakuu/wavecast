@@ -38,3 +38,15 @@ describe("listening status", () => {
     expect(progressRatio(10, 0)).toBe(0);
   });
 });
+
+import { swipeDecision } from "../components/library/swipe-row";
+
+describe("swipe decision", () => {
+  it("opens past 40px, deletes past 60% of the row, honours flings", () => {
+    expect(swipeDecision(-30, 350, 0)).toBe("close");
+    expect(swipeDecision(-41, 350, 0)).toBe("open");
+    expect(swipeDecision(-211, 350, 0)).toBe("delete");
+    expect(swipeDecision(-20, 350, -0.8)).toBe("open");
+    expect(swipeDecision(-80, 350, 0.8)).toBe("close");
+  });
+});

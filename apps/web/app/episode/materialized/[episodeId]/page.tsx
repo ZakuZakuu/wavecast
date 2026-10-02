@@ -1,10 +1,6 @@
-import { PlayerScreen } from "../../../../components/player/player-screen";
-
-export default async function MaterializedEpisodePage({
-  params,
-}: {
-  params: Promise<{ episodeId: string }>;
-}) {
-  const { episodeId } = await params;
-  return <PlayerScreen episodeId={episodeId} />;
+// The player is a global overlay (components/player/player-overlay.tsx) that
+// reads this URL; the route itself renders nothing so in-app opens can keep
+// the page beneath mounted.
+export default function Page() {
+  return null;
 }

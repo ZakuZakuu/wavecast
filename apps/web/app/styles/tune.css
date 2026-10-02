@@ -30,7 +30,7 @@
   width: 4px;
   border-radius: 1.5px;
   background: rgba(29, 29, 31, .15);
-  transition: background-color var(--t-state) var(--ease);
+  transition: background-color 50ms linear;
 }
 .signal span.is-lit { background: var(--ink); }
 
@@ -40,7 +40,7 @@
 .tuner-name {
   font-size: 20px;
   font-weight: 600;
-  animation: fade-in-plain var(--t-state) var(--ease) both;
+  animation: fade-in-plain var(--dur-fast) var(--ease-standard) both;
 }
 .tuner-name.is-between { color: var(--ink-3); }
 .match-badge {
@@ -70,10 +70,12 @@
 .tuning-window.is-dragging { cursor: grabbing; }
 .tuning-window.is-static { cursor: default; width: 100%; }
 .tuning-window:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.tw-layer { position: absolute; left: 0; top: 0; height: 96px; width: 0; will-change: transform; }
 .tw-scale { position: absolute; left: 0; top: 0; }
+.tw-noise-layer { position: absolute; left: 0; top: 0; pointer-events: none; }
 .tw-minor { fill: none; stroke: rgba(29, 29, 31, .2); stroke-width: 1; stroke-linecap: round; }
 .tw-major { fill: none; stroke: rgba(29, 29, 31, .48); stroke-width: 1.2; stroke-linecap: round; }
-.tw-noise { fill: rgba(29, 29, 31, .16); transition: opacity var(--t-state) var(--ease); }
+.tw-noise { fill: rgba(29, 29, 31, .16); }
 .tw-label {
   position: absolute;
   top: 0;
@@ -86,8 +88,11 @@
   gap: 4px;
   font-size: 13px;
   white-space: nowrap;
-  transition: color var(--t-state) var(--ease);
+  color: var(--ink-3);
+  font-weight: 400;
+  transition: color var(--dur-fast) var(--ease-standard);
 }
+.tw-label.is-active { color: var(--ink); font-weight: 600; }
 .tw-dot { width: 5px; height: 5px; border-radius: 50%; }
 .tw-number {
   position: absolute;
@@ -110,15 +115,6 @@
   background: var(--live);
   box-shadow: 0 0 8px var(--live-glow);
   pointer-events: none;
-}
-.tw-pointer.is-swinging { animation: pointer-swing 800ms cubic-bezier(.3, .7, .3, 1) both; }
-@keyframes pointer-swing {
-  0% { transform: translateX(-14px); }
-  25% { transform: translateX(10px); }
-  50% { transform: translateX(-6px); }
-  72% { transform: translateX(3px); }
-  88% { transform: translateX(-1px); }
-  100% { transform: none; }
 }
 .tw-ghost { position: absolute; top: 8px; bottom: 8px; width: 2px; border-radius: 1px; background: rgba(255, 107, 44, .18); }
 
@@ -153,6 +149,7 @@
 .tune-input input:focus-visible { box-shadow: 0 0 0 2px rgba(29, 29, 31, .25); }
 
 .segmented {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   padding: 3px;
@@ -167,11 +164,25 @@
   font-size: 15px;
   color: var(--ink);
   white-space: nowrap;
-  transition: background-color var(--t-state) var(--ease), box-shadow var(--t-state) var(--ease);
+  transition: transform var(--dur-fast) var(--ease-standard);
   position: relative;
+  z-index: 1;
 }
 .segmented button::after { content: ""; position: absolute; inset: -4px 0; }
-.segmented button.is-selected { background: #FFFFFF; box-shadow: 0 2px 6px rgba(0, 0, 0, .1); font-weight: 600; }
+.segmented button.is-selected { font-weight: 600; }
+.seg-thumb {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  bottom: 3px;
+  border-radius: var(--radius-segment);
+  background: #FFFFFF;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .1);
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+@media (prefers-reduced-motion: reduce) {
+  .seg-thumb { transition: none; }
+}
 
 .on-air {
   min-height: 54px;
@@ -185,9 +196,9 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  transition: opacity var(--t-state) var(--ease), transform var(--t-micro) var(--ease);
+  transition: opacity var(--dur-base) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
 }
-.on-air:active:not(:disabled) { transform: scale(.98); }
+.on-air:active:not(:disabled) { transform: scale(.96); transition-duration: var(--dur-base), var(--dur-instant); }
 .on-air:disabled { opacity: .3; }
 .on-air-light { width: 8px; height: 8px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 4px rgba(255, 107, 44, .25); }
 
@@ -280,8 +291,11 @@
   transition: background-color var(--t-state) var(--ease);
 }
 .is-done .step-mark { background: var(--ink); border-color: var(--ink); color: #FFFFFF; }
-.step-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live); animation: dot-pulse 1.2s ease-in-out infinite; }
-@keyframes dot-pulse { 50% { opacity: .35; } }
+/* Step completes: the tick grows in from .6 (200ms); the next dot breathes. */
+.is-done .step-mark svg { animation: tick-in 200ms var(--ease-enter) both; }
+@keyframes tick-in { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
+.step-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live); animation: dot-breathe 1.2s ease-in-out infinite; }
+@keyframes dot-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
 .tuning-error { margin: 18px 4px 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .tuning-error p { margin: 0; font-size: 15px; color: var(--danger); }
 .tuning-in-foot { margin: auto 0 0; text-align: center; font-size: 15px; line-height: 1.6; color: var(--ink-2); }
@@ -292,6 +306,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tw-pointer.is-swinging { animation: none; }
   .step-dot { animation: none; }
+  .is-done .step-mark svg { animation: fade-in-plain 150ms both; }
+}
+
+/* Glow colour follows the station smoothly (MOTION.md §4.7). */
+.tune-glow { transition: background-color 600ms var(--ease-standard), opacity 600ms var(--ease-standard); }
+
+@media (prefers-reduced-motion: reduce) {
+  .signal span { transition-delay: 0ms !important; }
 }

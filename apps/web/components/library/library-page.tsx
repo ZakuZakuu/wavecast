@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../../lib/api";
+import { openPlayer } from "../../lib/player-nav";
 import { dedupeByProgramme, listeningStatus, progressRatio } from "../../lib/library-view";
 import { stationForProgramme, STATIONS, type StationId } from "../../lib/stations";
 import type { ProgramProposal } from "../../lib/types";
@@ -17,6 +18,7 @@ import {
   type UserLibraryState,
 } from "../../lib/user-library";
 import { AppShell } from "../app-shell";
+import { Segmented } from "../segmented";
 import { ProgrammeCoverView } from "../cover/programme-cover-view";
 import { SwipeRow } from "./swipe-row";
 
@@ -71,6 +73,17 @@ export function LibraryPage() {
   const [library, setLibrary] = useState<UserLibraryState>(emptyUserLibrary);
   const [created, setCreated] = useState<ProgramProposal[]>([]);
   const [now, setNow] = useState(() => Date.now());
+  // Only one row may show its delete button; any tap outside it closes it.
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!openKey) return;
+    const onDown = (event: PointerEvent) => {
+      const row = (event.target as Element | null)?.closest?.("[data-row-key]");
+      if (row?.getAttribute("data-row-key") !== openKey) setOpenKey(null);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [openKey]);
 
   useEffect(() => {
     const refresh = () => {
@@ -143,20 +156,13 @@ export function LibraryPage() {
       <div className="library">
         <h1 className="page-title">节目库</h1>
 
-        <div className="segmented" role="tablist" aria-label="节目分类">
-          {TABS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === item.id}
-              className={tab === item.id ? "is-selected" : undefined}
-              onClick={() => setTab(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          kind="tab"
+          label="节目分类"
+          options={TABS.map((item) => ({ value: item.id, label: item.label }))}
+          value={tab}
+          onChange={setTab}
+        />
 
         <div className="filter-row" role="group" aria-label="按电台筛选">
           <button type="button" className={filter === "all" ? "filter-chip is-on" : "filter-chip"} aria-pressed={filter === "all"} onClick={() => setFilter("all")}>
@@ -178,8 +184,23 @@ export function LibraryPage() {
         {visible.length ? (
           <ul className="lib-list">
             {visible.map((row) => (
-              <SwipeRow key={row.key} onDelete={row.onDelete} deleteLabel={row.deleteLabel}>
-                <Link href={row.href} className="lib-link" draggable={false} aria-label={`${row.title}，${row.status}，继续播放`}>
+              <SwipeRow
+                key={row.key}
+                rowKey={row.key}
+                onDelete={row.onDelete}
+                deleteLabel={row.deleteLabel}
+                open={openKey === row.key}
+                onOpenChange={(next) => setOpenKey(next ? row.key : null)}
+              >
+                <Link
+                  href={row.href}
+                  className="lib-link"
+                  draggable={false}
+                  onClick={(event) => {
+                    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey) return;
+                    event.preventDefault();
+                    openPlayer(row.href);
+                  }} aria-label={`${row.title}，${row.status}，继续播放`}>
                   <span className="lib-cover">
                     <ProgrammeCoverView id={row.programmeId} title={row.title} stationId={row.stationId} bare radius={0} />
                   </span>

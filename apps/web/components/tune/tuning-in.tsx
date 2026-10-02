@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 
+import { approach, cleanTarget, swingOffset, waveformPathAt } from "../../lib/motion/ambient";
+import { prefersReducedMotion } from "../../lib/motion/easing";
 import { formatFreq, type Station } from "../../lib/stations";
-import { waveformPath } from "../../lib/tuner";
+import { PX_PER_MHZ } from "../../lib/tuner";
 import { TuningWindow, useElementWidth } from "./tuning-window";
 
 export type TuningStep = { label: string; done: boolean };
@@ -24,16 +26,37 @@ export function TuningInScreen({
 }) {
   const { ref, width } = useElementWidth<HTMLDivElement>();
   const doneCount = steps.filter((step) => step.done).length;
-  const progress = doneCount / Math.max(1, steps.length);
-  const [seed, setSeed] = useState(42);
+  const waveRef = useRef<SVGPathElement | null>(null);
+  const targetRef = useRef(cleanTarget(doneCount));
+  targetRef.current = cleanTarget(doneCount);
 
-  // Re-seed the noise while preparing so the waveform crackles; still when done.
+  // One rAF loop on real elapsed time: the pointer's damped swing (first
+  // 900ms) and a continuously flowing waveform whose cleanliness eases toward
+  // the step target (~6% per frame). No per-frame randomness.
   useEffect(() => {
-    if (progress >= 1 || error) return;
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-    const timer = window.setInterval(() => setSeed((value) => value + 1), 140);
-    return () => window.clearInterval(timer);
-  }, [error, progress]);
+    const wave = waveRef.current;
+    const pointer = ref.current?.querySelector<HTMLElement>(".tw-pointer") ?? null;
+    if (prefersReducedMotion()) {
+      wave?.setAttribute("d", waveformPathAt(0, 1));
+      return;
+    }
+    const amplitude = 1.2 * PX_PER_MHZ;
+    const start = performance.now();
+    let last = start;
+    let clean = 0;
+    let frame = requestAnimationFrame(function tick(now) {
+      const elapsed = now - start;
+      clean = approach(clean, targetRef.current, now - last);
+      last = now;
+      if (pointer) {
+        const offset = swingOffset(elapsed, amplitude);
+        pointer.style.transform = offset ? `translate3d(${offset}px, 0, 0)` : "";
+      }
+      wave?.setAttribute("d", waveformPathAt(elapsed / 1000, clean));
+      frame = requestAnimationFrame(tick);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [ref]);
 
   const activeIndex = steps.findIndex((step) => !step.done);
 
@@ -47,7 +70,7 @@ export function TuningInScreen({
 
         <section className="tuning-in-card" aria-label="正在对准电台">
           <div ref={ref} className="tuning-window is-static" aria-hidden="true">
-            <TuningWindow freq={station.freq} width={width} activeStation={station} pointerGhosts swing />
+            <TuningWindow freq={station.freq} width={width} activeStation={station} pointerGhosts />
           </div>
           <div className="tuner-freq tuning-in-freq">
             <span className="tuner-fm">FM</span>
@@ -55,7 +78,7 @@ export function TuningInScreen({
           </div>
           <span className="tuning-in-name">{station.name}</span>
           <svg className="tuning-in-wave" width="300" height="56" viewBox="0 0 300 56" aria-hidden="true">
-            <path d={waveformPath(progress, seed)} style={{ stroke: station.deep }} />
+            <path ref={waveRef} d={waveformPathAt(0, 0)} style={{ stroke: station.deep }} />
           </svg>
         </section>
 

@@ -35,11 +35,10 @@
   background: #2A241A;
   color: #FFFFFF;
 }
-.page-rise { animation: page-rise var(--t-sheet) var(--ease) both; }
-@keyframes page-rise {
-  from { opacity: 0; transform: translateY(24px); }
-  to { opacity: 1; transform: none; }
-}
+/* Player overlay (MOTION.md §4.1): the page beneath stays mounted and dims. */
+.player-layer { position: absolute; inset: 0; z-index: 40; }
+.player-scrim { position: absolute; inset: 0; background: #000; opacity: .3; pointer-events: none; }
+.player-sheet { position: absolute; inset: 0; overflow: hidden; }
 
 .player-backdrop { position: absolute; inset: 0; pointer-events: none; }
 .player-backdrop-art {
@@ -61,14 +60,16 @@
   flex-direction: column;
 }
 
-.player-top-zone { touch-action: pan-x; }
+/* 44px drag area; the grabber sits above the frosted backdrop so it stays visible. */
+.player-top-zone { touch-action: none; position: relative; z-index: 1; cursor: grab; }
 .player-grabber {
   display: block;
   margin: 0 auto;
   width: 36px;
   height: 5px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, .4);
+  background: rgba(255, 255, 255, .55);
+  box-shadow: 0 0 0 .5px rgba(0, 0, 0, .08);
 }
 .player-top {
   margin-top: 8px;
@@ -103,7 +104,6 @@
   transition: transform var(--t-micro) var(--ease);
 }
 .glass-icon > svg { position: relative; }
-.glass-icon:active::before { transform: scale(.92); }
 
 .station-pill {
   min-width: 0;
@@ -134,6 +134,8 @@
 }
 .player-cover {
   flex: 0 0 auto;
+  touch-action: none;
+  transform-origin: 50% 50%;
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 22px 50px rgba(0, 0, 0, .35);
@@ -199,7 +201,22 @@
 @keyframes voice { from { transform: scaleY(.45); } to { transform: scaleY(1); } }
 
 /* Progress (three layers) */
-.progress { margin-top: 18px; display: flex; flex-direction: column; gap: 8px; }
+.progress { position: relative; margin-top: 18px; display: flex; flex-direction: column; gap: 8px; }
+.progress-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -19px;
+  height: 16px;
+  font-size: 13px;
+  line-height: 16px;
+  text-align: center;
+  color: rgba(255, 255, 255, .7);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-standard);
+  pointer-events: none;
+}
+.progress-hint.is-visible { opacity: 1; }
 .progress-hit {
   height: 24px;
   margin: -9px 0;
@@ -214,7 +231,7 @@
   width: 100%;
   height: 6px;
   border-radius: 3px;
-  overflow: hidden;
+  overflow: visible;
   transition: transform var(--t-micro) var(--ease);
 }
 .progress-track > .progress-pending {
@@ -223,9 +240,9 @@
 }
 .progress-track.dragging { transform: scaleY(1.5); }
 .progress-track > span { position: absolute; left: 0; top: 0; bottom: 0; }
+.progress-prepared, .progress-played { width: 100%; transform-origin: 0 50%; border-radius: 3px; }
 .progress-prepared { background: rgba(255, 255, 255, .32); }
-.progress-overshoot { background: rgba(255, 255, 255, .12); }
-.progress-played { background: #FFFFFF; transition: width var(--t-micro) linear; }
+.progress-played { background: #FFFFFF; transition: transform var(--dur-fast) linear; }
 .progress-track.dragging .progress-played { transition: none; }
 .progress-times {
   display: flex;
@@ -251,18 +268,20 @@
   border-radius: 50%;
   transition: transform var(--t-micro) var(--ease), opacity var(--t-micro) var(--ease);
 }
-.transport button:active { transform: scale(.9); }
+.transport button:not(:disabled):active { transform: scale(.96); transition-duration: var(--dur-instant); }
 .transport button:disabled { opacity: .35; }
 .transport-side { width: 56px; height: 56px; }
 .transport-main { width: 72px; height: 72px; }
 .morph { position: relative; width: 46px; height: 46px; display: block; }
+.morph-sm { width: 24px; height: 24px; }
 .morph > svg {
   position: absolute;
   inset: 0;
-  transition: opacity var(--t-micro) var(--ease), transform var(--t-micro) var(--ease);
+  transition: opacity var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
 }
+/* Play/pause cross-fade: outgoing shrinks to .8, incoming grows from .8 (150ms). */
 .morph[data-state="play"] .morph-pause,
-.morph[data-state="pause"] .morph-play { opacity: 0; transform: scale(.6); }
+.morph[data-state="pause"] .morph-play { opacity: 0; transform: scale(.8); }
 
 .player-error {
   position: absolute;
@@ -296,7 +315,7 @@
   color: rgba(255, 255, 255, .75);
   display: grid;
   place-items: center;
-  transition: background var(--t-micro) var(--ease), color var(--t-micro) var(--ease);
+  transition: background var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
 }
 .bottom-tool.is-on { background: rgba(255, 255, 255, .2); color: #FFFFFF; }
 
@@ -324,7 +343,7 @@
 
 /* ---------- Sheets ---------- */
 .sheet-layer { position: fixed; inset: 0; z-index: 80; display: flex; justify-content: center; align-items: flex-end; }
-.sheet-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, .35); animation: fade-in-plain var(--t-sheet) var(--ease) both; }
+.sheet-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, .35); }
 @keyframes fade-in-plain { from { opacity: 0; } to { opacity: 1; } }
 .sheet {
   position: relative;
@@ -337,8 +356,6 @@
   flex-direction: column;
   outline: none;
   overflow: hidden;
-  animation: sheet-up var(--t-sheet) var(--ease) both;
-  transition: transform var(--t-state) var(--ease);
 }
 @keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
 .sheet-dark {
@@ -355,6 +372,7 @@
   color: var(--ink);
 }
 .sheet-handle-zone { flex: 0 0 auto; height: 26px; display: grid; place-items: center; touch-action: none; cursor: grab; }
+.sheet h2:focus { outline: none; }
 .sheet-handle { width: 36px; height: 5px; border-radius: 3px; background: rgba(127, 127, 127, .45); }
 
 /* Route sheet */
@@ -465,10 +483,22 @@ button.route-track { min-height: 44px; margin: -6px 0; }
   overflow: hidden;
 }
 .mini-player[hidden] { display: none; }
-.mini-player.is-entering { animation: fade-up-plain var(--t-sheet) var(--ease) both; }
+/* Entrance only for a new programme: translateY(16px) + fade, 300ms ease-enter. */
+.mini-player.is-entering { animation: mini-in 300ms var(--ease-enter) both; }
+@keyframes mini-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
 @keyframes fade-up-plain { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 .mini-progress { position: absolute; left: 14px; right: 14px; bottom: 0; height: 2px; border-radius: 1px; background: rgba(29, 29, 31, .08); }
-.mini-progress > span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 1px; background: var(--ink); }
+.mini-progress > span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  border-radius: 1px;
+  background: var(--ink);
+  transform-origin: 0 50%;
+  transition: transform 250ms linear;
+}
 .mini-main { flex: 1 1 auto; min-width: 0; height: 60px; display: flex; align-items: center; gap: 12px; }
 .mini-cover { width: 42px; height: 42px; flex: 0 0 auto; border-radius: 8px; overflow: hidden; view-transition-name: programme-cover; }
 .mini-copy { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
@@ -484,7 +514,7 @@ button.route-track { min-height: 44px; margin: -6px 0; }
 .mini-button:active { background: var(--fill); }
 
 @media (prefers-reduced-motion: reduce) {
-  .page-rise, .sheet, .mini-player.is-entering { animation-name: fade-in-plain; }
+  .mini-player.is-entering { animation-name: fade-in-plain; }
   .voice-bars i, .route-eq i { animation: none; }
   .progress-track.dragging { transform: none; }
   .morph > svg { transform: none !important; }

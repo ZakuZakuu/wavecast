@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { STATIONS } from "../lib/stations";
-import { clampFreq, freqAfterDrag, freqToX, knurlXs, nearestStation, PX_PER_MHZ, readTuner, snapTarget, stepStation, tickGeometry } from "../lib/tuner";
+import { clampFreq, freqAfterDrag, freqToX, fullScaleGeometry, knurlXs, nearestStation, noiseForDistance, PX_PER_MHZ, readTuner, scaleTranslate, scaleX, snapTarget, stepStation, tickGeometry } from "../lib/tuner";
 
 describe("scale conversion", () => {
   it("maps 38.75px to 1 MHz around the centred pointer", () => {
@@ -67,5 +67,26 @@ describe("knurled dial", () => {
 
   it("moves the grooves as the phase changes", () => {
     expect(knurlXs(310, 0.02)).not.toEqual(knurlXs(310, 0));
+  });
+});
+
+describe("full scale layer", () => {
+  it("draws 87.5–108 once and positions it with translateX only", () => {
+    const full = fullScaleGeometry();
+    expect(full.numbers.map((n) => n.label)).toEqual(["88", "90", "92", "94", "96", "98", "100", "102", "104", "106", "108"]);
+    expect(scaleX(87.5)).toBe(0);
+    expect(scaleX(88)).toBeCloseTo(19.375);
+    expect(scaleTranslate(97.4, 310)).toBeCloseTo(155 - (97.4 - 87.5) * PX_PER_MHZ);
+    const first = full.major.match(/M([\d.]+) /);
+    expect(Number(first![1])).toBeCloseTo(scaleX(88), 1);
+  });
+
+  it("raises noise continuously with distance", () => {
+    expect(noiseForDistance(0)).toBe(0);
+    expect(noiseForDistance(0.15)).toBe(0);
+    const samples = [0.2, 0.3, 0.5, 0.8, 1.1].map(noiseForDistance);
+    for (let i = 1; i < samples.length; i += 1) expect(samples[i]).toBeGreaterThan(samples[i - 1]);
+    expect(noiseForDistance(2)).toBe(1);
+    expect(Math.abs(noiseForDistance(0.301) - noiseForDistance(0.299))).toBeLessThan(0.01);
   });
 });

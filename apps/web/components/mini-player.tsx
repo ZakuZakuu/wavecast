@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useLayoutEffect, useRef, useState } from "react";
 
 import { currentMusicSegment, estimatedTotalSeconds, formatClock } from "../lib/now-playing";
@@ -9,6 +8,7 @@ import { nextProgramMusicStart } from "../lib/playback";
 import { formatFreq } from "../lib/stations";
 import { TypeCover } from "./cover/type-cover";
 import { PauseIcon, PlayIcon, SkipIcon } from "./icons";
+import { openPlayer } from "../lib/player-nav";
 import { useNowPlaying } from "./player/playback-provider";
 
 // Programme whose entrance has already been animated (survives remounts).
@@ -21,7 +21,6 @@ let lastEnteredEpisodeId: string | null = null;
  */
 export function MiniPlayer({ hidden = false }: { hidden?: boolean }) {
   const np = useNowPlaying();
-  const router = useRouter();
   const swipeRef = useRef<number | null>(null);
   const episode = np?.localEpisode;
   const episodeId = episode?.id ?? null;
@@ -51,12 +50,21 @@ export function MiniPlayer({ hidden = false }: { hidden?: boolean }) {
       onAnimationEnd={() => setEntering(false)}
       onPointerDown={(event) => { swipeRef.current = event.clientY; }}
       onPointerUp={(event) => {
-        if (swipeRef.current !== null && swipeRef.current - event.clientY > 40) router.push(href);
+        if (swipeRef.current !== null && swipeRef.current - event.clientY > 40) openPlayer(href, "mini");
         swipeRef.current = null;
       }}
     >
-      <span className="mini-progress" aria-hidden="true"><span style={{ width: played + "%" }} /></span>
-      <Link href={href} className="mini-main" aria-label="展开播放页">
+      <span className="mini-progress" aria-hidden="true"><span style={{ transform: `scaleX(${played / 100})` }} /></span>
+      <Link
+        href={href}
+        className="mini-main"
+        aria-label="展开播放页"
+        onClick={(event) => {
+          if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+          event.preventDefault();
+          openPlayer(href, "mini");
+        }}
+      >
         <span className="mini-cover">
           {np.cover ? <TypeCover params={{ ...np.cover.params, bare: true }} radius={0} /> : null}
         </span>
@@ -80,7 +88,10 @@ export function MiniPlayer({ hidden = false }: { hidden?: boolean }) {
         aria-label={np.browserPlaying ? "暂停" : "播放"}
         onClick={np.browserPlaying ? np.pausePlayback : np.resumePlayback}
       >
-        {np.browserPlaying ? <PauseIcon size={24} /> : <PlayIcon size={24} />}
+        <span className="morph morph-sm" data-state={np.browserPlaying ? "pause" : "play"}>
+          <PlayIcon size={24} className="morph-play" />
+          <PauseIcon size={24} className="morph-pause" />
+        </span>
       </button>
       <button type="button" className="mini-button" aria-label="跳过这首" onClick={np.nextPlayback} disabled={!canSkip}>
         <SkipIcon size={24} />

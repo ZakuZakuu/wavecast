@@ -42,16 +42,22 @@ export type TunerReading = {
   between: boolean;
   /** Lit signal bars, 1..5. */
   bars: number;
-  /** Static noise layer opacity, 0..1 (only between stations). */
+  /** Static noise opacity, 0..1, rising continuously with distance from a station. */
   noise: number;
 };
+
+/** Noise grows smoothly from the lock range to ~1.2 MHz away (no on/off steps). */
+export function noiseForDistance(distance: number): number {
+  const t = Math.min(1, Math.max(0, (distance - LOCK_RANGE) / (1.2 - LOCK_RANGE)));
+  return t * t * (3 - 2 * t);
+}
 
 export function readTuner(freq: number): TunerReading {
   const { station, distance } = nearestStation(freq);
   const locked = distance <= LOCK_RANGE + 1e-9;
   const between = distance > BETWEEN_THRESHOLD + 1e-9;
   const bars = locked ? 5 : between ? 1 : 3;
-  const noise = between ? Math.min(1, (distance - BETWEEN_THRESHOLD) / 1.2 + 0.35) : 0;
+  const noise = noiseForDistance(distance);
   return { station, distance, locked, between, bars, noise };
 }
 
@@ -73,6 +79,24 @@ export function stepStation(freq: number, direction: 1 | -1): Station {
     return (direction > 0 ? candidates[0] : candidates.at(-1)) ?? station;
   }
   return STATIONS[Math.min(STATIONS.length - 1, Math.max(0, index + direction))];
+}
+
+/** Width in px of the whole 87.5–108 MHz scale. */
+export const FULL_SCALE_WIDTH = (FREQ_MAX - FREQ_MIN) * PX_PER_MHZ;
+
+/** X of a frequency on the full scale layer (0 at 87.5 MHz). */
+export function scaleX(freq: number): number {
+  return (freq - FREQ_MIN) * PX_PER_MHZ;
+}
+
+/** translateX of the full scale so `freq` sits under the window's centre. */
+export function scaleTranslate(freq: number, windowWidth: number): number {
+  return windowWidth / 2 - scaleX(freq);
+}
+
+/** The whole band drawn once (ticks + numbers), for a translateX-only layer. */
+export function fullScaleGeometry(): TickGeometry {
+  return tickGeometry((FREQ_MIN + FREQ_MAX) / 2, FULL_SCALE_WIDTH);
 }
 
 export type TickGeometry = {
@@ -157,24 +181,6 @@ export function noisePath(width: number, height = 96, count = 260, seed = 7): st
     const y = R() * height;
     const rr = 0.4 + R() * 0.6;
     d += "M" + r2(x - rr) + " " + r2(y) + "a" + r2(rr) + " " + r2(rr) + " 0 1 0 " + r2(2 * rr) + " 0a" + r2(rr) + " " + r2(rr) + " 0 1 0 " + r2(-2 * rr) + " 0Z";
-  }
-  return d;
-}
-
-/**
- * Tuning-in waveform: static noise fading into a clean sine as preparation
- * progresses (0 = all noise, 1 = smooth sine).
- */
-export function waveformPath(progress: number, seed: number, width = 300, mid = 28): string {
-  const p = Math.min(1, Math.max(0, progress));
-  const R = rng(seed);
-  let d = "";
-  for (let x = 0; x <= width; x += 2) {
-    const t = x / width;
-    const noiseAmp = 20 * (1 - p) * Math.pow(1 - t * p, 1.6);
-    const sineAmp = 12 * (0.25 + 0.75 * p) * Math.pow(Math.max(t, p * 0.6), 0.7);
-    const y = mid + (R() * 2 - 1) * noiseAmp + sineAmp * Math.sin(x * 0.12);
-    d += (x ? "L" : "M") + x + " " + r2(y);
   }
   return d;
 }

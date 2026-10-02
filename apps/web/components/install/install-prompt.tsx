@@ -28,6 +28,12 @@ if (typeof window !== "undefined") {
 /** iOS Safari: guided card. Android/Chrome: light banner calling prompt(). */
 export function InstallPrompt() {
   const [mode, setMode] = useState<"none" | "ios" | "banner">("none");
+  // Plays the 150ms fade-out before the dialog unmounts (MOTION.md §4.3).
+  const [leaving, setLeaving] = useState(false);
+  const dismiss = () => {
+    if (mode === "ios" && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) setLeaving(true);
+    else setMode("none");
+  };
 
   useEffect(() => {
     const visits = countVisit();
@@ -49,11 +55,11 @@ export function InstallPrompt() {
 
   const later = () => {
     snoozeInstall();
-    setMode("none");
+    dismiss();
   };
   const gotIt = () => {
     acknowledgeInstall();
-    setMode("none");
+    dismiss();
   };
 
   if (mode === "banner") {
@@ -84,7 +90,15 @@ export function InstallPrompt() {
 
   return (
     <Portal>
-    <div className="install-layer">
+    <div
+      className={leaving ? "install-layer is-leaving" : "install-layer"}
+      onAnimationEnd={(event) => {
+        if (leaving && event.target === event.currentTarget) {
+          setLeaving(false);
+          setMode("none");
+        }
+      }}
+    >
       <div className="sheet-scrim" aria-hidden="true" onClick={later} />
       <section className="install-card" role="dialog" aria-modal="true" aria-labelledby="install-title">
         <span className="install-logo"><LogoMark size={76} /></span>
