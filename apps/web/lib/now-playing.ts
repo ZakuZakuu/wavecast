@@ -141,3 +141,42 @@ export function routeChapters(
     };
   });
 }
+
+/** The next music after the playhead (MixPlan order, falling back to segment order). */
+export function nextMusicSegment(
+  episode: LiveEpisode,
+  plan: MixPlan | null,
+  position: number,
+  currentMusicId: string | null,
+): MusicSegment | undefined {
+  const byId = (id: string) => episode.segments.find((segment) => segment.id === id);
+  if (plan) {
+    const next = plan.clips
+      .filter((clip) => clip.lane === "MUSIC" && clip.timelineStartSeconds > position + 0.05 && clip.segmentId !== currentMusicId)
+      .sort((left, right) => left.timelineStartSeconds - right.timelineStartSeconds)[0];
+    const segment = next ? byId(next.segmentId) : undefined;
+    if (segment?.kind === "MUSIC") return segment;
+  }
+  const ordered = [...episode.segments]
+    .filter((segment) => segment.state !== "SKIPPED")
+    .sort((left, right) => left.order - right.order);
+  const index = currentMusicId ? ordered.findIndex((segment) => segment.id === currentMusicId) : -1;
+  return ordered.slice(index + 1).find((segment): segment is MusicSegment => segment.kind === "MUSIC");
+}
+
+/** 1-based chapter ("第 N 段") that contains a segment, or null. */
+export function chapterNumberOf(episode: LiveEpisode, segmentId: string | null | undefined): number | null {
+  if (!segmentId) return null;
+  const index = musicChaptersForEpisode(episode)
+    .findIndex((chapter) => chapter.segments.some((segment) => segment.id === segmentId));
+  return index >= 0 ? index + 1 : null;
+}
+
+/** Timeline start and duration of a narration (VOICE) clip, when the MixPlan has it. */
+export function voiceClipTiming(
+  plan: MixPlan | null,
+  segmentId: string,
+): { startSeconds: number; durationSeconds: number } | null {
+  const clip = plan?.clips.find((candidate) => candidate.lane === "VOICE" && candidate.segmentId === segmentId);
+  return clip ? { startSeconds: clip.timelineStartSeconds, durationSeconds: clip.playableDurationSeconds } : null;
+}

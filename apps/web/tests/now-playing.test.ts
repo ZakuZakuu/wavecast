@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { clampSeek, currentMusicSegment, estimatedTotalSeconds, formatClock, progressLayers, routeChapters, trackLabel } from "../lib/now-playing";
+import { chapterNumberOf, clampSeek, currentMusicSegment, nextMusicSegment, voiceClipTiming, estimatedTotalSeconds, formatClock, progressLayers, routeChapters, trackLabel } from "../lib/now-playing";
 import type { MixPlan } from "../lib/mix-timeline";
 import type { LiveEpisode } from "../lib/types";
 
@@ -80,5 +80,18 @@ describe("route", () => {
   it("labels tracks", () => {
     expect(trackLabel({ title: "春风吹", artist: "方大同" })).toBe("方大同《春风吹》");
     expect(trackLabel({ title: "", artist: null })).toBe("曲目待定");
+  });
+});
+
+describe("now line view model", () => {
+  it("finds the next music, its chapter and the narration clip timing", () => {
+    expect(nextMusicSegment(episode, plan, 10, "m1")?.id).toBe("m2");
+    expect(nextMusicSegment(episode, plan, 150, "m2")?.id).toBe("m3");
+    expect(nextMusicSegment(episode, null, 0, "m1")?.id).toBe("m2");
+    expect(chapterNumberOf(episode, "m2")).toBe(2);
+    expect(chapterNumberOf(episode, "n1")).toBe(2);
+    expect(chapterNumberOf(episode, "nope")).toBeNull();
+    expect(voiceClipTiming(plan, "n1")).toEqual({ startSeconds: 95, durationSeconds: 10 });
+    expect(voiceClipTiming(plan, "m1")).toBeNull();
   });
 });

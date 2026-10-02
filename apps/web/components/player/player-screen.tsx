@@ -8,17 +8,45 @@ import { isDarkColour } from "../../lib/cover/build-cover";
 import { readCaptionsEnabled, recordLessLikeThis, writeCaptionsEnabled } from "../../lib/listener-feedback";
 import { friendlyError } from "../../lib/friendly-error";
 import { lastTabPathOr } from "../../lib/nav-memory";
-import { currentMusicSegment, estimatedTotalSeconds } from "../../lib/now-playing";
+import { chapterNumberOf, currentMusicSegment, estimatedTotalSeconds, nextMusicSegment, trackLabel, voiceClipTiming } from "../../lib/now-playing";
+import { currentSentenceIndex, nowLineMode, splitSentences, type NowLineMode } from "../../lib/now-line";
 import { nextProgramMusicStart } from "../../lib/playback";
 import { formatFreq } from "../../lib/stations";
 import { TypeCover } from "../cover/type-cover";
 import { Back15Icon, CaptionsIcon, ChevronDownIcon, MoreIcon, PauseIcon, PlayIcon, RouteIcon, SkipIcon, ThumbDownIcon } from "../icons";
 import { MoreSheet } from "./more-sheet";
+import { NarrationSheet } from "./narration-sheet";
+import { NowLine } from "./now-line";
 import { useNowPlaying, usePlaybackControl, usePlaybackTarget } from "./playback-provider";
 import { ProgressBar } from "./progress-bar";
 import { RouteSheet } from "./route-sheet";
 
-const CAPTION_LINGER_MS = 1500;
+const COVER_MAX = 296;
+const LAYOUT_SAMPLE = "这是一段用来检查布局的主持词。它比较长，用来确认字幕只显示两行。切换到下一句时会平滑上移！最后一句。";
+
+/** Dev only: ?nowline=narration|preparing|next forces a NowLine state for layout checks. */
+function forcedNowLineMode(): NowLineMode | null {
+  if (process.env.NODE_ENV === "production" || typeof window === "undefined") return null;
+  const value = new URLSearchParams(window.location.search).get("nowline");
+  return value === "narration" || value === "preparing" || value === "next" ? value : null;
+}
+
+/** Cover = min(296, available height - 16, available width), recomputed on resize. */
+function useCoverSize(extraBelow: number) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState(COVER_MAX);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setSize(Math.max(96, Math.floor(Math.min(COVER_MAX, height - 16 - extraBelow, width))));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [extraBelow]);
+  return { ref, size };
+}
 
 function useToast() {
   const [message, setMessage] = useState<string | null>(null);
@@ -43,10 +71,14 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
   const [routeOpen, setRouteOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [captions, setCaptions] = useState(true);
-  const [caption, setCaption] = useState<{ text: string | null } | null>(null);
+  const [narrationOpen, setNarrationOpen] = useState(false);
+  const [forcedMode, setForcedMode] = useState<NowLineMode | null>(null);
   const swipeRef = useRef<number | null>(null);
 
-  useEffect(() => setCaptions(readCaptionsEnabled()), []);
+  useEffect(() => {
+    setCaptions(readCaptionsEnabled());
+    setForcedMode(forcedNowLineMode());
+  }, []);
 
   const matches = playback?.localEpisode && (
     episodeId ? playback.localEpisode.id === episodeId : playback.localEpisode.seed_id === seedId
@@ -58,23 +90,22 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
     router.push(lastTabPathOr("/"));
   }, [router]);
 
-  // Caption bar: follows the current narration and lingers 1.5s after it ends.
+  // Narration shown in the NowLine and the full-script sheet. The sheet keeps
+  // the last narration so it does not empty out when the host stops talking.
   const narration = np?.current?.kind === "NARRATION" ? np.current : null;
-  const narrationKey = narration?.id ?? null;
-  const narrationText = narration?.narration_text?.trim() || null;
+  const narrationText = narration?.narration_text?.trim() || (forcedMode === "narration" ? LAYOUT_SAMPLE : "");
+  const sentences = useMemo(() => splitSentences(narrationText), [narrationText]);
+  const [sheetNarration, setSheetNarration] = useState<{ id: string; sentences: string[] } | null>(null);
+  const narrationId = narration?.id ?? (forcedMode === "narration" ? "layout-sample" : null);
   useEffect(() => {
-    if (narrationKey) {
-      setCaption({ text: narrationText });
-      return;
-    }
-    const timer = window.setTimeout(() => setCaption(null), CAPTION_LINGER_MS);
-    return () => window.clearTimeout(timer);
-  }, [narrationKey, narrationText]);
+    if (narrationId && sentences.length) setSheetNarration({ id: narrationId, sentences });
+  }, [narrationId, sentences]);
 
   const music = useMemo(
     () => episode && np ? currentMusicSegment(episode, np.mixPlan, np.browserPosition, np.current) : undefined,
     [episode, np],
   );
+  const { ref: coverAreaRef, size: coverSize } = useCoverSize(np?.cover?.titleBelow ? 26 : 0);
 
   if (!np || !episode) {
     // A start that failed before any episode existed still reports here.
@@ -137,8 +168,28 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
     });
   };
 
-  const showCaptionBar = Boolean(caption);
-  const showPreparing = !showCaptionBar && preparingHint;
+  // Sentence timing follows the audio position, so seeks re-derive it.
+  const sentenceIndexFor = (segmentId: string | null, list: string[]) => {
+    if (!list.length) return -1;
+    if (!segmentId) return 0;
+    const timing = voiceClipTiming(np.mixPlan, segmentId);
+    const start = timing?.startSeconds ?? np.mixPlan?.segmentStarts[segmentId] ?? null;
+    if (start === null) return 0;
+    return currentSentenceIndex(list, np.browserPosition - start, timing?.durationSeconds ?? null);
+  };
+  const sentenceIndex = sentenceIndexFor(narrationId, sentences);
+  const sheetId = sheetNarration?.id ?? null;
+  const sheetIndex = sheetId === narrationId
+    ? sentenceIndex
+    : sentenceIndexFor(sheetId, sheetNarration?.sentences ?? []);
+
+  const mode = forcedMode ?? nowLineMode({ narrating: Boolean(narration), preparing: preparingHint });
+  const nextMusic = nextMusicSegment(episode, np.mixPlan, np.browserPosition, music?.id ?? null);
+  const nextChapter = chapterNumberOf(episode, nextMusic?.id);
+  const next = nextMusic
+    ? { primary: trackLabel(nextMusic), secondary: nextChapter ? `第 ${nextChapter} 段` : "" }
+    : { primary: `继续收听：${episode.title ?? "WaveCast"}`, secondary: "" };
+  const narrationChapter = chapterNumberOf(episode, sheetId);
 
   return (
     <main className="player page-rise" data-cover-tone={darkCover ? "dark" : "light"}>
@@ -179,91 +230,85 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
           </div>
         </div>
 
-        <div className="player-cover-slot">
+        <div ref={coverAreaRef} className="player-cover-area">
           {cover ? (
-            <div className="player-cover">
+            <div className="player-cover" style={{ width: coverSize, height: coverSize }}>
               <TypeCover params={cover.params} radius={12} />
             </div>
           ) : null}
+          {cover?.titleBelow ? <p className="player-programme-title" style={{ maxWidth: coverSize }}>{episode.title}</p> : null}
         </div>
-        {cover?.titleBelow ? <p className="player-programme-title">{episode.title}</p> : null}
 
-        <div className="player-meta">
-          <div className="player-meta-text">
-            <h1>{music?.title || episode.title || "WaveCast"}</h1>
-            <p>{music?.artist ?? station?.name ?? ""}</p>
+        <div className="player-dock">
+          <div className="player-meta">
+            <div className="player-meta-text">
+              <h1>{music?.title || episode.title || "WaveCast"}</h1>
+              <p>{music?.artist ?? station?.name ?? ""}</p>
+            </div>
+            <button type="button" className="glass-icon" aria-label="少放这类" onClick={lessLikeThis}>
+              <ThumbDownIcon size={20} strokeWidth={1.8} />
+            </button>
           </div>
-          <button type="button" className="glass-icon" aria-label="少放这类" onClick={lessLikeThis}>
-            <ThumbDownIcon size={20} strokeWidth={1.8} />
-          </button>
-        </div>
 
-        <div className="player-caption-slot" aria-live="polite">
-          {showCaptionBar ? (
-            <div className={narrationKey ? "caption-bar is-open" : "caption-bar is-closing"}>
-              <span className="caption-label">
-                <span className="voice-bars" aria-hidden="true"><i /><i /><i /><i /><i /></span>
-                主持在说
+          <NowLine
+            mode={mode}
+            sentences={sentences}
+            sentenceIndex={Math.max(0, sentenceIndex)}
+            captions={captions}
+            next={next}
+            preparedSeconds={frontier}
+            onOpenNarration={() => setNarrationOpen(true)}
+            onRetry={!audioReady && np.renderState === "error" ? np.requestProgramRender : undefined}
+          />
+
+          <ProgressBar
+            position={np.displayedPosition}
+            frontier={frontier}
+            total={total}
+            disabled={!audioReady}
+            onPreview={np.updateSeekPreview}
+            onCommit={np.commitSeek}
+            onOvershoot={() => toast.show("这部分还在准备")}
+          />
+
+          <div className="transport" aria-label="播放控制">
+            <button type="button" className="transport-side" aria-label="后退 15 秒" onClick={() => np.nudgeSeek(-15)} disabled={!audioReady}>
+              <Back15Icon size={34} />
+            </button>
+            <button
+              type="button"
+              className="transport-main"
+              aria-label={np.browserPlaying ? "暂停" : "播放"}
+              onClick={np.browserPlaying ? np.pausePlayback : np.resumePlayback}
+            >
+              <span className="morph" data-state={np.browserPlaying ? "pause" : "play"}>
+                <PlayIcon size={46} className="morph-play" />
+                <PauseIcon size={46} className="morph-pause" />
               </span>
-              {captions && caption?.text ? <p>{caption.text}</p> : null}
-            </div>
-          ) : showPreparing ? (
-            <div className="caption-bar is-open is-hint">
-              <span className="caption-label">正在准备接下来的内容</span>
-            </div>
-          ) : null}
-        </div>
+            </button>
+            <button type="button" className="transport-side" aria-label="跳过这首" onClick={skip} disabled={!audioReady}>
+              <SkipIcon size={34} />
+            </button>
+          </div>
 
-        <ProgressBar
-          position={np.displayedPosition}
-          frontier={frontier}
-          total={total}
-          disabled={!audioReady}
-          onPreview={np.updateSeekPreview}
-          onCommit={np.commitSeek}
-          onOvershoot={() => toast.show("这部分还在准备")}
-        />
-
-        <div className="transport" aria-label="播放控制">
-          <button type="button" className="transport-side" aria-label="后退 15 秒" onClick={() => np.nudgeSeek(-15)} disabled={!audioReady}>
-            <Back15Icon size={34} />
-          </button>
-          <button
-            type="button"
-            className="transport-main"
-            aria-label={np.browserPlaying ? "暂停" : "播放"}
-            onClick={np.browserPlaying ? np.pausePlayback : np.resumePlayback}
-          >
-            <span className="morph" data-state={np.browserPlaying ? "pause" : "play"}>
-              <PlayIcon size={46} className="morph-play" />
-              <PauseIcon size={46} className="morph-pause" />
-            </span>
-          </button>
-          <button type="button" className="transport-side" aria-label="跳过这首" onClick={skip} disabled={!audioReady}>
-            <SkipIcon size={34} />
-          </button>
-        </div>
-
-        {np.error ? <p className="player-error" role="alert">{np.error}</p> : null}
-        {!audioReady && np.renderState === "error" ? (
-          <button type="button" className="pill-button on-dark" onClick={np.requestProgramRender}>重试准备</button>
-        ) : null}
-
-        <div className="player-bottom">
-          <button
-            type="button"
-            className={captions ? "bottom-tool is-on" : "bottom-tool"}
-            aria-label="字幕"
-            aria-pressed={captions}
-            onClick={toggleCaptions}
-          >
-            <CaptionsIcon size={22} strokeWidth={1.8} />
-          </button>
-          <button type="button" className="bottom-tool" aria-label="节目路线" onClick={() => setRouteOpen(true)}>
-            <RouteIcon size={22} strokeWidth={1.8} />
-          </button>
+          <div className="player-bottom">
+            <button
+              type="button"
+              className={captions ? "bottom-tool is-on" : "bottom-tool"}
+              aria-label="字幕"
+              aria-pressed={captions}
+              onClick={toggleCaptions}
+            >
+              <CaptionsIcon size={22} strokeWidth={1.8} />
+            </button>
+            <button type="button" className="bottom-tool" aria-label="节目路线" onClick={() => setRouteOpen(true)}>
+              <RouteIcon size={22} strokeWidth={1.8} />
+            </button>
+          </div>
         </div>
       </div>
+
+      {np.error ? <p className="player-error" role="alert">{friendlyError(np.error, "播放遇到了问题，可以稍后重试")}</p> : null}
 
       {toast.message ? <div className="toast" role="status">{toast.message}</div> : null}
 
@@ -275,6 +320,13 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
         totalSeconds={total}
       />
       <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} playback={np} />
+      <NarrationSheet
+        open={narrationOpen}
+        onClose={() => setNarrationOpen(false)}
+        subtitle={narrationChapter ? `第 ${narrationChapter} 段` : episode.title ?? "WaveCast"}
+        sentences={sheetNarration?.sentences ?? []}
+        index={Math.max(0, sheetIndex)}
+      />
     </main>
   );
 }
