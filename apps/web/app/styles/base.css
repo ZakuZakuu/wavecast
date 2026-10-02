@@ -23,6 +23,9 @@ button { cursor: pointer; }
 button:disabled { cursor: default; }
 h1, h2, h3, p { margin-top: 0; }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* Keyboard focus stays visible on dark surfaces too; mouse focus draws none. */
+:where(.player-sheet, .sheet-dark) :focus-visible { outline-color: #FFFFFF; }
+:focus:not(:focus-visible) { outline: none; }
 
 /* Press feedback (MOTION.md §4.6): clickable things dip to .96 in 100ms and
    return in 150ms. Component rules that set their own transition must list
@@ -55,10 +58,7 @@ h1, h2, h3, p { margin-top: 0; }
   background: var(--bg);
 }
 
-@media (min-width: 980px) {
-  body { background: #E6E6EA; }
-  .app-root { box-shadow: 0 0 0 .5px var(--separator), 0 20px 60px rgba(29, 29, 31, .08); }
-}
+/* Wide-screen backdrop and side card: desktop.css. */
 
 .app-frame {
   position: absolute;

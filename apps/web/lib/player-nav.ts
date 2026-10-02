@@ -2,6 +2,8 @@
 // The URL still changes (shareable, back button works): a history.pushState
 // that Next.js syncs into usePathname without rendering a new page.
 
+import { detachOverlayHistory, onOverlayHistoryEntry } from "./overlay-stack";
+
 export type PlayerOpenSource = "mini" | "fade" | "slide";
 
 export type PlayerTargetFromPath = { seedId?: string; episodeId?: string };
@@ -40,6 +42,13 @@ export function openPlayer(href: string, source: PlayerOpenSource = "slide"): vo
   const rect = source === "mini" ? lastMiniCoverRect : null;
   pendingSource = { source, rect };
   openedInApp = true;
+  if (onOverlayHistoryEntry()) {
+    // An overlay (开播中) owns the current entry and hands over to the
+    // player: replace it, so Back from the player returns to the page.
+    detachOverlayHistory();
+    window.history.replaceState(null, "", href);
+    return;
+  }
   window.history.pushState(null, "", href);
 }
 

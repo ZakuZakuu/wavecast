@@ -7,9 +7,39 @@ const ACK_KEY = "wavecast-install-ack-v1";
 
 export const SNOOZE_DAYS = 14;
 
+export type DeferredInstallPrompt = Event & { prompt: () => Promise<void>; userChoice?: Promise<unknown> };
+
+// Android Chrome fires beforeinstallprompt once, early, on whichever page the
+// visit starts. This module is loaded app-wide (playback provider), so the
+// event is kept even when the visit starts away from the home page.
+let deferredPrompt: DeferredInstallPrompt | null = null;
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    deferredPrompt = event as DeferredInstallPrompt;
+  });
+  window.addEventListener("appinstalled", () => {
+    deferredPrompt = null;
+    acknowledgeInstall();
+  });
+}
+
+export function peekInstallPrompt(): DeferredInstallPrompt | null {
+  return deferredPrompt;
+}
+
+/** Hands the saved prompt to the caller once (prompt() may only be called once). */
+export function takeInstallPrompt(): DeferredInstallPrompt | null {
+  const prompt = deferredPrompt;
+  deferredPrompt = null;
+  return prompt;
+}
+
 export type InstallContext = {
   platform: "ios-safari" | "installable" | "other";
   standalone: boolean;
+  /** Mouse-driven wide screen: the desktop side card offers a QR code instead. */
+  desktop?: boolean;
   visits: number;
   finishedProgramme: boolean;
   snoozedUntil: number;
@@ -18,7 +48,7 @@ export type InstallContext = {
 };
 
 export function shouldOfferInstall(context: InstallContext): boolean {
-  if (context.platform === "other" || context.standalone || context.acknowledged) return false;
+  if (context.platform === "other" || context.standalone || context.acknowledged || context.desktop) return false;
   if (context.now < context.snoozedUntil) return false;
   return context.finishedProgramme || context.visits >= 2;
 }
@@ -93,4 +123,10 @@ export function isStandalone(): boolean {
   if (typeof window === "undefined") return false;
   const nav = navigator as Navigator & { standalone?: boolean };
   return nav.standalone === true || window.matchMedia?.("(display-mode: standalone)").matches === true;
+}
+
+/** A computer: wide viewport with a hovering, precise pointer (not a phone or tablet). */
+export function isDesktopPointer(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  return window.matchMedia("(min-width: 768px) and (hover: hover) and (pointer: fine)").matches;
 }

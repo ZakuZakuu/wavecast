@@ -58,7 +58,7 @@ export function TypeCover({
 
       {show && cover.template === "freq" ? (
         <>
-          <span style={{ position: "absolute", left: cq(3), bottom: cq(-6), fontSize: cq(34), fontWeight: 200, lineHeight: 1, letterSpacing: "-0.05em", color: cover.p1 }}>{cover.freq}</span>
+          <span style={{ position: "absolute", left: cq(3), bottom: cq(-6), fontFamily: "var(--font-numeric)", fontSize: cq(34), fontWeight: 200, lineHeight: 1, letterSpacing: "-0.05em", color: cover.p1 }}>{cover.freq}</span>
           <span style={{ position: "absolute", left: cq(7), top: cq(7), right: cq(7), display: "flex", flexDirection: "column", gap: cq(2) }}>
             <span style={{ fontSize: cq(cover.titleSize), fontWeight: 700, lineHeight: 1.15, letterSpacing: "-0.01em", whiteSpace: "pre-line", color: cover.onBg }}>{cover.heading}</span>
             <span style={{ fontSize: cq(5), fontWeight: 500, color: cover.onBg, opacity: 0.75 }}>{cover.station}</span>
@@ -93,7 +93,7 @@ export function TypeCover({
           </span>
           <span style={{ position: "absolute", left: 0, bottom: cq(6), width: cq(40), display: "flex", flexDirection: "column", alignItems: "center", gap: cq(0.8), color: cover.onP2 }}>
             <span style={{ fontSize: cq(4.6), fontWeight: 500, opacity: 0.8 }}>{cover.station}</span>
-            <span style={{ fontSize: cq(5.4), fontWeight: 200 }}>{cover.freq}</span>
+            <span style={{ fontFamily: "var(--font-numeric)", fontSize: cq(5.4), fontWeight: 200 }}>{cover.freq}</span>
           </span>
         </>
       ) : null}

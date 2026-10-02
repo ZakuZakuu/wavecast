@@ -184,3 +184,21 @@ export function noisePath(width: number, height = 96, count = 260, seed = 7): st
   }
   return d;
 }
+
+/** Milliseconds of wheel silence before the dial snaps to the nearest station. */
+export const WHEEL_SNAP_DELAY_MS = 150;
+
+/**
+ * Wheel/trackpad scroll as scale travel in px: the dominant axis wins, line
+ * and page modes are normalised. Down/right scrolls toward higher frequencies.
+ */
+export function wheelDeltaPx(
+  event: { deltaX: number; deltaY: number; deltaMode: number },
+  pageWidth = 310,
+): number {
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+  if (!Number.isFinite(delta)) return 0;
+  if (event.deltaMode === 1) return delta * 16;
+  if (event.deltaMode === 2) return delta * pageWidth;
+  return delta;
+}

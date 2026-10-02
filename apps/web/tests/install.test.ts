@@ -22,6 +22,12 @@ describe("install guide conditions", () => {
     expect(shouldOfferInstall({ ...base, visits: 3, platform: "other" })).toBe(false);
   });
 
+  it("is never offered on a computer (the desktop side card has a QR code)", () => {
+    expect(shouldOfferInstall({ ...base, visits: 3, desktop: true })).toBe(false);
+    expect(shouldOfferInstall({ ...base, visits: 3, platform: "installable", desktop: true })).toBe(false);
+    expect(shouldOfferInstall({ ...base, visits: 3, platform: "installable" })).toBe(true);
+  });
+
   it("detects iOS Safari vs other browsers", () => {
     const iphoneSafari = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
     const iphoneChrome = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/129.0 Mobile/15E148 Safari/604.1";

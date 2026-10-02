@@ -44,7 +44,7 @@
   transition: transform var(--dur-fast) var(--ease-standard);
 }
 .station-card:active { transform: scale(.96); transition-duration: var(--dur-instant); }
-.station-card-freq { font-size: 30px; font-weight: 200; line-height: 1; letter-spacing: -0.02em; }
+.station-card-freq { font-family: var(--font-numeric); font-size: 30px; font-weight: 200; line-height: 1; letter-spacing: -0.02em; }
 .station-card-copy { display: flex; flex-direction: column; gap: 3px; }
 .station-card-name { font-size: 17px; font-weight: 600; }
 .station-card-line { font-size: 13px; line-height: 1.4; opacity: .85; }

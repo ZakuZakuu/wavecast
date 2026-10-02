@@ -13,6 +13,9 @@
   --danger: #FF3B30;
 
   --font-ui: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  /* Thin frequency numerals: Android has Roboto Thin/Light but its CJK system
+     font (Noto Sans SC) often lacks weights below 400, so Roboto goes first. */
+  --font-numeric: -apple-system, "Roboto", "Noto Sans SC", sans-serif;
   --font-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
 
   --gutter: 20px;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { STATIONS } from "../lib/stations";
-import { clampFreq, freqAfterDrag, freqToX, fullScaleGeometry, knurlXs, nearestStation, noiseForDistance, PX_PER_MHZ, readTuner, scaleTranslate, scaleX, snapTarget, stepStation, tickGeometry } from "../lib/tuner";
+import { clampFreq, freqAfterDrag, freqToX, fullScaleGeometry, knurlXs, nearestStation, noiseForDistance, PX_PER_MHZ, readTuner, scaleTranslate, scaleX, snapTarget, stepStation, tickGeometry, wheelDeltaPx } from "../lib/tuner";
 
 describe("scale conversion", () => {
   it("maps 38.75px to 1 MHz around the centred pointer", () => {
@@ -88,5 +88,17 @@ describe("full scale layer", () => {
     for (let i = 1; i < samples.length; i += 1) expect(samples[i]).toBeGreaterThan(samples[i - 1]);
     expect(noiseForDistance(2)).toBe(1);
     expect(Math.abs(noiseForDistance(0.301) - noiseForDistance(0.299))).toBeLessThan(0.01);
+  });
+});
+
+describe("wheelDeltaPx", () => {
+  it("uses the dominant axis so both horizontal and vertical scrolling tune", () => {
+    expect(wheelDeltaPx({ deltaX: 30, deltaY: 4, deltaMode: 0 })).toBe(30);
+    expect(wheelDeltaPx({ deltaX: -2, deltaY: -40, deltaMode: 0 })).toBe(-40);
+  });
+
+  it("normalises line and page delta modes", () => {
+    expect(wheelDeltaPx({ deltaX: 0, deltaY: 3, deltaMode: 1 })).toBe(48);
+    expect(wheelDeltaPx({ deltaX: 0, deltaY: 1, deltaMode: 2 }, 300)).toBe(300);
   });
 });

@@ -6,24 +6,18 @@ import {
   acknowledgeInstall,
   countVisit,
   detectPlatform,
+  isDesktopPointer,
   isStandalone,
+  peekInstallPrompt,
   readInstallState,
   shouldOfferInstall,
   snoozeInstall,
+  takeInstallPrompt,
 } from "../../lib/install";
+import { useOverlay } from "../../lib/overlay-stack";
 import { PlusSquareIcon, ShareIcon } from "../icons";
 import { LogoMark } from "../logo-mark";
 import { Portal } from "../portal";
-
-type DeferredPrompt = Event & { prompt: () => Promise<void>; userChoice?: Promise<unknown> };
-
-let deferredPrompt: DeferredPrompt | null = null;
-if (typeof window !== "undefined") {
-  window.addEventListener("beforeinstallprompt", (event) => {
-    event.preventDefault();
-    deferredPrompt = event as DeferredPrompt;
-  });
-}
 
 /** iOS Safari: guided card. Android/Chrome: light banner calling prompt(). */
 export function InstallPrompt() {
@@ -35,11 +29,16 @@ export function InstallPrompt() {
     else setMode("none");
   };
 
+  useOverlay(mode === "ios" && !leaving, () => {
+    snoozeInstall();
+    dismiss();
+  });
+
   useEffect(() => {
     const visits = countVisit();
     const evaluate = () => {
-      const platform = detectPlatform(navigator.userAgent, navigator.maxTouchPoints ?? 0, Boolean(deferredPrompt));
-      const show = shouldOfferInstall({ platform, standalone: isStandalone(), visits, ...readInstallState() });
+      const platform = detectPlatform(navigator.userAgent, navigator.maxTouchPoints ?? 0, Boolean(peekInstallPrompt()));
+      const show = shouldOfferInstall({ platform, standalone: isStandalone(), desktop: isDesktopPointer(), visits, ...readInstallState() });
       setMode(show ? (platform === "ios-safari" ? "ios" : "banner") : "none");
     };
     const timer = window.setTimeout(evaluate, 1200);
@@ -71,8 +70,7 @@ export function InstallPrompt() {
           type="button"
           className="install-banner-action"
           onClick={async () => {
-            const prompt = deferredPrompt;
-            deferredPrompt = null;
+            const prompt = takeInstallPrompt();
             if (!prompt) return later();
             await prompt.prompt().catch(() => undefined);
             acknowledgeInstall();

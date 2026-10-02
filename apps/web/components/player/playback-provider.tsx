@@ -311,6 +311,7 @@ function PlaybackHost({
           onPlayRequest={playback.resumePlayback}
           onPauseRequest={playback.pausePlayback}
           onSeekRequest={playback.commitSeek}
+          onNextRequest={playback.nextPlayback}
           onError={(message) => playback.setError(message)}
         />
       ) : null}

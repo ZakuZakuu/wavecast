@@ -6,6 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { DUR, easeEnter, easeExit, prefersReducedMotion, tween } from "../../lib/motion/easing";
 import { attachDragDismiss, type DragDismiss } from "../../lib/motion/drag-dismiss";
 import { lastTabPathOr } from "../../lib/nav-memory";
+import { useOverlay } from "../../lib/overlay-stack";
 import {
   miniCoverTargetRect,
   playerOpenedInApp,
@@ -190,6 +191,10 @@ export function PlayerOverlay() {
   }, [shownKey]);
 
   useEffect(() => () => cancelFadeRef.current?.(), []);
+
+  // Esc collapses the player when nothing is open above it. Back needs no
+  // extra entry: the player has its own URL.
+  useOverlay(Boolean(shown), () => close(0, true), { history: false });
 
   if (!shown) return null;
 

@@ -17,6 +17,7 @@
     "kysely": "^0.29.6",
     "next": "15.1.11",
     "pg": "^8.23.0",
+    "qrcode-generator": "2.0.4",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "zustand": "5.0.2"
