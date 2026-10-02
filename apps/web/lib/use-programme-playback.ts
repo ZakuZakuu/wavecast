@@ -469,6 +469,8 @@ export function useProgrammePlayback({
   ]);
 
   useEffect(() => {
+    // An idle host (nothing selected yet) loads nothing.
+    if (!episodeId && !seedId) return;
     let mounted = true;
 
     const load = episodeId ? api.get(episodeId) : api.start(seedId!);

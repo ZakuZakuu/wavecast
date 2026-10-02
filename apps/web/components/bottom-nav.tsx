@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ComponentType } from "react";
+import { useEffect, type ComponentType } from "react";
+
+import { rememberTabPath } from "../lib/nav-memory";
 
 import { HomeIcon, LibraryIcon, TuneIcon } from "./icons";
 
@@ -14,6 +16,7 @@ const ITEMS: Array<{ href: string; label: string; Icon: ComponentType<{ size?: n
 
 export function BottomNav() {
   const pathname = usePathname();
+  useEffect(() => rememberTabPath(pathname), [pathname]);
 
   return (
     <nav className="bottom-nav" aria-label="主导航">

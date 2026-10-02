@@ -1,9 +1,11 @@
 import type { Metadata, Viewport } from "next";
 
 import { LibraryIdentityBridge } from "../components/library-identity-bridge";
+import { PlaybackProvider } from "../components/player/playback-provider";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles.css";
+import "./styles/player.css";
 
 export const metadata: Metadata = {
   title: "WaveCast",
@@ -35,7 +37,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="zh-CN">
       <body>
         <LibraryIdentityBridge>
-          <div className="app-root">{children}</div>
+          <PlaybackProvider>
+            <div className="app-root">{children}</div>
+          </PlaybackProvider>
         </LibraryIdentityBridge>
       </body>
     </html>

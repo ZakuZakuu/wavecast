@@ -1,6 +1,6 @@
-import { EpisodePlayer } from "../../../components/episode-player";
+import { PlayerScreen } from "../../../components/player/player-screen";
 
 export default async function EpisodePage({ params }: { params: Promise<{ seedId: string }> }) {
   const { seedId } = await params;
-  return <EpisodePlayer seedId={seedId} />;
+  return <PlayerScreen seedId={seedId} />;
 }
