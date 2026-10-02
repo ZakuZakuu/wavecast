@@ -143,7 +143,7 @@ export function TunePage() {
   }, [animateTo, text]);
 
   // --- Drag with inertia, then snap to the nearest station.
-  const dragState = useRef<{ x: number; freq: number; samples: Array<[number, number]> } | null>(null);
+  const dragState = useRef<{ x: number; freq: number; samples: Array<[number, number]>; label: string | null; moved: boolean } | null>(null);
 
   const markManual = () => {
     manualRef.current = true;
@@ -154,7 +154,8 @@ export function TunePage() {
     if (event.button !== 0 && event.pointerType === "mouse") return;
     stopAnimation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    dragState.current = { x: event.clientX, freq: freqRef.current, samples: [[performance.now(), freqRef.current]] };
+    const label = (event.target as HTMLElement).closest?.("[data-station]")?.getAttribute("data-station") ?? null;
+    dragState.current = { x: event.clientX, freq: freqRef.current, samples: [[performance.now(), freqRef.current]], label, moved: false };
     setDragging(true);
   };
 
@@ -162,7 +163,10 @@ export function TunePage() {
     const drag = dragState.current;
     if (!drag) return;
     const dx = event.clientX - drag.x;
-    if (Math.abs(dx) > 2) markManual();
+    if (Math.abs(dx) > 4) {
+      drag.moved = true;
+      markManual();
+    }
     const next = freqAfterDrag(drag.freq, dx);
     setFreq(next);
     const now = performance.now();
@@ -175,6 +179,11 @@ export function TunePage() {
     dragState.current = null;
     setDragging(false);
     if (!drag) return;
+    if (!drag.moved && drag.label) {
+      // A tap on a station name tunes straight to it.
+      tapStation(stationById(drag.label));
+      return;
+    }
     const [t0, f0] = drag.samples[0];
     const [t1, f1] = drag.samples[drag.samples.length - 1];
     let velocity = t1 > t0 ? (f1 - f0) / (t1 - t0) : 0; // MHz per ms
@@ -367,7 +376,6 @@ export function TunePage() {
               width={width}
               activeStation={reading.locked ? station : null}
               noise={reading.noise}
-              onStationTap={tapStation}
             />
           </div>
 

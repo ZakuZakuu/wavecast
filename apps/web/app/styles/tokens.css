@@ -48,21 +48,6 @@
   --blur-nav: blur(24px);
   --blur-sheet: blur(40px) saturate(1.4);
 
-  /* Legacy aliases for screens not yet migrated. */
-  --text: var(--ink);
-  --muted: var(--ink-2);
-  --subtle: var(--ink-3);
-  --line: var(--separator);
-  --line-strong: rgba(60, 60, 67, .29);
-  --surface-2: #E9E9EC;
-  --surface-3: #DEDEE2;
-  --bg-elevated: rgba(255, 255, 255, .86);
-  --accent: var(--ink);
-  --accent-2: var(--ink-2);
-  --accent-soft: var(--fill);
-  --good: #34A853;
-  --shadow: 0 10px 30px rgba(29, 29, 31, .08);
-
   font-family: var(--font-ui);
   background: var(--bg);
   color: var(--ink);

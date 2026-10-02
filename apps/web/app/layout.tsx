@@ -4,7 +4,6 @@ import { LibraryIdentityBridge } from "../components/library-identity-bridge";
 import { PlaybackProvider } from "../components/player/playback-provider";
 import "./styles/tokens.css";
 import "./styles/base.css";
-import "./styles.css";
 import "./styles/player.css";
 import "./styles/tune.css";
 import "./styles/home.css";

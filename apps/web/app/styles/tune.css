@@ -76,12 +76,10 @@
 .tw-noise { fill: rgba(29, 29, 31, .16); transition: opacity var(--t-state) var(--ease); }
 .tw-label {
   position: absolute;
-  top: 2px;
+  top: 0;
   width: 80px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+  height: 36px;
+  padding-top: 2px;
   display: flex;
   align-items: center;
   justify-content: center;

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { formatFreq, STATIONS, type Station } from "../../lib/stations";
+import { STATIONS, type Station } from "../../lib/stations";
 import { freqToX, noisePath, tickGeometry } from "../../lib/tuner";
 
 export function useElementWidth<T extends HTMLElement>(fallback = 310) {
@@ -32,7 +32,6 @@ export function TuningWindow({
   noise = 0,
   pointerGhosts = false,
   swing = false,
-  onStationTap,
   children,
 }: {
   freq: number;
@@ -41,7 +40,6 @@ export function TuningWindow({
   noise?: number;
   pointerGhosts?: boolean;
   swing?: boolean;
-  onStationTap?: (station: Station) => void;
   children?: ReactNode;
 }) {
   const ticks = useMemo(() => tickGeometry(freq, width), [freq, width]);
@@ -66,21 +64,8 @@ export function TuningWindow({
             {station.name}
           </>
         );
-        return onStationTap ? (
-          <button
-            type="button"
-            key={station.id}
-            className="tw-label"
-            style={style}
-            tabIndex={-1}
-            aria-label={`对准 FM ${formatFreq(station.freq)} ${station.name}`}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => onStationTap(station)}
-          >
-            {content}
-          </button>
-        ) : (
-          <span key={station.id} className="tw-label" style={style} aria-hidden="true">{content}</span>
+        return (
+          <span key={station.id} className="tw-label" style={style} data-station={station.id} aria-hidden="true">{content}</span>
         );
       })}
       {ticks.numbers.map((number) => (

@@ -11,7 +11,7 @@ import {
   onboardingDoneLocally,
   preferenceUpdate,
 } from "../../lib/onboarding";
-import { writeLocalTaste } from "../../lib/taste";
+import { readLocalTaste, writeLocalTaste } from "../../lib/taste";
 import type { UserPreferences } from "../../lib/types";
 import { BottomSheet } from "../bottom-sheet";
 
@@ -32,7 +32,14 @@ function toggle(list: string[], value: string): string[] {
  * see it. Choices are saved to the preference API and kept locally for
  * taste_context.
  */
-export function OnboardingSheet({ onFinished }: { onFinished?: () => void }) {
+export function OnboardingSheet({
+  onFinished,
+  force = false,
+}: {
+  onFinished?: () => void;
+  /** Open even when already completed (editing from the account page). */
+  force?: boolean;
+}) {
   const { data: session, isPending } = authClient.useSession();
   const userId = session?.user?.id ?? null;
   const [open, setOpen] = useState(false);
@@ -46,7 +53,7 @@ export function OnboardingSheet({ onFinished }: { onFinished?: () => void }) {
 
   useEffect(() => {
     if (isPending || !userId) return;
-    if (onboardingDoneLocally(userId)) {
+    if (!force && onboardingDoneLocally(userId)) {
       onFinished?.();
       return;
     }
@@ -55,7 +62,15 @@ export function OnboardingSheet({ onFinished }: { onFinished?: () => void }) {
       .then((preferences) => {
         if (!active) return;
         setExisting(preferences);
-        if (preferences.onboarding_completed) {
+        if (force) {
+          const local = readLocalTaste();
+          if (local) {
+            setGenres(local.genres);
+            setArtists(local.artists);
+            setMoments(local.moments);
+          }
+          setOpen(true);
+        } else if (preferences.onboarding_completed) {
           markOnboardingDoneLocally(userId);
           onFinished?.();
         } else {
@@ -68,7 +83,7 @@ export function OnboardingSheet({ onFinished }: { onFinished?: () => void }) {
     return () => {
       active = false;
     };
-  }, [isPending, onFinished, userId]);
+  }, [force, isPending, onFinished, userId]);
 
   if (!userId || !open) return null;
 
@@ -96,7 +111,14 @@ export function OnboardingSheet({ onFinished }: { onFinished?: () => void }) {
     }
   };
 
-  const skip = () => void finish(null);
+  const skip = () => {
+    if (force) {
+      setOpen(false);
+      onFinished?.();
+      return;
+    }
+    void finish(null);
+  };
 
   return (
     <BottomSheet open onClose={skip} label={step === 1 ? "平时爱听什么？" : "一般在什么时候听？"} tone="light" height="min(700px, calc(100dvh - 24px))" className="onboarding">
