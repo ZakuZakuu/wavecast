@@ -120,7 +120,7 @@
   font-weight: 500;
   white-space: nowrap;
 }
-.station-pill-freq { font-weight: 300; }
+.station-pill-freq { font-family: var(--font-numeric); font-weight: 300; }
 
 .player-cover-area {
   flex: 1 1 auto;

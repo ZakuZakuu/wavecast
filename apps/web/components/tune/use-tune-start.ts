@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { useImmersiveOverlay } from "../../lib/chrome-visibility";
 import { friendlyError } from "../../lib/friendly-error";
+import { DUR } from "../../lib/motion/easing";
 import { isPlaybackReadySegment } from "../../lib/playback";
 import { openPlayer } from "../../lib/player-nav";
 import { rememberProgrammeStation, type Station } from "../../lib/stations";
@@ -15,6 +16,8 @@ import { useNowPlaying, usePlaybackControl } from "../player/playback-provider";
 import type { TuningStep } from "./tuning-in";
 
 export const LAST_STATION_KEY = "wavecast-last-station-v1";
+/** 开播中 stays under the player until its fade-in (DUR.slow) has finished. */
+const HANDOVER_MS = DUR.slow + 150;
 
 type Phase =
   | { kind: "idle" }
@@ -40,6 +43,8 @@ export function useTuneStart() {
   const np = useNowPlaying();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const requestRef = useRef(0);
+  const handedOver = useRef<string | null>(null);
+  const [handoverAt, setHandoverAt] = useState<number | null>(null);
 
   useImmersiveOverlay("tuning-in", phase.kind === "tuning");
 
@@ -48,6 +53,7 @@ export function useTuneStart() {
     requestRef.current = requestId;
     const label = prompt.trim() || target.name;
     const base = { kind: "tuning" as const, station: target, label, prompt, duration };
+    handedOver.current = null;
     setPhase({ ...base, proposal: null, error: null });
     try {
       window.localStorage.setItem(LAST_STATION_KEY, target.id);
@@ -95,14 +101,25 @@ export function useTuneStart() {
     && np.programManifest.renderedFrontierSeconds > 0,
   );
 
-  // First playable audio -> go to the player.
+  // First playable audio -> go to the player; 开播中 is done once the
+  // player has faded in over it, so collapsing returns to the page.
   useEffect(() => {
-    if (audioReady && hostEpisode) {
-      requestRef.current += 1;
-      // 开播中 cross-fades into the player (MOTION.md §4.8).
-      openPlayer(`/episode/materialized/${hostEpisode.id}`, "fade");
-    }
+    if (!audioReady || !hostEpisode || handedOver.current === hostEpisode.id) return;
+    handedOver.current = hostEpisode.id;
+    requestRef.current += 1;
+    // 开播中 cross-fades into the player (MOTION.md §4.8).
+    openPlayer(`/episode/materialized/${hostEpisode.id}`, "fade");
+    setHandoverAt(Date.now());
   }, [audioReady, hostEpisode]);
+
+  useEffect(() => {
+    if (handoverAt === null) return;
+    const timer = window.setTimeout(() => {
+      setHandoverAt(null);
+      setPhase({ kind: "idle" });
+    }, HANDOVER_MS);
+    return () => window.clearTimeout(timer);
+  }, [handoverAt]);
 
   const cancel = useCallback(() => {
     requestRef.current += 1;

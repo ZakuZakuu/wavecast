@@ -23,7 +23,7 @@
 .tuner-readout { display: flex; align-items: flex-end; justify-content: space-between; }
 .tuner-freq { display: flex; align-items: baseline; gap: 6px; }
 .tuner-fm { font-size: 15px; font-weight: 500; color: var(--ink-2); }
-.tuner-number { font-size: 56px; font-weight: 200; line-height: 1; letter-spacing: -0.03em; }
+.tuner-number { font-family: var(--font-numeric); font-size: 56px; font-weight: 200; line-height: 1; letter-spacing: -0.03em; }
 
 .signal { display: flex; align-items: flex-end; gap: 3px; height: 18px; padding-bottom: 8px; box-sizing: content-box; }
 .signal span {
@@ -99,6 +99,7 @@
   top: 60px;
   width: 32px;
   text-align: center;
+  font-family: var(--font-numeric);
   font-size: 13px;
   font-weight: 300;
   color: var(--ink-3);
@@ -316,3 +317,30 @@
 @media (prefers-reduced-motion: reduce) {
   .signal span { transition-delay: 0ms !important; }
 }
+
+/* Soft keyboard open (lib/soft-keyboard.ts): the app is pinned to the visible
+   area; the field and the CTA stay above the keyboard, the dial gives way. */
+html.kb-open,
+html.kb-open body,
+html.kb-open .app-root { height: var(--kb-height); }
+html.kb-open .bottom-nav,
+html.kb-open .mini-player { display: none; }
+html.kb-open .tune {
+  /* Beats the mini-player/short-screen padding rules above. */
+  padding: 12px var(--gutter) 12px !important;
+  gap: 10px;
+  justify-content: flex-end;
+}
+html.kb-open .tune .page-title,
+html.kb-open .tune .tuner-station p,
+html.kb-open .tune .knurl { display: none; }
+html.kb-open .tune .tuner-card {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding-top: 14px;
+  padding-bottom: 14px;
+  gap: 10px;
+}
+html.kb-open .tune .tuner-station { min-height: 0; }
+html.kb-open .tune .tuner-number { font-size: 44px; }

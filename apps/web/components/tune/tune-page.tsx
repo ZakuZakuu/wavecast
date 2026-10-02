@@ -29,6 +29,7 @@ import { Segmented } from "../segmented";
 import { easeStandard, prefersReducedMotion, tween } from "../../lib/motion/easing";
 import { VelocityTracker } from "../../lib/motion/gesture";
 import { animateSpring, type Cancel } from "../../lib/motion/spring";
+import { useSoftKeyboard } from "../../lib/soft-keyboard";
 import { TuningInScreen } from "./tuning-in";
 import { LAST_STATION_KEY, useTuneStart } from "./use-tune-start";
 import { TuningWindow, useElementWidth } from "./tuning-window";
@@ -42,6 +43,7 @@ const GLIDE_STOP_SPEED = 0.05;
 
 export function TunePage() {
   const tune = useTuneStart();
+  useSoftKeyboard();
 
   const [freq, setFreqState] = useState(STATIONS[0].freq);
   const freqRef = useRef(freq);

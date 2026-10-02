@@ -192,8 +192,9 @@ export function PlayerOverlay() {
 
   useEffect(() => () => cancelFadeRef.current?.(), []);
 
-  // Esc collapses the player when nothing is open above it.
-  useOverlay(Boolean(shown), () => close(0, true));
+  // Esc collapses the player when nothing is open above it. Back needs no
+  // extra entry: the player has its own URL.
+  useOverlay(Boolean(shown), () => close(0, true), { history: false });
 
   if (!shown) return null;
 

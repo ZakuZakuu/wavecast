@@ -27,6 +27,8 @@ type ProgrammeAudioPlayerProps = {
   onPlayRequest: () => void;
   onPauseRequest: () => void;
   onSeekRequest: (positionSeconds: number) => void;
+  /** System "next track" (notification / lock screen): skip to the next song. */
+  onNextRequest?: () => void;
   onError: (message: string) => void;
 };
 
@@ -48,6 +50,7 @@ export function ProgrammeAudioPlayer({
   onPlayRequest,
   onPauseRequest,
   onSeekRequest,
+  onNextRequest,
   onError,
 }: ProgrammeAudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -71,6 +74,7 @@ export function ProgrammeAudioPlayer({
   const onPlayRequestRef = useRef(onPlayRequest);
   const onPauseRequestRef = useRef(onPauseRequest);
   const onSeekRequestRef = useRef(onSeekRequest);
+  const onNextRequestRef = useRef(onNextRequest);
   const onErrorRef = useRef(onError);
 
   desiredPlayingRef.current = playing;
@@ -84,6 +88,7 @@ export function ProgrammeAudioPlayer({
   onPlayRequestRef.current = onPlayRequest;
   onPauseRequestRef.current = onPauseRequest;
   onSeekRequestRef.current = onSeekRequest;
+  onNextRequestRef.current = onNextRequest;
   onErrorRef.current = onError;
 
   const applyPendingSeek = useCallback(() => {
@@ -544,6 +549,7 @@ export function ProgrammeAudioPlayer({
       ["seekto", (details) => {
         if (typeof details.seekTime === "number") seekTo(details.seekTime);
       }],
+      ["nexttrack", onNextRequestRef.current ? () => onNextRequestRef.current?.() : null],
     ];
 
     for (const [action, handler] of handlers) {

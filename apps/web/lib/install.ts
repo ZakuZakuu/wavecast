@@ -7,6 +7,34 @@ const ACK_KEY = "wavecast-install-ack-v1";
 
 export const SNOOZE_DAYS = 14;
 
+export type DeferredInstallPrompt = Event & { prompt: () => Promise<void>; userChoice?: Promise<unknown> };
+
+// Android Chrome fires beforeinstallprompt once, early, on whichever page the
+// visit starts. This module is loaded app-wide (playback provider), so the
+// event is kept even when the visit starts away from the home page.
+let deferredPrompt: DeferredInstallPrompt | null = null;
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    deferredPrompt = event as DeferredInstallPrompt;
+  });
+  window.addEventListener("appinstalled", () => {
+    deferredPrompt = null;
+    acknowledgeInstall();
+  });
+}
+
+export function peekInstallPrompt(): DeferredInstallPrompt | null {
+  return deferredPrompt;
+}
+
+/** Hands the saved prompt to the caller once (prompt() may only be called once). */
+export function takeInstallPrompt(): DeferredInstallPrompt | null {
+  const prompt = deferredPrompt;
+  deferredPrompt = null;
+  return prompt;
+}
+
 export type InstallContext = {
   platform: "ios-safari" | "installable" | "other";
   standalone: boolean;
