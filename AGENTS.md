@@ -381,6 +381,17 @@ When uncertain, optimize for maintainability, observable state, bounded cost, an
 
 ## Hosted deployment discipline
 
+### CI selection
+
+PR checks are selected automatically; see `docs/deployment/ci.md`. Web checks
+always run. PRs limited to known Web/documentation paths skip the backend and
+Docker deployment jobs. Backend/shared/deployment/unknown paths, release PRs
+targeting `main`, pushes to `main`, and manual CI runs get full validation.
+Do not bypass CI with commit-message skip directives or workflow path filters.
+Use a manual CI run when a full-stack checkpoint is needed on a feature branch.
+
+### Hosted checkpoints
+
 WaveCast has constrained hosted deployment budgets. Treat deployments as explicit
 human-test checkpoints, not as a side effect of every code commit.
 
