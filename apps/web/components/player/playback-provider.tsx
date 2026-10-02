@@ -5,9 +5,11 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
@@ -29,10 +31,35 @@ export type NowPlaying = ProgrammePlayback & {
 type Control = {
   /** Select the programme the persistent host should play. */
   open: (target: ProgrammePlaybackTarget) => void;
+  /** Unload the current programme (e.g. a cancelled tune-in). */
+  close: () => void;
 };
 
 const ControlContext = createContext<Control | null>(null);
-const NowPlayingContext = createContext<NowPlaying | null>(null);
+
+/**
+ * The playback host is a sibling of the app tree (so remounting it never
+ * remounts pages); it publishes its state here and only consumers re-render.
+ */
+function createNowPlayingStore() {
+  let value: NowPlaying | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set: (next: NowPlaying | null) => {
+      if (next === value) return;
+      value = next;
+      listeners.forEach((listener) => listener());
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+type NowPlayingStore = ReturnType<typeof createNowPlayingStore>;
+const StoreContext = createContext<NowPlayingStore | null>(null);
 
 export function usePlaybackControl(): Control {
   const value = useContext(ControlContext);
@@ -40,8 +67,12 @@ export function usePlaybackControl(): Control {
   return value;
 }
 
+const serverSnapshot = () => null;
+
 export function useNowPlaying(): NowPlaying | null {
-  return useContext(NowPlayingContext);
+  const store = useContext(StoreContext);
+  if (!store) throw new Error("useNowPlaying must be used inside PlaybackProvider");
+  return useSyncExternalStore(store.subscribe, store.get, serverSnapshot);
 }
 
 /** Selects a programme for playback when a player route mounts. */
@@ -80,13 +111,16 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const control = useMemo(() => ({ open }), [open]);
+  const close = useCallback(() => setTarget(null), []);
+  const control = useMemo(() => ({ open, close }), [close, open]);
+  const [store] = useState(createNowPlayingStore);
 
   return (
     <ControlContext.Provider value={control}>
-      <PlaybackHost key={targetKey(target)} target={target ?? {}} hostEpisodeRef={hostEpisodeRef}>
+      <StoreContext.Provider value={store}>
         {children}
-      </PlaybackHost>
+        <PlaybackHost key={targetKey(target)} target={target ?? {}} hostEpisodeRef={hostEpisodeRef} store={store} />
+      </StoreContext.Provider>
     </ControlContext.Provider>
   );
 }
@@ -94,11 +128,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 function PlaybackHost({
   target,
   hostEpisodeRef,
-  children,
+  store,
 }: {
   target: ProgrammePlaybackTarget;
   hostEpisodeRef: React.MutableRefObject<{ id: string; seedId: string } | null>;
-  children: ReactNode;
+  store: NowPlayingStore;
 }) {
   const playback = useProgrammePlayback(target);
   const episode = playback.localEpisode;
@@ -137,6 +171,10 @@ function PlaybackHost({
     () => episode ? { ...playback, station, cover } : null,
     [cover, episode, playback, station],
   );
+  useLayoutEffect(() => {
+    store.set(value);
+  });
+  useEffect(() => () => store.set(null), [store]);
 
   const manifest = playback.programManifest;
   const audioReady = Boolean(
@@ -147,8 +185,7 @@ function PlaybackHost({
   );
 
   return (
-    <NowPlayingContext.Provider value={value}>
-      {children}
+    <>
       {audioReady && episode && manifest ? (
         <ProgrammeAudioPlayer
           streamUrl={manifest.streamUrl}
@@ -171,6 +208,6 @@ function PlaybackHost({
           onError={(message) => playback.setError(message)}
         />
       ) : null}
-    </NowPlayingContext.Provider>
+    </>
   );
 }

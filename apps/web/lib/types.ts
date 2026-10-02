@@ -42,6 +42,8 @@ export type ProposalGenerationRequest = {
   prompt: string;
   duration_intent: DurationIntent;
   count?: number;
+  /** Optional listener taste summary; accepted by the backend (≤1000 chars). */
+  taste_context?: string;
 };
 
 type SegmentBase = {

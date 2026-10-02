@@ -6,6 +6,7 @@ import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles.css";
 import "./styles/player.css";
+import "./styles/tune.css";
 
 export const metadata: Metadata = {
   title: "WaveCast",

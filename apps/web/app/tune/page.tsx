@@ -1,5 +1,5 @@
-import { TunePage } from "../../components/tune-page";
+import { TunePage } from "../../components/tune/tune-page";
 
-export default function TuneRoute() {
+export default function Page() {
   return <TunePage />;
 }

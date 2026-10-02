@@ -20,7 +20,7 @@ export function AppShell({
     <div className="app-frame">
       {background}
       <main className={fixed ? "app-fixed" : "app-scroll page-enter"}>{children}</main>
-      <MiniPlayer />
+      {fixed ? null : <MiniPlayer />}
       <BottomNav />
     </div>
   );
