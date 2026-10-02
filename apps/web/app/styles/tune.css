@@ -191,6 +191,11 @@
 .on-air:disabled { opacity: .3; }
 .on-air-light { width: 8px; height: 8px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 4px rgba(255, 107, 44, .25); }
 
+/* Global mini player visible: reserve its height too. */
+.app-root:has(> .mini-player:not([hidden])) .tune {
+  padding-bottom: calc(var(--nav-height) + var(--mini-height) + 8px + 12px);
+}
+
 /* Short screens (375×667) must fit without scrolling. */
 @media (max-height: 760px) {
   .tune { padding-top: 24px; gap: 12px; }
@@ -199,6 +204,15 @@
   .tuner-station { min-height: 46px; }
   .tune-input input { height: 50px; }
   .on-air { min-height: 50px; }
+}
+/* Short screens with the mini player: tighten so the CTA stays clear of it. */
+@media (max-height: 760px) {
+  .app-root:has(> .mini-player:not([hidden])) .tune { padding-top: 12px; gap: 10px; }
+  .app-root:has(> .mini-player:not([hidden])) .tune .page-title { font-size: 28px; }
+  .app-root:has(> .mini-player:not([hidden])) .tuner-card { padding-top: 14px; padding-bottom: 12px; gap: 8px; }
+  .app-root:has(> .mini-player:not([hidden])) .tuner-number { font-size: 44px; }
+  .app-root:has(> .mini-player:not([hidden])) .tune-input input { height: 46px; }
+  .app-root:has(> .mini-player:not([hidden])) .on-air { min-height: 48px; }
 }
 @media (max-height: 680px) {
   .tune .page-title { font-size: 28px; }

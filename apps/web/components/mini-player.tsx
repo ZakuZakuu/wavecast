@@ -2,21 +2,38 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
-import { currentMusicSegment, estimatedTotalSeconds } from "../lib/now-playing";
+import { currentMusicSegment, estimatedTotalSeconds, formatClock } from "../lib/now-playing";
 import { nextProgramMusicStart } from "../lib/playback";
 import { formatFreq } from "../lib/stations";
 import { TypeCover } from "./cover/type-cover";
 import { PauseIcon, PlayIcon, SkipIcon } from "./icons";
 import { useNowPlaying } from "./player/playback-provider";
 
-/** Floating mini player; only shown while a programme is loaded. */
-export function MiniPlayer() {
+// Programme whose entrance has already been animated (survives remounts).
+let lastEnteredEpisodeId: string | null = null;
+
+/**
+ * Floating mini player, rendered once app-wide. `hidden` keeps it mounted but
+ * invisible (player route, 开播中) so showing it again does not replay the
+ * entrance animation; that only runs when a new programme appears.
+ */
+export function MiniPlayer({ hidden = false }: { hidden?: boolean }) {
   const np = useNowPlaying();
   const router = useRouter();
   const swipeRef = useRef<number | null>(null);
   const episode = np?.localEpisode;
+  const episodeId = episode?.id ?? null;
+  const [entering, setEntering] = useState(false);
+
+  // Layout effect: the entering class applies before the first paint.
+  useLayoutEffect(() => {
+    if (!episodeId || hidden || lastEnteredEpisodeId === episodeId) return;
+    lastEnteredEpisodeId = episodeId;
+    setEntering(true);
+  }, [episodeId, hidden]);
+
   if (!np || !episode) return null;
 
   const href = `/episode/materialized/${episode.id}`;
@@ -28,7 +45,10 @@ export function MiniPlayer() {
 
   return (
     <div
-      className="mini-player"
+      className={entering ? "mini-player is-entering" : "mini-player"}
+      hidden={hidden}
+      aria-hidden={hidden || undefined}
+      onAnimationEnd={() => setEntering(false)}
       onPointerDown={(event) => { swipeRef.current = event.clientY; }}
       onPointerUp={(event) => {
         if (swipeRef.current !== null && swipeRef.current - event.clientY > 40) router.push(href);
@@ -43,8 +63,14 @@ export function MiniPlayer() {
         <span className="mini-copy">
           <strong>{music?.title || episode.title || "WaveCast"}</strong>
           <small>
-            <span className="live-dot" aria-hidden="true" />
-            {np.station ? `FM ${formatFreq(np.station.freq)} ${np.station.name}` : "WaveCast"}
+            {np.browserPlaying ? (
+              <>
+                <span className="live-dot" aria-hidden="true" />
+                {np.station ? `FM ${formatFreq(np.station.freq)} ${np.station.name}` : "WaveCast"}
+              </>
+            ) : (
+              <span className="tabular">暂停在 {formatClock(np.browserPosition)}</span>
+            )}
           </small>
         </span>
       </Link>

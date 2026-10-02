@@ -111,6 +111,8 @@ export type LiveEpisode = {
   current_segment_id: string | null;
   playback_position_seconds: number;
   program_playback_position_seconds?: number;
+  /** Server activity timestamp (ISO); bumped by playback checkpoints. */
+  last_activity_at?: string;
   program_transport_active?: boolean;
   program_rendered_frontier_seconds?: number | null;
   program_publication_latency_seconds?: number;
