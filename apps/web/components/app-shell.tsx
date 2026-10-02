@@ -1,11 +1,9 @@
 import type { ReactNode } from "react";
 
-import { BottomNav } from "./bottom-nav";
-import { MiniPlayer } from "./mini-player";
-
 /**
- * Tab-level frame: a single scrolling content region, the floating mini player
- * and the frosted bottom navigation. `fixed` screens (tuner) never scroll.
+ * Tab-level frame: a single scrolling content region. The bottom navigation
+ * and mini player live once in the root layout (GlobalChrome); bottom spacing
+ * for them is applied centrally in CSS. `fixed` screens (tuner) never scroll.
  */
 export function AppShell({
   children,
@@ -20,8 +18,6 @@ export function AppShell({
     <div className="app-frame">
       {background}
       <main className={fixed ? "app-fixed" : "app-scroll page-enter"}>{children}</main>
-      {fixed ? null : <MiniPlayer />}
-      <BottomNav />
     </div>
   );
 }

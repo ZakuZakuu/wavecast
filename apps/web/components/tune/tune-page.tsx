@@ -28,6 +28,7 @@ import type { DurationIntent, ProgramProposal } from "../../lib/types";
 import { recordCreatedProgram } from "../../lib/user-library";
 import { AppShell } from "../app-shell";
 import { useNowPlaying, usePlaybackControl } from "../player/playback-provider";
+import { useImmersiveOverlay } from "../../lib/chrome-visibility";
 import { TuningInScreen, type TuningStep } from "./tuning-in";
 import { TuningWindow, useElementWidth } from "./tuning-window";
 
@@ -108,6 +109,8 @@ export function TunePage() {
     if (initial) setFreq(initial.freq);
     return stopAnimation;
   }, [setFreq, stopAnimation]);
+
+  useImmersiveOverlay("tuning-in", phase.kind === "tuning");
 
   const reading = readTuner(freq);
   const station = reading.station;

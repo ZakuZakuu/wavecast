@@ -68,7 +68,7 @@ h1, h2, h3, p { margin-top: 0; }
   padding: calc(var(--safe-top) + 58px) var(--gutter) calc(var(--nav-height) + 24px);
 }
 
-.app-frame:has(.mini-player) .app-scroll {
+.app-root:has(> .mini-player:not([hidden])) .app-scroll {
   padding-bottom: calc(var(--nav-height) + var(--mini-height) + 8px + 24px);
 }
 
