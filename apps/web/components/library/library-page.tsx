@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../../lib/api";
+import { openPlayer } from "../../lib/player-nav";
 import { dedupeByProgramme, listeningStatus, progressRatio } from "../../lib/library-view";
 import { stationForProgramme, STATIONS, type StationId } from "../../lib/stations";
 import type { ProgramProposal } from "../../lib/types";
@@ -179,7 +180,15 @@ export function LibraryPage() {
           <ul className="lib-list">
             {visible.map((row) => (
               <SwipeRow key={row.key} onDelete={row.onDelete} deleteLabel={row.deleteLabel}>
-                <Link href={row.href} className="lib-link" draggable={false} aria-label={`${row.title}，${row.status}，继续播放`}>
+                <Link
+                  href={row.href}
+                  className="lib-link"
+                  draggable={false}
+                  onClick={(event) => {
+                    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey) return;
+                    event.preventDefault();
+                    openPlayer(row.href);
+                  }} aria-label={`${row.title}，${row.status}，继续播放`}>
                   <span className="lib-cover">
                     <ProgrammeCoverView id={row.programmeId} title={row.title} stationId={row.stationId} bare radius={0} />
                   </span>

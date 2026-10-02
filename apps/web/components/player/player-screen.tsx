@@ -1,13 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isDarkColour } from "../../lib/cover/build-cover";
 import { readCaptionsEnabled, recordLessLikeThis, writeCaptionsEnabled } from "../../lib/listener-feedback";
 import { friendlyError } from "../../lib/friendly-error";
-import { lastTabPathOr } from "../../lib/nav-memory";
 import { chapterNumberOf, currentMusicSegment, estimatedTotalSeconds, nextMusicSegment, trackLabel, voiceClipTiming } from "../../lib/now-playing";
 import { currentSentenceIndex, nowLineMode, splitSentences, type NowLineMode } from "../../lib/now-line";
 import { nextProgramMusicStart } from "../../lib/playback";
@@ -62,9 +60,17 @@ function useToast() {
   return { message, show };
 }
 
-export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId?: string }) {
+export function PlayerScreen({
+  seedId,
+  episodeId,
+  onCollapse,
+}: {
+  seedId?: string;
+  episodeId?: string;
+  /** Collapse back to the mini player (the overlay animates it). */
+  onCollapse: () => void;
+}) {
   usePlaybackTarget({ seedId, episodeId });
-  const router = useRouter();
   const playback = useNowPlaying();
   const { reload } = usePlaybackControl();
   const toast = useToast();
@@ -73,7 +79,6 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
   const [captions, setCaptions] = useState(true);
   const [narrationOpen, setNarrationOpen] = useState(false);
   const [forcedMode, setForcedMode] = useState<NowLineMode | null>(null);
-  const swipeRef = useRef<number | null>(null);
 
   useEffect(() => {
     setCaptions(readCaptionsEnabled());
@@ -86,9 +91,7 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
   const np = matches ? playback : null;
   const episode = np?.localEpisode ?? null;
 
-  const collapse = useCallback(() => {
-    router.push(lastTabPathOr("/"));
-  }, [router]);
+  const collapse = onCollapse;
 
   // Narration shown in the NowLine and the full-script sheet. The sheet keeps
   // the last narration so it does not empty out when the host stops talking.
@@ -116,7 +119,7 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
     return (
       <main className="player player-loading" aria-busy={!failed}>
         <div className="player-body">
-          <div className="player-top">
+          <div className="player-top" data-drag-handle>
             <button type="button" className="glass-icon" aria-label="收起" onClick={collapse}>
               <ChevronDownIcon size={20} strokeWidth={2.2} />
             </button>
@@ -192,7 +195,7 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
   const narrationChapter = chapterNumberOf(episode, sheetId);
 
   return (
-    <main className="player page-rise" data-cover-tone={darkCover ? "dark" : "light"}>
+    <main className="player" data-cover-tone={darkCover ? "dark" : "light"}>
       {cover ? (
         <div className="player-backdrop" aria-hidden="true">
           <div className="player-backdrop-art">
@@ -203,15 +206,8 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
       ) : null}
 
       <div className="player-body">
-        <div
-          className="player-top-zone"
-          onPointerDown={(event) => { swipeRef.current = event.clientY; }}
-          onPointerUp={(event) => {
-            if (swipeRef.current !== null && event.clientY - swipeRef.current > 80) collapse();
-            swipeRef.current = null;
-          }}
-          onPointerCancel={() => { swipeRef.current = null; }}
-        >
+        {/* The whole 44px top area (not just the grabber) drags the player down. */}
+        <div className="player-top-zone" data-drag-handle>
           <span className="player-grabber" aria-hidden="true" />
           <div className="player-top">
             <button type="button" className="glass-icon" aria-label="收起" onClick={collapse}>
@@ -232,7 +228,7 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
 
         <div ref={coverAreaRef} className="player-cover-area">
           {cover ? (
-            <div className="player-cover" style={{ width: coverSize, height: coverSize }}>
+            <div className="player-cover" data-drag-handle style={{ width: coverSize, height: coverSize }}>
               <TypeCover params={cover.params} radius={12} />
             </div>
           ) : null}

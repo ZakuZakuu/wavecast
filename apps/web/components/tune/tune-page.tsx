@@ -29,6 +29,7 @@ import { recordCreatedProgram } from "../../lib/user-library";
 import { AppShell } from "../app-shell";
 import { useNowPlaying, usePlaybackControl } from "../player/playback-provider";
 import { useImmersiveOverlay } from "../../lib/chrome-visibility";
+import { openPlayer } from "../../lib/player-nav";
 import { TuningInScreen, type TuningStep } from "./tuning-in";
 import { TuningWindow, useElementWidth } from "./tuning-window";
 
@@ -282,7 +283,8 @@ export function TunePage() {
   useEffect(() => {
     if (audioReady && hostEpisode) {
       requestRef.current += 1;
-      router.push(`/episode/materialized/${hostEpisode.id}`);
+      // 开播中 cross-fades into the player (MOTION.md §4.8).
+      openPlayer(`/episode/materialized/${hostEpisode.id}`, "fade");
     }
   }, [audioReady, hostEpisode, router]);
 

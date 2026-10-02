@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../../lib/api";
+import { openPlayer } from "../../lib/player-nav";
 import { authClient } from "../../lib/auth-client";
 import { programmeCover } from "../../lib/cover/programme-cover";
 import { formatFreq, rememberProgrammeStation, stationForProgramme, STATIONS } from "../../lib/stations";
@@ -89,7 +90,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
       const proposal = batch.proposals[0];
       if (!proposal) throw new Error();
       rememberProgrammeStation(proposal.id, stationForProgramme(idea.id, idea.title).id);
-      router.push(`/episode/${proposal.id}`);
+      openPlayer(`/episode/${proposal.id}`);
     } catch {
       setError("这档节目暂时开不了，换一档试试");
       setBusyId(null);
@@ -116,7 +117,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
       busy: false,
       onOpen: () => {
         rememberProgrammeStation(seed.id, stationForProgramme(seed.id, seed.title).id);
-        router.push(`/episode/${seed.id}`);
+        openPlayer(`/episode/${seed.id}`);
       },
     }));
   }, [busyId, ideas, router, seeds, user]);

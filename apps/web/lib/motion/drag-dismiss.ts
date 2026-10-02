@@ -152,13 +152,19 @@ export function attachDragDismiss(options: DragDismissOptions): DragDismiss {
   // scrollable list can hand over to the sheet once it reaches its top.
   const onPointerDown = (event: PointerEvent) => {
     if (event.pointerType === "touch" || event.button !== 0) return;
-    if (begin(event.clientX, event.clientY, event.target as Element, event.pointerId)) {
-      panel.setPointerCapture?.(event.pointerId);
-    }
+    // Capture only once a drag really starts, so taps still reach buttons.
+    begin(event.clientX, event.clientY, event.target as Element, event.pointerId);
   };
   const onPointerMove = (event: PointerEvent) => {
     if (event.pointerType === "touch" || !active || active.pointerId !== event.pointerId) return;
-    move(event.clientX, event.clientY);
+    const wasDragging = active.dragging;
+    if (move(event.clientX, event.clientY) && !wasDragging) {
+      try {
+        panel.setPointerCapture(event.pointerId);
+      } catch {
+        // The pointer may already be gone.
+      }
+    }
   };
   const onPointerUp = (event: PointerEvent) => {
     if (event.pointerType === "touch") return;

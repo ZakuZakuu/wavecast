@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { LibraryIdentityBridge } from "../components/library-identity-bridge";
 import { GlobalChrome } from "../components/global-chrome";
 import { PlaybackProvider } from "../components/player/playback-provider";
+import { PlayerOverlay } from "../components/player/player-overlay";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/player.css";
@@ -43,6 +44,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <PlaybackProvider>
             <div className="app-root">
               {children}
+              <PlayerOverlay />
               <GlobalChrome />
             </div>
           </PlaybackProvider>
