@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import { Portal } from "./portal";
+
 const CLOSE_DISTANCE = 96;
 
 /**
@@ -61,6 +63,7 @@ export function BottomSheet({
   };
 
   return (
+    <Portal>
     <div className="sheet-layer" role="presentation">
       <div className="sheet-scrim" onClick={onClose} aria-hidden="true" />
       <section
@@ -88,5 +91,6 @@ export function BottomSheet({
         {children}
       </section>
     </div>
+    </Portal>
   );
 }

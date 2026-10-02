@@ -14,6 +14,7 @@ import {
 } from "react";
 
 import { coverArtworkUrl } from "../../lib/cover/artwork";
+import { markProgrammeFinished } from "../../lib/install";
 import { programmeCover, type ProgrammeCover } from "../../lib/cover/programme-cover";
 import { stationForProgramme, type Station } from "../../lib/stations";
 import {
@@ -200,7 +201,10 @@ function PlaybackHost({
           onPositionChange={playback.handleProgramPosition}
           onPlayingChange={playback.handlePlayingChange}
           onBufferingChange={playback.setProgramBuffering}
-          onEnded={playback.handleProgrammeEnded}
+          onEnded={() => {
+            playback.handleProgrammeEnded();
+            markProgrammeFinished();
+          }}
           onFrontierReached={playback.handleFrontierReached}
           onPlayRequest={playback.resumePlayback}
           onPauseRequest={playback.pausePlayback}

@@ -11,6 +11,8 @@ import { formatFreq, rememberProgrammeStation, stationForProgramme, STATIONS } f
 import type { ProgramIdea, Seed } from "../../lib/types";
 import { AppShell } from "../app-shell";
 import { TypeCover } from "../cover/type-cover";
+import { InstallPrompt } from "../install/install-prompt";
+import { OnboardingSheet } from "../onboarding/onboarding-sheet";
 import { useNowPlaying } from "../player/playback-provider";
 
 type Pick = {
@@ -43,7 +45,7 @@ function PickCard({ pick }: { pick: Pick }) {
   );
 }
 
-export function HomePage() {
+export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () => void } = {}) {
   const router = useRouter();
   const np = useNowPlaying();
   const { data: session, isPending: sessionPending } = authClient.useSession();
@@ -172,6 +174,8 @@ export function HomePage() {
           ) : null}
         </section>
       </div>
+      <OnboardingSheet onFinished={onOnboardingFinished} />
+      <InstallPrompt />
     </AppShell>
   );
 }
