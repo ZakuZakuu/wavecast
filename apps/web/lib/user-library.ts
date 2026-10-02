@@ -425,3 +425,12 @@ export function recordCreatedProgram(programId: string): UserLibraryState {
     ],
   });
 }
+
+/** Removes every recent record of a programme (local; cloud recents may re-merge). */
+export function removeRecentProgramme(seedId: string): void {
+  const current = readUserLibrary();
+  persistUserLibrary({
+    ...current,
+    recentPrograms: current.recentPrograms.filter((item) => item.seedId !== seedId),
+  });
+}
