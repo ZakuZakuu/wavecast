@@ -18,6 +18,7 @@ import {
   type UserLibraryState,
 } from "../../lib/user-library";
 import { AppShell } from "../app-shell";
+import { Segmented } from "../segmented";
 import { ProgrammeCoverView } from "../cover/programme-cover-view";
 import { SwipeRow } from "./swipe-row";
 
@@ -144,20 +145,13 @@ export function LibraryPage() {
       <div className="library">
         <h1 className="page-title">节目库</h1>
 
-        <div className="segmented" role="tablist" aria-label="节目分类">
-          {TABS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === item.id}
-              className={tab === item.id ? "is-selected" : undefined}
-              onClick={() => setTab(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          kind="tab"
+          label="节目分类"
+          options={TABS.map((item) => ({ value: item.id, label: item.label }))}
+          value={tab}
+          onChange={setTab}
+        />
 
         <div className="filter-row" role="group" aria-label="按电台筛选">
           <button type="button" className={filter === "all" ? "filter-chip is-on" : "filter-chip"} aria-pressed={filter === "all"} onClick={() => setFilter("all")}>

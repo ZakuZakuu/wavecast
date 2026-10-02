@@ -30,6 +30,7 @@ import {
 import type { DurationIntent, ProgramProposal } from "../../lib/types";
 import { recordCreatedProgram } from "../../lib/user-library";
 import { AppShell } from "../app-shell";
+import { Segmented } from "../segmented";
 import { useNowPlaying, usePlaybackControl } from "../player/playback-provider";
 import { useImmersiveOverlay } from "../../lib/chrome-visibility";
 import { easeStandard, prefersReducedMotion, tween } from "../../lib/motion/easing";
@@ -458,20 +459,12 @@ export function TunePage() {
           />
         </label>
 
-        <div className="segmented" role="radiogroup" aria-label="时长">
-          {DURATIONS.map((item) => (
-            <button
-              type="button"
-              role="radio"
-              key={item.value}
-              aria-checked={duration === item.value}
-              className={duration === item.value ? "is-selected" : undefined}
-              onClick={() => setDuration(item.value)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="时长"
+          options={DURATIONS}
+          value={duration}
+          onChange={setDuration}
+        />
 
         <button type="button" className="on-air" disabled={between} onClick={() => void start(station, text)}>
           <span className="on-air-light" aria-hidden="true" />

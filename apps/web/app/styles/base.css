@@ -24,6 +24,17 @@ button:disabled { cursor: default; }
 h1, h2, h3, p { margin-top: 0; }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
+/* Press feedback (MOTION.md §4.6): clickable things dip to .96 in 100ms and
+   return in 150ms. Component rules that set their own transition must list
+   transform too. */
+:where(button, .pressable) {
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+:where(button, .pressable):not(:disabled):active {
+  transform: scale(.96);
+  transition-duration: var(--dur-instant);
+}
+
 .tabular { font-variant-numeric: tabular-nums; }
 .visually-hidden {
   position: absolute !important;

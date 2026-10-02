@@ -104,7 +104,6 @@
   transition: transform var(--t-micro) var(--ease);
 }
 .glass-icon > svg { position: relative; }
-.glass-icon:active::before { transform: scale(.92); }
 
 .station-pill {
   min-width: 0;
@@ -254,18 +253,20 @@
   border-radius: 50%;
   transition: transform var(--t-micro) var(--ease), opacity var(--t-micro) var(--ease);
 }
-.transport button:active { transform: scale(.9); }
+.transport button:not(:disabled):active { transform: scale(.96); transition-duration: var(--dur-instant); }
 .transport button:disabled { opacity: .35; }
 .transport-side { width: 56px; height: 56px; }
 .transport-main { width: 72px; height: 72px; }
 .morph { position: relative; width: 46px; height: 46px; display: block; }
+.morph-sm { width: 24px; height: 24px; }
 .morph > svg {
   position: absolute;
   inset: 0;
-  transition: opacity var(--t-micro) var(--ease), transform var(--t-micro) var(--ease);
+  transition: opacity var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
 }
+/* Play/pause cross-fade: outgoing shrinks to .8, incoming grows from .8 (150ms). */
 .morph[data-state="play"] .morph-pause,
-.morph[data-state="pause"] .morph-play { opacity: 0; transform: scale(.6); }
+.morph[data-state="pause"] .morph-play { opacity: 0; transform: scale(.8); }
 
 .player-error {
   position: absolute;
@@ -299,7 +300,7 @@
   color: rgba(255, 255, 255, .75);
   display: grid;
   place-items: center;
-  transition: background var(--t-micro) var(--ease), color var(--t-micro) var(--ease);
+  transition: background var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
 }
 .bottom-tool.is-on { background: rgba(255, 255, 255, .2); color: #FFFFFF; }
 

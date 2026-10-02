@@ -88,7 +88,10 @@ export function MiniPlayer({ hidden = false }: { hidden?: boolean }) {
         aria-label={np.browserPlaying ? "暂停" : "播放"}
         onClick={np.browserPlaying ? np.pausePlayback : np.resumePlayback}
       >
-        {np.browserPlaying ? <PauseIcon size={24} /> : <PlayIcon size={24} />}
+        <span className="morph morph-sm" data-state={np.browserPlaying ? "pause" : "play"}>
+          <PlayIcon size={24} className="morph-play" />
+          <PauseIcon size={24} className="morph-pause" />
+        </span>
       </button>
       <button type="button" className="mini-button" aria-label="跳过这首" onClick={np.nextPlayback} disabled={!canSkip}>
         <SkipIcon size={24} />

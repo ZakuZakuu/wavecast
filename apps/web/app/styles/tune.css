@@ -149,6 +149,7 @@
 .tune-input input:focus-visible { box-shadow: 0 0 0 2px rgba(29, 29, 31, .25); }
 
 .segmented {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   padding: 3px;
@@ -163,11 +164,25 @@
   font-size: 15px;
   color: var(--ink);
   white-space: nowrap;
-  transition: background-color var(--t-state) var(--ease), box-shadow var(--t-state) var(--ease);
+  transition: transform var(--dur-fast) var(--ease-standard);
   position: relative;
+  z-index: 1;
 }
 .segmented button::after { content: ""; position: absolute; inset: -4px 0; }
-.segmented button.is-selected { background: #FFFFFF; box-shadow: 0 2px 6px rgba(0, 0, 0, .1); font-weight: 600; }
+.segmented button.is-selected { font-weight: 600; }
+.seg-thumb {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  bottom: 3px;
+  border-radius: var(--radius-segment);
+  background: #FFFFFF;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .1);
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+@media (prefers-reduced-motion: reduce) {
+  .seg-thumb { transition: none; }
+}
 
 .on-air {
   min-height: 54px;
@@ -181,9 +196,9 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  transition: opacity var(--t-state) var(--ease), transform var(--t-micro) var(--ease);
+  transition: opacity var(--dur-base) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
 }
-.on-air:active:not(:disabled) { transform: scale(.98); }
+.on-air:active:not(:disabled) { transform: scale(.96); transition-duration: var(--dur-base), var(--dur-instant); }
 .on-air:disabled { opacity: .3; }
 .on-air-light { width: 8px; height: 8px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 4px rgba(255, 107, 44, .25); }
 
