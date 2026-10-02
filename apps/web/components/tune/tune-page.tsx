@@ -1,23 +1,17 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api } from "../../lib/api";
-import { isPlaybackReadySegment } from "../../lib/playback";
 import {
   DURATIONS,
   FREQ_MAX,
   FREQ_MIN,
   formatFreq,
   matchStation,
-  rememberProgrammeStation,
   stationById,
   STATIONS,
   type Station,
 } from "../../lib/stations";
-import { friendlyError } from "../../lib/friendly-error";
-import { readLocalTaste, tasteContext } from "../../lib/taste";
 import {
   clampFreq,
   freqAfterDrag,
@@ -27,20 +21,16 @@ import {
   readTuner,
   stepStation,
 } from "../../lib/tuner";
-import type { DurationIntent, ProgramProposal } from "../../lib/types";
-import { recordCreatedProgram } from "../../lib/user-library";
+import type { DurationIntent } from "../../lib/types";
 import { AppShell } from "../app-shell";
 import { Segmented } from "../segmented";
-import { useNowPlaying, usePlaybackControl } from "../player/playback-provider";
-import { useImmersiveOverlay } from "../../lib/chrome-visibility";
 import { easeStandard, prefersReducedMotion, tween } from "../../lib/motion/easing";
 import { VelocityTracker } from "../../lib/motion/gesture";
 import { animateSpring, type Cancel } from "../../lib/motion/spring";
-import { openPlayer } from "../../lib/player-nav";
-import { TuningInScreen, type TuningStep } from "./tuning-in";
+import { TuningInScreen } from "./tuning-in";
+import { LAST_STATION_KEY, useTuneStart } from "./use-tune-start";
 import { TuningWindow, useElementWidth } from "./tuning-window";
 
-const LAST_STATION_KEY = "wavecast-last-station-v1";
 const MATCH_SLIDE_MS = 500;
 
 /** Inertia: velocity decays to 0.998× per ms (iOS normal scrolling). */
@@ -48,14 +38,8 @@ const GLIDE_DECAY_PER_MS = 0.998;
 /** Below this speed (px/ms) the glide hands over to the snapping spring. */
 const GLIDE_STOP_SPEED = 0.05;
 
-type Phase =
-  | { kind: "idle" }
-  | { kind: "tuning"; station: Station; label: string; proposal: ProgramProposal | null; error: string | null };
-
 export function TunePage() {
-  const router = useRouter();
-  const { open, close, reload } = usePlaybackControl();
-  const np = useNowPlaying();
+  const tune = useTuneStart();
 
   const [freq, setFreqState] = useState(STATIONS[0].freq);
   const freqRef = useRef(freq);
@@ -64,8 +48,6 @@ export function TunePage() {
   const [matched, setMatched] = useState(false);
   const manualRef = useRef(false);
   const [duration, setDuration] = useState<DurationIntent>("STANDARD");
-  const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-  const requestRef = useRef(0);
   const animRef = useRef<Cancel | null>(null);
   const lastLockedRef = useRef<string | null>(null);
   const { ref: windowRef, width } = useElementWidth<HTMLDivElement>();
@@ -159,8 +141,6 @@ export function TunePage() {
     if (fromQuery && Math.abs(fromQuery.freq - freqRef.current) > 0.01) animateTo(fromQuery.freq);
     return stopAnimation;
   }, [animateTo, setFreq, stopAnimation]);
-
-  useImmersiveOverlay("tuning-in", phase.kind === "tuning");
 
   const reading = readTuner(freq);
   const station = reading.station;
@@ -260,109 +240,7 @@ export function TunePage() {
     animateTo(target.freq);
   };
 
-  // --- Start: proposal -> play immediately, with the tuning-in screen meanwhile.
-  const start = useCallback(async (target: Station, prompt: string) => {
-    const requestId = requestRef.current + 1;
-    requestRef.current = requestId;
-    const label = prompt.trim() || target.name;
-    setPhase({ kind: "tuning", station: target, label, proposal: null, error: null });
-    try {
-      window.localStorage.setItem(LAST_STATION_KEY, target.id);
-    } catch {
-      // Ignore.
-    }
-    try {
-      const batch = await api.createProgramProposals({
-        prompt: prompt.trim().length >= 2 ? prompt.trim() : target.defaultTopic,
-        duration_intent: duration,
-        count: 1,
-        taste_context: tasteContext(readLocalTaste()),
-      });
-      if (requestRef.current !== requestId) return;
-      const proposal = batch.proposals[0];
-      if (!proposal) throw new Error("没有拿到节目方案");
-      rememberProgrammeStation(proposal.id, target.id);
-      recordCreatedProgram(proposal.id);
-      setPhase({ kind: "tuning", station: target, label, proposal, error: null });
-      open({ seedId: proposal.id });
-    } catch (reason: unknown) {
-      if (requestRef.current !== requestId) return;
-      setPhase({
-        kind: "tuning",
-        station: target,
-        label,
-        proposal: null,
-        error: reason instanceof Error && /[一-鿿]/.test(reason.message) ? reason.message : "开播失败了，可以再试一次",
-      });
-    }
-  }, [duration, open]);
-
-  const tuningProposalId = phase.kind === "tuning" ? phase.proposal?.id ?? null : null;
-  const hostEpisode = np?.localEpisode && tuningProposalId && np.localEpisode.seed_id === tuningProposalId
-    ? np.localEpisode
-    : null;
-  const opening = useMemo(
-    () => hostEpisode
-      ? [...hostEpisode.segments].sort((a, b) => a.order - b.order).find((segment) => segment.kind === "MUSIC")
-      : undefined,
-    [hostEpisode],
-  );
-  const audioReady = Boolean(
-    hostEpisode
-    && np?.programManifest
-    && np.programManifest.chunks.length > 0
-    && np.programManifest.renderedFrontierSeconds > 0,
-  );
-
-  // First playable audio -> go to the player.
-  useEffect(() => {
-    if (audioReady && hostEpisode) {
-      requestRef.current += 1;
-      // 开播中 cross-fades into the player (MOTION.md §4.8).
-      openPlayer(`/episode/materialized/${hostEpisode.id}`, "fade");
-    }
-  }, [audioReady, hostEpisode, router]);
-
-  const cancel = () => {
-    requestRef.current += 1;
-    if (tuningProposalId) {
-      // open() may already have been called even if the episode has not
-      // loaded yet: always unload this programme so a late start cannot play.
-      if (hostEpisode && np) np.leaveEpisode();
-      close({ seedId: tuningProposalId });
-    }
-    setPhase({ kind: "idle" });
-  };
-
-  const tuningError = phase.kind === "tuning"
-    ? phase.error ?? (hostEpisode && np?.renderState === "error" ? "节目音频暂时没有准备好" : null)
-      ?? (tuningProposalId && np?.target.seedId === tuningProposalId && !hostEpisode && np.error ? friendlyError(np.error, "节目暂时无法开始，可以再试一次") : null)
-    : null;
-
-  const retry = () => {
-    if (phase.kind !== "tuning") return;
-    if (hostEpisode && np) {
-      np.requestProgramRender();
-      return;
-    }
-    if (phase.proposal) {
-      // The proposal exists; only the episode start failed. Retry that.
-      reload();
-      return;
-    }
-    void start(phase.station, text);
-  };
-
-  const steps: TuningStep[] = phase.kind === "tuning" ? [
-    { label: phase.proposal ? `听懂了：${phase.label}` : "正在理解你想听的", done: Boolean(phase.proposal) },
-    {
-      label: opening && isPlaybackReadySegment(opening)
-        ? `开场歌就位：${opening.artist ? opening.artist : ""}《${opening.title}》`
-        : "正在找开场歌",
-      done: Boolean(opening && isPlaybackReadySegment(opening)),
-    },
-    { label: "正在排后面的曲目", done: audioReady },
-  ] : [];
+  const startFrom = (target: Station) => void tune.start(target, text, duration);
 
   const glowColor = between ? "#B8B8C0" : station.light;
   const cta = between ? "先对准一个台" : `在 FM ${formatFreq(station.freq)} 开播`;
@@ -454,7 +332,7 @@ export function TunePage() {
             enterKeyHint="go"
             maxLength={200}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !between) void start(station, text);
+              if (event.key === "Enter" && !between) startFrom(station);
             }}
           />
         </label>
@@ -466,19 +344,19 @@ export function TunePage() {
           onChange={setDuration}
         />
 
-        <button type="button" className="on-air" disabled={between} onClick={() => void start(station, text)}>
+        <button type="button" className="on-air" disabled={between} onClick={() => startFrom(station)}>
           <span className="on-air-light" aria-hidden="true" />
           {cta}
         </button>
       </div>
 
-      {phase.kind === "tuning" ? (
+      {tune.tuning ? (
         <TuningInScreen
-          station={phase.station}
-          steps={steps}
-          error={tuningError}
-          onCancel={cancel}
-          onRetry={retry}
+          station={tune.tuning}
+          steps={tune.steps}
+          error={tune.error}
+          onCancel={tune.cancel}
+          onRetry={tune.retry}
         />
       ) : null}
     </AppShell>

@@ -8,17 +8,29 @@ import { api } from "../../lib/api";
 import { openPlayer } from "../../lib/player-nav";
 import { authClient } from "../../lib/auth-client";
 import { programmeCover } from "../../lib/cover/programme-cover";
-import { formatFreq, rememberProgrammeStation, stationForProgramme, STATIONS } from "../../lib/stations";
+import { FEATURED_PROGRAMMES, featuredDurationIntent, type FeaturedProgramme } from "../../lib/featured";
+import {
+  formatFreq,
+  rememberProgrammeStation,
+  stationById,
+  stationForProgramme,
+  STATIONS,
+  type StationId,
+} from "../../lib/stations";
 import type { ProgramIdea, Seed } from "../../lib/types";
 import { AppShell } from "../app-shell";
 import { TypeCover } from "../cover/type-cover";
 import { InstallPrompt } from "../install/install-prompt";
 import { OnboardingSheet } from "../onboarding/onboarding-sheet";
 import { useNowPlaying } from "../player/playback-provider";
+import { TuningInScreen } from "../tune/tuning-in";
+import { useTuneStart } from "../tune/use-tune-start";
 
 type Pick = {
   key: string;
   id: string;
+  /** Known station (featured cards); otherwise remembered/matched from the copy. */
+  stationId?: StationId;
   title: string;
   minutes: number | null;
   onOpen: () => void;
@@ -26,7 +38,7 @@ type Pick = {
 };
 
 function PickCard({ pick }: { pick: Pick }) {
-  const station = stationForProgramme(pick.id, pick.title);
+  const station = pick.stationId ? stationById(pick.stationId) : stationForProgramme(pick.id, pick.title);
   const cover = programmeCover({ id: pick.id, title: pick.title, stationId: station.id });
   const meta = pick.minutes ? `${station.name}，约 ${pick.minutes} 分钟` : station.name;
   return (
@@ -55,6 +67,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
   const [ideas, setIdeas] = useState<ProgramIdea[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const tune = useTuneStart();
 
   useEffect(() => {
     api.seeds()
@@ -97,8 +110,22 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
     }
   };
 
-  // Personalised ideas when signed in; otherwise (or when empty) the seeds — rendered once.
+  // Guests: hand-picked featured cards (generated only on click). Signed in:
+  // personalised ideas, or the seeds when there are none — rendered once.
+  const guest = !sessionPending && !user;
   const picks: Pick[] = useMemo(() => {
+    if (sessionPending) return [];
+    if (!user) {
+      return FEATURED_PROGRAMMES.map((item: FeaturedProgramme) => ({
+        key: "featured:" + item.id,
+        id: item.id,
+        stationId: item.stationId,
+        title: item.title,
+        minutes: item.minutes,
+        busy: false,
+        onOpen: () => void tune.start(stationById(item.stationId), item.prompt, featuredDurationIntent(item)),
+      }));
+    }
     if (ideas && ideas.length) {
       return ideas.map((idea) => ({
         key: "idea:" + idea.id,
@@ -120,9 +147,9 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
         openPlayer(`/episode/${seed.id}`);
       },
     }));
-  }, [busyId, ideas, router, seeds, user]);
+  }, [busyId, ideas, router, seeds, sessionPending, tune.start, user]);
 
-  const loading = seeds === null || (Boolean(user) && ideas === null);
+  const loading = sessionPending || (!guest && (seeds === null || ideas === null));
   const glow = np?.station?.light ?? "#5C7CE0";
   const initial = user?.name?.trim().slice(0, 1) || user?.email?.slice(0, 1)?.toUpperCase() || null;
 
@@ -162,7 +189,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
         </section>
 
         <section className="home-section" aria-labelledby="home-picks">
-          <h2 id="home-picks" className="section-title">猜你想听</h2>
+          <h2 id="home-picks" className="section-title">{guest ? "先听这几档" : "猜你想听"}</h2>
           {error ? <p className="inline-note" role="alert">{error}</p> : null}
           <div className="pick-grid">
             {picks.map((pick) => <PickCard key={pick.key} pick={pick} />)}
@@ -177,6 +204,15 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
       </div>
       <OnboardingSheet onFinished={onOnboardingFinished} />
       <InstallPrompt />
+      {tune.tuning ? (
+        <TuningInScreen
+          station={tune.tuning}
+          steps={tune.steps}
+          error={tune.error}
+          onCancel={tune.cancel}
+          onRetry={tune.retry}
+        />
+      ) : null}
     </AppShell>
   );
 }
