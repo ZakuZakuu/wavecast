@@ -148,7 +148,7 @@ function PlaybackHost({
   hostEpisodeRef: React.MutableRefObject<{ id: string; seedId: string } | null>;
   store: NowPlayingStore;
 }) {
-  const playback = useProgrammePlayback(target);
+  const playback = useProgrammePlayback({ ...target, leaveIfAbandoned: true });
   const episode = playback.localEpisode;
   hostEpisodeRef.current = episode ? { id: episode.id, seedId: episode.seed_id } : null;
 

@@ -64,6 +64,7 @@ describe("PlaybackProvider", () => {
     api.mixPlan.mockRejectedValue(new Error("none"));
     api.heartbeat.mockResolvedValue(episode);
     api.recordUserEvent.mockResolvedValue(undefined);
+    api.leave.mockResolvedValue(episode);
     root = createRoot(document.createElement("div"));
   });
 
@@ -108,6 +109,8 @@ describe("PlaybackProvider", () => {
     expect(latest).toBeNull();
     expect(usePlayerStore.getState().episode).toBeNull();
     expect(api.heartbeat).not.toHaveBeenCalled();
+    // The server is told to stop generating for the abandoned episode.
+    expect(api.leave).toHaveBeenCalledWith("episode-1");
   });
 
   it("close(only) leaves a different programme playing", async () => {
@@ -118,5 +121,6 @@ describe("PlaybackProvider", () => {
     await act(async () => control!.close({ seedId: "other" }));
     await flush();
     expect(latest?.localEpisode?.id).toBe("episode-1");
+    expect(api.leave).not.toHaveBeenCalled();
   });
 });

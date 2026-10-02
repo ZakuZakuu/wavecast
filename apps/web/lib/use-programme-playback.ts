@@ -187,7 +187,14 @@ export type ProgrammePlaybackTarget = {
 export function useProgrammePlayback({
   seedId,
   episodeId,
-}: ProgrammePlaybackTarget) {
+  leaveIfAbandoned = false,
+}: ProgrammePlaybackTarget & {
+  /**
+   * When a new episode's start resolves after this host was unmounted
+   * (cancelled or replaced), release it so the server stops generating.
+   */
+  leaveIfAbandoned?: boolean;
+}) {
   const { episode, setEpisode } = usePlayerStore();
   const bootstrapEpisodeId = (
     episodeId
@@ -481,7 +488,12 @@ export function useProgrammePlayback({
         program_id: started.seed_id,
         episode_id: started.id,
       }).catch(() => undefined);
-      if (!mounted) return;
+      if (!mounted) {
+        if (leaveIfAbandoned && !episodeId) {
+          void api.leave(started.id).catch(() => undefined);
+        }
+        return;
+      }
 
       const storedProgress = storedProgramProgress(started.id);
       const stored = resolvedProgramPosition(storedProgress);
@@ -527,7 +539,7 @@ export function useProgrammePlayback({
       // /leave; otherwise MINI-player re-entry must resume the same session.
       mounted = false;
     };
-  }, [episodeId, seedId, setEpisode]);
+  }, [episodeId, leaveIfAbandoned, seedId, setEpisode]);
 
   useEffect(() => {
     if (!localEpisode) return;
