@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isDarkColour } from "../../lib/cover/build-cover";
 import { readCaptionsEnabled, recordLessLikeThis, writeCaptionsEnabled } from "../../lib/listener-feedback";
+import { friendlyError } from "../../lib/friendly-error";
 import { lastTabPathOr } from "../../lib/nav-memory";
 import { currentMusicSegment, estimatedTotalSeconds } from "../../lib/now-playing";
 import { nextProgramMusicStart } from "../../lib/playback";
@@ -13,7 +14,7 @@ import { formatFreq } from "../../lib/stations";
 import { TypeCover } from "../cover/type-cover";
 import { Back15Icon, CaptionsIcon, ChevronDownIcon, MoreIcon, PauseIcon, PlayIcon, RouteIcon, SkipIcon, ThumbDownIcon } from "../icons";
 import { MoreSheet } from "./more-sheet";
-import { useNowPlaying, usePlaybackTarget } from "./playback-provider";
+import { useNowPlaying, usePlaybackControl, usePlaybackTarget } from "./playback-provider";
 import { ProgressBar } from "./progress-bar";
 import { RouteSheet } from "./route-sheet";
 
@@ -37,6 +38,7 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
   usePlaybackTarget({ seedId, episodeId });
   const router = useRouter();
   const playback = useNowPlaying();
+  const { reload } = usePlaybackControl();
   const toast = useToast();
   const [routeOpen, setRouteOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -75,7 +77,11 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
   );
 
   if (!np || !episode) {
-    const failed = playback?.error && !playback.localEpisode;
+    // A start that failed before any episode existed still reports here.
+    const sameTarget = Boolean(playback && (
+      episodeId ? playback.target.episodeId === episodeId : playback.target.seedId === seedId
+    ));
+    const failed = Boolean(sameTarget && playback?.error && !playback.localEpisode);
     return (
       <main className="player player-loading" aria-busy={!failed}>
         <div className="player-body">
@@ -86,9 +92,14 @@ export function PlayerScreen({ seedId, episodeId }: { seedId?: string; episodeId
           </div>
           <div className="player-cover-slot"><div className="player-cover-placeholder" /></div>
           <p className="player-loading-text" role="status">
-            {failed ? playback?.error ?? "节目暂时无法开始" : "正在接入节目…"}
+            {failed ? friendlyError(playback?.error, "节目暂时无法开始，可以再试一次") : "正在接入节目…"}
           </p>
-          {failed ? <Link href="/tune" className="pill-button">回到调频</Link> : null}
+          {failed ? (
+            <div className="player-failed-actions">
+              <button type="button" className="pill-button on-dark" onClick={reload}>重试</button>
+              <Link href="/tune" className="pill-button on-dark">回到调频</Link>
+            </div>
+          ) : null}
         </div>
       </main>
     );

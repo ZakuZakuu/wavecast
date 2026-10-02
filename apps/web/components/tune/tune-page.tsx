@@ -14,6 +14,7 @@ import {
   STATIONS,
   type Station,
 } from "../../lib/stations";
+import { friendlyError } from "../../lib/friendly-error";
 import { readLocalTaste, tasteContext } from "../../lib/taste";
 import {
   clampFreq,
@@ -47,7 +48,7 @@ type Phase =
 
 export function TunePage() {
   const router = useRouter();
-  const { open, close } = usePlaybackControl();
+  const { open, close, reload } = usePlaybackControl();
   const np = useNowPlaying();
 
   const [freq, setFreqState] = useState(STATIONS[0].freq);
@@ -284,22 +285,29 @@ export function TunePage() {
 
   const cancel = () => {
     requestRef.current += 1;
-    if (hostEpisode && np) {
-      np.leaveEpisode();
-      close();
+    if (tuningProposalId) {
+      // open() may already have been called even if the episode has not
+      // loaded yet: always unload this programme so a late start cannot play.
+      if (hostEpisode && np) np.leaveEpisode();
+      close({ seedId: tuningProposalId });
     }
     setPhase({ kind: "idle" });
   };
 
   const tuningError = phase.kind === "tuning"
     ? phase.error ?? (hostEpisode && np?.renderState === "error" ? "节目音频暂时没有准备好" : null)
-      ?? (np?.error && tuningProposalId && !hostEpisode ? np.error : null)
+      ?? (tuningProposalId && np?.target.seedId === tuningProposalId && !hostEpisode && np.error ? friendlyError(np.error, "节目暂时无法开始，可以再试一次") : null)
     : null;
 
   const retry = () => {
     if (phase.kind !== "tuning") return;
     if (hostEpisode && np) {
       np.requestProgramRender();
+      return;
+    }
+    if (phase.proposal) {
+      // The proposal exists; only the episode start failed. Retry that.
+      reload();
       return;
     }
     void start(phase.station, text);

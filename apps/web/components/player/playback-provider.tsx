@@ -25,6 +25,8 @@ import {
 import { ProgrammeAudioPlayer } from "../programme-audio-player";
 
 export type NowPlaying = ProgrammePlayback & {
+  /** The programme this host was asked to play; errors belong to it. */
+  target: ProgrammePlaybackTarget;
   station: Station | null;
   cover: ProgrammeCover | null;
 };
@@ -32,8 +34,13 @@ export type NowPlaying = ProgrammePlayback & {
 type Control = {
   /** Select the programme the persistent host should play. */
   open: (target: ProgrammePlaybackTarget) => void;
-  /** Unload the current programme (e.g. a cancelled tune-in). */
-  close: () => void;
+  /**
+   * Unload the current programme (e.g. a cancelled tune-in). With `only`, it
+   * closes just that programme and leaves anything else playing.
+   */
+  close: (only?: ProgrammePlaybackTarget) => void;
+  /** Remount the host for the same programme (retry after a failed start). */
+  reload: () => void;
 };
 
 const ControlContext = createContext<Control | null>(null);
@@ -98,6 +105,7 @@ function targetKey(target: ProgrammePlaybackTarget | null): string {
  */
 export function PlaybackProvider({ children }: { children: ReactNode }) {
   const [target, setTarget] = useState<ProgrammePlaybackTarget | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const hostEpisodeRef = useRef<{ id: string; seedId: string } | null>(null);
 
   const open = useCallback((next: ProgrammePlaybackTarget) => {
@@ -112,15 +120,20 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const close = useCallback(() => setTarget(null), []);
-  const control = useMemo(() => ({ open, close }), [close, open]);
+  const close = useCallback((only?: ProgrammePlaybackTarget) => {
+    setTarget((previous) => (
+      only && targetKey(previous) !== targetKey(only) ? previous : null
+    ));
+  }, []);
+  const reload = useCallback(() => setAttempt((value) => value + 1), []);
+  const control = useMemo(() => ({ open, close, reload }), [close, open, reload]);
   const [store] = useState(createNowPlayingStore);
 
   return (
     <ControlContext.Provider value={control}>
       <StoreContext.Provider value={store}>
         {children}
-        <PlaybackHost key={targetKey(target)} target={target ?? {}} hostEpisodeRef={hostEpisodeRef} store={store} />
+        <PlaybackHost key={targetKey(target) + "#" + attempt} target={target ?? {}} hostEpisodeRef={hostEpisodeRef} store={store} />
       </StoreContext.Provider>
     </ControlContext.Provider>
   );
@@ -169,13 +182,21 @@ function PlaybackHost({
   }, [cover]);
 
   const value = useMemo<NowPlaying | null>(
-    () => episode ? { ...playback, station, cover } : null,
-    [cover, episode, playback, station],
+    // Publish as soon as a programme is selected, so a failed start (no
+    // episode yet) still reaches the player and the tuning-in screen.
+    () => target.seedId || target.episodeId ? { ...playback, target, station, cover } : null,
+    [cover, playback, station, target],
   );
+  const publishedRef = useRef<NowPlaying | null>(null);
   useLayoutEffect(() => {
+    publishedRef.current = value;
     store.set(value);
   });
-  useEffect(() => () => store.set(null), [store]);
+  // Layout cleanup runs before the replacement host publishes, and only
+  // clears what this host published, so a remount never wipes its successor.
+  useLayoutEffect(() => () => {
+    if (store.get() === publishedRef.current) store.set(null);
+  }, [store]);
 
   const manifest = playback.programManifest;
   const audioReady = Boolean(

@@ -532,3 +532,4 @@ button.route-track { min-height: 44px; margin: -6px 0; }
   .progress-track.dragging { transform: none; }
   .morph > svg { transform: none !important; }
 }
+.player-failed-actions { margin-top: 16px; display: flex; justify-content: center; gap: 10px; }
