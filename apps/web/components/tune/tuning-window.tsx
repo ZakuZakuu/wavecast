@@ -31,7 +31,6 @@ export function TuningWindow({
   activeStation,
   noise = 0,
   pointerGhosts = false,
-  swing = false,
   children,
 }: {
   freq: number;
@@ -39,7 +38,6 @@ export function TuningWindow({
   activeStation: Station | null;
   noise?: number;
   pointerGhosts?: boolean;
-  swing?: boolean;
   children?: ReactNode;
 }) {
   const ticks = useMemo(() => tickGeometry(freq, width), [freq, width]);
@@ -81,7 +79,7 @@ export function TuningWindow({
           <span className="tw-ghost" style={{ left: width / 2 + 7 }} aria-hidden="true" />
         </>
       ) : null}
-      <span className={swing ? "tw-pointer is-swinging" : "tw-pointer"} style={{ left: width / 2 - 1 }} aria-hidden="true" />
+      <span className="tw-pointer" style={{ left: width / 2 - 1 }} aria-hidden="true" />
       {children}
     </>
   );

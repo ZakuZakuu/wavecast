@@ -160,21 +160,3 @@ export function noisePath(width: number, height = 96, count = 260, seed = 7): st
   }
   return d;
 }
-
-/**
- * Tuning-in waveform: static noise fading into a clean sine as preparation
- * progresses (0 = all noise, 1 = smooth sine).
- */
-export function waveformPath(progress: number, seed: number, width = 300, mid = 28): string {
-  const p = Math.min(1, Math.max(0, progress));
-  const R = rng(seed);
-  let d = "";
-  for (let x = 0; x <= width; x += 2) {
-    const t = x / width;
-    const noiseAmp = 20 * (1 - p) * Math.pow(1 - t * p, 1.6);
-    const sineAmp = 12 * (0.25 + 0.75 * p) * Math.pow(Math.max(t, p * 0.6), 0.7);
-    const y = mid + (R() * 2 - 1) * noiseAmp + sineAmp * Math.sin(x * 0.12);
-    d += (x ? "L" : "M") + x + " " + r2(y);
-  }
-  return d;
-}
