@@ -24,10 +24,20 @@
   --radius-cover: 12px;
   --radius-segment: 9px;
 
-  --ease: cubic-bezier(.2, .8, .2, 1);
-  --t-micro: 150ms;
-  --t-state: 250ms;
-  --t-sheet: 350ms;
+  /* Motion (MOTION.md §2). */
+  --dur-instant: 100ms;
+  --dur-fast: 150ms;
+  --dur-base: 250ms;
+  --dur-slow: 350ms;
+  --dur-page: 400ms;
+  --ease-standard: cubic-bezier(.2, .8, .2, 1);
+  --ease-enter: cubic-bezier(.05, .7, .1, 1);
+  --ease-exit: cubic-bezier(.3, 0, .8, .15);
+  /* Older names, kept as aliases. */
+  --ease: var(--ease-standard);
+  --t-micro: var(--dur-fast);
+  --t-state: var(--dur-base);
+  --t-sheet: var(--dur-slow);
 
   --nav-bottom-pad: max(env(safe-area-inset-bottom, 0px), 26px);
   --nav-height: calc(58px + var(--nav-bottom-pad));
