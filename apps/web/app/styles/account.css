@@ -16,7 +16,18 @@
   display: flex;
   flex-direction: column;
 }
-.acct-login .acct-body { padding-left: 24px; padding-right: 24px; }
+.acct-login .acct-body {
+  padding-left: 24px;
+  padding-right: 24px;
+  /* The three Frost-Login glows as radial gradients painted in the page
+     background. Large filter: blur() layers here made iOS Safari leave an
+     unpainted box behind the logo (and reload the page under memory
+     pressure); gradients need no compositing. */
+  background:
+    radial-gradient(circle 270px at 60px 100px, rgba(232, 131, 74, .28), rgba(232, 131, 74, .14) 50%, rgba(232, 131, 74, 0)),
+    radial-gradient(circle 260px at calc(100% - 30px) 290px, rgba(110, 98, 182, .26), rgba(110, 98, 182, .12) 50%, rgba(110, 98, 182, 0)),
+    radial-gradient(ellipse 240px 220px at 170px 460px, rgba(62, 156, 140, .18), rgba(62, 156, 140, .08) 50%, rgba(62, 156, 140, 0));
+}
 
 .acct-back {
   flex: 0 0 auto;
