@@ -14,6 +14,7 @@ import {
   snoozeInstall,
   takeInstallPrompt,
 } from "../../lib/install";
+import { claimVisitPrompt, visitPrompt } from "../../lib/login-nudge";
 import { useOverlay } from "../../lib/overlay-stack";
 import { PlusSquareIcon, ShareIcon } from "../icons";
 import { LogoMark } from "../logo-mark";
@@ -34,7 +35,9 @@ export function InstallPrompt() {
     const evaluate = () => {
       const platform = detectPlatform(navigator.userAgent, navigator.maxTouchPoints ?? 0, Boolean(peekInstallPrompt()));
       const show = shouldOfferInstall({ platform, standalone: isStandalone(), desktop: isDesktopPointer(), visits, ...readInstallState() });
-      setMode(show ? (platform === "ios-safari" ? "ios" : "banner") : "none");
+      // One one-off prompt per visit: not after the login card, and it holds the slot.
+      const allowed = show && visitPrompt() !== "login" && claimVisitPrompt("install");
+      setMode(allowed ? (platform === "ios-safari" ? "ios" : "banner") : "none");
     };
     const timer = window.setTimeout(evaluate, 1200);
     const onPrompt = () => window.setTimeout(evaluate, 0);

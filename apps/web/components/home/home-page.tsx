@@ -197,7 +197,12 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
         </section>
 
         <section className="home-section" aria-labelledby="home-picks">
-          <h2 id="home-picks" className="section-title">{guest ? "先听这几档" : "猜你想听"}</h2>
+          <div className="section-head">
+            <h2 id="home-picks" className="section-title">{guest ? "先听这几档" : "猜你想听"}</h2>
+            {guest ? (
+              <p className="section-hint">登录后，这里会换成按你口味准备的节目<Link href="/account">登录</Link></p>
+            ) : null}
+          </div>
           {error ? <p className="inline-note" role="alert">{error}</p> : null}
           <div className="pick-grid">
             {picks.map((pick) => <PickCard key={pick.key} pick={pick} />)}

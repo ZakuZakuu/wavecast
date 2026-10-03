@@ -124,3 +124,40 @@
   .install-arrow { animation: none; }
   .install-card, .install-banner { animation-name: fade-in-plain; animation-duration: var(--dur-fast); }
 }
+
+/* Guest login card (one-off, after the second finished programme): above the
+   bottom nav, and above the mini player when it is showing. */
+.login-nudge {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(var(--nav-height) + 8px);
+  z-index: 21;
+  padding: 14px 14px 12px 16px;
+  border-radius: 18px;
+  background: var(--mat-mini);
+  backdrop-filter: var(--blur-card);
+  -webkit-backdrop-filter: var(--blur-card);
+  border: .5px solid rgba(255, 255, 255, .9);
+  box-shadow: 0 10px 30px rgba(29, 29, 31, .14);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: nudge-in var(--dur-slow) var(--ease-enter) both;
+}
+.login-nudge[hidden] { display: none; }
+.app-root:has(> .mini-player:not([hidden])) .login-nudge { bottom: calc(var(--nav-height) + var(--mini-height) + 16px); }
+.login-nudge.is-leaving { animation: nudge-out var(--dur-base) var(--ease-exit) both; }
+.login-nudge-copy { margin: 0; display: flex; flex-direction: column; gap: 2px; line-height: 1.4; }
+.login-nudge-copy strong { font-size: 15px; font-weight: 600; }
+.login-nudge-copy span { font-size: 13px; color: var(--ink-2); }
+.login-nudge-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.login-nudge-actions button { min-height: 36px; padding: 0 16px; border: 0; border-radius: 999px; font-size: 15px; font-weight: 600; }
+.login-nudge-later { background: rgba(118, 118, 128, .12); color: var(--ink); }
+.login-nudge-go { background: var(--ink); color: #FFFFFF; }
+@keyframes nudge-in { from { transform: translateY(calc(100% + 24px)); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes nudge-out { from { transform: none; opacity: 1; } to { transform: translateY(calc(100% + 24px)); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .login-nudge { animation: fade-in-plain var(--dur-fast) linear both; }
+  .login-nudge.is-leaving { animation: none; }
+}

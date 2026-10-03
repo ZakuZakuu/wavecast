@@ -49,6 +49,9 @@
 .station-card-name { font-size: 17px; font-weight: 600; }
 .station-card-line { font-size: 13px; line-height: 1.4; opacity: .85; }
 
+.section-head { display: flex; flex-direction: column; gap: 4px; }
+.section-hint { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+.section-hint a { margin-left: 6px; color: var(--ink); font-weight: 600; }
 .pick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 14px; }
 .pick {
   padding: 0;
