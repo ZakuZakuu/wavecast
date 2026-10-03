@@ -170,24 +170,4 @@
 .lib-empty { padding: 32px 8px; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }
 .lib-empty p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--ink-2); }
 
-/* Account */
-.account { display: flex; flex-direction: column; gap: 22px; }
-.account .avatar { margin-right: -4px; }
-.account-group { border-radius: var(--radius-group); background: var(--surface); overflow: hidden; }
-.account-row { padding: 16px; display: flex; flex-direction: column; gap: 4px; }
-.account-row strong { font-size: 17px; font-weight: 600; }
-.account-row span { font-size: 15px; line-height: 1.5; color: var(--ink-2); }
-.account-note { margin: 0; padding: 0 16px 14px; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
-.account-action {
-  width: 100%;
-  min-height: 50px;
-  padding: 0 16px;
-  border: 0;
-  border-top: .5px solid var(--separator);
-  background: transparent;
-  text-align: left;
-  font-size: 17px;
-  color: #007AFF;
-}
-.account-action.is-danger { color: var(--danger); }
 .inline-note.is-error { color: var(--danger); }

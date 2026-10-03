@@ -38,3 +38,8 @@ export function useImmersiveActive(): boolean {
 export function isImmersiveRoute(pathname: string | null): boolean {
   return Boolean(pathname && /^\/episode(\/|$)/.test(pathname));
 }
+
+/** Routes without the bottom nav and mini player: the player, and /account (login / account). */
+export function isChromelessRoute(pathname: string | null): boolean {
+  return isImmersiveRoute(pathname) || Boolean(pathname && /^\/account(\/|$)/.test(pathname));
+}

@@ -12,6 +12,7 @@ import "./styles/player.css";
 import "./styles/tune.css";
 import "./styles/home.css";
 import "./styles/overlays.css";
+import "./styles/account.css";
 import "./styles/desktop.css";
 
 export const metadata: Metadata = {
