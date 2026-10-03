@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>封面变化对比</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@200;300;400;500;700&amp;family=Noto+Serif+SC:wght@900&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.cv-title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+</style>
+</helmet>
+<div style="width: 1608px; height: 1760px; box-sizing: border-box; background: #F2F2F4; color: #1D1D1F; font-family: -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif; padding: 48px; display: flex; flex-direction: column; gap: 40px">
+<sc-for list="{{rows}}" as="row" hint-placeholder-count="5">
+<section style="display: flex; flex-direction: column; gap: 14px">
+<h2 style="margin: 0; display: flex; align-items: baseline; gap: 10px; font-size: 22px; font-weight: 700">
+<span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; background: {{row.color}}; align-self: center"></span>
+{{row.name}}
+<span style="font-size: 15px; font-weight: 300; color: #6E6E73">FM {{row.freq}}</span>
+</h2>
+<div style="display: grid; grid-template-columns: repeat(8, 168px); gap: 24px">
+<sc-for list="{{row.items}}" as="it" hint-placeholder-count="8">
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="border-radius: 12px; overflow: hidden; box-shadow: 0 6px 18px rgba(29,29,31,0.08)">
+<dc-import name="Cover2" station="{{row.id}}" heading="{{it.heading}}" seed="{{it.seed}}" radius="{{0}}" hint-size="168px,168px"></dc-import>
+</div>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<span class="cv-title" style="font-size: 15px; font-weight: 600; line-height: 1.4">{{it.title}}</span>
+<span style="font-size: 13px; color: #6E6E73">{{it.meta}}</span>
+</div>
+</div>
+</sc-for>
+</div>
+</section>
+</sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"seed":{"editor":"int","min":0,"max":500,"default":0},"$preview":{"width":1608,"height":1760}}'>
+const DATA = [
+  { id: 'casual', name: '随便听', freq: '88.7', color: '#E8834A', items: [
+    ['下班路上', '下班路上听点轻松的：City Pop 与 Funk 小品'],
+    ['周末早晨', '周末早晨：慢慢醒来的原声与爵士'],
+    ['雨天开车', '雨天开车：Lo-fi 与氛围电子'],
+    ['留白处\n的转音', '留白处的转音：R&B 人声里的呼吸'],
+    ['极简入繁\n再归静', '极简入繁再归静：从钢琴独奏到弦乐编制'],
+    ['做饭时间', '做饭时间：拉丁节奏和 Bossa Nova'],
+    ['午后两点', '午后两点：适合发呆的独立流行'],
+    ['夏天的尾巴', '夏天的尾巴：海边、合成器和一点怀旧'],
+  ] },
+  { id: 'crate', name: '唱片行', freq: '93.1', color: '#3E9C8C', items: [
+    ['从 Lo-fi\n往外听', '喜欢 Lo-fi 的话，还能听什么'],
+    ['Neo-Soul\n入门', '从 D’Angelo 出发：Neo-Soul 的几条支线'],
+    ['City Pop\n之后', '听完 City Pop，再去找谁'],
+    ['冷门爵士', '冷门爵士：唱片店老板会推荐的几张'],
+    ['日系氛围', '日系氛围：从环境音乐到涩谷系'],
+    ['被低估\n的女声', '被低估的女声：七位值得多听的歌手'],
+    ['贝斯手\n的歌单', '贝斯手的歌单：低音线最好听的歌'],
+    ['老歌新唱', '老歌新唱：翻唱比原版还好听的那些'],
+  ] },
+  { id: 'profile', name: '人物志', freq: '97.4', color: '#C9A04A', items: [
+    ['坂本龙一\n这些年', '坂本龙一这些年的歌'],
+    ['久石让', '久石让：电影之外的旋律'],
+    ['Norah\nJones', 'Norah Jones：二十年的低声歌唱'],
+    ['李宗盛', '李宗盛：写给别人的那些歌'],
+    ['Nujabes', 'Nujabes：短暂又漫长的影响'],
+    ['Bill\nEvans', 'Bill Evans：钢琴三重奏的另一种可能'],
+    ['Sade', 'Sade：慢下来的力量'],
+    ['细野晴臣', '细野晴臣：从乐队到电子的五十年'],
+  ] },
+  { id: 'origins', name: '来龙去脉', freq: '101.5', color: '#5C7CE0', items: [
+    ['Bossa Nova\n怎么来的', 'Bossa Nova 是怎么来的'],
+    ['UK Garage', 'UK Garage：伦敦地下的两步节拍'],
+    ['City Pop\n的来历', 'City Pop 的来历：泡沫年代的城市声音'],
+    ['Lo-fi\n从哪来', 'Lo-fi 从哪来：采样、磁带和一个直播间'],
+    ['Disco\n没死', 'Disco 没死：从七十年代到 Nu-Disco'],
+    ['Dub\n的回声', 'Dub 的回声：牙买加录音棚里的实验'],
+    ['Shoegaze', 'Shoegaze：低头看效果器的那一代'],
+    ['Trip-hop', 'Trip-hop：布里斯托的慢节拍'],
+  ] },
+  { id: 'night', name: '夜里', freq: '105.8', color: '#6E62B6', items: [
+    ['夜航\n低音线', '夜航低音线：从 R&B 律动贝斯到爵士行走贝斯'],
+    ['雨夜慢频', '雨夜慢频：钢琴与环境音'],
+    ['低速张力', '低速张力：慢速节拍里的紧绷感'],
+    ['睡前\n半小时', '睡前半小时，安静一点'],
+    ['凌晨三点', '凌晨三点：给失眠的人'],
+    ['专注\n两小时', '专注两小时：没有人声的电子'],
+    ['海边夜色', '海边夜色：慢速 Balearic'],
+    ['城市熄灯', '城市熄灯：深夜的爵士钢琴'],
+  ] },
+];
+const MINUTES = [30, 40, 45, 30, 35, 40, 30, 45];
+
+function hash(s) {
+  let h = 2166136261;
+  for (const ch of s) h = Math.imul(h ^ ch.codePointAt(0), 16777619);
+  return (h >>> 0) % 9973;
+}
+
+class Component extends DCLogic {
+  renderVals() {
+    const o = Number(this.props.seed ?? 0) || 0;
+    const rows = DATA.map((row) => ({
+      id: row.id, name: row.name, freq: row.freq, color: row.color,
+      items: row.items.map(([heading, title], i) => ({
+        heading, title,
+        seed: hash(row.id + ':' + title) + o,
+        meta: row.name + '，约 ' + MINUTES[i] + ' 分钟',
+      })),
+    }));
+    return { rows };
+  }
+}
+</script>
+</body>
+</html>

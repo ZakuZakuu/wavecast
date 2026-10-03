@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>节目封面 v2</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@200;300;500;700&amp;family=Noto+Serif+SC:wght@900&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 100%; aspect-ratio: 1 / 1; position: relative; overflow: hidden; container-type: inline-size; background: {{bg}}; border-radius: {{radius}}px; font-family: -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif">
+<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" style="position: absolute; inset: 0; width: 100%; height: 100%; display: block" aria-hidden="true">
+<path d="{{s0.d}}" style="fill: {{s0.fill}}; fill-opacity: {{s0.o}}; stroke: {{s0.stroke}}; stroke-width: {{s0.sw}}; stroke-opacity: {{s0.so}}; stroke-linecap: round; stroke-linejoin: round"></path>
+<path d="{{s1.d}}" style="fill: {{s1.fill}}; fill-opacity: {{s1.o}}; stroke: {{s1.stroke}}; stroke-width: {{s1.sw}}; stroke-opacity: {{s1.so}}; stroke-linecap: round; stroke-linejoin: round"></path>
+<path d="{{s2.d}}" style="fill: {{s2.fill}}; fill-opacity: {{s2.o}}; stroke: {{s2.stroke}}; stroke-width: {{s2.sw}}; stroke-opacity: {{s2.so}}; stroke-linecap: round; stroke-linejoin: round"></path>
+<path d="{{s3.d}}" style="fill: {{s3.fill}}; fill-opacity: {{s3.o}}; stroke: {{s3.stroke}}; stroke-width: {{s3.sw}}; stroke-opacity: {{s3.so}}; stroke-linecap: round; stroke-linejoin: round"></path>
+<path d="{{s4.d}}" style="fill: {{s4.fill}}; fill-opacity: {{s4.o}}; stroke: {{s4.stroke}}; stroke-width: {{s4.sw}}; stroke-opacity: {{s4.so}}; stroke-linecap: round; stroke-linejoin: round"></path>
+<path d="{{s5.d}}" style="fill: {{s5.fill}}; fill-opacity: {{s5.o}}; stroke: {{s5.stroke}}; stroke-width: {{s5.sw}}; stroke-opacity: {{s5.so}}; stroke-linecap: round; stroke-linejoin: round"></path>
+<path d="{{s6.d}}" style="fill: {{s6.fill}}; fill-opacity: {{s6.o}}; stroke: {{s6.stroke}}; stroke-width: {{s6.sw}}; stroke-opacity: {{s6.so}}; stroke-linecap: round; stroke-linejoin: round"></path>
+<path d="{{s7.d}}" style="fill: {{s7.fill}}; fill-opacity: {{s7.o}}; stroke: {{s7.stroke}}; stroke-width: {{s7.sw}}; stroke-opacity: {{s7.so}}; stroke-linecap: round; stroke-linejoin: round"></path>
+</svg>
+<sc-if value="{{N.show}}" hint-placeholder-val="{{false}}">
+<span aria-hidden="true" style="position: absolute; left: {{N.left}}; right: {{N.right}}; top: {{N.top}}; bottom: {{N.bottom}}; font-size: 34cqw; font-weight: 200; line-height: 1; letter-spacing: -0.05em; color: {{N.color}}">{{freq}}</span>
+</sc-if>
+<sc-if value="{{showText}}" hint-placeholder-val="{{true}}">
+<span style="position: absolute; left: {{T.left}}; right: {{T.right}}; top: {{T.top}}; bottom: {{T.bottom}}; width: {{T.width}}; font-family: {{T.family}}; font-size: {{T.size}}cqw; font-weight: {{T.weight}}; line-height: {{T.lh}}; letter-spacing: {{T.ls}}; text-align: {{T.align}}; writing-mode: {{T.wm}}; white-space: pre-line; color: {{T.color}}">{{heading}}</span>
+<span style="position: absolute; left: {{S.left}}; right: {{S.right}}; top: {{S.top}}; bottom: {{S.bottom}}; width: {{S.width}}; font-size: 4.6cqw; line-height: 1.3; text-align: {{S.align}}; white-space: nowrap; color: {{S.color}}; opacity: 0.78"><span style="font-weight: 300">{{S.freqText}}</span> <span style="font-weight: 500">{{stationName}}</span></span>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"station":{"editor":"enum","options":["casual","crate","profile","origins","night"],"default":"night"},"heading":{"editor":"text","default":"夜航低音线"},"seed":{"editor":"int","min":0,"max":9999,"default":11},"bare":{"editor":"boolean","default":false},"radius":{"editor":"int","min":0,"max":40,"default":12},"$preview":{"width":320,"height":320}}'>
+const STATIONS = {
+  casual: { name: '随便听', freq: '88.7', hue: 22, templates: ['freq', 'split', 'horizon'], dark: 0.25 },
+  crate: { name: '唱片行', freq: '93.1', hue: 168, templates: ['label', 'split', 'contour'], dark: 0.45 },
+  profile: { name: '人物志', freq: '97.4', hue: 38, templates: ['column', 'label', 'split'], dark: 0.35 },
+  origins: { name: '来龙去脉', freq: '101.5', hue: 224, templates: ['contour', 'column', 'freq'], dark: 0.4 },
+  night: { name: '夜里', freq: '105.8', hue: 252, templates: ['horizon', 'contour', 'split'], dark: 0.8 },
+};
+
+const r2 = (n) => Math.round(n * 100) / 100;
+const cq = (v) => (v === null || v === undefined ? 'auto' : r2(v) + 'cqw');
+
+function rng(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hsl(h, s, l) {
+  h = ((h % 360) + 360) % 360; s /= 100; l /= 100;
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  const x = (v) => Math.round(v * 255).toString(16).padStart(2, '0');
+  return '#' + x(f(0)) + x(f(8)) + x(f(4));
+}
+
+function lum(hex) {
+  const h = hex.replace('#', '');
+  const v = [0, 2, 4].map((i) => parseInt(h.substr(i, 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
+  return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+}
+const textOn = (hex) => (lum(hex) > 0.3 ? '#1C1C1E' : '#FAF8F4');
+
+function palette(R, st) {
+  const h = st.hue + (R() * 2 - 1) * 16;
+  const accent = h + (R() < 0.5 ? 150 : -150) + (R() * 2 - 1) * 20;
+  const roll = R();
+  if (roll < st.dark) {
+    return { mode: 'dark', bg: hsl(h, 30 + R() * 15, 11 + R() * 6), p1: hsl(h, 35 + R() * 18, 34 + R() * 12), p2: hsl(18 + R() * 22, 72, 74 + R() * 8), ink: hsl(h, 30, 88) };
+  }
+  if (roll < st.dark + (1 - st.dark) / 2) {
+    return { mode: 'light', bg: hsl(h, 36 + R() * 22, 85 + R() * 7), p1: hsl(h, 45 + R() * 20, 28 + R() * 10), p2: hsl(accent, 62, 54), ink: hsl(h, 40, 15) };
+  }
+  return { mode: 'vivid', bg: hsl(h, 45 + R() * 15, 44 + R() * 8), p1: hsl(h, 40, 86 + R() * 6), p2: hsl(h, 50, 15 + R() * 6), ink: hsl(h, 40, 12) };
+}
+
+function circ(cx, cy, r) {
+  return 'M' + r2(cx - r) + ' ' + r2(cy) + 'a' + r2(r) + ' ' + r2(r) + ' 0 1 0 ' + r2(2 * r) + ' 0a' + r2(r) + ' ' + r2(r) + ' 0 1 0 ' + r2(-2 * r) + ' 0Z';
+}
+function box(x, y, w, h) {
+  return 'M' + r2(x) + ' ' + r2(y) + 'h' + r2(w) + 'v' + r2(h) + 'h' + r2(-w) + 'Z';
+}
+function visLen(s) {
+  let n = 0;
+  for (const ch of s) n += /[\u3400-\u9fff]/.test(ch) ? 1 : 0.56;
+  return n;
+}
+const lines = (t) => String(t).split('\n');
+const longest = (t) => Math.max(1, ...lines(t).map(visLen));
+
+function baseText(c, extra) {
+  return Object.assign({ left: null, right: null, top: null, bottom: null, width: null, family: 'inherit', size: 12, weight: 700, lh: 1.15, ls: '-0.01em', align: 'left', wm: 'horizontal-tb', color: textOn(c.bg) }, extra);
+}
+function baseStation(c, extra) {
+  return Object.assign({ left: null, right: null, top: null, bottom: null, width: null, align: 'left', color: textOn(c.bg), freqText: 'FM ' }, extra);
+}
+
+const TEMPLATES = {
+  freq(R, c, m) {
+    const flip = R() < 0.5;
+    const ty = flip ? 40 + R() * 10 : 52 + R() * 12;
+    const step = R() < 0.5 ? 2.2 : 3;
+    let ticks = '';
+    for (let i = 0, x = 6; x <= 94; x += step, i++) ticks += 'M' + r2(x) + ' ' + r2(ty + (i % 5 === 0 ? -3 : 0)) + 'V' + r2(ty + 3);
+    const fx = 6 + ((parseFloat(m.freq) - 87) / 21) * 88;
+    const size = Math.min(15, 80 / longest(m.heading));
+    const nl = lines(m.heading).length;
+    return {
+      slots: [
+        { d: ticks, stroke: c.p1, sw: 0.45, so: 0.75 },
+        { d: 'M' + r2(fx) + ' ' + r2(ty - 7) + 'V' + r2(ty + 5), stroke: c.p2, sw: 1.1 },
+        { d: circ(fx, ty - 8, 1.5), fill: c.p2 },
+      ],
+      N: flip ? { show: true, right: cq(3), top: cq(-7), left: null, bottom: null } : { show: true, left: cq(3), bottom: cq(-6), right: null, top: null },
+      T: baseText(c, flip ? { left: cq(7), bottom: cq(8), width: cq(86), size } : { left: cq(7), top: cq(7), width: cq(86), size }),
+      S: baseStation(c, flip ? { left: cq(7), top: cq(ty + 6), freqText: '' } : { left: cq(7), top: cq(Math.max(ty - 12, 9 + nl * size * 1.15)), freqText: '' }),
+    };
+  },
+  split(R, c, m) {
+    const top = R() < 0.55;
+    const split = 50 + R() * 16;
+    const size = Math.min(15, 86 / longest(m.heading));
+    const fy = top ? 0 : 100 - split;
+    const cr = 5 + R() * 4;
+    const cy = top ? split + 14 + R() * 18 : 12 + R() * (100 - split - 24);
+    const n = 2 + Math.floor(R() * 3);
+    let rules = '';
+    const ry = top ? split + 14 : 17;
+    for (let i = 0; i < n; i++) rules += box(7, ry + i * 5, 42 - i * 9, 0.35);
+    return {
+      slots: [
+        { d: box(0, fy, 100, split), fill: c.p1 },
+        { d: circ(72 + R() * 16, cy, cr), fill: c.p2 },
+        { d: rules, fill: textOn(c.bg), o: 0.28 },
+      ],
+      N: { show: false },
+      T: baseText(c, top ? { left: cq(7), right: cq(7), bottom: cq(100 - split + 3), size, color: textOn(c.p1) } : { left: cq(7), right: cq(7), top: cq(fy + 5), size, color: textOn(c.p1) }),
+      S: baseStation(c, top ? { left: cq(7), top: cq(split + 5) } : { left: cq(7), top: cq(7) }),
+    };
+  },
+  horizon(R, c, m) {
+    const hy = 54 + R() * 16;
+    const right = R() < 0.5;
+    const r = 10 + R() * 9;
+    const cx = right ? 74 + R() * 12 : 14 + R() * 12;
+    const cy = hy + r * 0.15;
+    let refl = '';
+    const nr = 4 + Math.floor(R() * 4);
+    for (let i = 0; i < nr; i++) {
+      const w = r * 1.7 * (1 - i * (0.7 / nr));
+      refl += box(cx - w / 2, hy + 3 + i * (30 / nr), w, Math.max(0.3, 1.1 - i * 0.12));
+    }
+    let stars = '';
+    if (lum(c.bg) < 0.12 && R() < 0.75) {
+      const ns = 16 + Math.floor(R() * 22);
+      for (let i = 0; i < ns; i++) stars += circ(R() * 100, R() * (hy - 14), 0.25 + R() * 0.35);
+    }
+    const size = Math.min(14, 56 / longest(m.heading));
+    return {
+      slots: [
+        { d: stars, fill: c.ink, o: 0.55 },
+        { d: circ(cx, cy, r * 1.9), fill: c.p1, o: 0.2 },
+        { d: circ(cx, cy, r * 1.4), fill: c.p1, o: 0.32 },
+        { d: circ(cx, cy, r), fill: c.p2 },
+        { d: box(0, hy, 100, 100 - hy), fill: c.bg },
+        { d: refl, fill: c.p2, o: 0.45 },
+        { d: box(0, hy - 0.2, 100, 0.4), fill: c.p1, o: 0.7 },
+      ],
+      N: { show: false },
+      T: baseText(c, right ? { left: cq(7), bottom: cq(100 - hy + 2.5), width: cq(60), size } : { right: cq(7), bottom: cq(100 - hy + 2.5), width: cq(60), size, align: 'right' }),
+      S: baseStation(c, right ? { left: cq(7), top: cq(hy + 5) } : { right: cq(7), top: cq(hy + 5), align: 'right' }),
+    };
+  },
+  column(R, c, m) {
+    const left = R() < 0.5;
+    const w = 36 + R() * 6;
+    const colX = left ? 0 : 100 - w;
+    const x0 = left ? w + 8 : 6, x1 = left ? 94 : 100 - w - 8;
+    const nl = lines(m.heading).length;
+    const size = Math.min(14.5, 64 / longest(m.heading), (w - 8) / (1.3 * nl));
+    let pattern = '';
+    if (R() < 0.6) {
+      const cols = 6, rows = 11, step = (x1 - x0) / (cols - 1), fx = R() * cols, fy = R() * rows;
+      for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
+        const rr = Math.max(0.35, 3.3 - Math.hypot(i - fx, j - fy) * 0.42 + (R() - 0.5) * 0.5);
+        pattern += circ(x0 + i * step, 8 + j * 8.4, Math.min(rr, step * 0.48));
+      }
+    } else {
+      for (let y = 8; y < 93; y += 6 + R() * 2) {
+        const len = 0.25 + R() * 0.75;
+        pattern += box(left ? x0 : x1 - (x1 - x0) * len, y, (x1 - x0) * len, 1.4 + R() * 1.2);
+      }
+    }
+    const textW = nl * size * 1.3;
+    return {
+      slots: [
+        { d: box(colX, 0, w, 100), fill: c.p2 },
+        { d: pattern, fill: c.p1, o: 0.9 },
+      ],
+      N: { show: false },
+      T: baseText(c, { left: cq(colX + (w - textW) / 2), top: cq(8), family: "'Songti SC', 'Noto Serif SC', serif", weight: 900, size, lh: 1.25, ls: '0.08em', wm: 'vertical-rl', color: textOn(c.p2) }),
+      S: baseStation(c, { left: cq(colX), width: cq(w), bottom: cq(6), align: 'center', color: textOn(c.p2) }),
+    };
+  },
+  label(R, c, m) {
+    const cx = 44 + R() * 12, cy = 44 + R() * 12, lr = 27 + R() * 6;
+    let grooves = '';
+    const st = 1.6 + R() * 0.7;
+    for (let r = lr + 2; r < 56; r += st) grooves += circ(cx, cy, r);
+    let arcs = '';
+    const na = 1 + Math.floor(R() * 2);
+    for (let i = 0; i < na; i++) {
+      const ri = lr + 4 + R() * 14, a0 = R() * 6.28, a1 = a0 + 0.6 + R() * 1.2;
+      arcs += 'M' + r2(cx + ri * Math.cos(a0)) + ' ' + r2(cy + ri * Math.sin(a0)) + 'A' + r2(ri) + ' ' + r2(ri) + ' 0 0 1 ' + r2(cx + ri * Math.cos(a1)) + ' ' + r2(cy + ri * Math.sin(a1));
+    }
+    const nl = lines(m.heading).length;
+    const size = Math.min(10.5, (lr * 1.5) / longest(m.heading));
+    const th = nl * size * 1.2;
+    return {
+      slots: [
+        { d: grooves, stroke: c.p1, sw: 0.35, so: 0.6 },
+        { d: arcs, stroke: c.p1, sw: 1.1 },
+        { d: circ(cx, cy, lr), fill: c.p2 },
+      ],
+      N: { show: false },
+      T: baseText(c, { left: cq(cx - lr), width: cq(lr * 2), top: cq(cy - th / 2 - 2), size, family: "'Songti SC', 'Noto Serif SC', serif", weight: 900, lh: 1.2, align: 'center', color: textOn(c.p2) }),
+      S: baseStation(c, { right: cq(5), bottom: cq(4), align: 'right' }),
+    };
+  },
+  contour(R, c, m) {
+    const k = Math.floor(R() * 3);
+    const cx = [70 + R() * 12, 22 + R() * 14, 82 + R() * 8][k];
+    const cy = [70 + R() * 12, 74 + R() * 10, 44 + R() * 18][k];
+    const n = 9 + Math.floor(R() * 7), gap = 6.2 + R() * 1.4, amp = 0.08 + R() * 0.08;
+    const ph1 = R() * 6.28, ph2 = R() * 6.28;
+    const nl = lines(m.heading).length;
+    const size = Math.min(13.5, 64 / longest(m.heading));
+    const zoneY = 7 + nl * size * 1.15 + 9;
+    const zone = (x, y) => x < 74 && y < zoneY;
+    let ls = '', inner = '';
+    for (let j = 1; j <= n; j++) {
+      const base = j * gap + R();
+      let seg = '', on = false;
+      for (let q = 0; q <= 80; q++) {
+        const t = (q / 80) * Math.PI * 2;
+        const rr = base * (1 + amp * Math.sin(3 * t + ph1 + j * 0.2) + amp * 0.5 * Math.sin(5 * t + ph2));
+        const x = cx + rr * Math.cos(t), y = cy + rr * Math.sin(t);
+        if (zone(x, y)) { on = false; continue; }
+        seg += (on ? 'L' : 'M') + r2(x) + ' ' + r2(y);
+        on = true;
+      }
+      if (j === 1) inner = seg + 'Z'; else ls += seg;
+    }
+    return {
+      slots: [
+        { d: ls, stroke: c.p1, sw: 0.5 },
+        { d: inner, fill: c.p2 },
+      ],
+      N: { show: false },
+      T: baseText(c, { left: cq(7), top: cq(7), width: cq(66), size }),
+      S: baseStation(c, { left: cq(7), top: cq(7 + nl * size * 1.15 + 2) }),
+    };
+  },
+};
+
+function norm(s) {
+  return {
+    d: s.d || 'M0 0', fill: s.fill || 'none', o: s.o ?? 1,
+    stroke: s.stroke || 'none', sw: s.sw ?? 0, so: s.so ?? 1,
+  };
+}
+
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props;
+    const st = STATIONS[p.station] || STATIONS.night;
+    const seed = Number(p.seed ?? 11) || 0;
+    const heading = p.heading ?? '夜航低音线';
+    const R = rng(seed * 2654435761 + st.hue * 97 + 13);
+    const tpl = st.templates[Math.floor(R() * st.templates.length)];
+    const c = palette(R, st);
+    const out = TEMPLATES[tpl](R, c, { heading, freq: st.freq });
+    const bare = p.bare === true || p.bare === 'true';
+    const slots = out.slots.map(norm);
+    while (slots.length < 8) slots.push(norm({}));
+    const fix = (o) => { const r = {}; for (const k in o) r[k] = o[k] === null || o[k] === undefined ? 'auto' : o[k]; return r; };
+    return {
+      bg: c.bg,
+      radius: p.radius ?? 12,
+      s0: slots[0], s1: slots[1], s2: slots[2], s3: slots[3], s4: slots[4], s5: slots[5], s6: slots[6], s7: slots[7],
+      N: fix(Object.assign({ left: null, right: null, top: null, bottom: null, color: c.p1 }, out.N, { show: !bare && out.N.show })),
+      T: fix(Object.assign({}, out.T, { size: r2(out.T.size) })),
+      S: fix(out.S),
+      showText: !bare,
+      heading,
+      stationName: st.name,
+      freq: st.freq,
+    };
+  }
+}
+</script>
+</body>
+</html>
