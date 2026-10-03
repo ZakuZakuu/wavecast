@@ -2,8 +2,9 @@
 
 import { usePathname } from "next/navigation";
 
-import { isImmersiveRoute, useImmersiveActive } from "../lib/chrome-visibility";
+import { isChromelessRoute, useImmersiveActive } from "../lib/chrome-visibility";
 import { BottomNav } from "./bottom-nav";
+import { LoginNudge } from "./login-nudge";
 import { MiniPlayer } from "./mini-player";
 
 /**
@@ -14,10 +15,11 @@ import { MiniPlayer } from "./mini-player";
 export function GlobalChrome() {
   const pathname = usePathname();
   const overlay = useImmersiveActive();
-  const hidden = isImmersiveRoute(pathname) || overlay;
+  const hidden = isChromelessRoute(pathname) || overlay;
   return (
     <>
       <MiniPlayer hidden={hidden} />
+      <LoginNudge hidden={hidden} />
       {hidden ? null : <BottomNav />}
     </>
   );

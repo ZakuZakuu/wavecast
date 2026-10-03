@@ -14,6 +14,7 @@ import {
   snoozeInstall,
   takeInstallPrompt,
 } from "../../lib/install";
+import { claimVisitPrompt, visitPrompt } from "../../lib/login-nudge";
 import { useOverlay } from "../../lib/overlay-stack";
 import { PlusSquareIcon, ShareIcon } from "../icons";
 import { LogoMark } from "../logo-mark";
@@ -29,17 +30,14 @@ export function InstallPrompt() {
     else setMode("none");
   };
 
-  useOverlay(mode === "ios" && !leaving, () => {
-    snoozeInstall();
-    dismiss();
-  });
-
   useEffect(() => {
     const visits = countVisit();
     const evaluate = () => {
       const platform = detectPlatform(navigator.userAgent, navigator.maxTouchPoints ?? 0, Boolean(peekInstallPrompt()));
       const show = shouldOfferInstall({ platform, standalone: isStandalone(), desktop: isDesktopPointer(), visits, ...readInstallState() });
-      setMode(show ? (platform === "ios-safari" ? "ios" : "banner") : "none");
+      // One one-off prompt per visit: not after the login card, and it holds the slot.
+      const allowed = show && visitPrompt() !== "login" && claimVisitPrompt("install");
+      setMode(allowed ? (platform === "ios-safari" ? "ios" : "banner") : "none");
     };
     const timer = window.setTimeout(evaluate, 1200);
     const onPrompt = () => window.setTimeout(evaluate, 0);
@@ -87,17 +85,44 @@ export function InstallPrompt() {
   }
 
   return (
+    <IosInstallGuide
+      leaving={leaving}
+      onLater={later}
+      onGotIt={gotIt}
+      onLeft={() => {
+        setLeaving(false);
+        setMode("none");
+      }}
+    />
+  );
+}
+
+/**
+ * The iOS Safari "add to home screen" guide card. Shown automatically by
+ * InstallPrompt, or on request from the account page.
+ */
+export function IosInstallGuide({
+  leaving,
+  onLater,
+  onGotIt,
+  onLeft,
+}: {
+  /** Plays the 150ms fade-out; onLeft fires when it ends. */
+  leaving: boolean;
+  onLater: () => void;
+  onGotIt: () => void;
+  onLeft: () => void;
+}) {
+  useOverlay(!leaving, onLater);
+  return (
     <Portal>
     <div
       className={leaving ? "install-layer is-leaving" : "install-layer"}
       onAnimationEnd={(event) => {
-        if (leaving && event.target === event.currentTarget) {
-          setLeaving(false);
-          setMode("none");
-        }
+        if (leaving && event.target === event.currentTarget) onLeft();
       }}
     >
-      <div className="sheet-scrim" aria-hidden="true" onClick={later} />
+      <div className="sheet-scrim" aria-hidden="true" onClick={onLater} />
       <section className="install-card" role="dialog" aria-modal="true" aria-labelledby="install-title">
         <span className="install-logo"><LogoMark size={76} /></span>
         <h2 id="install-title">把 WaveCast 放到主屏幕</h2>
@@ -107,8 +132,8 @@ export function InstallPrompt() {
           <li><span className="install-num">2</span><span>选择“添加到主屏幕”</span><PlusSquareIcon size={22} /></li>
           <li><span className="install-num">3</span><span>点右上角的“添加”</span></li>
         </ol>
-        <button type="button" className="pill-button install-ok" onClick={gotIt}>知道了</button>
-        <button type="button" className="install-later" onClick={later}>以后再说</button>
+        <button type="button" className="pill-button install-ok" onClick={onGotIt}>知道了</button>
+        <button type="button" className="install-later" onClick={onLater}>以后再说</button>
       </section>
       <div className="install-arrow" aria-hidden="true">
         <span>分享按钮在这里</span>

@@ -49,6 +49,9 @@
 .station-card-name { font-size: 17px; font-weight: 600; }
 .station-card-line { font-size: 13px; line-height: 1.4; opacity: .85; }
 
+.section-head { display: flex; flex-direction: column; gap: 4px; }
+.section-hint { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+.section-hint a { margin-left: 6px; color: var(--ink); font-weight: 600; }
 .pick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 14px; }
 .pick {
   padding: 0;
@@ -68,10 +71,11 @@
   overflow: hidden;
   box-shadow: 0 6px 18px rgba(29, 29, 31, .08);
 }
+.pick-text { display: flex; flex-direction: column; gap: 2px; }
 .pick-title {
   font-size: 15px;
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -169,24 +173,4 @@
 .lib-empty { padding: 32px 8px; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }
 .lib-empty p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--ink-2); }
 
-/* Account */
-.account { display: flex; flex-direction: column; gap: 22px; }
-.account .avatar { margin-right: -4px; }
-.account-group { border-radius: var(--radius-group); background: var(--surface); overflow: hidden; }
-.account-row { padding: 16px; display: flex; flex-direction: column; gap: 4px; }
-.account-row strong { font-size: 17px; font-weight: 600; }
-.account-row span { font-size: 15px; line-height: 1.5; color: var(--ink-2); }
-.account-note { margin: 0; padding: 0 16px 14px; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
-.account-action {
-  width: 100%;
-  min-height: 50px;
-  padding: 0 16px;
-  border: 0;
-  border-top: .5px solid var(--separator);
-  background: transparent;
-  text-align: left;
-  font-size: 17px;
-  color: #007AFF;
-}
-.account-action.is-danger { color: var(--danger); }
 .inline-note.is-error { color: var(--danger); }

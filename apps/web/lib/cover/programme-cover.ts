@@ -1,17 +1,17 @@
 // Derives the one set of cover params used everywhere for a programme.
-import { formatFreq, stationById, type Station, type StationId } from "../stations";
-import { visualLength, type CoverParams } from "./build-cover";
+import { stationById, type CoverTemplate, type StationId } from "../stations";
+import { buildCover, visualLength, type CoverParams } from "./build-cover";
 
 export const MAX_HEADING_WIDTH = 10;
 
-/** FNV-1a hash of the programme id, folded into 0..999. */
+/** FNV-1a hash of the programme id, folded into 0..9972 (as CoverVariety). */
 export function seedFromId(id: string): number {
   let hash = 0x811c9dc5;
   for (let index = 0; index < id.length; index += 1) {
     hash ^= id.charCodeAt(index);
     hash = Math.imul(hash, 0x01000193);
   }
-  return (hash >>> 0) % 1000;
+  return (hash >>> 0) % 9973;
 }
 
 /**
@@ -20,7 +20,8 @@ export function seedFromId(id: string): number {
  * the cover is drawn bare and the title is shown beneath it.
  */
 export function coverHeading(title: string): string | null {
-  const head = title.split(/[:：,，、;；|｜\-—–]/)[0]?.trim() ?? "";
+  // A hyphen inside a word (Lo-fi, Trip-hop) is not a separator; " - " is.
+  const head = title.split(/[:：,，、;；|｜—–]|\s-\s/)[0]?.trim() ?? "";
   const text = head || title.trim();
   if (!text) return null;
   if (visualLength(text) > MAX_HEADING_WIDTH) return null;
@@ -54,36 +55,60 @@ export function breakHeading(text: string): string {
   return (chars.slice(0, best).join("").trimEnd() + "\n" + chars.slice(best).join("").trimStart());
 }
 
-export function templateForStation(station: Station, seed: number) {
-  return station.templates[seed % station.templates.length];
-}
-
 export type ProgrammeCover = {
   params: CoverParams;
+  /** Template and background the seed resolved to (for theming around the cover). */
+  template: CoverTemplate;
+  bg: string;
   /** True when the title did not fit the cover; render it beneath the cover. */
   titleBelow: boolean;
 };
+
+// --- Cover identity for programmes created from a card (featured promise,
+// recommendation): the new programme keeps the card's cover seed, so the
+// cover the listener clicked is the one they see in the player and library.
+
+const COVER_ALIAS_KEY = "wavecast-cover-alias-v1";
+
+function readCoverAliases(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(COVER_ALIAS_KEY) ?? "{}");
+    return parsed && typeof parsed === "object" ? parsed as Record<string, string> : {};
+  } catch {
+    return {};
+  }
+}
+
+export function rememberCoverSource(programmeId: string, coverId: string): void {
+  if (typeof window === "undefined" || programmeId === coverId) return;
+  try {
+    const map = readCoverAliases();
+    map[programmeId] = coverId;
+    const entries = Object.entries(map).slice(-200);
+    window.localStorage.setItem(COVER_ALIAS_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // Storage is a convenience; the programme id still seeds a stable cover.
+  }
+}
+
+/** The id that seeds a programme's cover: the card it came from, else itself. */
+export function coverIdFor(programmeId: string): string {
+  return readCoverAliases()[programmeId] ?? programmeId;
+}
 
 export function programmeCover(input: {
   id: string;
   title: string;
   stationId: StationId;
 }): ProgrammeCover {
-  const station = stationById(input.stationId);
-  const seed = seedFromId(input.id);
-  const template = templateForStation(station, seed);
-  const palette = station.palettes[template]!;
   const heading = coverHeading(input.title);
-  return {
-    params: {
-      template,
-      seed,
-      ...palette,
-      heading: heading ?? "",
-      station: station.name,
-      freq: formatFreq(station.freq),
-      bare: heading === null,
-    },
-    titleBelow: heading === null,
+  const params: CoverParams = {
+    stationId: stationById(input.stationId).id,
+    seed: seedFromId(coverIdFor(input.id)),
+    heading: heading ?? "",
+    bare: heading === null,
   };
+  const built = buildCover(params);
+  return { params, template: built.template, bg: built.bg, titleBelow: heading === null };
 }
