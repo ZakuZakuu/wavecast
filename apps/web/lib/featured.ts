@@ -13,9 +13,9 @@ export type FeaturedProgramme = {
   /** Stable id: seeds the procedural cover so it never changes between visits. */
   id: string;
   stationId: StationId;
-  /** Sent to the programme proposal endpoint on click. */
+  /** Sent to the programme proposal endpoint on click; also the full title under the card. */
   prompt: string;
-  /** Short title shown on the card / cover. */
+  /** Short title drawn on the cover. */
   title: string;
   /** Estimated length in minutes, shown on the card; maps to a duration intent. */
   minutes: number;
@@ -33,8 +33,7 @@ export const FEATURED_PROGRAMMES: FeaturedProgramme[] = [
     id: "featured-crate-lofi",
     stationId: "crate",
     prompt: "喜欢 Lo-fi 的话，还能听什么",
-    // U+2011 (non-breaking hyphen): a plain "-" would cut the cover heading to "Lo".
-    title: "Lo‑fi 之外",
+    title: "Lo-fi 之外",
     minutes: 30,
   },
   {

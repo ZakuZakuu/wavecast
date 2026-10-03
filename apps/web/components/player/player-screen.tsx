@@ -15,6 +15,7 @@ import { Back15Icon, CaptionsIcon, ChevronDownIcon, MoreIcon, PauseIcon, PlayIco
 import { MoreSheet } from "./more-sheet";
 import { NarrationSheet } from "./narration-sheet";
 import { NowLine } from "./now-line";
+import { authClient } from "../../lib/auth-client";
 import { useNowPlaying, usePlaybackControl, usePlaybackTarget } from "./playback-provider";
 import { ProgressBar } from "./progress-bar";
 import { RouteSheet } from "./route-sheet";
@@ -49,10 +50,10 @@ function useCoverSize(extraBelow: number) {
 function useToast() {
   const [message, setMessage] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
-  const show = useCallback((text: string) => {
+  const show = useCallback((text: string, durationMs = 2200) => {
     setMessage(text);
     if (timer.current !== null) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setMessage(null), 2200);
+    timer.current = window.setTimeout(() => setMessage(null), durationMs);
   }, []);
   useEffect(() => () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -74,6 +75,7 @@ export function PlayerScreen({
   const playback = useNowPlaying();
   const { reload } = usePlaybackControl();
   const toast = useToast();
+  const signedIn = Boolean(authClient.useSession().data?.user);
   const [routeOpen, setRouteOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [captions, setCaptions] = useState(true);
@@ -145,7 +147,7 @@ export function PlayerScreen({
   const audioReady = Boolean(manifest && manifest.chunks.length > 0 && manifest.renderedFrontierSeconds > 0);
   const frontier = np.maxSeekPosition;
   const total = estimatedTotalSeconds(episode, manifest);
-  const darkCover = cover ? isDarkColour(cover.params.bg) : true;
+  const darkCover = cover ? isDarkColour(cover.bg) : true;
   const preparingHint = np.programBuffering || np.preparingAhead || !audioReady;
 
   const skip = () => {
@@ -161,7 +163,9 @@ export function PlayerScreen({
     if (music) {
       recordLessLikeThis({ trackRef: music.track_ref, title: music.title, artist: music.artist, episodeId: episode.id });
     }
-    toast.show("会少放这类歌");
+    // Guests: the preference lives on this device only until they sign in.
+    if (signedIn) toast.show("会少放这类歌");
+    else toast.show("已记下。登录后，这些偏好会一直保存", 3200);
   };
 
   const toggleCaptions = () => {

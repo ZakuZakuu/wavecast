@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { useImmersiveOverlay } from "../../lib/chrome-visibility";
 import { friendlyError } from "../../lib/friendly-error";
+import { rememberCoverSource } from "../../lib/cover/programme-cover";
 import { DUR } from "../../lib/motion/easing";
 import { isPlaybackReadySegment } from "../../lib/playback";
 import { openPlayer } from "../../lib/player-nav";
@@ -27,6 +28,7 @@ type Phase =
     label: string;
     prompt: string;
     duration: DurationIntent;
+    coverId?: string;
     proposal: ProgramProposal | null;
     error: string | null;
   };
@@ -48,11 +50,12 @@ export function useTuneStart() {
 
   useImmersiveOverlay("tuning-in", phase.kind === "tuning");
 
-  const start = useCallback(async (target: Station, prompt: string, duration: DurationIntent) => {
+  /** `coverId`: the card the listener clicked, whose cover the programme keeps. */
+  const start = useCallback(async (target: Station, prompt: string, duration: DurationIntent, coverId?: string) => {
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     const label = prompt.trim() || target.name;
-    const base = { kind: "tuning" as const, station: target, label, prompt, duration };
+    const base = { kind: "tuning" as const, station: target, label, prompt, duration, coverId };
     handedOver.current = null;
     setPhase({ ...base, proposal: null, error: null });
     try {
@@ -71,6 +74,7 @@ export function useTuneStart() {
       const proposal = batch.proposals[0];
       if (!proposal) throw new Error("没有拿到节目方案");
       rememberProgrammeStation(proposal.id, target.id);
+      if (coverId) rememberCoverSource(proposal.id, coverId);
       recordCreatedProgram(proposal.id);
       setPhase({ ...base, proposal, error: null });
       open({ seedId: proposal.id });
@@ -148,7 +152,7 @@ export function useTuneStart() {
       reload();
       return;
     }
-    void start(phase.station, phase.prompt, phase.duration);
+    void start(phase.station, phase.prompt, phase.duration, phase.coverId);
   };
 
   const steps: TuningStep[] = phase.kind === "tuning" ? [

@@ -49,7 +49,7 @@ describe("guest featured programmes", () => {
       const again = programmeCover({ id: item.id, title: item.title, stationId: item.stationId });
       expect(again).toEqual(first);
       const station = STATIONS.find((candidate) => candidate.id === item.stationId)!;
-      expect(station.templates).toContain(first.params.template);
+      expect(station.templates).toContain(first.template);
     }
   });
 });

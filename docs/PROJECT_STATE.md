@@ -18,15 +18,14 @@
 - Merged to `integration`: NowLine status bar (#160), global mini player and
   session restore (#161), motion and gestures per `docs/design/frost/MOTION.md`
   (#162).
-- In review (`feat/featured-desktop-android`): guest home shows five featured
-  programme promises (`apps/web/lib/featured.ts`, one per station; the 人物志
-  artist is the single constant `FEATURED_PORTRAIT_ARTIST`), generated only on
-  click through the shared `components/tune/use-tune-start.ts` flow; desktop
-  (≥ 768px) keeps the 430px column on a station-coloured backdrop with a QR
-  side card at ≥ 1100px, plus wheel/keyboard control; Android back closes the
-  top-most overlay via `lib/overlay-stack.ts` (same-URL history entries),
-  `lib/soft-keyboard.ts` keeps the tuner CTA above the keyboard, and
-  MediaSession gains next track. Web-only; no backend change.
+- Merged: guest featured cards, desktop layout, Android adaptation (#163).
+- In review (`feat/cover-v2-account`): cover v2 (`lib/cover/build-cover.ts`,
+  port of `Cover2.dc.html`: three templates per station, procedural palettes
+  with a 4.5:1 title-contrast guarantee; cards created from a featured or
+  recommended card keep its cover seed via `rememberCoverSource`); home card
+  title + "电台，约 N 分钟" and title dedupe; `/account` as Frost login /
+  account; guest sign-in hints (`lib/login-nudge.ts`, one prompt per visit
+  shared with the install guide). Web-only.
 
 ## Active UI P0 checkpoint — frost redesign (`feat/ui-p0-frost`)
 

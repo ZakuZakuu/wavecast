@@ -16,6 +16,7 @@ import {
 import { coverArtworkUrl } from "../../lib/cover/artwork";
 import { api } from "../../lib/api";
 import { markProgrammeFinished } from "../../lib/install";
+import { recordFinishedProgramme } from "../../lib/login-nudge";
 import {
   clearNowPlayingSession,
   primePausedProgress,
@@ -305,6 +306,8 @@ function PlaybackHost({
           onEnded={() => {
             playback.handleProgrammeEnded();
             markProgrammeFinished();
+            const finished = playback.localEpisode;
+            if (finished) recordFinishedProgramme(finished.seed_id || finished.id);
             endedSession(playback.localEpisode?.id ?? null);
           }}
           onFrontierReached={playback.handleFrontierReached}
