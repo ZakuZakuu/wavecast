@@ -13,9 +13,9 @@ export type FeaturedProgramme = {
   /** Stable id: seeds the procedural cover so it never changes between visits. */
   id: string;
   stationId: StationId;
-  /** Sent to the programme proposal endpoint on click. */
+  /** Sent to the programme proposal endpoint on click; also the full title under the card. */
   prompt: string;
-  /** Short title shown on the card / cover. */
+  /** Short title drawn on the cover. */
   title: string;
   /** Estimated length in minutes, shown on the card; maps to a duration intent. */
   minutes: number;

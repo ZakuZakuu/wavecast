@@ -8,6 +8,7 @@ import { api } from "../../lib/api";
 import { openPlayer } from "../../lib/player-nav";
 import { authClient } from "../../lib/auth-client";
 import { programmeCover, rememberCoverSource } from "../../lib/cover/programme-cover";
+import { dedupeByTitle, pickMeta, RECOMMENDATION_MINUTES } from "../../lib/home-picks";
 import { FEATURED_PROGRAMMES, featuredDurationIntent, type FeaturedProgramme } from "../../lib/featured";
 import {
   formatFreq,
@@ -31,7 +32,10 @@ type Pick = {
   id: string;
   /** Known station (featured cards); otherwise remembered/matched from the copy. */
   stationId?: StationId;
+  /** Full programme title, shown under the cover (two lines max). */
   title: string;
+  /** Short cover heading when it differs from the title (featured cards). */
+  coverTitle?: string;
   minutes: number | null;
   onOpen: () => void;
   busy: boolean;
@@ -39,8 +43,8 @@ type Pick = {
 
 function PickCard({ pick }: { pick: Pick }) {
   const station = pick.stationId ? stationById(pick.stationId) : stationForProgramme(pick.id, pick.title);
-  const cover = programmeCover({ id: pick.id, title: pick.title, stationId: station.id });
-  const meta = pick.minutes ? `${station.name}，约 ${pick.minutes} 分钟` : station.name;
+  const cover = programmeCover({ id: pick.id, title: pick.coverTitle ?? pick.title, stationId: station.id });
+  const meta = pickMeta(station.name, pick.minutes);
   return (
     <button
       type="button"
@@ -52,8 +56,10 @@ function PickCard({ pick }: { pick: Pick }) {
       <span className="pick-cover">
         <TypeCover params={cover.params} radius={0} />
       </span>
-      {cover.titleBelow ? <span className="pick-title">{pick.title}</span> : null}
-      <span className="pick-meta">{pick.busy ? "正在准备…" : meta}</span>
+      <span className="pick-text">
+        <span className="pick-title">{pick.title}</span>
+        <span className="pick-meta">{pick.busy ? "正在准备…" : meta}</span>
+      </span>
     </button>
   );
 }
@@ -121,23 +127,24 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
         key: "featured:" + item.id,
         id: item.id,
         stationId: item.stationId,
-        title: item.title,
+        title: item.prompt,
+        coverTitle: item.title,
         minutes: item.minutes,
         busy: false,
         onOpen: () => void tune.start(stationById(item.stationId), item.prompt, featuredDurationIntent(item), item.id),
       }));
     }
     if (ideas && ideas.length) {
-      return ideas.map((idea) => ({
+      return dedupeByTitle(ideas).map((idea) => ({
         key: "idea:" + idea.id,
         id: idea.id,
         title: idea.title,
-        minutes: null,
+        minutes: RECOMMENDATION_MINUTES,
         busy: busyId === idea.id,
         onOpen: () => void openIdea(idea),
       }));
     }
-    return (seeds ?? []).map((seed) => ({
+    return dedupeByTitle(seeds ?? []).map((seed) => ({
       key: "seed:" + seed.id,
       id: seed.id,
       title: seed.title,
