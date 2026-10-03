@@ -138,6 +138,14 @@ The browser continues to call same-origin /api/*; the Next build rewrites that
 route to the Railway service. The variable is server/build routing config, not
 a browser credential.
 
+Builds are skipped by `vercel.json` `ignoreCommand`, which runs
+`scripts/vercel-ignore-build.sh`: `integration` always builds; other branches
+build only when the web app or root workspace files changed since
+`VERCEL_GIT_PREVIOUS_SHA`. Vercel runs it from `apps/web`, so the script
+compares from the repository root (`tests/ci/test_vercel_ignore_build.py`).
+If a production build is ever skipped wrongly, Redeploy it in the dashboard
+with "Skip Ignored Build Step".
+
 ## First hosted smoke
 
 Keep provider mode mock and verify Web home, same-origin health, opening-only
