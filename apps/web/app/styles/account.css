@@ -33,7 +33,9 @@
 
 /* Login */
 .login-brand { margin-top: 56px; display: flex; flex-direction: column; align-items: center; text-align: center; }
-.login-logo { line-height: 0; filter: drop-shadow(0 12px 24px rgba(29, 29, 31, .16)); }
+/* box-shadow on the tile's own radius (rx 22.5 of 100), not filter: drop-shadow —
+   iOS Safari can paint a filter inside a scroll container as a grey box. */
+.login-logo { line-height: 0; border-radius: 22.5%; box-shadow: 0 12px 24px rgba(29, 29, 31, .16); }
 .login-brand h1 { margin: 22px 0 0; font-size: 32px; font-weight: 700; letter-spacing: -0.01em; }
 .login-brand p { margin: 8px 0 0; font-size: 17px; color: var(--ink-2); }
 
