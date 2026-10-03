@@ -113,9 +113,6 @@ function LoginView({ availability }: { availability: AuthAvailability | null }) 
 
   return (
     <div className="acct acct-login">
-      <span className="glow" aria-hidden="true" style={{ left: -120, top: -80, width: 360, height: 360, background: "#E8834A", opacity: 0.22 }} />
-      <span className="glow" aria-hidden="true" style={{ right: -140, top: 120, width: 340, height: 340, background: "#6E62B6", opacity: 0.2 }} />
-      <span className="glow" aria-hidden="true" style={{ left: 20, top: 330, width: 300, height: 260, background: "#3E9C8C", opacity: 0.14 }} />
       <div className="acct-body">
         <BackButton />
         <div className="login-brand">
