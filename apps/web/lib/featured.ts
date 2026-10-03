@@ -33,8 +33,7 @@ export const FEATURED_PROGRAMMES: FeaturedProgramme[] = [
     id: "featured-crate-lofi",
     stationId: "crate",
     prompt: "喜欢 Lo-fi 的话，还能听什么",
-    // U+2011 (non-breaking hyphen): a plain "-" would cut the cover heading to "Lo".
-    title: "Lo‑fi 之外",
+    title: "Lo-fi 之外",
     minutes: 30,
   },
   {

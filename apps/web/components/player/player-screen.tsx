@@ -145,7 +145,7 @@ export function PlayerScreen({
   const audioReady = Boolean(manifest && manifest.chunks.length > 0 && manifest.renderedFrontierSeconds > 0);
   const frontier = np.maxSeekPosition;
   const total = estimatedTotalSeconds(episode, manifest);
-  const darkCover = cover ? isDarkColour(cover.params.bg) : true;
+  const darkCover = cover ? isDarkColour(cover.bg) : true;
   const preparingHint = np.programBuffering || np.preparingAhead || !audioReady;
 
   const skip = () => {

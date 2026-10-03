@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
 import { openPlayer } from "../../lib/player-nav";
 import { authClient } from "../../lib/auth-client";
-import { programmeCover } from "../../lib/cover/programme-cover";
+import { programmeCover, rememberCoverSource } from "../../lib/cover/programme-cover";
 import { FEATURED_PROGRAMMES, featuredDurationIntent, type FeaturedProgramme } from "../../lib/featured";
 import {
   formatFreq,
@@ -103,6 +103,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
       const proposal = batch.proposals[0];
       if (!proposal) throw new Error();
       rememberProgrammeStation(proposal.id, stationForProgramme(idea.id, idea.title).id);
+      rememberCoverSource(proposal.id, idea.id);
       openPlayer(`/episode/${proposal.id}`);
     } catch {
       setError("这档节目暂时开不了，换一档试试");
@@ -123,7 +124,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
         title: item.title,
         minutes: item.minutes,
         busy: false,
-        onOpen: () => void tune.start(stationById(item.stationId), item.prompt, featuredDurationIntent(item)),
+        onOpen: () => void tune.start(stationById(item.stationId), item.prompt, featuredDurationIntent(item), item.id),
       }));
     }
     if (ideas && ideas.length) {

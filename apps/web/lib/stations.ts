@@ -3,7 +3,6 @@ import type { DurationIntent } from "./types";
 
 export type StationId = "casual" | "crate" | "portrait" | "lineage" | "night";
 export type CoverTemplate = "column" | "label" | "freq" | "horizon" | "contour" | "split";
-export type CoverPalette = { bg: string; p1: string; p2: string; ink: string };
 
 export type Station = {
   id: StationId;
@@ -16,8 +15,10 @@ export type Station = {
   line: string;
   description: string;
   defaultTopic: string;
+  /** Cover v2 (Cover2.dc.html): three templates, picked by the programme seed. */
   templates: CoverTemplate[];
-  palettes: Partial<Record<CoverTemplate, CoverPalette>>;
+  /** Palette hue and the odds of the dark mode (light/vivid split the rest). */
+  cover: { hue: number; dark: number };
 };
 
 export const STATIONS: Station[] = [
@@ -30,11 +31,8 @@ export const STATIONS: Station[] = [
     line: "音乐为主，偶尔说两句",
     description: "以音乐为主，主持偶尔说两句。像开车时听的电台。",
     defaultTopic: "随便放点好听的",
-    templates: ["freq", "split"],
-    palettes: {
-      freq: { bg: "#F2C9A8", p1: "#B4542A", p2: "#FFFFFF", ink: "#3A1E10" },
-      split: { bg: "#ECEFEC", p1: "#3E9C8C", p2: "#E8834A", ink: "#12302C" },
-    },
+    templates: ["freq", "split", "horizon"],
+    cover: { hue: 22, dark: 0.25 },
   },
   {
     id: "crate",
@@ -45,8 +43,8 @@ export const STATIONS: Station[] = [
     line: "挖你没听过的",
     description: "从一首你喜欢的歌出发，往外挖你还没听过的。",
     defaultTopic: "挖几首我可能没听过的好歌",
-    templates: ["label"],
-    palettes: { label: { bg: "#173B36", p1: "#6FB5A6", p2: "#F0D9A6", ink: "#173B36" } },
+    templates: ["label", "split", "contour"],
+    cover: { hue: 168, dark: 0.45 },
   },
   {
     id: "portrait",
@@ -57,8 +55,8 @@ export const STATIONS: Station[] = [
     line: "一位歌手的路",
     description: "用一位歌手的作品，讲他走过的路。",
     defaultTopic: "讲一位华语歌手这些年的作品",
-    templates: ["column"],
-    palettes: { column: { bg: "#F1E9D8", p1: "#B0823A", p2: "#2E2A24", ink: "#2E2A24" } },
+    templates: ["column", "label", "split"],
+    cover: { hue: 38, dark: 0.35 },
   },
   {
     id: "lineage",
@@ -69,8 +67,8 @@ export const STATIONS: Station[] = [
     line: "一种风格的来历",
     description: "一种风格是怎么来的，跨年代串起来听。",
     defaultTopic: "City Pop 是怎么来的",
-    templates: ["contour"],
-    palettes: { contour: { bg: "#E4E9F5", p1: "#5C7CE0", p2: "#1F2A4D", ink: "#1F2A4D" } },
+    templates: ["contour", "column", "freq"],
+    cover: { hue: 224, dark: 0.4 },
   },
   {
     id: "night",
@@ -81,8 +79,8 @@ export const STATIONS: Station[] = [
     line: "几乎不说话",
     description: "几乎不说话，节奏放缓。适合睡前和专注。",
     defaultTopic: "睡前听的安静音乐",
-    templates: ["horizon"],
-    palettes: { horizon: { bg: "#1E1B3A", p1: "#6E62B6", p2: "#F3B8A0", ink: "#E9E6FF" } },
+    templates: ["horizon", "contour", "split"],
+    cover: { hue: 252, dark: 0.8 },
   },
 ];
 
