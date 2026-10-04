@@ -392,7 +392,7 @@ export function Film({ sfx = true }: { sfx?: boolean }) {
                   transform: `translateY(${((1 - miniIn) * 16).toFixed(1)}px)`,
                 }}
               >
-                <CoverView cv={NOW_BARE} bare style={{ width: 42, height: 42, borderRadius: 8, flexShrink: 0 }} />
+                <CoverView cv={NOW_BARE} bare style={{ width: 42, height: 42, borderRadius: 8, flexShrink: 0, opacity: t < 59.0 ? 0 : 1 }} />
                 <div style={{ flexGrow: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 15, fontWeight: 600 }}>{PROG.nowPlaying.title}</div>
                   <div style={{ fontSize: 12, color: SUB, display: "flex", alignItems: "center", gap: 6 }}>
@@ -410,7 +410,7 @@ export function Film({ sfx = true }: { sfx?: boolean }) {
             </div>
 
             {/* TUNE */}
-            <div style={{ ...abs({ inset: 0, background: "#F2F2F4" }), ...show(t, 9.0, 24.0) }}>
+            <div style={{ ...abs({ inset: 0, background: "#F2F2F4" }), ...show(t, 9.0, 24.0), ...(t > 23.4 && t < 24.6 ? { transform: `scale(${(1 + 0.04 * sp(t, 23.4, 24.4)).toFixed(4)})`, transformOrigin: "195px 588px" } : null) }}>
               <div style={abs({ left: -90, top: -140, width: 460, height: 420, borderRadius: "50%", background: locked ? near.c : "#B8B8C0", opacity: 0.32, filter: "blur(80px)" })} />
               <div style={abs({ left: 20, top: 58, fontSize: 34, fontWeight: 700 })}>{content.ui.tuneTitle}</div>
               <div style={{ ...abs({ left: 20, top: 115, width: 350, height: 300, borderRadius: 28, padding: 20, boxSizing: "border-box" }), ...glass }}>
@@ -500,7 +500,7 @@ export function Film({ sfx = true }: { sfx?: boolean }) {
             </div>
 
             {/* TUNING-IN */}
-            <div style={{ ...abs({ inset: 0, background: "#F2F2F4" }), ...show(t, 24.0, 31.0) }}>
+            <div style={{ ...abs({ inset: 0, background: "#F2F2F4" }), ...show(t, 24.0, 31.0), ...(t >= 24.0 && t < 25.0 ? { transform: `scale(${lerp(0.9, 1, sp(t, 24.0, 24.8)).toFixed(4)})`, transformOrigin: "195px 588px" } : null) }}>
               <div style={abs({ left: -60, top: 80, width: 520, height: 520, borderRadius: "50%", background: NIGHT, opacity: 0.34, filter: "blur(90px)" })} />
               <div style={abs({ left: 20, top: 58, height: 36, padding: "0 14px", borderRadius: 999, background: "rgba(118,118,128,.14)", fontSize: 15, fontWeight: 500, lineHeight: "36px" })}>{content.ui.cancel}</div>
               <div style={{ ...abs({ left: 20, top: 140, width: 350, height: 330, borderRadius: 28, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 22, boxSizing: "border-box" }), ...glass }}>
@@ -570,7 +570,7 @@ export function Film({ sfx = true }: { sfx?: boolean }) {
                   </svg>
                 </span>
               </div>
-              <CoverView cv={NOW} style={abs({ left: 47, top: 136, width: 296, height: 296, borderRadius: 12, boxShadow: "0 22px 50px rgba(0,0,0,.4)" })} />
+              <CoverView cv={NOW} style={{ ...abs({ left: 47, top: 136, width: 296, height: 296, borderRadius: 12, boxShadow: "0 22px 50px rgba(0,0,0,.4)" }), opacity: t > 58.2 ? 0 : 1 }} />
               <div style={abs({ left: 24, top: 452, right: 24 })}>
                 <div style={{ fontSize: 22, fontWeight: 600 }}>{PROG.nowPlaying.title}</div>
                 <div style={{ fontSize: 19, color: "rgba(255,255,255,.62)" }}>{PROG.nowPlaying.artist}</div>
@@ -699,6 +699,18 @@ export function Film({ sfx = true }: { sfx?: boolean }) {
                 </div>
               </div>
             </div>
+
+            {/* collapsing the player: the cover shrinks into the mini player's slot */}
+            {t > 58.2 && t < 59.0 ? (() => {
+              const x = sp(t, 58.2, 59.0);
+              const box = { left: lerp(47, 20, x), top: lerp(136, 701, x), width: lerp(296, 42, x), height: lerp(296, 42, x), borderRadius: lerp(12, 8, x) };
+              return (
+                <>
+                  <CoverView cv={NOW_BARE} bare style={abs({ ...box, boxShadow: `0 ${lerp(22, 4, x)}px ${lerp(50, 10, x)}px rgba(0,0,0,${lerp(0.4, 0.15, x)})` })} />
+                  <CoverView cv={NOW} style={{ ...abs(box), opacity: 1 - eo(p(t, 58.2, 58.6)) }} />
+                </>
+              );
+            })() : null}
 
             {/* tab bar (home / tune) */}
             <div
