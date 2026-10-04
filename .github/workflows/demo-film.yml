@@ -1,0 +1,44 @@
+name: Demo film
+
+# Renders the WaveCast demo film (apps/video) and uploads the two MP4s and
+# markers.md as an Actions artifact. Manual only: it never runs on PRs/pushes.
+on:
+  workflow_dispatch:
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Chrome Headless Shell dependencies
+        run: sudo apt-get update && sudo apt-get install -y libnss3 libdbus-1-3 libatk1.0-0 libgbm-dev libasound2t64 libxrandr2 libxkbcommon-dev libxfixes3 libxcomposite1 libxdamage1 libatk-bridge2.0-0 libpango-1.0-0 libcairo2 libcups2
+      - run: pnpm --dir apps/video exec remotion browser ensure
+      - run: pnpm --dir apps/video typecheck
+      - run: pnpm --dir apps/video render
+      - run: pnpm --dir apps/video render:silent
+      - name: Check output
+        run: |
+          cp apps/video/markers.md apps/video/out/markers.md
+          ls -la apps/video/out
+          for f in apps/video/out/*.mp4; do
+            size=$(stat -c %s "$f")
+            [ "$size" -lt 524288000 ] || { echo "$f is larger than 500 MB"; exit 1; }
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wavecast-demo-film
+          path: |
+            apps/video/out/wavecast-demo.mp4
+            apps/video/out/wavecast-demo-silent.mp4
+            apps/video/out/markers.md
+          if-no-files-found: error
+          retention-days: 30
