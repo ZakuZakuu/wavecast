@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WaveCast 演示短片</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@200;300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --page:#E8E8ED; --chrome:#FFFFFF; --chrome-ink:#1D1D1F; --chrome-sub:#6E6E73; --chrome-line:rgba(0,0,0,.1);
+  --font:-apple-system,"SF Pro Display","PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){ --page:#111113; --chrome:#1C1C1E; --chrome-ink:#F5F5F7; --chrome-sub:#A1A1A6; --chrome-line:rgba(255,255,255,.12); }
+}
+:root[data-theme="dark"]{ --page:#111113; --chrome:#1C1C1E; --chrome-ink:#F5F5F7; --chrome-sub:#A1A1A6; --chrome-line:rgba(255,255,255,.12); }
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%;margin:0}
+body{background:var(--page);color:var(--chrome-ink);font-family:var(--font);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:14px;overflow:hidden}
+#viewport{position:relative;width:min(100%, calc((100dvh - 110px) * 16 / 9));aspect-ratio:16/9;border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.18);background:#F5F5F7}
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;background:#F5F5F7;color:#1D1D1F;font-family:var(--font);overflow:hidden;perspective:2200px}
+.ctrl{width:min(100%, calc((100dvh - 110px) * 16 / 9));display:flex;align-items:center;gap:10px;background:var(--chrome);border:1px solid var(--chrome-line);border-radius:14px;padding:8px 12px}
+.ctrl button{font:inherit;font-size:14px;font-weight:500;color:var(--chrome-ink);background:transparent;border:1px solid var(--chrome-line);border-radius:999px;height:36px;padding:0 14px;cursor:pointer;white-space:nowrap}
+.ctrl button:hover{background:rgba(127,127,127,.12)}
+.ctrl button:focus-visible,.ctrl input:focus-visible{outline:2px solid #0071E3;outline-offset:2px}
+.ctrl input[type=range]{flex:1;min-width:60px;accent-color:#FF6B2C}
+.ctrl .time{font-size:13px;color:var(--chrome-sub);font-variant-numeric:tabular-nums;min-width:92px;text-align:right}
+.abs{position:absolute}
+.glass{background:rgba(255,255,255,.64);border:.5px solid rgba(255,255,255,.9);box-shadow:0 10px 30px rgba(29,29,31,.06);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px)}
+.cap{position:absolute;left:170px;top:470px;width:820px;font-size:52px;font-weight:600;letter-spacing:-0.02em;line-height:1.25;will-change:transform,opacity,filter}
+.scr{position:absolute;inset:0;will-change:transform,opacity}
+.cv svg{display:block;width:100%;height:100%}
+.cv .pc,.cv .pt{transform-box:fill-box;transform-origin:center}
+.clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+</style>
+</head>
+<body>
+<div id="viewport" role="img" aria-label="WaveCast 演示短片，约 76 秒：从首页、调频、开播、收听到推荐的一次完整使用">
+<div id="stage">
+  <div id="bg1" class="abs" style="left:900px;top:-160px;width:900px;height:800px;border-radius:50%;background:#E8834A;opacity:.18;filter:blur(160px)"></div>
+  <div id="bg2" class="abs" style="left:260px;top:520px;width:700px;height:600px;border-radius:50%;background:#6E62B6;opacity:.10;filter:blur(160px)"></div>
+
+  <!-- captions -->
+  <div class="cap" id="c1">每一档节目，<br>都有自己的封面。</div>
+  <div class="cap" id="c2">拨一拨，<br>换一个台。</div>
+  <div class="cap" id="c3">或者，<br>直接说想听什么。</div>
+  <div class="cap" id="c4">几秒之后，<br>音乐就响了。</div>
+  <div class="cap" id="c5" style="top:300px">主持在间奏里说话，<br>音乐自动让路。</div>
+  <div class="cap" id="c6">节目边播，<br>边往前生成。</div>
+  <div class="cap" id="c7">整档节目，<br>是一条路线。</div>
+  <div class="cap" id="c8">听过的，<br>会变成下一次的推荐。</div>
+
+  <!-- mixer panel -->
+  <div id="mixer" class="abs glass" style="left:170px;top:560px;width:620px;height:230px;border-radius:30px;padding:30px 34px">
+    <div style="display:flex;align-items:center;gap:18px;height:70px"><span style="width:70px;font-size:22px;font-weight:600">音乐</span><svg id="mx-music" width="460" height="70"></svg></div>
+    <div style="display:flex;align-items:center;gap:18px;height:70px;margin-top:24px"><span style="width:70px;font-size:22px;font-weight:600">主持</span><svg id="mx-host" width="460" height="70"></svg></div>
+  </div>
+
+  <!-- end card -->
+  <div id="end" class="abs" style="left:0;right:0;top:330px;display:flex;flex-direction:column;align-items:center;text-align:center">
+    <svg id="end-logo" width="150" height="150" viewBox="0 0 100 100" style="filter:drop-shadow(0 18px 30px rgba(29,29,31,.18))">
+      <rect width="100" height="100" rx="22.5" fill="#fff"/>
+      <path d="M27 33 42 20" stroke="#1D1D1F" stroke-width="3.2" stroke-linecap="round"/>
+      <circle cx="42" cy="20" r="3.6" fill="#FF6B2C"/>
+      <rect x="15" y="32" width="70" height="46" rx="12" fill="#1D1D1F"/>
+      <g fill="#fff"><circle cx="27" cy="46" r="2.5"/><circle cx="35" cy="46" r="2.5"/><circle cx="43" cy="46" r="2.5"/><circle cx="27" cy="55" r="2.5"/><circle cx="35" cy="55" r="2.5"/><circle cx="43" cy="55" r="2.5"/><circle cx="27" cy="64" r="2.5"/><circle cx="35" cy="64" r="2.5"/><circle cx="43" cy="64" r="2.5"/></g>
+      <rect x="51" y="41" width="26" height="13" rx="4" fill="#fff"/>
+      <path d="M66 38V57" stroke="#FF6B2C" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="64" cy="66.5" r="5.5" fill="#fff"/>
+    </svg>
+    <div id="end-name" style="margin-top:34px;font-size:96px;font-weight:600;letter-spacing:-0.03em">WaveCast</div>
+    <div id="end-line" style="margin-top:14px;font-size:40px;font-weight:500;color:#86868B">说一句想听什么，电台马上开播。</div>
+    <div id="end-url" style="margin-top:44px;font-size:28px;font-weight:500;color:#1D1D1F">wavecast.space</div>
+  </div>
+
+  <!-- phone rig -->
+  <div id="rig" class="abs" style="left:975px;top:108px;width:410px;height:864px;transform-origin:0 0;transform-style:preserve-3d">
+    <div style="position:absolute;inset:0;border-radius:58px;background:#1D1D1F;padding:10px;box-shadow:0 50px 100px rgba(29,29,31,.28)">
+      <div id="screen" style="position:relative;width:390px;height:844px;border-radius:48px;overflow:hidden;background:#F2F2F4;color:#1D1D1F">
+
+        <!-- HOME -->
+        <div id="home" class="scr" style="background:#F2F2F4">
+          <div id="home-aura" class="abs" style="left:-100px;top:-160px;width:420px;height:340px;border-radius:50%;background:#5C7CE0;opacity:.14;filter:blur(80px)"></div>
+          <div class="abs" style="left:20px;top:58px;right:20px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:34px;font-weight:700">首页</span><span style="width:36px;height:36px;border-radius:50%;background:#1D1D1F;color:#fff;display:grid;place-items:center;font-size:15px;font-weight:600">R</span></div>
+          <div class="abs" style="left:20px;top:122px;font-size:22px;font-weight:700">猜你想听</div>
+          <div id="home-why" class="abs" style="left:20px;top:152px;font-size:13px;color:#6E6E73;opacity:0">因为你听了《下雨天的爵士钢琴》</div>
+          <div id="gridA" class="abs" style="left:20px;top:176px;width:350px;display:grid;grid-template-columns:165px 165px;gap:18px 20px"></div>
+          <div id="gridB" class="abs" style="left:20px;top:176px;width:350px;display:grid;grid-template-columns:165px 165px;gap:18px 20px"></div>
+          <div id="mini" class="abs glass" style="left:10px;right:10px;bottom:92px;height:60px;border-radius:18px;display:flex;align-items:center;gap:12px;padding:0 14px 0 10px;background:rgba(250,250,252,.86)">
+            <div id="mini-cv" class="cv" style="width:42px;height:42px;border-radius:8px;overflow:hidden;flex-shrink:0"></div>
+            <div style="flex-grow:1;min-width:0"><div style="font-size:15px;font-weight:600">Peace Piece</div><div style="font-size:12px;color:#6E6E73;display:flex;align-items:center;gap:6px"><span style="width:5px;height:5px;border-radius:50%;background:#FF6B2C"></span>FM 105.8 夜里</div></div>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#1D1D1F"><rect x="6" y="4.5" width="4" height="15" rx="1.2"/><rect x="14" y="4.5" width="4" height="15" rx="1.2"/></svg>
+            <span class="abs" style="left:14px;right:14px;bottom:0;height:2px;background:rgba(29,29,31,.08)"></span><span id="mini-prog" class="abs" style="left:14px;bottom:0;height:2px;width:30%;background:#1D1D1F"></span>
+          </div>
+        </div>
+
+        <!-- TUNE -->
+        <div id="tune" class="scr" style="background:#F2F2F4">
+          <div id="tu-aura" class="abs" style="left:-90px;top:-140px;width:460px;height:420px;border-radius:50%;background:#E8834A;opacity:.32;filter:blur(80px)"></div>
+          <div class="abs" style="left:20px;top:58px;font-size:34px;font-weight:700">调频</div>
+          <div class="abs glass" style="left:20px;top:115px;width:350px;height:300px;border-radius:28px;padding:20px">
+            <div style="display:flex;align-items:flex-end;justify-content:space-between">
+              <div style="display:flex;align-items:baseline;gap:6px"><span style="font-size:15px;font-weight:500;color:#6E6E73">FM</span><span id="tu-freq" style="font-size:56px;font-weight:200;line-height:1;letter-spacing:-0.03em;font-variant-numeric:tabular-nums">88.7</span></div>
+              <div id="tu-bars" style="display:flex;align-items:flex-end;gap:3px;height:18px;padding-bottom:8px"></div>
+            </div>
+            <div style="margin-top:12px;display:flex;align-items:center;gap:8px;height:28px"><span id="tu-name" style="font-size:20px;font-weight:600">随便听</span><span id="tu-chip" style="font-size:12px;font-weight:500;padding:3px 8px;border-radius:999px;background:rgba(110,98,182,.16);color:#4A3F8F;opacity:0">按描述对准</span></div>
+            <div id="tu-desc" style="margin-top:4px;font-size:15px;color:#6E6E73;height:22px">以音乐为主，主持偶尔说两句</div>
+            <div class="abs" style="left:20px;top:150px;width:310px;height:96px;border-radius:18px;background:rgba(226,226,232,.8);box-shadow:inset 0 2px 6px rgba(29,29,31,.16),inset 0 1px 1px rgba(29,29,31,.08),0 1px 0 #fff;overflow:hidden">
+              <svg id="tu-strip" class="abs" style="left:0;top:0" height="96"></svg>
+              <svg id="tu-noise" class="abs" style="left:0;top:0" width="310" height="96"></svg>
+              <div class="abs" style="left:0;top:0;bottom:0;width:48px;background:linear-gradient(90deg,rgba(228,228,234,.96),rgba(228,228,234,0))"></div>
+              <div class="abs" style="right:0;top:0;bottom:0;width:48px;background:linear-gradient(270deg,rgba(228,228,234,.96),rgba(228,228,234,0))"></div>
+              <div class="abs" style="left:154px;top:8px;bottom:8px;width:2px;border-radius:1px;background:#FF6B2C;box-shadow:0 0 8px rgba(255,107,44,.55)"></div>
+            </div>
+            <div class="abs" style="left:20px;top:258px;width:310px;height:26px;border-radius:13px;background:linear-gradient(180deg,rgba(29,29,31,.07),rgba(255,255,255,.75) 50%,rgba(29,29,31,.09));overflow:hidden"><svg id="tu-knurl" width="330" height="26"></svg></div>
+          </div>
+          <div class="abs" style="left:20px;top:431px;width:350px;height:56px;border-radius:16px;background:rgba(255,255,255,.75);border:.5px solid rgba(255,255,255,.9);padding:0 18px;display:flex;align-items:center;font-size:17px">
+            <span id="tu-input" style="white-space:nowrap;overflow:hidden"></span><span id="tu-caret" style="width:2px;height:22px;background:#FF6B2C;margin-left:2px"></span>
+            <span id="tu-ph" class="abs" style="left:18px;color:#8E8E93">说一个歌手、一首歌，或者你在做什么</span>
+          </div>
+          <div class="abs" style="left:20px;top:503px;width:350px;height:42px;border-radius:12px;background:rgba(118,118,128,.12);display:grid;grid-template-columns:repeat(3,1fr);padding:3px;font-size:14px;text-align:center;align-items:center"><span>15 分钟</span><span style="background:#fff;border-radius:9px;height:36px;line-height:36px;font-weight:600;box-shadow:0 2px 6px rgba(0,0,0,.1)">半小时</span><span>一小时</span></div>
+          <div id="tu-cta" class="abs" style="left:20px;top:561px;width:350px;height:54px;border-radius:999px;background:#1D1D1F;color:#fff;display:flex;align-items:center;justify-content:center;gap:10px;font-size:17px;font-weight:600"><span style="width:8px;height:8px;border-radius:50%;background:#FF6B2C;box-shadow:0 0 0 4px rgba(255,107,44,.25)"></span><span id="tu-cta-t">在 FM 88.7 开播</span></div>
+        </div>
+
+        <!-- TUNING-IN -->
+        <div id="tuning" class="scr" style="background:#F2F2F4">
+          <div class="abs" style="left:-60px;top:80px;width:520px;height:520px;border-radius:50%;background:#6E62B6;opacity:.34;filter:blur(90px)"></div>
+          <div class="abs" style="left:20px;top:58px;height:36px;padding:0 14px;border-radius:999px;background:rgba(118,118,128,.14);font-size:15px;font-weight:500;line-height:36px">取消</div>
+          <div class="abs glass" style="left:20px;top:140px;width:350px;height:330px;border-radius:28px;display:flex;flex-direction:column;align-items:center;padding-top:22px">
+            <div style="position:relative;width:310px;height:96px;border-radius:18px;background:rgba(226,226,232,.8);box-shadow:inset 0 2px 6px rgba(29,29,31,.16),0 1px 0 #fff;overflow:hidden">
+              <svg id="ti-strip" class="abs" style="left:0;top:0" height="96"></svg>
+              <div class="abs" style="left:0;top:0;bottom:0;width:48px;background:linear-gradient(90deg,rgba(228,228,234,.96),rgba(228,228,234,0))"></div>
+              <div class="abs" style="right:0;top:0;bottom:0;width:48px;background:linear-gradient(270deg,rgba(228,228,234,.96),rgba(228,228,234,0))"></div>
+              <div id="ti-needle" class="abs" style="left:154px;top:8px;bottom:8px;width:2px;border-radius:1px;background:#FF6B2C;box-shadow:0 0 10px rgba(255,107,44,.6)"></div>
+            </div>
+            <div style="margin-top:14px;display:flex;align-items:baseline;gap:6px"><span style="font-size:15px;font-weight:500;color:#6E6E73">FM</span><span style="font-size:56px;font-weight:200;line-height:1;letter-spacing:-0.03em">105.8</span></div>
+            <div style="margin-top:8px;font-size:20px;font-weight:600">夜里</div>
+            <svg id="ti-wave" width="300" height="56" style="margin-top:14px"></svg>
+          </div>
+          <div class="abs" style="left:24px;top:500px;display:flex;flex-direction:column;gap:14px;font-size:16px">
+            <div id="st1" style="display:flex;align-items:center;gap:12px"><span class="dot"></span>听懂了：下雨天，想听点爵士钢琴</div>
+            <div id="st2" style="display:flex;align-items:center;gap:12px"><span class="dot"></span>开场歌就位：Bill Evans《Peace Piece》</div>
+            <div id="st3" style="display:flex;align-items:center;gap:12px"><span class="dot"></span>正在排后面的曲目</div>
+          </div>
+          <div class="abs" style="left:0;right:0;bottom:40px;text-align:center;font-size:14px;line-height:1.6;color:#6E6E73">音乐几秒内就会响起来，<br>后面的内容边播边准备。</div>
+        </div>
+
+        <!-- PLAYER -->
+        <div id="player" class="scr" style="background:#221C2C;color:#fff">
+          <div id="pl-blur" class="cv abs" style="left:-160px;top:-120px;width:710px;height:710px;filter:blur(70px) saturate(1.3);opacity:.9"></div>
+          <div class="abs" style="inset:0;background:rgba(18,14,26,.45)"></div>
+          <div class="abs" style="left:177px;top:58px;width:36px;height:5px;border-radius:3px;background:rgba(255,255,255,.5)"></div>
+          <div class="abs" style="left:24px;top:72px;right:24px;height:44px;display:flex;align-items:center;justify-content:space-between">
+            <span style="width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.14);display:grid;place-items:center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+            <span style="display:flex;align-items:center;gap:8px;height:32px;padding:0 14px;border-radius:999px;background:rgba(255,255,255,.14);font-size:13px;font-weight:500"><span style="width:6px;height:6px;border-radius:50%;background:#FF6B2C"></span><span style="font-weight:300">FM 105.8</span><span>夜里</span></span>
+            <span style="width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.14);display:grid;place-items:center"><svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg></span>
+          </div>
+          <div id="pl-cv" class="cv abs" style="left:47px;top:136px;width:296px;height:296px;border-radius:12px;overflow:hidden;box-shadow:0 22px 50px rgba(0,0,0,.4)"></div>
+          <div class="abs" style="left:24px;top:452px;right:24px">
+            <div style="font-size:22px;font-weight:600">Peace Piece</div>
+            <div style="font-size:19px;color:rgba(255,255,255,.62)">Bill Evans</div>
+          </div>
+          <div class="abs" style="left:24px;right:24px;top:520px;height:92px;border-radius:18px;background:rgba(255,255,255,.13);padding:12px 14px;overflow:hidden">
+            <div id="sl-next" class="abs" style="left:14px;right:14px;top:12px">
+              <div style="font-size:13px;font-weight:600;color:rgba(255,255,255,.8);display:flex;gap:8px;align-items:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="#fff"><path d="M5 4.5v15l12-7.5z"/></svg>接下来</div>
+              <div style="margin-top:6px;font-size:15px">Brad Mehldau《River Man》</div>
+              <div style="font-size:13px;color:rgba(255,255,255,.55)">第 1 段：开场</div>
+            </div>
+            <div id="sl-host" class="abs" style="left:14px;right:14px;top:12px;opacity:0">
+              <div style="font-size:13px;font-weight:600;color:rgba(255,255,255,.8);display:flex;gap:8px;align-items:center"><span id="sl-vu" style="display:flex;gap:2px;align-items:center;height:12px"></span>主持在说<span style="margin-left:auto;font-weight:400;color:rgba(255,255,255,.6);font-size:12px">全文 ›</span></div>
+              <div style="position:relative;margin-top:6px;height:45px;overflow:hidden;-webkit-mask-image:linear-gradient(180deg,transparent 0,#000 9px);mask-image:linear-gradient(180deg,transparent 0,#000 9px)">
+                <div id="sl-roll" style="position:absolute;left:0;right:0;top:0;font-size:15px;line-height:22.5px"></div>
+              </div>
+            </div>
+          </div>
+          <div class="abs" style="left:24px;right:24px;top:630px">
+            <div style="position:relative;height:6px;border-radius:3px;background:repeating-linear-gradient(90deg,rgba(255,255,255,.22) 0 3px,transparent 3px 7px);overflow:hidden">
+              <span id="pg-ready" class="abs" style="left:0;top:0;bottom:0;width:40%;background:rgba(255,255,255,.34)"></span>
+              <span id="pg-play" class="abs" style="left:0;top:0;bottom:0;width:12%;background:#fff"></span>
+            </div>
+            <div style="margin-top:8px;display:flex;justify-content:space-between;font-size:12px;color:rgba(255,255,255,.6);font-variant-numeric:tabular-nums"><span id="pg-t">03:48</span><span>约 32:00</span></div>
+          </div>
+          <div class="abs" style="left:46px;right:46px;top:672px;height:72px;display:flex;align-items:center;justify-content:space-between">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 3.8v3.7h3.7"/><text x="12.4" y="15.4" text-anchor="middle" font-size="7" font-weight="600" fill="#fff" stroke="none">15</text></svg>
+            <svg width="46" height="46" viewBox="0 0 24 24" fill="#fff"><rect x="5.5" y="4" width="4.5" height="16" rx="1.4"/><rect x="14" y="4" width="4.5" height="16" rx="1.4"/></svg>
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="#fff"><path d="M4 5.8v12.4a.8.8 0 0 0 1.2.7l9.4-6.2a.8.8 0 0 0 0-1.4L5.2 5.1a.8.8 0 0 0-1.2.7z"/><rect x="16.8" y="5" width="2.6" height="14" rx="1"/></svg>
+          </div>
+          <div class="abs" style="left:36px;right:36px;top:764px;height:44px;display:flex;align-items:center;justify-content:space-between">
+            <span style="width:44px;height:44px;border-radius:12px;background:rgba(255,255,255,.2);display:grid;place-items:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 11h10M7 15h6"/></svg></span>
+            <span id="pl-routebtn" style="width:44px;height:44px;border-radius:12px;display:grid;place-items:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.8)" stroke-width="1.8" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg></span>
+          </div>
+
+          <!-- route sheet -->
+          <div id="route" class="abs" style="left:0;right:0;bottom:0;height:600px;border-radius:28px 28px 0 0;background:rgba(36,30,48,.82);backdrop-filter:blur(40px) saturate(1.4);-webkit-backdrop-filter:blur(40px) saturate(1.4);border-top:.5px solid rgba(255,255,255,.18);padding:10px 20px 34px">
+            <div style="width:36px;height:5px;border-radius:3px;background:rgba(255,255,255,.35);margin:0 auto"></div>
+            <div style="margin-top:14px;font-size:22px;font-weight:700">节目路线</div>
+            <div style="font-size:13px;color:rgba(255,255,255,.6)">下雨天的爵士钢琴，约 32 分钟</div>
+            <div id="route-list" style="margin-top:18px;display:flex;flex-direction:column;gap:6px"></div>
+          </div>
+        </div>
+
+        <!-- tab bar (home/tune) -->
+        <div id="tabbar" class="abs" style="left:0;right:0;bottom:0;height:84px;background:rgba(242,242,244,.86);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-top:.5px solid rgba(60,60,67,.18);display:grid;grid-template-columns:repeat(3,1fr);padding:10px 24px 26px;font-size:11px;text-align:center">
+          <span id="tb-home" style="font-weight:600">首页</span><span id="tb-tune" style="color:#8E8E93">调频</span><span style="color:#8E8E93">节目库</span>
+        </div>
+
+        <div id="finger" class="abs" style="left:0;top:0;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;background:rgba(255,255,255,.55);border:1.5px solid rgba(255,255,255,.9);box-shadow:0 4px 14px rgba(0,0,0,.18);opacity:0;pointer-events:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="fade" class="abs" style="inset:0;background:#000;pointer-events:none"></div>
+</div>
+</div>
+
+<div class="ctrl" role="group" aria-label="播放控制">
+  <button id="play" type="button">播放</button>
+  <button id="restart" type="button">从头</button>
+  <input id="scrub" type="range" min="0" max="76" step="0.01" value="0" aria-label="时间轴">
+  <span id="time" class="time">0:00.0 / 1:16</span>
+  <button id="sound" type="button" aria-pressed="false">开启声音</button>
+</div>
+
+<script>
+(function(){
+  const DUR = 76;
+  const $ = (id) => document.getElementById(id);
+  const stage = $('stage'), viewport = $('viewport');
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function fit(){ stage.style.transform = 'scale(' + (viewport.clientWidth / 1920) + ')'; }
+  window.addEventListener('resize', fit); fit();
+
+  const clamp = (x) => Math.max(0, Math.min(1, x));
+  const p = (t, a, b) => clamp((t - a) / (b - a));
+  const eo = (x) => 1 - Math.pow(1 - x, 3);
+  const eio = (x) => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+  const ei = (x) => x * x * x;
+  const lerp = (a, b, x) => a + (b - a) * x;
+  const r2 = (n) => Math.round(n * 100) / 100;
+
+  function reveal(el, t, a, b, rise){
+    rise = rise || 26;
+    const i = eo(p(t, a, a + .7)), o = b == null ? 0 : ei(p(t, b, b + .5));
+    const op = i * (1 - o);
+    el.style.opacity = op.toFixed(3);
+    el.style.visibility = op < .002 ? 'hidden' : 'visible';
+    if (reduce) { el.style.transform = 'none'; el.style.filter = 'none'; return op; }
+    el.style.transform = 'translateY(' + ((1 - i) * rise - o * 14).toFixed(2) + 'px)';
+    el.style.filter = 'blur(' + ((1 - i) * 10 + o * 8).toFixed(2) + 'px)';
+    return op;
+  }
+
+  /* ---------------- procedural covers ---------------- */
+  const ST = {
+    casual: { n: '随便听', f: '88.7', hue: 22, tpl: ['freq', 'split'], dark: .25, c: '#E8834A' },
+    crate: { n: '唱片行', f: '93.1', hue: 168, tpl: ['label', 'split'], dark: .45, c: '#3E9C8C' },
+    profile: { n: '人物志', f: '97.4', hue: 38, tpl: ['label', 'split'], dark: .35, c: '#C9A04A' },
+    origins: { n: '来龙去脉', f: '101.5', hue: 224, tpl: ['contour', 'freq'], dark: .4, c: '#5C7CE0' },
+    night: { n: '夜里', f: '105.8', hue: 252, tpl: ['horizon', 'contour'], dark: .85, c: '#6E62B6' },
+  };
+  function rng(seed){ let a = seed >>> 0; return function(){ a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+  function hsl(h, s, l){ h = ((h % 360) + 360) % 360; s /= 100; l /= 100; const k = (n) => (n + h / 30) % 12; const a = s * Math.min(l, 1 - l); const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); const x = (v) => Math.round(v * 255).toString(16).padStart(2, '0'); return '#' + x(f(0)) + x(f(8)) + x(f(4)); }
+  function lum(hex){ const h = hex.replace('#', ''); const v = [0, 2, 4].map((i) => parseInt(h.substr(i, 2), 16) / 255).map((c) => c <= .03928 ? c / 12.92 : Math.pow((c + .055) / 1.055, 2.4)); return .2126 * v[0] + .7152 * v[1] + .0722 * v[2]; }
+  const onC = (hex) => lum(hex) > .3 ? '#1C1C1E' : '#FAF8F4';
+  function palette(R, st){
+    const h = st.hue + (R() * 2 - 1) * 16, acc = h + (R() < .5 ? 150 : -150) + (R() * 2 - 1) * 20, roll = R();
+    if (roll < st.dark) return { bg: hsl(h, 30 + R() * 15, 11 + R() * 6), p1: hsl(h, 35 + R() * 18, 36 + R() * 12), p2: hsl(18 + R() * 22, 72, 74 + R() * 8), ink: hsl(h, 30, 88) };
+    if (roll < st.dark + (1 - st.dark) / 2) return { bg: hsl(h, 36 + R() * 22, 85 + R() * 7), p1: hsl(h, 45 + R() * 20, 28 + R() * 10), p2: hsl(acc, 62, 54), ink: hsl(h, 40, 15) };
+    return { bg: hsl(h, 45 + R() * 15, 44 + R() * 8), p1: hsl(h, 40, 86 + R() * 6), p2: hsl(h, 50, 15 + R() * 6), ink: hsl(h, 40, 12) };
+  }
+  const circ = (cx, cy, r) => 'M' + r2(cx - r) + ' ' + r2(cy) + 'a' + r2(r) + ' ' + r2(r) + ' 0 1 0 ' + r2(2 * r) + ' 0a' + r2(r) + ' ' + r2(r) + ' 0 1 0 ' + r2(-2 * r) + ' 0Z';
+  const box = (x, y, w, h) => 'M' + r2(x) + ' ' + r2(y) + 'h' + r2(w) + 'v' + r2(h) + 'h' + r2(-w) + 'Z';
+  const visLen = (s) => { let n = 0; for (const ch of s) n += /[\u3400-\u9fff]/.test(ch) ? 1 : .56; return n; };
+  function textBlock(lines, x, y0, size, lh, fill, anchor, weight){
+    let s = '<text x="' + r2(x) + '" y="' + r2(y0) + '" font-size="' + r2(size) + '" font-weight="' + (weight || 700) + '" fill="' + fill + '" text-anchor="' + (anchor || 'start') + '" style="letter-spacing:-0.01em">';
+    lines.forEach((l, i) => { s += '<tspan x="' + r2(x) + '" dy="' + (i ? r2(size * lh) : 0) + '">' + l + '</tspan>'; });
+    return s + '</text>';
+  }
+  function makeCover(key, seed, heading, bare){
+    const st = ST[key], R = rng(seed * 2654435761 + st.hue * 97 + 13);
+    const tpl = st.tpl[Math.floor(R() * st.tpl.length)], c = palette(R, st);
+    const lines = heading.split('\n'), L = lines.length, longest = Math.max(1, ...lines.map(visLen));
+    const fill = (d, col, o) => '<path d="' + d + '" fill="' + col + '" fill-opacity="' + (o == null ? 1 : o) + '"/>';
+    const stroke = (d, col, w, o) => '<path d="' + d + '" fill="none" stroke="' + col + '" stroke-width="' + w + '" stroke-opacity="' + (o == null ? 1 : o) + '" stroke-linecap="round"/>';
+    const parts = []; let text = '';
+    const stLine = (x, y, anchor, col) => '<text x="' + x + '" y="' + y + '" font-size="4.6" fill="' + col + '" fill-opacity=".8" text-anchor="' + (anchor || 'start') + '"><tspan font-weight="300">FM ' + st.f + '</tspan> <tspan font-weight="500">' + st.n + '</tspan></text>';
+    if (tpl === 'freq') {
+      const ty = 54 + R() * 10, step = R() < .5 ? 2.2 : 3; let ticks = '';
+      for (let i = 0, x = 6; x <= 94; x += step, i++) ticks += 'M' + r2(x) + ' ' + r2(ty + (i % 5 === 0 ? -3 : 0)) + 'V' + r2(ty + 3);
+      const fx = 6 + ((parseFloat(st.f) - 87) / 21) * 88, size = Math.min(15, 80 / longest);
+      parts.push(stroke(ticks, c.p1, .45, .75), stroke('M' + r2(fx) + ' ' + r2(ty - 7) + 'V' + r2(ty + 5), c.p2, 1.1) + fill(circ(fx, ty - 8, 1.5), c.p2));
+      parts.push('<text x="3" y="104" font-size="33" font-weight="200" fill="' + c.p1 + '" style="letter-spacing:-0.05em">' + st.f + '</text>');
+      text = textBlock(lines, 7, 7 + size * .9, size, 1.15, onC(c.bg)) + '<text x="7" y="' + r2(Math.max(ty - 11, 12 + L * size * 1.15)) + '" font-size="4.6" font-weight="500" fill="' + onC(c.bg) + '" fill-opacity=".8">' + st.n + '</text>';
+    } else if (tpl === 'split') {
+      const split = 52 + R() * 14, size = Math.min(15, 86 / longest), cy = split + 14 + R() * 16;
+      parts.push(fill(box(0, 0, 100, split), c.p1), fill(circ(72 + R() * 16, cy, 5 + R() * 4), c.p2));
+      let rules = ''; for (let i = 0; i < 3; i++) rules += box(7, split + 15 + i * 5, 40 - i * 9, .35);
+      parts.push(fill(rules, onC(c.bg), .28));
+      text = textBlock(lines, 7, split - 4 - (L - 1) * size * 1.12, size, 1.12, onC(c.p1)) + stLine(7, r2(split + 9), 'start', onC(c.bg));
+    } else if (tpl === 'horizon') {
+      const hy = 56 + R() * 14, r = 10 + R() * 8, cx = 76 + R() * 10, cy = hy + r * .15, size = Math.min(14, 56 / longest);
+      let stars = ''; if (lum(c.bg) < .12) for (let i = 0; i < 26; i++) stars += circ(R() * 100, R() * (hy - 14), .25 + R() * .35);
+      let refl = ''; for (let i = 0; i < 5; i++) { const w = r * 1.7 * (1 - i * .14); refl += box(cx - w / 2, hy + 3 + i * 5.5, w, Math.max(.3, 1.1 - i * .15)); }
+      parts.push(fill(stars, c.ink, .55), fill(circ(cx, cy, r * 1.9), c.p1, .2) + fill(circ(cx, cy, r * 1.4), c.p1, .32), fill(circ(cx, cy, r), c.p2) + fill(box(0, hy, 100, 100 - hy), c.bg), fill(refl, c.p2, .45) + fill(box(0, hy - .2, 100, .4), c.p1, .7));
+      text = textBlock(lines, 7, hy - 3 - (L - 1) * size * 1.15, size, 1.15, onC(c.bg)) + stLine(7, r2(hy + 9), 'start', onC(c.bg));
+    } else if (tpl === 'label') {
+      const cx = 44 + R() * 12, cy = 44 + R() * 12, lr = 28 + R() * 5; let g = '';
+      for (let rr = lr + 2; rr < 56; rr += 1.9) g += circ(cx, cy, rr);
+      const ri = lr + 6 + R() * 10, a0 = R() * 6.28, a1 = a0 + 1 + R();
+      const arc = 'M' + r2(cx + ri * Math.cos(a0)) + ' ' + r2(cy + ri * Math.sin(a0)) + 'A' + r2(ri) + ' ' + r2(ri) + ' 0 0 1 ' + r2(cx + ri * Math.cos(a1)) + ' ' + r2(cy + ri * Math.sin(a1));
+      const size = Math.min(10.5, lr * 1.5 / longest);
+      parts.push(stroke(g, c.p1, .35, .6), stroke(arc, c.p1, 1.1), fill(circ(cx, cy, lr), c.p2));
+      text = textBlock(lines, cx, cy - (L - 1) * size * 1.2 / 2 + size * .35, size, 1.2, onC(c.p2), 'middle', 900) + stLine(95, 96, 'end', onC(c.bg));
+    } else {
+      const k = Math.floor(R() * 2), cx = [72 + R() * 10, 24 + R() * 12][k], cy = [72 + R() * 10, 76 + R() * 8][k];
+      const size = Math.min(13.5, 64 / longest), zoneY = 7 + L * size * 1.15 + 9, ph = R() * 6.28; let ls = '', inner = '';
+      for (let j = 1; j <= 12; j++) { const base = j * 6.6; let seg = '', on = false;
+        for (let q = 0; q <= 72; q++) { const tt = q / 72 * Math.PI * 2, rr = base * (1 + .12 * Math.sin(3 * tt + ph + j * .2)); const x = cx + rr * Math.cos(tt), y = cy + rr * Math.sin(tt);
+          if (x < 74 && y < zoneY) { on = false; continue; } seg += (on ? 'L' : 'M') + r2(x) + ' ' + r2(y); on = true; }
+        if (j === 1) inner = seg + 'Z'; else ls += seg; }
+      parts.push(stroke(ls, c.p1, .5), fill(inner, c.p2));
+      text = textBlock(lines, 7, 7 + size * .9, size, 1.15, onC(c.bg)) + stLine(7, r2(7 + L * size * 1.15 + 4), 'start', onC(c.bg));
+    }
+    let svg = '<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice"><rect width="100" height="100" fill="' + c.bg + '"/>';
+    parts.forEach((pt) => { svg += '<g class="pc">' + pt + '</g>'; });
+    if (!bare) svg += '<g class="pt" style="font-family:-apple-system,\'PingFang SC\',\'Noto Sans SC\',sans-serif">' + text + '</g>';
+    return { svg: svg + '</svg>', c };
+  }
+  function buildProgress(el, x){
+    const gs = el.querySelectorAll('.pc,.pt'), n = gs.length;
+    gs.forEach((g, i) => { const l = clamp(x * (n + .6) - i); g.style.opacity = l.toFixed(3); g.style.transform = reduce ? 'none' : 'scale(' + (.9 + .1 * eo(l)).toFixed(4) + ')'; });
+  }
+  function card(key, seed, heading, title, meta){
+    const d = document.createElement('div');
+    d.innerHTML = '<div class="cv" style="width:165px;height:165px;border-radius:12px;overflow:hidden;box-shadow:0 6px 18px rgba(29,29,31,.08)">' + makeCover(key, seed, heading).svg + '</div>' +
+      '<div class="clamp2" style="margin-top:8px;font-size:14px;font-weight:600;line-height:1.35">' + title + '</div><div style="font-size:12px;color:#6E6E73;margin-top:2px">' + meta + '</div>';
+    return d;
+  }
+  const A = [
+    ['casual', 11, '下班路上', '下班路上听点轻松的：City Pop 与 Funk', '随便听，约 30 分钟'],
+    ['crate', 27, 'City Pop\n之后', '听完 City Pop，再去找谁', '唱片行，约 40 分钟'],
+    ['profile', 43, '坂本龙一\n这些年', '坂本龙一这些年的歌', '人物志，约 45 分钟'],
+    ['origins', 58, 'Bossa Nova\n怎么来的', 'Bossa Nova 是怎么来的', '来龙去脉，约 40 分钟'],
+  ];
+  const B = [
+    ['origins', 71, '钢琴三重奏\n入门', '钢琴三重奏入门：从 Bill Evans 开始', '来龙去脉，约 40 分钟'],
+    ['night', 88, '深夜的\nECM', '深夜的 ECM：安静的欧洲爵士', '夜里，约 45 分钟'],
+    ['casual', 95, '雨天的\nBossa Nova', '雨天的 Bossa Nova', '随便听，约 30 分钟'],
+    ['crate', 104, 'Bill Evans\n之后', 'Bill Evans 之后，还能听谁', '唱片行，约 40 分钟'],
+  ];
+  const cardsA = A.map((a) => { const d = card(...a); $('gridA').appendChild(d); return d; });
+  const cardsB = B.map((a) => { const d = card(...a); $('gridB').appendChild(d); return d; });
+  const NOW = makeCover('night', 63, '下雨天的\n爵士钢琴');
+  $('pl-cv').innerHTML = NOW.svg;
+  $('pl-blur').innerHTML = makeCover('night', 63, '', true).svg;
+  $('mini-cv').innerHTML = makeCover('night', 63, '', true).svg;
+
+  /* ---------------- tuning strips ---------------- */
+  const STA = [
+    { n: '随便听', f: 88.7, c: '#E8834A', d: '以音乐为主，主持偶尔说两句' },
+    { n: '唱片行', f: 93.1, c: '#3E9C8C', d: '从你喜欢的出发，挖你没听过的' },
+    { n: '人物志', f: 97.4, c: '#C9A04A', d: '用一位歌手的作品，讲他走过的路' },
+    { n: '来龙去脉', f: 101.5, c: '#5C7CE0', d: '一种风格是怎么来的' },
+    { n: '夜里', f: 105.8, c: '#6E62B6', d: '几乎不说话，节奏放缓' },
+  ];
+  function strip(svg){
+    const lo = 84, hi = 112, px = 38.75, W = (hi - lo) * px;
+    svg.setAttribute('width', W); svg.setAttribute('viewBox', '0 0 ' + W + ' 96');
+    let mi = '', ma = '', tx = '', lb = '';
+    for (let i = lo * 5; i <= hi * 5; i++) { const f = i / 5, x = ((f - lo) * px).toFixed(1), isInt = i % 5 === 0, isHalf = !isInt && Math.abs(f * 2 - Math.round(f * 2)) < 1e-6; const len = isInt ? 18 : isHalf ? 12 : 7; const s = 'M' + x + ' ' + (52 - len) + 'V52'; if (isInt) ma += s; else mi += s; if (isInt && i % 10 === 0) tx += '<text x="' + x + '" y="72" text-anchor="middle" font-size="12" font-weight="300" fill="#8E8E93">' + f + '</text>'; }
+    STA.forEach((s) => { const x = (s.f - lo) * px; lb += '<circle cx="' + (x - 26) + '" cy="16" r="2.5" fill="' + s.c + '"/><text x="' + (x - 20) + '" y="20" font-size="12" font-weight="500" fill="#6E6E73">' + s.n + '</text>'; });
+    svg.innerHTML = '<path d="' + mi + '" stroke="rgba(29,29,31,.22)" stroke-width="1" stroke-linecap="round"/><path d="' + ma + '" stroke="rgba(29,29,31,.5)" stroke-width="1.2" stroke-linecap="round"/>' + tx + lb;
+    return { lo, px };
+  }
+  const TS = strip($('tu-strip')); strip($('ti-strip'));
+  $('ti-strip').style.transform = 'translateX(' + (155 - (105.8 - TS.lo) * TS.px).toFixed(1) + 'px)';
+  (function(){ let d = ''; for (let k = 0; k <= 33; k++) d += 'M' + (k * 10) + ' 7V19'; $('tu-knurl').innerHTML = '<path d="' + d + '" stroke="rgba(29,29,31,.16)" stroke-width="1"/>'; })();
+  (function(){ let s = 7; const R = () => (s = (s * 16807) % 2147483647) / 2147483647; let d = ''; for (let k = 0; k < 240; k++) { const x = R() * 310, y = R() * 96, rr = .4 + R() * .6; d += circ(x, y, rr); } $('tu-noise').innerHTML = '<path d="' + d + '" fill="rgba(29,29,31,.18)"/>'; })();
+  const bars = []; [6, 9, 12, 15, 18].forEach((h) => { const b = document.createElement('span'); b.style.cssText = 'width:4px;border-radius:1.5px;height:' + h + 'px'; $('tu-bars').appendChild(b); bars.push(b); });
+  const vu = []; [5, 11, 8, 12, 4].forEach(() => { const b = document.createElement('span'); b.style.cssText = 'width:2.5px;border-radius:1px;background:#fff'; $('sl-vu').appendChild(b); vu.push(b); });
+  ['st1', 'st2', 'st3'].forEach((id) => { $(id).querySelector('.dot').outerHTML = '<span class="dot" style="width:22px;height:22px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;box-sizing:border-box"></span>'; });
+
+  const HOST = ['注意听左手，', '它一直重复着同一个小节，', '右手在上面慢慢往前走。', '雨天听它，刚刚好。', '下一首，我们换一位钢琴手。'];
+  $('sl-roll').innerHTML = HOST.map((s) => '<div>' + s + '</div>').join('');
+  const ROUTE = [
+    ['00:00', '开场', '正在播', [['Bill Evans《Peace Piece》', 1], ['Brad Mehldau《River Man》', 0]], 1],
+    ['09:20', '雨声里的钢琴', '已准备', [['坂本龙一《aqua》', 0], ['Keith Jarrett《My Song》', 0]], 1],
+    ['18:40', '换一种安静', '准备中', [['曲目待定', 2]], .7],
+    ['27:30', '收尾', '准备中', [['曲目待定', 2]], .55],
+  ];
+  $('route-list').innerHTML = ROUTE.map(([tm, ti, stt, tr, op], i) =>
+    '<div class="rt" style="border-radius:16px;padding:12px 14px;background:' + (i === 0 ? 'rgba(255,255,255,.12)' : i === 1 ? 'rgba(255,255,255,.05)' : 'transparent') + ';opacity:' + op + '">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center"><span><span style="font-size:13px;font-weight:300;color:rgba(255,255,255,.6);margin-right:8px">' + tm + '</span><span style="font-size:16px;font-weight:600">' + ti + '</span></span><span style="font-size:12px;font-weight:500;color:' + (i === 0 ? '#FF8A55' : 'rgba(255,255,255,.55)') + '">' + stt + '</span></div>' +
+    tr.map(([n, s]) => '<div style="margin-top:8px;font-size:14px;color:' + (s === 1 ? '#fff' : s === 2 ? 'rgba(255,255,255,.5)' : 'rgba(255,255,255,.78)') + ';display:flex;gap:10px;align-items:center"><span style="width:14px;display:flex;gap:1.5px;align-items:flex-end;height:12px">' + (s === 1 ? '<span style="width:3px;height:6px;background:#FF6B2C"></span><span style="width:3px;height:12px;background:#FF6B2C"></span><span style="width:3px;height:8px;background:#FF6B2C"></span>' : '') + '</span>' + n + '</div>').join('') + '</div>').join('');
+  const routeRows = Array.from(document.querySelectorAll('#route-list .rt'));
+
+  /* ---------------- motion curves ---------------- */
+  function tuneF(t){
+    if (t < 11) return 88.7;
+    if (t < 14.6) return lerp(88.7, 101.7, eio(p(t, 11, 14.6)));
+    if (t < 20.6) { const x = t - 14.6; return 101.5 + .2 * Math.exp(-x / .3) * Math.cos(x * 11); }
+    if (t < 22.2) return lerp(101.5, 106.0, eio(p(t, 20.6, 22.2)));
+    const x = t - 22.2; return 105.8 + .2 * Math.exp(-x / .25) * Math.cos(x * 12);
+  }
+  const TYPED = '下雨天，想听点爵士钢琴';
+  const typed = (t) => Math.floor(p(t, 17.2, 20.2) * TYPED.length);
+
+  // camera: scale, focus point (phone coords) mapped to screen anchor
+  const ANCHOR = { x: 975 + 205, y: 108 + 432 };
+  const KEYS = [
+    [0, 1, 205, 432], [9.6, 1, 205, 432], [10.4, 1.45, 205, 315], [15.6, 1.45, 205, 315], [16.4, 1, 205, 432],
+    [34.6, 1, 205, 432], [35.6, 1.35, 205, 566], [42.6, 1.35, 205, 566], [43.4, 1.3, 205, 640], [49.2, 1.3, 205, 640], [50, 1, 205, 432],
+  ];
+  function cam(t){
+    let k = 0; while (k < KEYS.length - 1 && t > KEYS[k + 1][0]) k++;
+    const a = KEYS[k], b = KEYS[Math.min(k + 1, KEYS.length - 1)];
+    const x = b[0] === a[0] ? 0 : eio(p(t, a[0], b[0]));
+    return { s: lerp(a[1], b[1], x), fx: lerp(a[2], b[2], x), fy: lerp(a[3], b[3], x) };
+  }
+
+  function show(el, t, a, b, dy){
+    const i = eo(p(t, a, a + .45)), o = b == null ? 0 : ei(p(t, b, b + .45));
+    const v = i * (1 - o);
+    el.style.opacity = v.toFixed(3); el.style.visibility = v < .002 ? 'hidden' : 'visible';
+    el.style.transform = reduce ? 'none' : 'translateY(' + ((1 - i) * (dy || 18) - o * 10).toFixed(1) + 'px) scale(' + (.985 + .015 * i).toFixed(4) + ')';
+  }
+  function finger(t, keys){
+    for (const k of keys) { if (t >= k.a && t <= k.b) { const x = p(t, k.a, k.b); const e = eio(x);
+      $('finger').style.left = lerp(k.x0, k.x1, e).toFixed(1) + 'px'; $('finger').style.top = lerp(k.y0, k.y1, e).toFixed(1) + 'px';
+      const fade = Math.min(1, p(t, k.a, k.a + .15) * 1, 1 - p(t, k.b - .15, k.b));
+      $('finger').style.opacity = (fade * .95).toFixed(3); $('finger').style.transform = 'scale(' + (k.tap ? (1 - .18 * Math.sin(Math.PI * x)) : 1).toFixed(3) + ')'; return; } }
+    $('finger').style.opacity = 0;
+  }
+  const FINGER = [
+    { a: 8.1, b: 8.8, x0: 195, y0: 808, x1: 195, y1: 808, tap: true },
+    { a: 10.8, b: 14.9, x0: 290, y0: 313, x1: 90, y1: 313 },
+    { a: 22.9, b: 23.6, x0: 200, y0: 588, x1: 200, y1: 588, tap: true },
+    { a: 49.9, b: 50.6, x0: 332, y0: 786, x1: 332, y1: 786, tap: true },
+    { a: 57.9, b: 58.9, x0: 195, y0: 70, x1: 195, y1: 420 },
+  ];
+
+  /* ---------------- render ---------------- */
+  function render(t){
+    $('fade').style.opacity = Math.max(1 - eo(p(t, 0, 1.2)), ei(p(t, 75.2, 76))).toFixed(3);
+
+    // rig entrance / exit + camera
+    const enter = eo(p(t, .4, 2.2)), exit = eio(p(t, 68.6, 70.2));
+    const c = cam(t);
+    const s = c.s * (1 - .1 * exit);
+    const tx = ANCHOR.x - 975 - s * c.fx, ty = ANCHOR.y - 108 - s * c.fy + (1 - enter) * 160 + exit * 40;
+    const ry = (1 - enter) * -16, rx = (1 - enter) * 8;
+    $('rig').style.transform = reduce ? 'translate(' + tx.toFixed(1) + 'px,' + ty.toFixed(1) + 'px) scale(' + s.toFixed(4) + ')' :
+      'translate(' + tx.toFixed(1) + 'px,' + ty.toFixed(1) + 'px) scale(' + s.toFixed(4) + ') rotateY(' + ry.toFixed(2) + 'deg) rotateX(' + rx.toFixed(2) + 'deg)';
+    $('rig').style.opacity = (enter * (1 - exit)).toFixed(3);
+
+    // background aura follows station
+    const f = tuneF(t);
+    let near = STA[0], dist = 99; STA.forEach((st) => { const d = Math.abs(st.f - f); if (d < dist) { dist = d; near = st; } });
+    const locked = dist < .18;
+    const auraCol = t < 10 ? '#E8834A' : t < 24 ? (locked ? near.c : '#B8B8C0') : '#6E62B6';
+    $('bg1').style.background = auraCol; $('tu-aura').style.background = locked ? near.c : '#B8B8C0';
+    $('bg1').style.opacity = (t > 24 && t < 58 ? .22 : .18).toFixed(2);
+
+    // captions
+    reveal($('c1'), t, 2.4, 7.4); reveal($('c2'), t, 10.6, 16.0); reveal($('c3'), t, 17.0, 23.4);
+    reveal($('c4'), t, 25.0, 30.6); reveal($('c5'), t, 35.6, 43.0); reveal($('c6'), t, 44.0, 49.4);
+    reveal($('c7'), t, 51.0, 57.4); reveal($('c8'), t, 60.2, 68.2);
+    reveal($('mixer'), t, 36.0, 43.0, 30);
+
+    // screens
+    show($('home'), t, 0, 9.0); if (t >= 58.4) show($('home'), t, 58.4, null, 0);
+    show($('tune'), t, 9.0, 24.0); show($('tuning'), t, 24.0, 31.0); show($('player'), t, 31.0, 58.2, 40);
+    $('tabbar').style.opacity = (t < 24 || t > 58.4) ? 1 : 0;
+    $('tb-home').style.fontWeight = (t < 9 || t > 58) ? 600 : 400; $('tb-home').style.color = (t < 9 || t > 58) ? '#1D1D1F' : '#8E8E93';
+    $('tb-tune').style.fontWeight = (t >= 9 && t < 24) ? 600 : 400; $('tb-tune').style.color = (t >= 9 && t < 24) ? '#1D1D1F' : '#8E8E93';
+    if (t > 58 && t < 58.9) { const x = eo(p(t, 58.2, 58.9)); $('player').style.opacity = (1 - x).toFixed(3); $('player').style.visibility = 'visible'; $('player').style.transform = 'translateY(' + (x * 700).toFixed(1) + 'px)'; }
+
+    // home covers
+    cardsA.forEach((cd, i) => { const cv = cd.querySelector('.cv'); buildProgress(cv, p(t, 1.4 + i * .55, 3.4 + i * .55)); });
+    const swapOut = eo(p(t, 60.2, 60.8));
+    $('gridA').style.opacity = (t < 59 ? 1 : 1 - swapOut).toFixed(3);
+    $('gridB').style.opacity = t < 60.4 ? 0 : 1;
+    cardsB.forEach((cd, i) => { const cv = cd.querySelector('.cv'); const x = p(t, 60.6 + i * .6, 62.6 + i * .6); buildProgress(cv, x);
+      cd.querySelectorAll('div:not(.cv)').forEach((d) => { d.style.opacity = eo(p(t, 61.6 + i * .6, 62.4 + i * .6)).toFixed(3); }); });
+    $('home-why').style.opacity = eo(p(t, 60.4, 61)).toFixed(3);
+    $('mini').style.opacity = t > 58.6 ? eo(p(t, 58.6, 59.2)).toFixed(3) : 0;
+    $('mini').style.transform = 'translateY(' + ((1 - eo(p(t, 58.6, 59.2))) * 16).toFixed(1) + 'px)';
+    $('home-aura').style.background = t > 58 ? '#6E62B6' : '#5C7CE0';
+
+    // tune
+    $('tu-strip').style.transform = 'translateX(' + (155 - (f - TS.lo) * TS.px).toFixed(2) + 'px)';
+    $('tu-knurl').style.transform = 'translateX(' + (-(((f - 84) * 38.75) % 10)).toFixed(2) + 'px)';
+    $('tu-freq').textContent = f.toFixed(1);
+    $('tu-name').textContent = locked ? near.n : '两个台之间'; $('tu-name').style.color = locked ? '#1D1D1F' : '#8E8E93';
+    $('tu-desc').textContent = locked ? near.d : '松手会自动对准最近的台';
+    $('tu-noise').style.opacity = locked ? 0 : Math.min(1, (dist - .18) * 2).toFixed(3);
+    bars.forEach((b, i) => { b.style.background = i < (locked ? 5 : 1) ? '#1D1D1F' : 'rgba(29,29,31,.15)'; });
+    $('tu-cta-t').textContent = locked ? '在 FM ' + near.f.toFixed(1) + ' 开播' : '先对准一个台';
+    $('tu-chip').style.opacity = eo(p(t, 22.3, 22.8)).toFixed(3);
+    const n = typed(t); $('tu-input').textContent = TYPED.slice(0, n); $('tu-ph').style.display = n ? 'none' : 'block';
+    $('tu-caret').style.opacity = (t > 16.8 && t < 22 && Math.floor(t * 2.2) % 2 === 0) ? 1 : 0;
+    $('tu-cta').style.transform = 'scale(' + (1 - .04 * Math.sin(Math.PI * p(t, 23.0, 23.4))).toFixed(4) + ')';
+
+    // tuning-in
+    const clean = eo(p(t, 25, 30));
+    let wd = '';
+    for (let x = 0; x <= 300; x += 3) {
+      const nz = Math.sin(x * .21 + t * 7.3) * .5 + Math.sin(x * .53 - t * 5.1) * .3 + Math.sin(x * 1.13 + t * 11.7) * .2;
+      const sn = Math.sin(x * .12 - t * 5.0);
+      const y = 28 + nz * 20 * (1 - clean) + sn * 12 * (.3 + .7 * clean);
+      wd += (x ? 'L' : 'M') + x + ' ' + y.toFixed(1);
+    }
+    $('ti-wave').innerHTML = '<path d="' + wd + '" fill="none" stroke="#5A4FA0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>';
+    const wob = Math.exp(-p(t, 24.2, 25.4) * 4) * Math.sin((t - 24.2) * 20) * 10;
+    $('ti-needle').style.transform = 'translateX(' + (t < 25.4 ? wob : 0).toFixed(1) + 'px)';
+    [['st1', 25.6], ['st2', 27.2], ['st3', 28.8]].forEach(([id, at], i) => {
+      const el = $(id), done = t > at + (i === 2 ? 99 : 0), act = t > at - 1.4;
+      el.style.opacity = act ? 1 : .35;
+      const dot = el.querySelector('.dot');
+      if (done) { dot.style.background = '#1D1D1F'; dot.style.border = '0'; dot.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>'; dot.style.transform = 'scale(' + (.6 + .4 * eo(p(t, at, at + .25))).toFixed(3) + ')'; }
+      else { dot.style.background = 'transparent'; dot.style.border = '1.5px solid rgba(29,29,31,.25)'; dot.innerHTML = act ? '<span style="width:8px;height:8px;border-radius:50%;background:#FF6B2C;opacity:' + (.5 + .5 * Math.sin(t * 5)).toFixed(2) + '"></span>' : ''; dot.style.transform = 'none'; }
+    });
+
+    // player
+    const host = t > 35.6 && t < 43.0;
+    const hIn = eo(p(t, 35.6, 36.0)), hOut = eo(p(t, 43.0, 43.4));
+    $('sl-host').style.opacity = (hIn * (1 - hOut)).toFixed(3);
+    $('sl-next').style.opacity = (1 - hIn * (1 - hOut)).toFixed(3);
+    const idx = Math.min(HOST.length - 2, Math.max(0, (t - 36.2) / 1.55));
+    const whole = Math.floor(idx), frac = eio(clamp((idx - whole) * 3 - 2));
+    $('sl-roll').style.transform = 'translateY(' + (-(whole + frac) * 22.5).toFixed(2) + 'px)';
+    vu.forEach((b, i) => { b.style.height = (host ? 3 + 9 * Math.abs(Math.sin(t * (6 + i * 1.7) + i)) : 3).toFixed(1) + 'px'; });
+    const pp = lerp(.12, .3, p(t, 31, 58)), rd = lerp(.32, .5, p(t, 31, 43)) + .16 * eo(p(t, 44, 49.4));
+    $('pg-play').style.width = (pp * 100).toFixed(2) + '%'; $('pg-ready').style.width = (rd * 100).toFixed(2) + '%';
+    const secs = Math.floor(228 + (t - 31) * 12.5); $('pg-t').textContent = String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0');
+    $('mini-prog').style.width = (pp * 100).toFixed(1) + '%';
+    const rIn = eo(p(t, 50.2, 50.8)), rOut = ei(p(t, 57.2, 57.8));
+    $('route').style.transform = 'translateY(' + ((1 - rIn) * 620 + rOut * 620).toFixed(1) + 'px)';
+    routeRows.forEach((r, i) => { r.style.transform = 'translateY(' + ((1 - eo(p(t, 50.6 + i * .15, 51.2 + i * .15))) * 20).toFixed(1) + 'px)'; });
+
+    // mixer lanes
+    const mLevel = 1 - .68 * eo(p(t, 35.6, 36.2)) * (1 - eo(p(t, 42.8, 43.6)));
+    const hLevel = eo(p(t, 35.8, 36.2)) * (1 - eo(p(t, 42.8, 43.2)));
+    let md = '', hd = '';
+    for (let i = 0; i < 46; i++) {
+      const a = (.35 + .65 * Math.abs(Math.sin(i * .9 + t * 4.2) * Math.cos(i * .37 - t * 2.1))) * 30 * mLevel;
+      const b = (.25 + .75 * Math.abs(Math.sin(i * 1.7 + t * 9.1) * Math.sin(i * .21 + t * 3.3))) * 30 * hLevel;
+      md += 'M' + (i * 10 + 4) + ' ' + (35 - a).toFixed(1) + 'V' + (35 + a).toFixed(1);
+      hd += 'M' + (i * 10 + 4) + ' ' + (35 - Math.max(.6, b)).toFixed(1) + 'V' + (35 + Math.max(.6, b)).toFixed(1);
+    }
+    $('mx-music').innerHTML = '<path d="' + md + '" stroke="#1D1D1F" stroke-width="4" stroke-linecap="round" stroke-opacity=".75"/>';
+    $('mx-host').innerHTML = '<path d="' + hd + '" stroke="#FF6B2C" stroke-width="4" stroke-linecap="round"/>';
+
+    finger(t, FINGER);
+
+    // end card
+    reveal($('end-logo'), t, 70.2, null, 30); reveal($('end-name'), t, 70.7, null, 30); reveal($('end-line'), t, 71.3, null, 20); reveal($('end-url'), t, 72.0, null, 14);
+  }
+
+  /* ---------------- sound ---------------- */
+  let soundOn = false, ctx = null; const EV = [];
+  (function(){
+    let prev = Math.floor(tuneF(10.9) * 5);
+    for (let t = 11; t < 23.2; t += 1 / 120) { const v = Math.floor(tuneF(t) * 5); if (v !== prev) { EV.push({ t, k: 'tick' }); prev = v; } }
+    [[8.4, 'tap'], [23.2, 'tap'], [50.2, 'tap'], [15.0, 'chime'], [22.6, 'chime'], [31.0, 'chime']].forEach(([t, k]) => EV.push({ t, k }));
+    [9.0, 24.0, 31.0, 50.3, 58.2, 60.4].forEach((t) => EV.push({ t, k: 'air' }));
+    for (let i = 1; i <= TYPED.length; i++) EV.push({ t: 17.2 + i / TYPED.length * 3, k: 'key' });
+    EV.push({ t: 24.2, k: 'noise' });
+    EV.sort((a, b) => a.t - b.t);
+  })();
+  function snd(k, when, from){
+    const c = ctx, g = c.createGain(); g.connect(c.destination);
+    if (k === 'tick' || k === 'key' || k === 'tap') {
+      const len = k === 'key' ? .03 : .015, buf = c.createBuffer(1, Math.ceil(c.sampleRate * len), c.sampleRate), d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 4);
+      const src = c.createBufferSource(); src.buffer = buf; const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = k === 'key' ? 2400 : k === 'tap' ? 1200 : 3800; bp.Q.value = 2;
+      g.gain.value = k === 'tap' ? .5 : k === 'key' ? .16 : .2; src.connect(bp).connect(g); src.start(when);
+    } else if (k === 'noise') {
+      const dur = Math.max(0, 5.5 - Math.max(0, from - 24.2)); if (!dur) return;
+      const buf = c.createBuffer(1, Math.ceil(c.sampleRate * dur), c.sampleRate), d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      const src = c.createBufferSource(); src.buffer = buf; const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1700; bp.Q.value = .7;
+      g.gain.setValueAtTime(.0001, when); g.gain.linearRampToValueAtTime(.06, when + .3); g.gain.linearRampToValueAtTime(.0001, when + dur);
+      src.connect(bp).connect(g); src.start(when); src.stop(when + dur);
+    } else if (k === 'chime') {
+      [880, 1318.5].forEach((fr, i) => { const o = c.createOscillator(), og = c.createGain(); o.frequency.value = fr; og.gain.setValueAtTime(.0001, when + i * .06); og.gain.exponentialRampToValueAtTime(.1, when + i * .06 + .02); og.gain.exponentialRampToValueAtTime(.0001, when + i * .06 + 1.1); o.connect(og).connect(c.destination); o.start(when + i * .06); o.stop(when + i * .06 + 1.2); });
+    } else if (k === 'air') {
+      const o = c.createOscillator(); o.frequency.setValueAtTime(170, when); o.frequency.exponentialRampToValueAtTime(300, when + .5);
+      g.gain.setValueAtTime(.0001, when); g.gain.exponentialRampToValueAtTime(.05, when + .12); g.gain.exponentialRampToValueAtTime(.0001, when + .7); o.connect(g); o.start(when); o.stop(when + .8);
+    }
+  }
+  function schedule(t){ if (!soundOn) return; try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { ctx = null; return; } const now = ctx.currentTime + .05; EV.forEach((e) => { if (e.t >= t || (e.k === 'noise' && t < 29.7)) snd(e.k, now + Math.max(0, e.t - t), t); }); }
+  function stopS(){ if (ctx) { try { ctx.close(); } catch (e) {} ctx = null; } }
+
+  /* ---------------- transport ---------------- */
+  let t = 0, playing = false, last = 0;
+  const scrub = $('scrub'), timeEl = $('time'), pb = $('play');
+  const fmt = (x) => Math.floor(x / 60) + ':' + (x % 60).toFixed(1).padStart(4, '0');
+  function update(){ render(t); scrub.value = t; timeEl.textContent = fmt(t) + ' / 1:16'; }
+  function loop(ts){ if (!playing) return; t = Math.min(DUR, t + (ts - last) / 1000); last = ts; update(); if (t >= DUR) { setP(false); return; } requestAnimationFrame(loop); }
+  function setP(v){ playing = v; pb.textContent = v ? '暂停' : '播放'; if (v) { if (t >= DUR) t = 0; last = performance.now(); stopS(); schedule(t); requestAnimationFrame(loop); } else stopS(); }
+  pb.addEventListener('click', () => setP(!playing));
+  $('restart').addEventListener('click', () => { t = 0; update(); setP(true); });
+  scrub.addEventListener('input', () => { t = parseFloat(scrub.value); update(); if (playing) { stopS(); schedule(t); } });
+  $('sound').addEventListener('click', (e) => { soundOn = !soundOn; e.currentTarget.setAttribute('aria-pressed', String(soundOn)); e.currentTarget.textContent = soundOn ? '关闭声音' : '开启声音'; stopS(); if (playing) schedule(t); });
+  document.addEventListener('keydown', (e) => { if (e.code === 'Space') { e.preventDefault(); setP(!playing); } });
+  update();
+})();
+</script>
+</body>
+</html>
