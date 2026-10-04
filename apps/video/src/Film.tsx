@@ -5,7 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import { logoMarkSvg } from "../../web/lib/brand/logo-mark";
 import { content, type Card } from "./content";
-import { clamp, ei, eio, eo, lerp, p } from "./lib/anim";
+import { clamp, ei, eio, eo, lerp, p, sp } from "./lib/anim";
 import { circ, makeCover, type Cover } from "./lib/cover";
 import { SANS } from "./lib/fonts";
 import { STA, station } from "./lib/stations";
@@ -32,8 +32,8 @@ function reveal(t: number, a: number, b: number | null, rise = 26): CSSPropertie
 }
 
 function show(t: number, a: number, b: number | null, dy = 18): CSSProperties {
-  const i = eo(p(t, a, a + 0.45)),
-    o = b == null ? 0 : ei(p(t, b, b + 0.45));
+  const i = sp(t, a, a + 0.6),
+    o = b == null ? 0 : sp(t, b, b + 0.5);
   const v = i * (1 - o);
   return {
     opacity: v,
@@ -42,17 +42,21 @@ function show(t: number, a: number, b: number | null, dy = 18): CSSProperties {
   };
 }
 
-function fingerStyle(t: number): CSSProperties {
+function fingerStyle(t: number, fps: number): CSSProperties {
   for (const k of FINGER) {
     if (t >= k.a && t <= k.b) {
       const x = p(t, k.a, k.b),
         e = eio(x);
+      const dt = 1 / fps,
+        e2 = eio(p(t + dt, k.a, k.b));
+      const speed = Math.hypot(k.x1 - k.x0, k.y1 - k.y0) * (e2 - e) * fps;
       const fade = Math.min(1, p(t, k.a, k.a + 0.15), 1 - p(t, k.b - 0.15, k.b));
       return {
         left: lerp(k.x0, k.x1, e),
         top: lerp(k.y0, k.y1, e),
         opacity: fade * 0.95,
         transform: `scale(${k.tap ? 1 - 0.18 * Math.sin(Math.PI * x) : 1})`,
+        filter: speed > 1 ? `blur(${Math.min(1.5, (speed / fps) * 0.12).toFixed(2)}px)` : undefined,
       };
     }
   }
@@ -172,17 +176,25 @@ const NOISE = (() => {
   return d;
 })();
 
-function Strip({ x }: { x: number }) {
+/** Horizontal-only blur for fast-moving SVG content (sx in px). */
+const hblur = (id: string, sx: number) =>
+  sx > 0.05 ? `<defs><filter id="${id}" x="-5%" y="0" width="110%" height="100%"><feGaussianBlur stdDeviation="${sx.toFixed(2)} 0"/></filter></defs>` : "";
+
+function Strip({ x, blur = 0, id }: { x: number; blur?: number; id: string }) {
+  const html = blur > 0.05 ? `${hblur(id, blur)}<g filter="url(#${id})">${STRIP_SVG}</g>` : STRIP_SVG;
   return (
     <svg
       width={STRIP_W}
       height={96}
       viewBox={`0 0 ${STRIP_W} 96`}
       style={{ position: "absolute", left: 0, top: 0, transform: `translateX(${x.toFixed(2)}px)`, fontFamily: SANS }}
-      dangerouslySetInnerHTML={{ __html: STRIP_SVG }}
+      dangerouslySetInnerHTML={{ __html: html }}
     />
   );
 }
+
+/** Light motion blur: a fraction of the per-frame travel, capped. */
+const motionBlur = (pxPerSec: number, fps: number) => Math.min(3, (Math.abs(pxPerSec) / fps) * 0.35);
 const stripX = (f: number) => 155 - (f - STRIP_LO) * STRIP_PX;
 
 function Dial({ children, glow }: { children?: ReactNode; glow: number }) {
@@ -211,8 +223,8 @@ export function Film({ sfx = true }: { sfx?: boolean }) {
   const fade = Math.max(1 - eo(p(t, 0, 1.2)), ei(p(t, 75.2, 76)));
 
   // rig entrance / exit + camera
-  const enter = eo(p(t, 0.4, 2.2)),
-    exit = eio(p(t, 68.6, 70.2));
+  const enter = sp(t, 0.4, 2.2),
+    exit = sp(t, 68.6, 70.2);
   const c = cam(t);
   const s = c.s * (1 - 0.1 * exit);
   const tx = ANCHOR.x - RIG.left - s * c.fx,
@@ -232,13 +244,14 @@ export function Film({ sfx = true }: { sfx?: boolean }) {
     }
   });
   const locked = dist < 0.18;
+  const stripBlur = motionBlur(((tuneF(t + 0.5 / fps) - tuneF(t - 0.5 / fps)) * fps) * STRIP_PX, fps);
   const auraCol = t < 10 ? station("casual").c : t < 24 ? (locked ? near.c : "#B8B8C0") : NIGHT;
 
   // screens
   const homeStyle = t >= 58.4 ? show(t, 58.4, null, 0) : show(t, 0, 9.0);
   let playerStyle = show(t, 31.0, 58.2, 40);
   if (t > 58 && t < 58.9) {
-    const x = eo(p(t, 58.2, 58.9));
+    const x = sp(t, 58.2, 58.9);
     playerStyle = { opacity: 1 - x, visibility: "visible", transform: `translateY(${(x * 700).toFixed(1)}px)` };
   }
   const homeTab = t < 9 || t > 58,
@@ -274,8 +287,8 @@ export function Film({ sfx = true }: { sfx?: boolean }) {
     rd = lerp(0.32, 0.5, p(t, 31, 43)) + 0.16 * eo(p(t, 44, 49.4));
   const secs = Math.max(0, Math.floor(228 + (t - 31) * 12.5));
   const pgT = String(Math.floor(secs / 60)).padStart(2, "0") + ":" + String(secs % 60).padStart(2, "0");
-  const rIn = eo(p(t, 50.2, 50.8)),
-    rOut = ei(p(t, 57.2, 57.8));
+  const rIn = sp(t, 50.2, 50.9),
+    rOut = sp(t, 57.2, 57.9);
 
   // mixer lanes
   const mLevel = 1 - 0.68 * eo(p(t, 35.6, 36.2)) * (1 - eo(p(t, 42.8, 43.6)));
@@ -432,7 +445,7 @@ export function Film({ sfx = true }: { sfx?: boolean }) {
                   })}
                 >
                   <Dial glow={8}>
-                    <Strip x={stripX(f)} />
+                    <Strip x={stripX(f)} blur={stripBlur} id="mb-tune" />
                     <svg width={310} height={96} style={abs({ left: 0, top: 0, opacity: locked ? 0 : Math.min(1, (dist - 0.18) * 2) })}>
                       <path d={NOISE} fill="rgba(29,29,31,.18)" />
                     </svg>
@@ -440,7 +453,14 @@ export function Film({ sfx = true }: { sfx?: boolean }) {
                 </div>
                 <div style={abs({ left: 20, top: 258, width: 310, height: 26, borderRadius: 13, background: "linear-gradient(180deg,rgba(29,29,31,.07),rgba(255,255,255,.75) 50%,rgba(29,29,31,.09))", overflow: "hidden" })}>
                   <svg width={330} height={26} style={{ transform: `translateX(${(-(((f - 84) * 38.75) % 10)).toFixed(2)}px)` }}>
-                    <path d={KNURL} stroke="rgba(29,29,31,.16)" strokeWidth={1} />
+                    {stripBlur > 0.05 ? (
+                      <defs>
+                        <filter id="mb-knurl" x="-5%" y="0" width="110%" height="100%">
+                          <feGaussianBlur stdDeviation={`${stripBlur.toFixed(2)} 0`} />
+                        </filter>
+                      </defs>
+                    ) : null}
+                    <path d={KNURL} stroke="rgba(29,29,31,.16)" strokeWidth={1} filter={stripBlur > 0.05 ? "url(#mb-knurl)" : undefined} />
                   </svg>
                 </div>
               </div>
@@ -485,7 +505,7 @@ export function Film({ sfx = true }: { sfx?: boolean }) {
               <div style={abs({ left: 20, top: 58, height: 36, padding: "0 14px", borderRadius: 999, background: "rgba(118,118,128,.14)", fontSize: 15, fontWeight: 500, lineHeight: "36px" })}>{content.ui.cancel}</div>
               <div style={{ ...abs({ left: 20, top: 140, width: 350, height: 330, borderRadius: 28, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 22, boxSizing: "border-box" }), ...glass }}>
                 <div style={{ position: "relative", width: 310, height: 96, borderRadius: 18, background: "rgba(226,226,232,.8)", boxShadow: "inset 0 2px 6px rgba(29,29,31,.16),0 1px 0 #fff", overflow: "hidden" }}>
-                  <Strip x={stripX(station(PROG.station).f)} />
+                  <Strip x={stripX(station(PROG.station).f)} id="mb-ti" />
                   <div style={abs({ left: 0, top: 0, bottom: 0, width: 48, background: "linear-gradient(90deg,rgba(228,228,234,.96),rgba(228,228,234,0))" })} />
                   <div style={abs({ right: 0, top: 0, bottom: 0, width: 48, background: "linear-gradient(270deg,rgba(228,228,234,.96),rgba(228,228,234,0))" })} />
                   <div style={abs({ left: 154, top: 8, bottom: 8, width: 2, borderRadius: 1, background: ACCENT, boxShadow: "0 0 10px rgba(255,107,44,.6)", transform: `translateX(${(t < 25.4 ? wob : 0).toFixed(1)}px)` })} />
@@ -712,7 +732,7 @@ export function Film({ sfx = true }: { sfx?: boolean }) {
             <div
               style={{
                 ...abs({ left: 0, top: 0, width: 46, height: 46, margin: "-23px 0 0 -23px", borderRadius: "50%", background: "rgba(255,255,255,.55)", border: "1.5px solid rgba(255,255,255,.9)", boxShadow: "0 4px 14px rgba(0,0,0,.18)", boxSizing: "border-box" }),
-                ...fingerStyle(t),
+                ...fingerStyle(t, fps),
               }}
             />
           </div>

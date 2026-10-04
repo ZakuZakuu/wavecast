@@ -1,3 +1,5 @@
+import { spring } from "remotion";
+
 // Easing helpers, identical to the sample's render(t) helpers.
 export const clamp = (x: number) => Math.max(0, Math.min(1, x));
 export const p = (t: number, a: number, b: number) => clamp((t - a) / (b - a));
@@ -16,4 +18,21 @@ export function rng(seed: number) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/**
+ * 0..1 progress from a, settling by b, driven by Remotion's spring.
+ * Damping 200 = critically damped: steady, no visible overshoot.
+ */
+export const SPRING_FPS = 30;
+export function sp(t: number, a: number, b: number) {
+  if (t <= a) return 0;
+  if (t >= b) return 1;
+  const v = spring({
+    frame: (t - a) * SPRING_FPS,
+    fps: SPRING_FPS,
+    config: { damping: 200 },
+    durationInFrames: Math.max(1, (b - a) * SPRING_FPS),
+  });
+  return clamp(v);
 }

@@ -1,7 +1,7 @@
 // Choreography of the film, ported 1:1 from the sample's script
 // (docs/design/film/wavecast-film.html). All times are in seconds.
 import { content } from "./content";
-import { eio, lerp, p } from "./lib/anim";
+import { eio, lerp, p, sp } from "./lib/anim";
 
 export const FPS = 30;
 export const DURATION = 76;
@@ -38,7 +38,8 @@ export function cam(t: number) {
   while (k < KEYS.length - 1 && t > KEYS[k + 1][0]) k++;
   const a = KEYS[k],
     b = KEYS[Math.min(k + 1, KEYS.length - 1)];
-  const x = b[0] === a[0] ? 0 : eio(p(t, a[0], b[0]));
+  // Camera push-ins settle on a spring (no overshoot).
+  const x = b[0] === a[0] ? 0 : sp(t, a[0], b[0]);
   return { s: lerp(a[1], b[1], x), fx: lerp(a[2], b[2], x), fy: lerp(a[3], b[3], x) };
 }
 
