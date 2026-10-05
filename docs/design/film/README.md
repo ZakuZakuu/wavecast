@@ -5,3 +5,7 @@
 正式视频用 Remotion 制作，以这个文件为准移植：镜头顺序、时间点、相机运动（`KEYS`）、手指轨迹（`FINGER`）、调谐曲线（`tuneF`）、字幕出现时间、封面生成器（`makeCover`）、混音面板的波形算法、音效事件表（`EV`）都在文件的脚本里。
 
 片中的节目标题、歌名、主持词、推荐标题都是示意内容，正式版会替换成真实生成的节目内容。
+
+## 正式版
+
+正式版按 `FILM_BRIEF.md` 制作，代码在 `apps/video`（Remotion）。预览、渲染和内容配置见 `apps/video/README.md`；GitHub 上可在 Actions → Concept film 手动渲染。
