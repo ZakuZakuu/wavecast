@@ -1,10 +1,22 @@
 name: Concept film
 
-# Manual only: renders the WaveCast concept film (apps/video) and uploads the
-# MP4s and the music cue sheet as a workflow artifact. Nothing is committed.
+# Renders the WaveCast concept film (apps/video): a silent H.264 video, the
+# sound-effect bed as a WAV aligned to the video's 0 s, and the music cue
+# sheet, uploaded as a workflow artifact. Nothing is committed.
 on:
   workflow_dispatch:
-  # TEMPORARY: preview renders on the concept-film PR. Remove before merging.
+    inputs:
+      quality:
+        description: "preview = 1280×720, final = 1920×1080"
+        type: choice
+        options: [preview, final]
+        default: preview
+      range:
+        description: "Optional: cold, morning, afternoon, night, nextday, ending, or seconds like 12-30. Empty = whole film."
+        type: string
+        required: false
+        default: ""
+  # TEMPORARY: preview render of the whole film on the concept-film PR. Remove before merging.
   pull_request:
     paths:
       - "apps/video/**"
@@ -17,6 +29,10 @@ jobs:
   render:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      # The PR trigger always renders the whole film at preview quality.
+      FILM_QUALITY: ${{ github.event_name == 'workflow_dispatch' && inputs.quality || 'preview' }}
+      FILM_RANGE: ${{ github.event_name == 'workflow_dispatch' && inputs.range || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -26,6 +42,8 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Runner
+        run: echo "cores=$(nproc)"; free -h
       - name: Install system libraries for headless Chrome
         run: |
           sudo apt-get update
@@ -35,24 +53,22 @@ jobs:
       - run: pnpm install --frozen-lockfile --filter @wavecast/video...
       - run: pnpm --filter @wavecast/video typecheck
       - run: pnpm --dir apps/video exec remotion browser ensure
-      - name: Render (with sound effects, silent, cue sheet)
+      - name: Render (quality=${{ env.FILM_QUALITY }}, range=${{ env.FILM_RANGE || 'full' }})
         run: pnpm --dir apps/video render
       - name: Check outputs
         working-directory: apps/video
         run: |
-          cd out
-          for f in wavecast-film.mp4 wavecast-film-silent.mp4; do
-            # Remotion ships its own ffprobe.
-            pnpm exec remotion ffprobe -v error -show_entries format=duration:stream=codec_name,width,height,r_frame_rate -of default=nw=1 "$f"
-            size=$(stat -c %s "$f"); echo "$f: $size bytes"
-            test "$size" -lt 524288000
-          done
-          test -s music-cues.md
+          cat out/render-info.txt
+          pnpm exec remotion ffprobe -v error -show_entries format=duration:stream=codec_name,width,height,r_frame_rate -of default=nw=1 out/wavecast-film-silent.mp4
+          pnpm exec remotion ffprobe -v error -show_entries format=duration -of default=nw=1 out/wavecast-sfx.wav
+          size=$(stat -c %s out/wavecast-film-silent.mp4); echo "video: $size bytes"; test "$size" -lt 524288000
+          test -s out/music-cues.md
       - uses: actions/upload-artifact@v4
         with:
-          name: wavecast-film-${{ github.sha }}
+          name: wavecast-film-${{ env.FILM_QUALITY }}-${{ env.FILM_RANGE || 'full' }}-${{ github.sha }}
           path: |
-            apps/video/out/wavecast-film.mp4
             apps/video/out/wavecast-film-silent.mp4
+            apps/video/out/wavecast-sfx.wav
             apps/video/out/music-cues.md
+            apps/video/out/render-info.txt
           retention-days: 30
