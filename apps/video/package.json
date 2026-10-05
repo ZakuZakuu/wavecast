@@ -10,7 +10,7 @@
     "charset": "tsx scripts/build-charset.ts",
     "still": "pnpm charset && tsx scripts/stills.ts",
     "render": "pnpm charset && pnpm sfx && pnpm cues && remotion render src/index.ts WaveCast out/wavecast-film.mp4 && remotion render src/index.ts WaveCast out/wavecast-film-silent.mp4 --muted",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "pnpm charset && tsc --noEmit"
   },
   "dependencies": {
     "@remotion/cli": "4.0.533",
