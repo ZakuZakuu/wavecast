@@ -4,6 +4,10 @@ name: Concept film
 # MP4s and the music cue sheet as a workflow artifact. Nothing is committed.
 on:
   workflow_dispatch:
+  # TEMPORARY: preview renders on the concept-film PR. Remove before merging.
+  pull_request:
+    paths:
+      - "apps/video/**"
 
 concurrency:
   group: film-${{ github.ref }}

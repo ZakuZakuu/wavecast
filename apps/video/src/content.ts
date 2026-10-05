@@ -185,7 +185,7 @@ export const WALL_TITLES: Array<[StationId, string]> = [
   ["casual", "午饭后"],
   ["casual", "开车去海边"],
   ["casual", "做饭的时候"],
-  ["casual", "跑步听的"],
+  ["casual", "跑步的时候"],
   ["casual", "下午犯困"],
   ["casual", "洗衣服时"],
   ["crate", "冷门 B 面"],
