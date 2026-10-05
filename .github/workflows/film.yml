@@ -1,0 +1,54 @@
+name: Concept film
+
+# Manual only: renders the WaveCast concept film (apps/video) and uploads the
+# MP4s and the music cue sheet as a workflow artifact. Nothing is committed.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: film-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install system libraries for headless Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3 libdbus-1-3 libatk1.0-0 libgbm-dev libxrandr2 libxkbcommon-dev libxfixes3 libxcomposite1 libxdamage1 libatk-bridge2.0-0 libpango-1.0-0 libcairo2 libcups2
+          sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2
+      # Only the film package and its dependencies; apps/web is untouched.
+      - run: pnpm install --frozen-lockfile --filter @wavecast/video...
+      - run: pnpm --filter @wavecast/video typecheck
+      - run: pnpm --dir apps/video exec remotion browser ensure
+      - name: Render (with sound effects, silent, cue sheet)
+        run: pnpm --dir apps/video render
+      - name: Check outputs
+        working-directory: apps/video
+        run: |
+          cd out
+          for f in wavecast-film.mp4 wavecast-film-silent.mp4; do
+            # Remotion ships its own ffprobe.
+            pnpm exec remotion ffprobe -v error -show_entries format=duration:stream=codec_name,width,height,r_frame_rate -of default=nw=1 "$f"
+            size=$(stat -c %s "$f"); echo "$f: $size bytes"
+            test "$size" -lt 524288000
+          done
+          test -s music-cues.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wavecast-film-${{ github.sha }}
+          path: |
+            apps/video/out/wavecast-film.mp4
+            apps/video/out/wavecast-film-silent.mp4
+            apps/video/out/music-cues.md
+          retention-days: 30
