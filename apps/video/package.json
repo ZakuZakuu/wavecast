@@ -1,0 +1,32 @@
+{
+  "name": "@wavecast/video",
+  "private": true,
+  "version": "0.1.0",
+  "description": "WaveCast concept film (Remotion). See docs/design/film/FILM_BRIEF.md.",
+  "scripts": {
+    "studio": "pnpm charset && pnpm audio && remotion studio src/index.ts",
+    "cues": "tsx scripts/build-cues.ts",
+    "charset": "tsx scripts/build-charset.ts",
+    "still": "pnpm charset && tsx scripts/stills.ts",
+    "render": "tsx scripts/render.ts",
+    "typecheck": "pnpm charset && tsc --noEmit",
+    "check:preview": "pnpm charset && tsx scripts/check-preview.ts",
+    "audio": "tsx scripts/build-audio.ts"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.533",
+    "@remotion/google-fonts": "4.0.533",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "remotion": "4.0.533"
+  },
+  "devDependencies": {
+    "@remotion/bundler": "4.0.533",
+    "@remotion/renderer": "4.0.533",
+    "@types/node": "22.10.2",
+    "@types/react": "19.0.2",
+    "sharp": "0.33.5",
+    "tsx": "4.19.2",
+    "typescript": "5.7.2"
+  }
+}

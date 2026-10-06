@@ -1,6 +1,18 @@
 # WaveCast Project State
 
-**Last updated:** 2026-10-02
+**Last updated:** 2026-10-06
+
+## Concept film final render checkpoint
+
+- User accepted the 720p preview and requested a full 1080p render with sound.
+- Video branch `feat/concept-film` / PR #174 contains the accepted picture and
+  latest offline synthesized score (73c9c51 removes the flute-like lead).
+- Recent film runs use audio-only mode and reuse the earlier 720p picture;
+  they do not constitute a final-quality render.
+- The temporary film PR trigger now renders `full` / `final` / the whole film.
+  YAML and actionlint are checked before pushing. Completion and output metadata
+  must be observed in Actions; remove the temporary PR trigger before merging.
+- This checkpoint changes rendering configuration only, not the live Web/API.
 
 ## CI scope optimisation
 

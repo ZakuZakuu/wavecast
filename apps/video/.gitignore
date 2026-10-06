@@ -1,0 +1,3 @@
+out/
+public/*.wav
+src/charset.generated.ts
