@@ -8,8 +8,46 @@ GitHub main
 └─ Railway -> API + Postgres + Persistent Volume
 ~~~
 
-Initial hosted provider mode remains mock. Do not create platform resources,
-store credentials, enable live providers, or add music sidecars in this step.
+## Current release notes (2026-10-06)
+
+The user has completed production domain/login/backend setup and accepted the
+live listening flow at https://wavecast.space. The mock instructions below are
+the original provisioning baseline, not a claim that today's production is mock.
+Do not overwrite production selectors or secrets with those initial defaults.
+
+- Web production follows `main`; human acceptance preview follows `integration`.
+  Release using an ordinary merge commit, then fast-forward integration to the
+  new main head without rewriting history. Protect and keep both long-lived
+  branches. A feature PR alone does not create this project's hosted preview.
+- Railway production should track `main`; verify its actual source branch/SHA
+  before a release instead of assuming it still tracks integration from earlier
+  development. No backend change usually means no backend redeploy is needed.
+- GitHub OAuth is configured for the production domain. `BETTER_AUTH_URL` is
+  `https://wavecast.space`; callback is
+  `https://wavecast.space/api/auth/callback/github`. Railway issuer/audience/JWKS
+  must agree with that origin (`/api/auth/jwks` for JWKS). Do not copy secrets into
+  docs. Preview login is unavailable by current configuration, not necessarily
+  a broken UI; test authenticated flows on the configured production origin.
+- The Vercel install command was reported changed to
+  `pnpm install --frozen-lockfile --filter @wavecast/web...` so the video workspace
+  is not installed for website builds. It is a dashboard setting; confirm before
+  relying on it, and do not infer it from the repository alone.
+- Vercel ignore-build root-directory handling was fixed in #169 on integration.
+  Check the release commit contains that fix; a Git branch SHA is not proof of
+  the deployed SHA. If production gets skipped after an equivalent preview,
+  Redeploy the intended production commit with **Skip Ignored Build Step**.
+  Do not add meaningless main commits to trigger deployment.
+- Browser API/audio requests should stay under same-origin `/api/*`, with
+  `WAVECAST_INTERNAL_API_URL` supplying server/build routing to Railway. Verify
+  manifest/chunk requests as part of real-device acceptance.
+- CI and deployment cost rules: [ci.md](ci.md). Batch hosted checkpoints; do not
+  use Railway Agent for routine logs or trigger repeated builds for small edits.
+
+## Original provisioning baseline
+
+The remaining sections describe initial safe provisioning and optional provider
+activation; current environment values must be checked in the platform.
+
 
 ## Railway API
 

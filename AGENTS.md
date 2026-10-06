@@ -61,6 +61,30 @@ without duplicating the long-lived handoff or ADRs.
 
 ---
 
+## Session context and scoped contributors
+
+`docs/PROJECT_STATE.md` is the only current-state entry point. Keep it a short
+snapshot, not an append-only session transcript (aim for about 8 KB or less).
+Move superseded execution history to `docs/history/`; keep deployment procedures
+in `docs/deployment/`, design sources in `docs/design/`, and submission copy/assets
+in `docs/submission/`. Do not create a competing `CURRENT_STATUS.md`.
+
+Codex owns cross-project planning, verified context, and canonical state updates.
+Claude is a scoped contributor: give it the task goal, exact relevant files/assets,
+constraints, acceptance criteria, and expected deliverables. It reports changes,
+checks and unresolved gaps rather than re-summarising all project history.
+
+A scoped contributor reads AGENTS, the preliminary product target and the short
+current state, then only the relevant sections of handoffs/ADRs/tests. The broad
+reading list above applies when choosing cross-project or architecture work;
+it does not require an isolated poster/UI task to ingest every historical note.
+Source-of-truth and runtime invariants still apply. If its task exposes an API or
+architecture decision, hand that decision back to the owner rather than silently
+expanding scope. Short task packets may be delivered in conversation; do not
+create a new permanent handoff file for every small assignment.
+
+---
+
 ## Autonomy rules
 
 Proceed without asking for confirmation when the decision is reversible and does not change product semantics. Examples: file organization, internal helper APIs, naming, test structure, lint configuration, retry implementation, mock data, small dependency choices, refactors, and standard UI implementation details.
