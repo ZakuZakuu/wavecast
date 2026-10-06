@@ -6,6 +6,7 @@
 - `src/poster-v2.html` 超大标题，封面做成横穿画面的一条带子
 - `src/poster-v3.html` 在 V1 基础上：主角换成手机首页，两张封面从屏幕空位“飞出”，下半部为调谐窗口 + 输入框 + 开播按钮，网址为 www.wavecast.space
 - `src/poster-v4.html` 以 App 图标里的小收音机为主角，画成暖白色的实物；封面从它上方弧形升起，电波圈层向外扩散；显示窗里是“说一句”的输入与指针
+- `src/poster-v5.html` 三张真实页面（调频页、播放页、首页，按 `docs/design/frost/Frost-*.dc.html` 还原）串成“说一句，听一档，再来下一档”，无手机外壳，电台色光晕沿用视频
 - `src/seeds.html` 封面 seed 色板，用来挑柔和的 seed
 
 题目、歌单、主持词、“因为你常听…”均为示意，不是真实生成结果。
