@@ -30,9 +30,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      # The PR trigger always renders the whole film at preview quality.
+      # The PR trigger renders at preview quality (temporarily only the night segment while checking the preview fix).
       FILM_QUALITY: ${{ github.event_name == 'workflow_dispatch' && inputs.quality || 'preview' }}
-      FILM_RANGE: ${{ github.event_name == 'workflow_dispatch' && inputs.range || '' }}
+      FILM_RANGE: ${{ github.event_name == 'workflow_dispatch' && inputs.range || 'night' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -53,6 +53,8 @@ jobs:
       - run: pnpm install --frozen-lockfile --filter @wavecast/video...
       - run: pnpm --filter @wavecast/video typecheck
       - run: pnpm --dir apps/video exec remotion browser ensure
+      - name: Check preview matches final (one still per segment)
+        run: pnpm --dir apps/video check:preview
       - name: Render (quality=${{ env.FILM_QUALITY }}, range=${{ env.FILM_RANGE || 'full' }})
         run: pnpm --dir apps/video render
       - name: Check outputs

@@ -10,7 +10,8 @@
     "charset": "tsx scripts/build-charset.ts",
     "still": "pnpm charset && tsx scripts/stills.ts",
     "render": "tsx scripts/render.ts",
-    "typecheck": "pnpm charset && tsc --noEmit"
+    "typecheck": "pnpm charset && tsc --noEmit",
+    "check:preview": "pnpm charset && tsx scripts/check-preview.ts"
   },
   "dependencies": {
     "@remotion/cli": "4.0.533",
@@ -20,10 +21,11 @@
     "remotion": "4.0.533"
   },
   "devDependencies": {
-    "@remotion/renderer": "4.0.533",
     "@remotion/bundler": "4.0.533",
+    "@remotion/renderer": "4.0.533",
     "@types/node": "22.10.2",
     "@types/react": "19.0.2",
+    "sharp": "0.33.5",
     "tsx": "4.19.2",
     "typescript": "5.7.2"
   }

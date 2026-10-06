@@ -12,7 +12,7 @@ async function main() {
   mkdirSync(outDir, { recursive: true });
   const serveUrl = await bundle({ entryPoint: join(__dirname, "../src/index.ts") });
   const browserExecutable = process.env.REMOTION_BROWSER_EXECUTABLE ?? null;
-  const composition = await selectComposition({ serveUrl, id: "WaveCast", browserExecutable, chromiumOptions: { enableMultiProcessOnLinux: true } });
+  const composition = await selectComposition({ serveUrl, id: process.env.STILL_COMP ?? "WaveCast", browserExecutable, chromiumOptions: { enableMultiProcessOnLinux: true } });
   for (const t of times) {
     const frame = Math.min(composition.durationInFrames - 1, Math.round(t * FPS));
     const output = join(outDir, `t${String(Math.round(t * 100)).padStart(5, "0")}.png`);
