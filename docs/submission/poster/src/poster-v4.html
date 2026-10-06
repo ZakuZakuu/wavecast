@@ -1,0 +1,126 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>WaveCast poster V1</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+:root{--ink:#1D1D1F;--ink2:#6E6E73;--ink3:#8E8E93}
+body{background:#FBF4EA;color:var(--ink)}
+.poster{background:radial-gradient(120% 110% at 18% 8%,#F7D6B4 0%,#F9E6D0 38%,#FBF4EA 70%,#FCF8F2 100%)}
+.beam{position:absolute;top:-300px;height:2200px;transform:rotate(28deg);transform-origin:50% 0;background:linear-gradient(180deg,rgba(255,236,206,.62),rgba(255,236,206,0) 80%);filter:blur(34px)}
+.brand{left:80px;top:62px;display:flex;align-items:center;gap:14px;font-size:27px;font-weight:500;letter-spacing:.01em}
+.brand svg{width:48px;height:48px;border-radius:11px;box-shadow:0 6px 16px rgba(120,60,20,.18)}
+h1{left:74px;top:132px;font-family:var(--serif);font-weight:500;font-size:142px;line-height:1.1;letter-spacing:-.03em;white-space:nowrap}
+h1 span{font-size:.86em;letter-spacing:-.01em;margin:0 .05em}
+h1 i{display:inline-block;width:.14em;height:.14em;border-radius:50%;background:var(--accent);margin-left:.07em;box-shadow:0 0 .12em rgba(255,107,44,.6)}
+.sub{left:82px;top:316px;font-size:29px;line-height:1.62;font-weight:300;color:var(--ink2);letter-spacing:.01em}
+.sleeve{position:absolute}
+.sleeve .in{border-radius:12px;overflow:hidden}
+.why{position:absolute;font-size:18px;font-weight:300;color:var(--ink2);display:flex;align-items:center;gap:9px;white-space:nowrap}
+.why:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent)}
+.radio{position:absolute;left:132px;top:1010px;width:935px;height:561px;overflow:visible;filter:drop-shadow(0 46px 44px rgba(110,60,20,.26)) drop-shadow(0 10px 12px rgba(110,60,20,.20))}
+.foot{left:80px;right:80px;top:1640px;display:flex;align-items:center;gap:26px}
+.qr{width:112px;height:112px;border-radius:18px;background:rgba(255,255,255,.85);padding:10px;box-shadow:0 10px 24px rgba(120,70,30,.14)}
+.foot .u{font-family:var(--num);font-size:44px;font-weight:300;letter-spacing:.01em;color:var(--ink)}
+.foot .u .w{color:var(--ink2)}
+.foot .u em{font-style:normal;color:var(--accent)}
+.foot .t{margin-top:6px;font-size:21px;font-weight:300;color:var(--ink2)}
+.disc{position:absolute;right:80px;bottom:30px;font-size:15px;font-weight:300;color:var(--ink3);letter-spacing:.04em}
+</style></head><body>
+<div class="poster">
+  <div class="beam" style="left:-190px;width:150px"></div><div class="beam" style="left:240px;width:190px"></div><div class="beam" style="left:680px;width:230px"></div>
+  <svg id="dust" class="abs" style="left:0;top:0;pointer-events:none" width="1200" height="1800"></svg>
+  <svg id="rings" class="abs" style="left:0;top:0;pointer-events:none" width="1200" height="1800"></svg>
+
+  <div class="abs brand"><span id="logo"></span>WaveCast</div>
+  <h1 class="abs">你的专属<span>AI</span>电台<i></i></h1>
+  <p class="abs sub">说一句想听什么，音乐与它背后的故事，<br>为你一个人开播。</p>
+
+  <!-- covers rising in an arc above the radio, later ones on top -->
+  <div class="sleeve" style="left:200px;top:722px;width:190px;transform:rotate(-7deg);z-index:3;filter:drop-shadow(0 28px 36px rgba(70,40,15,.28))"><div class="in" data-cover="crate|49|游戏配乐\n怎么配合你"></div></div>
+  <div class="sleeve" style="left:350px;top:588px;width:215px;transform:rotate(-4deg);z-index:4;filter:drop-shadow(0 28px 36px rgba(70,40,15,.28))"><div class="in" data-cover="portrait|72|宇多田光\n这些年"></div></div>
+  <div class="sleeve" style="left:537px;top:535px;width:226px;transform:rotate(0deg);z-index:5;filter:drop-shadow(0 28px 36px rgba(70,40,15,.28))"><div class="in" data-cover="lineage|33|City Pop\n怎么来的"></div></div>
+  <div class="sleeve" style="left:736px;top:584px;width:215px;transform:rotate(4deg);z-index:6;filter:drop-shadow(0 28px 36px rgba(70,40,15,.28))"><div class="in" data-cover="lineage|64|同一种转调\n都有哪些歌"></div></div>
+  <div class="sleeve" style="left:925px;top:705px;width:190px;transform:rotate(8deg);z-index:7;filter:drop-shadow(0 28px 36px rgba(70,40,15,.28))"><div class="in" data-cover="night|25|睡前半小时"></div></div>
+  <div class="why" style="left:392px;top:824px;transform:rotate(-1deg);z-index:9">因为你常听日系流行</div>
+
+  <svg class="radio" id="radio" viewBox="0 0 850 510" style="z-index:7"></svg>
+
+  <div class="abs foot"><div class="qr"><svg id="qr" width="92" height="92"></svg></div>
+    <div><div class="u"><span class="w">www.</span>wavecast<em>.</em>space</div><div class="t">点开，音乐几秒内就会响起。</div></div></div>
+  <div class="disc">界面与节目内容为示意</div>
+  <div class="grain" style="opacity:.07"></div>
+</div>
+<script src="../dist/wc.js"></script>
+<script>
+const W=WC,NS="http://www.w3.org/2000/svg";
+const el=(t,a={},p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);p&&p.appendChild(e);return e};
+document.getElementById("logo").innerHTML=W.logo(false);
+W.mountCovers(document);
+(()=>{const s=document.getElementById("dust"),R=W.rng(4011);for(let i=0;i<46;i++){el("circle",{cx:R()*1200,cy:R()*1800,r:1+R()*2.6,fill:"#FFF6E8",opacity:.25+R()*.5},s)}})();
+// broadcast rings from the radio's display
+(()=>{const s=document.getElementById("rings"),cx=600,cy=1060;
+ const d=el("defs",{},s),cp=el("clipPath",{id:"cl"},d);el("rect",{x:0,y:440,width:1200,height:900},cp);
+ const g=el("g",{"clip-path":"url(#cl)"},s);
+ for(let i=0;i<9;i++){const r=150+i*92;el("circle",{cx,cy,r,fill:"none",stroke:i%3===0?"rgba(255,107,44,.30)":"rgba(255,107,44,.14)","stroke-width":i%3===0?1.8:1.3,"stroke-dasharray":i%2?"":"3 11"},g)}
+})();
+// the radio, drawn from the app icon
+(()=>{const s=document.getElementById("radio"),defs=el("defs",{},s);
+ const lg=(id,x2,y2,stops)=>{const g=el("linearGradient",{id,x1:0,y1:0,x2,y2},defs);stops.forEach(([o,c,a])=>el("stop",{offset:o,"stop-color":c,"stop-opacity":a??1},g));};
+ lg("body",0,1,[[0,"#FFF8EE"],[.5,"#F5E8D5"],[1,"#E4D0B5"]]);
+ lg("hl",0,1,[[0,"#FFFFFF",.95],[.25,"#FFFFFF",.0],[1,"#FFFFFF",0]]);
+ lg("shade",0,1,[[0,"#7A4A1E",0],[.7,"#7A4A1E",0],[1,"#7A4A1E",.16]]);
+ lg("glass",0,1,[[0,"#EADCC7"],[.12,"#FBF5EA"],[1,"#F6EDDF"]]);
+ const rg=(id,stops,cx=.5,cy=.5,r=.5)=>{const g=el("radialGradient",{id,cx,cy,r},defs);stops.forEach(([o,c,a])=>el("stop",{offset:o,"stop-color":c,"stop-opacity":a??1},g));};
+ rg("hole",[[0,"#BBA487"],[1,"#D6C3A8"]],.5,.6,.55);
+ rg("knob",[[0,"#FFFDF8"],[.6,"#F1E3CE"],[1,"#D9C4A6"]],.38,.3,.8);
+ rg("cap",[[0,"#FFFFFF"],[1,"#EBDAC2"]],.35,.28,.85);
+ // antenna
+ const ant=el("g",{},s);
+ el("line",{x1:122,y1:20,x2:-18,y2:-236,stroke:"#B9A68B","stroke-width":9,"stroke-linecap":"round"},ant);
+ el("line",{x1:70,y1:-60,x2:-18,y2:-236,stroke:"#D7C6AC","stroke-width":6,"stroke-linecap":"round"},ant);
+ el("line",{x1:123,y1:18,x2:-17,y2:-235,stroke:"#fff","stroke-opacity":.55,"stroke-width":2.5,"stroke-linecap":"round",transform:"translate(-2 -1)"},ant);
+ el("circle",{cx:-18,cy:-238,r:15,fill:"#FF6B2C"},ant);el("circle",{cx:-23,cy:-244,r:5,fill:"#fff","fill-opacity":.55},ant);
+ // body
+ el("rect",{x:0,y:0,width:850,height:510,rx:92,fill:"url(#body)"},s);
+ el("rect",{x:0,y:0,width:850,height:510,rx:92,fill:"url(#shade)"},s);
+ el("rect",{x:2,y:2,width:846,height:506,rx:90,fill:"none",stroke:"url(#hl)","stroke-width":3},s);
+ // grille
+ el("rect",{x:52,y:140,width:340,height:318,rx:40,fill:"#EBDBC4"},s);
+ el("rect",{x:52,y:140,width:340,height:318,rx:40,fill:"none",stroke:"#8A5A2B","stroke-opacity":.18,"stroke-width":2},s);
+ el("rect",{x:54,y:143,width:336,height:316,rx:38,fill:"none",stroke:"#fff","stroke-opacity":.75,"stroke-width":2,transform:"translate(0 3)"},s);
+ for(let j=0;j<6;j++)for(let i=0;i<7;i++){const x=90+i*44,y=189+j*44;
+  el("circle",{cx:x,cy:y,r:14,fill:"url(#hole)"},s);
+  el("path",{d:`M${x-14} ${y}a14 14 0 0 1 28 0`,fill:"none",stroke:"#6B4120","stroke-opacity":.36,"stroke-width":2.4},s);
+  el("path",{d:`M${x-11} ${y+5}a12.5 12.5 0 0 0 22 0`,fill:"none",stroke:"#fff","stroke-opacity":.8,"stroke-width":1.8,"stroke-linecap":"round"},s)}
+ // display
+ el("rect",{x:432,y:54,width:366,height:222,rx:34,fill:"#E6D4BC"},s);
+ el("rect",{x:432,y:54,width:366,height:222,rx:34,fill:"none",stroke:"#7A4A1E","stroke-opacity":.16,"stroke-width":2},s);
+ el("rect",{x:440,y:62,width:350,height:206,rx:27,fill:"url(#glass)"},s);
+ el("rect",{x:440,y:62,width:350,height:206,rx:27,fill:"none",stroke:"#fff","stroke-opacity":.8,"stroke-width":1.5,transform:"translate(0 1)"},s);
+ const T=(x,y,t,a)=>{const e=el("text",Object.assign({x,y,"font-family":"WC Sans"},a),s);e.textContent=t;return e};
+ T(470,108,"FM",{"font-size":19,"font-weight":300,fill:"#8A7765","letter-spacing":".14em"});
+ T(508,112,"93.1",{"font-size":54,"font-weight":200,fill:"#1D1D1F","letter-spacing":"-.03em"});
+ T(770,106,"唱片行",{"font-size":20,"font-weight":500,fill:"#8A7765","text-anchor":"end","letter-spacing":".06em"});
+ const q=T(470,168,"想找点和 Nujabes 类似的",{"font-size":26,"font-weight":300,fill:"#1D1D1F"});
+ const qw=q.getComputedTextLength();el("rect",{x:470+qw+6,y:146,width:3,height:28,rx:1.5,fill:"#FF6B2C"},s);
+ // scale with fixed needle
+ const nx=615,px=24,fx=f=>nx+(f-93.1)*px,sy=206;
+ for(let f=88;f<=98;f+=.1){const r=Math.round(f*10)/10,x=fx(r);if(x<462||x>770)continue;const i=Math.abs(r-Math.round(r))<.01,half=Math.abs(r*2-Math.round(r*2))<.01,h=i?22:half?15:(Math.round(r*10)%2===0?8:0);if(!h)continue;
+  el("line",{x1:x,x2:x,y1:sy,y2:sy+h,stroke:"#7A6A5A","stroke-opacity":i?.7:.38,"stroke-width":i?1.8:1.2,"stroke-linecap":"round"},s)}
+ [[88.7,"#E8834A"],[93.1,"#3E9C8C"],[97.4,"#C9A04A"]].forEach(([f,c])=>el("circle",{cx:fx(f),cy:sy-12,r:4.5,fill:c},s));
+ el("rect",{x:nx-5,y:sy-24,width:10,height:62,rx:5,fill:"#FF6B2C",opacity:.22,filter:"blur(4px)"},s);
+ el("line",{x1:nx,x2:nx,y1:sy-22,y2:sy+32,stroke:"#FF6B2C","stroke-width":3.2,"stroke-linecap":"round"},s);
+ // knob
+ const kx=630,ky=392;
+ el("circle",{cx:kx,cy:ky+6,r:84,fill:"#7A4A1E",opacity:.20,filter:"blur(8px)"},s);
+ el("circle",{cx:kx,cy:ky,r:82,fill:"url(#knob)"},s);
+ for(let i=0;i<72;i++){const a=i*5*Math.PI/180;el("line",{x1:kx+73*Math.cos(a),y1:ky+73*Math.sin(a),x2:kx+81*Math.cos(a),y2:ky+81*Math.sin(a),stroke:"#7A4A1E","stroke-opacity":.22,"stroke-width":1.6},s)}
+ el("circle",{cx:kx,cy:ky,r:82,fill:"none",stroke:"#7A4A1E","stroke-opacity":.18,"stroke-width":2},s);
+ el("circle",{cx:kx,cy:ky,r:56,fill:"url(#cap)"},s);
+ el("circle",{cx:kx,cy:ky,r:56,fill:"none",stroke:"#7A4A1E","stroke-opacity":.14,"stroke-width":1.5},s);
+ el("circle",{cx:kx,cy:ky,r:55,fill:"none",stroke:"#fff","stroke-opacity":.9,"stroke-width":2,"stroke-dasharray":"120 400",transform:`rotate(200 ${kx} ${ky})`},s);
+ const a=-38*Math.PI/180;el("line",{x1:kx+22*Math.cos(a),y1:ky+22*Math.sin(a),x2:kx+46*Math.cos(a),y2:ky+46*Math.sin(a),stroke:"#FF6B2C","stroke-width":5,"stroke-linecap":"round"},s);
+ // small buttons + name
+ [[748,330],[748,372],[748,414]].forEach(([x,y])=>{el("circle",{cx:x,cy:y,r:12,fill:"#EBDBC4"},s);el("circle",{cx:x,cy:y,r:12,fill:"none",stroke:"#7A4A1E","stroke-opacity":.2},s);el("path",{d:`M${x-9} ${y+4}a10 10 0 0 0 18 0`,fill:"none",stroke:"#fff","stroke-opacity":.85,"stroke-width":2},s)});
+ T(432,478,"WaveCast",{"font-size":20,"font-weight":500,fill:"#7A4A1E","fill-opacity":.42,"letter-spacing":".3em"});
+})();
+(()=>{const q=W.qrPath("https://www.wavecast.space",1),e=document.getElementById("qr");e.setAttribute("viewBox",`0 0 ${q.size} ${q.size}`);el("path",{d:q.d,fill:"#1D1D1F"},e)})();
+</script></body></html>

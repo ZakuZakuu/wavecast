@@ -1,7 +1,7 @@
 // node render.cjs [name...]  →  out/<name>.png at 2400×3600 (1200×1800 @2x)
 const { chromium } = require("playwright-core");
 const path = require("path");
-const names = process.argv.slice(2).length ? process.argv.slice(2) : ["v1", "v2", "v3"];
+const names = process.argv.slice(2).length ? process.argv.slice(2) : ["v1", "v2", "v3", "v4"];
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome", args: ["--no-sandbox"] });
   for (const n of names) {
