@@ -21,6 +21,7 @@ h1 i{display:inline-block;width:.14em;height:.14em;border-radius:50%;background:
 .gloss{position:absolute;inset:0;border-radius:12px;background:linear-gradient(120deg,rgba(255,255,255,.38),rgba(255,255,255,0) 38%);pointer-events:none}
 .far{filter:blur(1.6px);opacity:.88}
 .ask{position:absolute;z-index:9;font-size:18px;font-weight:400;color:var(--ink);line-height:1.35;display:flex;gap:8px;align-items:baseline}
+.ask.lab{white-space:nowrap;font-size:17px}
 .ask b{font-size:13px;font-weight:600;color:#fff;background:var(--accent);padding:2px 8px;border-radius:999px;letter-spacing:.06em;transform:translateY(-1px)}
 .why{position:absolute;font-size:18px;font-weight:300;color:var(--ink2);display:flex;align-items:center;gap:9px;white-space:nowrap}
 .why:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent)}
@@ -30,7 +31,7 @@ h1 i{display:inline-block;width:.14em;height:.14em;border-radius:50%;background:
 .nav{position:absolute;left:0;right:0;bottom:0;height:84px;box-sizing:border-box;padding:8px 24px 26px;background:rgba(242,242,244,.78);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-top:.5px solid rgba(60,60,67,.18);display:grid;grid-template-columns:repeat(3,1fr)}
 .nav a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#8E8E93;font-size:11px;font-weight:500}
 .nav a.on{color:#1D1D1F;font-weight:600}
-.note{position:absolute;left:44px;top:1124px;width:380px;padding:22px 26px 24px;border-radius:26px;background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.85);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);box-shadow:0 24px 50px rgba(120,70,30,.16);z-index:20}
+.note{position:absolute;left:44px;top:1150px;width:380px;padding:22px 26px 24px;border-radius:26px;background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.85);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);box-shadow:0 24px 50px rgba(120,70,30,.16);z-index:20}
 .note .tg{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:500;color:var(--accent);letter-spacing:.08em}
 .note .tg s{display:flex;gap:3px;align-items:center;height:18px;text-decoration:none}
 .note .tg s u{display:block;width:3px;border-radius:2px;background:var(--accent)}
@@ -70,21 +71,16 @@ h1 i{display:inline-block;width:.14em;height:.14em;border-radius:50%;background:
   <div class="sleeve far" style="left:40px;top:498px;width:140px;transform:rotate(6deg);z-index:1;filter:drop-shadow(0 16px 22px rgba(90,50,20,.16))"><div class="in" data-cover="crate|14|冷门\nB 面"></div></div>
   <div class="sleeve far" style="left:1042px;top:470px;width:140px;transform:rotate(-6deg);z-index:1;filter:drop-shadow(0 16px 22px rgba(90,50,20,.16))"><div class="in" data-cover="casual|59|雨天开车"></div></div>
   <!-- mid covers -->
-  <div class="sleeve" style="left:955px;top:812px;width:196px;transform:rotate(5deg);z-index:2;filter:drop-shadow(0 22px 30px rgba(90,50,20,.22))"><div class="in" data-cover="night|25|睡前半小时"></div></div>
-  <div class="sleeve" style="left:930px;top:1090px;width:182px;transform:rotate(-4deg);z-index:2;filter:drop-shadow(0 22px 30px rgba(90,50,20,.22))"><div class="in" data-cover="lineage|33|City Pop\n怎么来的"></div></div>
+  <div class="sleeve" style="left:955px;top:812px;width:196px;transform:rotate(5deg);z-index:2"><div style="filter:drop-shadow(0 22px 30px rgba(90,50,20,.22))"><div class="in" data-cover="night|25|睡前半小时"></div></div><div class="ask lab" style="left:2px;top:calc(100% + 14px)"><b>你问</b>睡前想听点安静的</div></div>
+  <div class="sleeve" style="left:930px;top:1090px;width:182px;transform:rotate(-4deg);z-index:2"><div style="filter:drop-shadow(0 22px 30px rgba(90,50,20,.22))"><div class="in" data-cover="lineage|33|City Pop\n怎么来的"></div></div><div class="ask lab" style="left:2px;top:calc(100% + 14px)"><b>你问</b>City Pop 是怎么来的？</div></div>
   <!-- covers coming out of the screen, in 3D -->
   <div class="echo" style="left:236px;top:568px;width:232px;transform:perspective(1500px) rotateY(18deg) rotateX(8deg) rotateZ(-8deg);z-index:7;opacity:0.2;filter:blur(6px)"><div class="in" data-cover="lineage|64|同一种转调\n都有哪些歌"></div></div>
   <div class="echo" style="left:299px;top:604px;width:232px;transform:perspective(1500px) rotateY(18deg) rotateX(8deg) rotateZ(-8deg);z-index:7;opacity:0.11;filter:blur(10px)"><div class="in" data-cover="lineage|64|同一种转调\n都有哪些歌"></div></div>
-  <div class="p3d" style="left:166px;top:528px;width:232px;transform:perspective(1500px) rotateY(18deg) rotateX(8deg) rotateZ(-8deg);z-index:8;filter:drop-shadow(0 34px 34px rgba(70,40,15,.30))"><div class="in" data-cover="lineage|64|同一种转调\n都有哪些歌"></div><div class="gloss"></div></div>
+  <div class="p3d" style="left:166px;top:528px;width:232px;transform:perspective(1500px) rotateY(18deg) rotateX(8deg) rotateZ(-8deg);z-index:8"><div style="filter:drop-shadow(0 34px 34px rgba(70,40,15,.30))"><div class="in" data-cover="lineage|64|同一种转调\n都有哪些歌"></div><div class="gloss"></div></div><div class="ask lab" style="left:2px;top:calc(100% + 16px)"><span style="display:inline-flex;align-items:center;gap:8px"><i style="width:7px;height:7px;border-radius:50%;background:var(--accent);display:block"></i>因为你常听 City Pop</span></div></div>
   <div class="echo" style="left:736px;top:540px;width:236px;transform:perspective(1500px) rotateY(-18deg) rotateX(8deg) rotateZ(7deg);z-index:7;opacity:0.2;filter:blur(6px)"><div class="in" data-cover="portrait|72|宇多田光\n这些年"></div></div>
   <div class="echo" style="left:673px;top:576px;width:236px;transform:perspective(1500px) rotateY(-18deg) rotateX(8deg) rotateZ(7deg);z-index:7;opacity:0.11;filter:blur(10px)"><div class="in" data-cover="portrait|72|宇多田光\n这些年"></div></div>
-  <div class="p3d" style="left:806px;top:500px;width:236px;transform:perspective(1500px) rotateY(-18deg) rotateX(8deg) rotateZ(7deg);z-index:8;filter:drop-shadow(0 34px 34px rgba(70,40,15,.30))"><div class="in" data-cover="portrait|72|宇多田光\n这些年"></div><div class="gloss"></div></div>
-  <div class="p3d" style="left:52px;top:812px;width:236px;transform:perspective(1500px) rotateY(16deg) rotateX(-6deg) rotateZ(-6deg);z-index:6;filter:drop-shadow(0 34px 34px rgba(70,40,15,.30))"><div class="in" data-cover="crate|49|游戏配乐\n怎么配合你"></div><div class="gloss"></div></div>
-  <div class="ask" style="left:174px;top:772px;z-index:9;font-size:17px;color:var(--ink2);font-weight:300"><span style="display:inline-flex;align-items:center;gap:8px"><i style="width:7px;height:7px;border-radius:50%;background:var(--accent);display:block"></i>因为你常听 City Pop</span></div>
-  <div class="ask" style="left:836px;top:772px;font-size:17px;color:var(--ink2);font-weight:300"><span style="display:inline-flex;align-items:center;gap:8px"><i style="width:7px;height:7px;border-radius:50%;background:var(--accent);display:block"></i>因为你常听日系流行</span></div>
-  <div class="ask" style="left:56px;top:1062px;width:330px"><b>你问</b>游戏配乐是怎么配合游戏的？</div>
-  <div class="ask" style="left:956px;top:1030px;width:230px"><b>你问</b>睡前想听点安静的</div>
-  <div class="ask" style="left:916px;top:1292px;width:270px"><b>你问</b>City Pop 是怎么来的？</div>
+  <div class="p3d" style="left:806px;top:500px;width:236px;transform:perspective(1500px) rotateY(-18deg) rotateX(8deg) rotateZ(7deg);z-index:8"><div style="filter:drop-shadow(0 34px 34px rgba(70,40,15,.30))"><div class="in" data-cover="portrait|72|宇多田光\n这些年"></div><div class="gloss"></div></div><div class="ask lab" style="left:62px;top:calc(100% + 16px)"><span style="display:inline-flex;align-items:center;gap:8px"><i style="width:7px;height:7px;border-radius:50%;background:var(--accent);display:block"></i>因为你常听日系流行</span></div></div>
+  <div class="p3d" style="left:52px;top:846px;width:236px;transform:perspective(1500px) rotateY(16deg) rotateX(-6deg) rotateZ(-6deg);z-index:6"><div style="filter:drop-shadow(0 34px 34px rgba(70,40,15,.30))"><div class="in" data-cover="crate|49|游戏配乐\n怎么配合你"></div><div class="gloss"></div></div><div class="ask lab" style="left:2px;top:calc(100% + 16px)"><b>你问</b>游戏配乐是怎么配合游戏的？</div></div>
 
   <div class="phone"><div class="scr">
     <div class="isl"></div>
