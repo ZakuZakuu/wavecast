@@ -50,7 +50,11 @@ h1 i{display:inline-block;width:.14em;height:.14em;border-radius:50%;background:
 .pts{position:absolute;left:80px;right:80px;top:1550px;display:grid;grid-template-columns:repeat(3,1fr);gap:34px}
 .pts div{border-top:1px solid rgba(29,29,31,.16);padding-top:12px;font-size:21px;font-weight:400;line-height:1.45;color:var(--ink)}
 .pts div b{display:block;font-family:var(--num);font-weight:200;font-size:17px;letter-spacing:.14em;color:var(--accent);margin-bottom:2px}
-.foot{left:80px;right:80px;top:1648px;display:flex;align-items:center;gap:26px}
+.foot{left:80px;right:80px;top:1646px;display:flex;align-items:center;justify-content:space-between}
+.fl{display:flex;align-items:center;gap:26px}
+.fr{display:flex;align-items:center;gap:16px;padding-left:34px;border-left:1px solid rgba(29,29,31,.14);height:88px}
+.fr b{display:block;font-size:24px;font-weight:500;color:var(--ink);letter-spacing:.01em}
+.fr span{display:block;margin-top:4px;font-size:18px;font-weight:300;color:var(--ink2)}
 .qr{width:104px;height:104px;border-radius:18px;background:rgba(255,255,255,.85);padding:10px;box-shadow:0 10px 24px rgba(120,70,30,.14)}
 .foot .u{font-family:var(--num);font-size:44px;font-weight:300;letter-spacing:.01em;color:var(--ink)}
 .foot .u .w{color:var(--ink2)}
@@ -58,18 +62,14 @@ h1 i{display:inline-block;width:.14em;height:.14em;border-radius:50%;background:
 .foot .t{margin-top:6px;font-size:21px;font-weight:300;color:var(--ink2)}
 .corner{position:absolute;right:80px;top:76px;font-size:17px;font-weight:300;color:var(--ink3);letter-spacing:.14em;display:flex;align-items:center;gap:10px}
 .corner i{display:block;width:6px;height:6px;border-radius:50%;background:var(--accent)}
-.safari{position:absolute;right:80px;top:1638px;width:352px;padding:16px 20px 16px 18px;border-radius:22px;background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.85);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);box-shadow:0 18px 40px rgba(120,70,30,.12);display:flex;align-items:center;gap:14px}
-.safari svg{flex:0 0 auto}
-.safari b{display:block;font-size:21px;font-weight:500;color:var(--ink);letter-spacing:.01em}
-.safari span{display:block;margin-top:3px;font-size:16px;font-weight:300;color:var(--ink2)}
-.disc{position:absolute;right:80px;bottom:22px;font-size:15px;font-weight:300;color:var(--ink3);letter-spacing:.04em}
+.disc{position:absolute;left:0;right:0;text-align:center;bottom:20px;font-size:15px;font-weight:300;color:var(--ink3);letter-spacing:.04em}
 </style></head><body>
 <div class="poster">
   <div class="beam" style="left:-190px;width:150px"></div><div class="beam" style="left:240px;width:190px"></div><div class="beam" style="left:680px;width:230px"></div>
   <div class="burst"></div>
   <svg id="dust" class="abs" style="left:0;top:0;pointer-events:none" width="1200" height="1800"></svg>
 
-  <div class="corner"><i></i>腾讯音乐 AI Hackathon 参赛作品</div>
+  <div class="corner"><i></i>腾讯音乐高校 AI Hackathon 参赛作品</div>
   <div class="abs brand"><span id="logo"></span>WaveCast</div>
   <h1 class="abs">你的专属<span>AI</span>电台<i></i></h1>
   <p class="abs sub"><b>想听的那件事，常常没有现成的节目。</b><br>说一句，音乐与它背后的故事，为你一个人开播。</p>
@@ -114,9 +114,11 @@ h1 i{display:inline-block;width:.14em;height:.14em;border-radius:50%;background:
   </div>
 
   <div class="pts"><div><b>01</b>真实的歌曲，AI 主持讲背后的故事</div><div><b>02</b>点开即听，不必等整档生成</div><div><b>03</b>听过的，会带来下一档</div></div>
-  <div class="abs foot"><div class="qr"><svg id="qr" width="86" height="86"></svg></div>
-    <div><div class="u"><span class="w">www.</span>wavecast<em>.</em>space</div><div class="t">点开，音乐几秒内就会响起。</div></div></div>
-  <div class="safari"><svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="20" fill="#fff" stroke="#6E6E73" stroke-opacity=".35" stroke-width="1.5"/><circle cx="22" cy="22" r="16" fill="none" stroke="#6E6E73" stroke-opacity=".45" stroke-width="1" stroke-dasharray="1.2 3.2"/><path d="M22 22l7-11-4 9z" fill="#FF6B2C"/><path d="M22 22l-7 11 4-9z" fill="#8E8E93"/><circle cx="22" cy="22" r="1.8" fill="#fff"/></svg><div><b>推荐用 iPhone Safari 打开</b><span>适配更完整，体验更好</span></div></div>
+  <div class="abs foot">
+    <div class="fl"><div class="qr"><svg id="qr" width="86" height="86"></svg></div>
+      <div><div class="u"><span class="w">www.</span>wavecast<em>.</em>space</div><div class="t">点开，音乐几秒内就会响起。</div></div></div>
+    <div class="fr"><img src="assets/safari.svg" width="64" height="64" alt="Safari" style="display:block;filter:drop-shadow(0 6px 10px rgba(30,70,160,.25))"><div><b>推荐用 iPhone Safari 打开</b><span>适配更完整，体验更好</span></div></div>
+  </div>
   <div class="disc">界面与节目内容为示意</div>
   <div class="grain" style="opacity:.07"></div>
 </div>

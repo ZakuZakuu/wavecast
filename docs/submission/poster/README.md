@@ -19,3 +19,5 @@ npm i esbuild playwright-core qrcode-generator    # 任意目录，下面用 NOD
 NODE_PATH=<node_modules> node build.cjs           # dist/wc.js
 NODE_PATH=<node_modules> node render.cjs [v1 v2]  # out/*.png
 ```
+
+`src/assets/safari.svg` 来自 npm 包 `@browser-logos/safari`（alrra/browser-logos 收录的官方图标）；Safari 为 Apple Inc. 的商标，此处仅用于指明推荐的浏览器。
