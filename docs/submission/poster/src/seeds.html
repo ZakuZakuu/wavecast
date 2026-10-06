@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="shared.css">
+<style>html,body{width:auto;height:auto;overflow:visible}body{background:#FBF4EA;padding:14px;font-family:var(--sans)}
+.row{display:flex;gap:10px;margin-bottom:16px;align-items:flex-start}.c{width:150px}.c small{display:block;font-size:12px;color:#555;text-align:center}
+.lab{width:80px;font-size:14px}</style></head><body><div id="o"></div>
+<script src="../dist/wc.js"></script><script>
+const T=[["crate","游戏配乐\\n怎么配合你"],["lineage","同一种转调\\n都有哪些歌"],["portrait","宇多田光\\n这些年"],["casual","下班路上"],["night","睡前半小时"],["lineage","City Pop\\n怎么来的"],["crate","Lo-fi\\n之外"]];
+const o=document.getElementById("o");
+T.forEach(([st,h],i)=>{const r=document.createElement("div");r.className="row";r.innerHTML=`<div class="lab">${st}<br>${h.replace("\\n"," ")}</div>`;
+ for(let s=1;s<=11;s++){const d=document.createElement("div");d.className="c";d.innerHTML=`<div data-cover="${st}|${s*7+i}|${h}"></div><small>${s*7+i}</small>`;r.appendChild(d)}o.appendChild(r)});
+WC.mountCovers(document);
+</script></body></html>

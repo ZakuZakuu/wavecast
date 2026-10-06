@@ -1,0 +1,86 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>WaveCast poster V1</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+:root{--ink:#1D1D1F;--ink2:#6E6E73;--ink3:#8E8E93}
+body{background:#FBF4EA;color:var(--ink)}
+.poster{background:radial-gradient(120% 110% at 18% 8%,#F7D6B4 0%,#F9E6D0 38%,#FBF4EA 70%,#FCF8F2 100%)}
+.beam{position:absolute;top:-300px;height:2200px;transform:rotate(28deg);transform-origin:50% 0;background:linear-gradient(180deg,rgba(255,236,206,.62),rgba(255,236,206,0) 80%);filter:blur(34px)}
+.brand{left:80px;top:62px;display:flex;align-items:center;gap:14px;font-size:27px;font-weight:500;letter-spacing:.01em}
+.brand svg{width:48px;height:48px;border-radius:11px;box-shadow:0 6px 16px rgba(120,60,20,.18)}
+.brand i{display:block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-left:2px;box-shadow:0 0 10px rgba(255,107,44,.6)}
+h1{left:76px;top:150px;font-family:var(--serif);font-weight:500;font-size:128px;line-height:1.1;letter-spacing:-.025em;white-space:nowrap}
+h1 span{font-size:.86em;letter-spacing:-.01em;margin:0 .06em}
+.sub{left:82px;top:318px;font-size:29px;line-height:1.62;font-weight:300;color:var(--ink2);letter-spacing:.01em}
+.sleeve{position:absolute}
+.sleeve .in{border-radius:12px;overflow:hidden}
+.why{position:absolute;font-size:18px;font-weight:300;color:var(--ink2);display:flex;align-items:center;gap:9px;white-space:nowrap}
+.why:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent)}
+.note{position:absolute;left:628px;top:1068px;width:440px;padding:24px 28px 26px;border-radius:26px;background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.85);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);box-shadow:0 24px 50px rgba(120,70,30,.16);z-index:20}
+.note .tg{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:500;color:var(--accent);letter-spacing:.08em}
+.note .tg s{display:flex;gap:3px;align-items:center;height:18px;text-decoration:none}
+.note .tg s u{display:block;width:3px;border-radius:2px;background:var(--accent)}
+.note .q{margin-top:12px;font-size:26px;line-height:1.5;font-weight:400;color:var(--ink)}
+.list{position:absolute;left:352px;top:1203px}
+.list .h{font-size:15px;font-weight:500;letter-spacing:.28em;color:var(--ink3)}
+.list div.i{margin-top:9px;font-size:20px;font-weight:300;color:#3A3A3E;line-height:1.35}
+.list div.i b{font-weight:400;color:var(--ink)}
+.foot{left:80px;right:80px;top:1664px;display:flex;align-items:center;gap:26px}
+.qr{width:108px;height:108px;border-radius:16px;background:rgba(255,255,255,.8);padding:10px;box-shadow:0 10px 24px rgba(120,70,30,.14)}
+.foot .u{font-family:var(--num);font-size:38px;font-weight:300;letter-spacing:.02em}
+.foot .u em{font-style:normal;color:var(--accent)}
+.foot .t{margin-top:6px;font-size:20px;font-weight:300;color:var(--ink2)}
+.disc{position:absolute;right:80px;bottom:34px;font-size:15px;font-weight:300;color:var(--ink3);letter-spacing:.04em}
+</style></head><body>
+<div class="poster">
+  <div class="beam" style="left:-190px;width:150px"></div><div class="beam" style="left:240px;width:190px"></div><div class="beam" style="left:680px;width:230px"></div>
+  <svg id="dust" class="abs" style="left:0;top:0;pointer-events:none" width="1200" height="1800"></svg>
+
+  <div class="abs brand"><span id="logo"></span>WaveCast<i></i></div>
+  <h1 class="abs">你的专属<span>AI</span>电台</h1>
+  <p class="abs sub">说一句想听什么，音乐与它背后的故事，<br>为你一个人开播。</p>
+
+  <!-- covers: back to front -->
+  <div class="sleeve" style="left:130px;top:1237px;width:190px;transform:rotate(-4deg);z-index:1;filter:drop-shadow(0 18px 24px rgba(90,50,20,.20))"><div class="in" data-cover="lineage|33|City Pop\n怎么来的"></div></div>
+  <div class="sleeve" style="left:905px;top:1285px;width:180px;transform:rotate(5deg);z-index:1;filter:drop-shadow(0 18px 24px rgba(90,50,20,.20))"><div class="in" data-cover="crate|20|Lo-fi\n之外"></div></div>
+  <div class="sleeve" style="left:70px;top:980px;width:200px;transform:rotate(3deg);z-index:2;filter:drop-shadow(0 20px 28px rgba(90,50,20,.22))"><div class="in" data-cover="casual|17|下班路上"></div></div>
+  <div class="sleeve" style="left:925px;top:880px;width:200px;transform:rotate(-3deg);z-index:2;filter:drop-shadow(0 20px 28px rgba(90,50,20,.22))"><div class="in" data-cover="night|25|睡前半小时"></div></div>
+  <div class="sleeve" style="left:82px;top:560px;width:290px;transform:rotate(-5deg);z-index:3;filter:drop-shadow(0 26px 36px rgba(90,50,20,.25))"><div class="in" data-cover="lineage|64|同一种转调\n都有哪些歌"></div></div>
+  <div class="sleeve" style="left:868px;top:520px;width:290px;transform:rotate(4deg);z-index:3;filter:drop-shadow(0 26px 36px rgba(90,50,20,.25))"><div class="in" data-cover="portrait|72|宇多田光\n这些年"></div></div>
+  <div class="why" style="left:96px;top:868px;transform:rotate(-1deg)">因为你常听 City Pop</div>
+  <div class="why" style="left:884px;top:826px;transform:rotate(1deg)">因为你常听日系流行</div>
+  <div class="sleeve" style="left:350px;top:665px;width:500px;z-index:5;filter:drop-shadow(0 44px 60px rgba(70,40,15,.34))"><div class="in" style="border-radius:16px" data-cover="crate|49|游戏配乐\n怎么配合你"></div></div>
+
+  <div class="note"><div class="tg"><s id="eq"></s>主持在说</div><div class="q">先听这一段，再告诉你<br>它为什么出现在这个时候。</div></div>
+  <div class="list"><div class="h">本期歌单</div>
+    <div class="i"><b>植松伸夫</b>　Aerith's Theme</div>
+    <div class="i"><b>目黑将司</b>　Last Surprise</div>
+    <div class="i"><b>近藤浩治</b>　《塞尔达传说》主题曲</div></div>
+
+  <svg id="dial" class="abs" style="left:0;top:1490px" width="1200" height="150"></svg>
+  <div class="abs foot"><div class="qr"><svg id="qr" width="88" height="88"></svg></div>
+    <div><div class="u">wavecast<em>.</em>space</div><div class="t">点开，音乐几秒内就会响起。</div></div></div>
+  <div class="disc">界面与节目内容为示意</div>
+  <div class="grain" style="opacity:.07"></div>
+</div>
+<script src="../dist/wc.js"></script>
+<script>
+const W=WC,NS="http://www.w3.org/2000/svg";
+const el=(t,a={},p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);p&&p.appendChild(e);return e};
+document.getElementById("logo").innerHTML=W.logo(false);
+W.mountCovers(document);
+(()=>{const e=document.getElementById("eq");[8,14,18,11,16,9].forEach(h=>{const u=document.createElement("u");u.style.height=h+"px";e.appendChild(u)})})();
+// dust motes, as in the film's morning scene
+(()=>{const s=document.getElementById("dust"),R=W.rng(4011);for(let i=0;i<46;i++){el("circle",{cx:R()*1200,cy:R()*1800,r:1+R()*2.6,fill:"#FFF6E8",opacity:.25+R()*.5},s)}})();
+// tuning scale, endless, needle on 93.1 under the lead cover
+(()=>{const s=document.getElementById("dial"),px=47.3,fx=f=>600+(f-93.1)*px,y=62;
+ for(let f=80;f<=106.5;f+=.1){const r=Math.round(f*10)/10,x=fx(r);if(x<-5||x>1205)continue;const i=Math.abs(r-Math.round(r))<.01,h=Math.abs(r*2-Math.round(r*2))<.01?(i?30:18):(Math.round(r*10)%2===0?9:0);if(!h)continue;
+  el("line",{x1:x,x2:x,y1:y,y2:y+h,stroke:"#6E6E73","stroke-opacity":i?.7:.38,"stroke-width":i?1.8:1.2},s);
+  if(i&&Math.round(r)%2===0){const t=el("text",{x,y:y+58,"text-anchor":"middle","font-size":17,"font-weight":200,fill:"#6E6E73","font-family":"WC Sans"},s);t.textContent=Math.round(r)}}
+ const cols=["#E8834A","#3E9C8C","#C9A04A","#5C7CE0","#6E62B6"],nm=["随便听","唱片行","人物志","来龙去脉","夜里"];
+ W.STATIONS.forEach((st,k)=>{const x=fx(st.freq);if(x<0||x>1200)return;el("circle",{cx:x,cy:y-18,r:5.5,fill:cols[k]},s);const t=el("text",{x,y:y-34,"text-anchor":"middle","font-size":k===1?19:16,"font-weight":k===1?500:300,fill:k===1?"#1D1D1F":"#6E6E73","font-family":"WC Sans"},s);t.textContent=nm[k]});
+ el("rect",{x:600-7,y:y-14,width:14,height:62,rx:7,fill:"#FF6B2C",opacity:.18,filter:"blur(5px)"},s);
+ el("line",{x1:600,x2:600,y1:y-12,y2:y+46,stroke:"#FF6B2C","stroke-width":3,"stroke-linecap":"round"},s);
+
+})();
+(()=>{const q=W.qrPath("https://wavecast.space",1),e=document.getElementById("qr");e.setAttribute("viewBox",`0 0 ${q.size} ${q.size}`);el("path",{d:q.d,fill:"#1D1D1F"},e)})();
+</script></body></html>
