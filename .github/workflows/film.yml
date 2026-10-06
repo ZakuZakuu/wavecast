@@ -30,9 +30,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      # The PR trigger renders at preview quality (temporarily only the night segment while checking the preview fix).
+      # The PR trigger always renders the whole film at preview quality.
       FILM_QUALITY: ${{ github.event_name == 'workflow_dispatch' && inputs.quality || 'preview' }}
-      FILM_RANGE: ${{ github.event_name == 'workflow_dispatch' && inputs.range || (github.event_name == 'pull_request' && 'night' || '') }}
+      FILM_RANGE: ${{ github.event_name == 'workflow_dispatch' && inputs.range || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
