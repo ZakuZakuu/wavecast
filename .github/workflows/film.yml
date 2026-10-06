@@ -32,7 +32,7 @@ jobs:
     env:
       # The PR trigger renders at preview quality (temporarily only the night segment while checking the preview fix).
       FILM_QUALITY: ${{ github.event_name == 'workflow_dispatch' && inputs.quality || 'preview' }}
-      FILM_RANGE: ${{ github.event_name == 'workflow_dispatch' && inputs.range || 'night' }}
+      FILM_RANGE: ${{ github.event_name == 'workflow_dispatch' && inputs.range || (github.event_name == 'pull_request' && 'night' || '') }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
