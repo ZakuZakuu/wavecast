@@ -47,22 +47,26 @@ h1 i{display:inline-block;width:.14em;height:.14em;border-radius:50%;background:
 .dial .q{margin-top:4px;font-size:17px;font-weight:300;color:var(--ink2)}
 .dial .q i{display:inline-block;width:2px;height:18px;background:var(--accent);margin-left:3px;vertical-align:-3px}
 .dial .win{position:absolute;left:392px;top:20px;width:652px;height:138px;border-radius:24px;overflow:hidden;background:rgba(226,226,232,.78);border:.5px solid rgba(29,29,31,.08);box-shadow:inset 0 2px 6px rgba(29,29,31,.16),inset 0 1px 1px rgba(29,29,31,.08),0 1px 0 rgba(255,255,255,.95)}
-.pts{position:absolute;left:80px;right:80px;top:1550px;display:grid;grid-template-columns:repeat(3,1fr);gap:34px}
+.pts{position:absolute;left:80px;right:80px;top:1540px;display:grid;grid-template-columns:repeat(3,1fr);gap:34px}
 .pts div{border-top:1px solid rgba(29,29,31,.16);padding-top:12px;font-size:21px;font-weight:400;line-height:1.45;color:var(--ink)}
 .pts div b{display:block;font-family:var(--num);font-weight:200;font-size:17px;letter-spacing:.14em;color:var(--accent);margin-bottom:2px}
-.foot{left:80px;right:80px;top:1646px;display:flex;align-items:center;justify-content:space-between}
+.foot{left:80px;right:80px;top:1632px;display:flex;align-items:center;justify-content:space-between}
 .fl{display:flex;align-items:center;gap:26px}
 .fr{display:flex;align-items:center;gap:16px;padding-left:34px;border-left:1px solid rgba(29,29,31,.14);height:88px}
 .fr b{display:block;font-size:24px;font-weight:500;color:var(--ink);letter-spacing:.01em}
 .fr span{display:block;margin-top:4px;font-size:18px;font-weight:300;color:var(--ink2)}
-.qr{width:104px;height:104px;border-radius:18px;background:rgba(255,255,255,.85);padding:10px;box-shadow:0 10px 24px rgba(120,70,30,.14)}
+.qr{width:100px;height:100px;border-radius:18px;background:rgba(255,255,255,.85);padding:10px;box-shadow:0 10px 24px rgba(120,70,30,.14)}
 .foot .u{font-family:var(--num);font-size:44px;font-weight:300;letter-spacing:.01em;color:var(--ink)}
 .foot .u .w{color:var(--ink2)}
 .foot .u em{font-style:normal;color:var(--accent)}
 .foot .t{margin-top:6px;font-size:21px;font-weight:300;color:var(--ink2)}
 .corner{position:absolute;right:80px;top:76px;font-size:17px;font-weight:300;color:var(--ink3);letter-spacing:.14em;display:flex;align-items:center;gap:10px}
 .corner i{display:block;width:6px;height:6px;border-radius:50%;background:var(--accent)}
-.disc{position:absolute;left:0;right:0;text-align:center;bottom:20px;font-size:15px;font-weight:300;color:var(--ink3);letter-spacing:.04em}
+.fn{position:absolute;left:80px;bottom:20px;font-size:15px;font-weight:300;color:var(--ink3);letter-spacing:.04em}
+.fn b{font-weight:300;color:var(--accent);margin-right:6px}
+.tag-s{position:absolute;right:80px;top:424px;z-index:30;font-size:16px;font-weight:300;color:var(--ink3);letter-spacing:.12em;display:flex;align-items:center;gap:6px}
+.tag-s b{font-family:var(--num);font-weight:300;font-size:22px;line-height:1;color:var(--accent);transform:translateY(3px)}
+.disc{display:none;position:absolute;left:0;right:0;text-align:center;bottom:20px;font-size:15px;font-weight:300;color:var(--ink3);letter-spacing:.04em}
 </style></head><body>
 <div class="poster">
   <div class="beam" style="left:-190px;width:150px"></div><div class="beam" style="left:240px;width:190px"></div><div class="beam" style="left:680px;width:230px"></div>
@@ -119,7 +123,8 @@ h1 i{display:inline-block;width:.14em;height:.14em;border-radius:50%;background:
       <div><div class="u"><span class="w">www.</span>wavecast<em>.</em>space</div><div class="t">点开，音乐几秒内就会响起。</div></div></div>
     <div class="fr"><img src="assets/safari.svg" width="64" height="64" alt="Safari" style="display:block;filter:drop-shadow(0 6px 10px rgba(30,70,160,.25))"><div><b>推荐用 iPhone Safari 打开</b><span>适配更完整，体验更好</span></div></div>
   </div>
-  <div class="disc">界面与节目内容为示意</div>
+  <div class="tag-s"><b>*</b>示意</div>
+  <div class="fn"><b>*</b>界面、封面与节目内容均为示意</div>
   <div class="grain" style="opacity:.07"></div>
 </div>
 <script src="../dist/wc.js"></script>
