@@ -4,6 +4,7 @@
 
 - `src/poster-v1.html` 封面错落堆叠，大封面做主角，主持词与歌单做页边批注
 - `src/poster-v2.html` 超大标题，封面做成横穿画面的一条带子
+- `src/poster-v3.html` 在 V1 基础上：主角换成手机首页，两张封面从屏幕空位“飞出”，下半部为调谐窗口 + 输入框 + 开播按钮，网址为 www.wavecast.space
 - `src/seeds.html` 封面 seed 色板，用来挑柔和的 seed
 
 题目、歌单、主持词、“因为你常听…”均为示意，不是真实生成结果。
