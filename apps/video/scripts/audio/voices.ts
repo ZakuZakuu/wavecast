@@ -1,5 +1,5 @@
 // Voices for the lazy-jazz score: soft e-piano with tremolo and chorus,
-// round sine bass with the odd glide, a breathy flute-like lead, brushes and
+// round sine bass with the odd glide, brushes and
 // a soft kick. All return mono buffers except the e-piano (stereo pair).
 import { biquad, envAD, envASR, noiseGen, SR, TAU } from "./dsp";
 
@@ -33,24 +33,6 @@ export function roundBass(freq: number, dur: number, vel = 0.8, slide = 0) {
     const f = freq * Math.pow(2, (-slide * Math.exp(-t / 0.03)) / 12);
     ph += f / SR;
     out[i] = (Math.sin(TAU * ph) + 0.08 * Math.sin(TAU * ph * 2)) * e[i] * vel;
-  }
-  return out;
-}
-
-/** Breathy flute-like lead: near-sine, delayed vibrato, a puff of air on the attack. */
-export function flute(freq: number, dur: number, vel = 0.7, seed = 1) {
-  const n = Math.ceil((dur + 0.3) * SR);
-  const e = envASR(n, 0.06, dur, 0.25);
-  const nz = noiseGen(seed);
-  const air = biquad("bp", freq * 2, 1.5);
-  const out = new Float32Array(n);
-  let ph = 0;
-  for (let i = 0; i < n; i++) {
-    const t = i / SR;
-    const vib = 1 + 0.004 * Math.min(1, t / 0.4) * Math.sin(TAU * 5 * t);
-    ph += (freq * vib) / SR;
-    const tone = Math.sin(TAU * ph) + 0.12 * Math.sin(TAU * ph * 2) + 0.04 * Math.sin(TAU * ph * 3);
-    out[i] = (tone + air(nz()) * (0.25 + 0.5 * Math.exp(-t * 12))) * e[i] * vel;
   }
   return out;
 }

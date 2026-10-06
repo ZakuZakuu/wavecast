@@ -23,7 +23,7 @@ for-profit companies with up to 3 employees and non-profits); see
 | Chapter cards, station calls, side lines, subtitles | `src/scenes/Text.tsx` |
 | Breakdown cards, mixer, cover wall and end card | `src/scenes/Breakdown.tsx`, `src/scenes/NightOverlay.tsx`, `src/scenes/Wall.tsx` |
 | Grain, vignette, disclaimer, final fade | `src/scenes/Overlays.tsx` |
-| Sound: effects (D major pentatonic), lazy-jazz score on the film's 4-bar motif, and mix, synthesised offline with fixed seeds | `scripts/build-audio.ts`, `scripts/audio/` (`music.ts`, `voices.ts`, `sfx.ts`) |
+| Sound: effects (D major pentatonic), lazy-jazz score, and mix, synthesised offline with fixed seeds | `scripts/build-audio.ts`, `scripts/audio/` (`music.ts`, `voices.ts`, `sfx.ts`) |
 | Music cue sheet (`music-cues.md`) | `scripts/build-cues.ts` |
 
 Every frame is a pure function of the frame number. There is no `Math.random`;

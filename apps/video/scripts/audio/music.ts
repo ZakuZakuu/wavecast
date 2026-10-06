@@ -1,12 +1,11 @@
 // Original score: floating, lazy jazz harmony (maj7, m9, 11, 13, sus; open
 // voicings), slow 16th swing with dragged snare and brushes, mellow e-piano,
-// round sine bass, tape warmth and a faint vinyl bed. D major and the film's
-// 4-bar motif run through it, slowed and with more space. Progressions and
-// melody are original. No music in the cold open.
+// round sine bass, tape warmth and a faint vinyl bed, in D major. No lead
+// melody: the harmony carries it. Progressions are original. No music in the cold open.
 import { AFTERNOON, DURATION, END, NIGHT } from "../../src/timeline";
 import { eo, p, rng } from "../../src/lib/math";
 import { bell, biquad, epiano, filterBuf, midiHz, noiseGen, pad, reverb, SR, Stereo, sweepLowpass } from "./dsp";
-import { arpNote, brush, brushSnare, flute, keys, roundBass, softKick } from "./voices";
+import { arpNote, brush, brushSnare, keys, roundBass, softKick } from "./voices";
 
 /** [beat, midi, beats] — the film's motif (4 bars of 4/4). */
 export const MOTIF: Array<[number, number, number]> = [
@@ -103,14 +102,6 @@ function chord(s: Section, beat: number, c: Chord, beatsLong: number, vel: numbe
   c.notes.forEach((m, k) => s.key(beat + k * roll * (s.bpm / 60), m, beatsLong, vel * (0.9 + 0.05 * k), gain, -0.3 + k * 0.2));
 }
 
-/** Sparse lead: the motif, slowed and thinned, on the flute voice. */
-function lead(s: Section, startBeat: number, stretch: number, gain: number, keep: (i: number) => boolean, transpose = 12, pan = 0.15) {
-  MOTIF.forEach(([b, m, d], i) => {
-    if (!keep(i)) return;
-    s.note(startBeat + b * stretch, flute(midiHz(m + transpose), s.beats(d * stretch * 0.9), 0.6, 50 + i), gain, pan, 0.45);
-  });
-}
-
 function bassLine(s: Section, bar: number, c: Chord, pattern: Array<[number, number, number, number?]>, gain = 0.34) {
   for (const [b, interval, d, slide] of pattern) s.note(bar * 4 + sw(b), roundBass(midiHz(c.bass + interval), s.beats(d), 0.75, slide ?? 0), gain, 0, 0);
 }
@@ -137,8 +128,6 @@ function morning() {
     if (bar >= 1) bassLine(s, bar, c, [[0, 0, 1.6], [sw(1.75), 7, 0.5], [2.5, 12, 1.2, bar % 2 ? 2 : 0]], 0.3);
     if (bar >= 2) lazyDrums(s, bar, 0.6, 2000 + bar * 31);
   }
-  // Sparse lead from bar 4: the motif at half speed, landing on colour tones.
-  lead(s, 16, 1.6, 0.11, (i) => i % 3 !== 2);
   s.sidechain();
   return s;
 }
@@ -154,8 +143,6 @@ function afternoon() {
     bassLine(s, bar, c, [[0, 0, 1.4], [sw(1.5), 0, 0.4], [sw(2.25), 7, 0.6], [3.5, 10, 0.4, 2]]);
     lazyDrums(s, bar, 0.9, 5000 + bar * 37);
   }
-  lead(s, 4, 1.25, 0.1, (i) => i < 8, 12, -0.15);
-  lead(s, 37, 1.25, 0.1, (i) => i >= 4, 12, -0.15);
   s.sidechain();
   const [b0] = AFTERNOON.breakdown;
   const open = AFTERNOON.player;
@@ -181,7 +168,6 @@ function night() {
     const shape = [0, 1, 2, 3, 2].slice(0, 3 + Math.floor(R() * 3));
     shape.forEach((k, i) => s.key(bar * 4 + 0.5 + i * (0.6 + R() * 0.5), c.notes[k] + 12, 2.2, 0.42, 0.1, -0.3 + k * 0.2, 0.8));
   }
-  lead(s, 12, 2, 0.08, (i) => i < 7 && i !== 2, 12, 0.2);
   const [h0, h1] = NIGHT.host;
   const duck = (t: number) => 1 - 0.684 * eo(p(t, h0 - 0.1, h0 + 0.5)) * (1 - eo(p(t, h1, h1 + 0.6)));
   s.dry.shape(duck);
@@ -210,7 +196,6 @@ function finale() {
     }
     if (b >= 5 && b < 7) lazyDrums(s, b, 0.55, 9000 + b * 29);
   }
-  lead(s, 8, 1.6, 0.11, (i) => i % 3 !== 2);
   // Landing chord: Dmaj9, open, long tail.
   const chordNotes = [50, 57, 61, 64, 66, 69];
   chordNotes.forEach((m, j) => {
