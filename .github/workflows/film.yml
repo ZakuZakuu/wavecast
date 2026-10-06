@@ -1,11 +1,17 @@
 name: Concept film
 
 # Renders the WaveCast concept film (apps/video): a silent H.264 video, the
-# sound-effect bed as a WAV aligned to the video's 0 s, and the music cue
-# sheet, uploaded as a workflow artifact. Nothing is committed.
+# sound (effects, score and mix as WAVs aligned to the video's 0 s), the video
+# with the mix muxed in, and the music cue sheet, uploaded as a workflow
+# artifact. Nothing is committed.
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "full = picture + sound; audio = rebuild only the sound and re-mux it into the silent video of the latest successful run on this branch (a few minutes)"
+        type: choice
+        options: [full, audio]
+        default: full
       quality:
         description: "preview = 1280×720, final = 1920×1080"
         type: choice
@@ -16,7 +22,8 @@ on:
         type: string
         required: false
         default: ""
-  # TEMPORARY: preview render of the whole film on the concept-film PR. Remove before merging.
+  # TEMPORARY: on the concept-film PR, rebuild the sound and mux it into the
+  # latest preview video. Remove before merging.
   pull_request:
     paths:
       - "apps/video/**"
@@ -25,11 +32,16 @@ concurrency:
   group: film-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   render:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
+      FILM_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'audio' }}
       # The PR trigger always renders the whole film at preview quality.
       FILM_QUALITY: ${{ github.event_name == 'workflow_dispatch' && inputs.quality || 'preview' }}
       FILM_RANGE: ${{ github.event_name == 'workflow_dispatch' && inputs.range || '' }}
@@ -45,6 +57,7 @@ jobs:
       - name: Runner
         run: echo "cores=$(nproc)"; free -h
       - name: Install system libraries for headless Chrome
+        if: env.FILM_MODE != 'audio'
         run: |
           sudo apt-get update
           sudo apt-get install -y libnss3 libdbus-1-3 libatk1.0-0 libgbm-dev libxrandr2 libxkbcommon-dev libxfixes3 libxcomposite1 libxdamage1 libatk-bridge2.0-0 libpango-1.0-0 libcairo2 libcups2
@@ -52,25 +65,48 @@ jobs:
       # Only the film package and its dependencies; apps/web is untouched.
       - run: pnpm install --frozen-lockfile --filter @wavecast/video...
       - run: pnpm --filter @wavecast/video typecheck
-      - run: pnpm --dir apps/video exec remotion browser ensure
+      - if: env.FILM_MODE != 'audio'
+        run: pnpm --dir apps/video exec remotion browser ensure
       - name: Check preview matches final (one still per segment)
+        if: env.FILM_MODE != 'audio'
         run: pnpm --dir apps/video check:preview
-      - name: Render (quality=${{ env.FILM_QUALITY }}, range=${{ env.FILM_RANGE || 'full' }})
+      - name: Fetch the silent video from the latest successful run on this branch
+        if: env.FILM_MODE == 'audio'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow film.yml --branch "$BRANCH" --status success --limit 30 --json databaseId -q '.[].databaseId'); do
+            if gh run download "$id" -R "$GITHUB_REPOSITORY" -D prev 2>/dev/null && find prev -name wavecast-film-silent.mp4 | grep -q .; then
+              echo "using the video from run $id"; break
+            fi
+            rm -rf prev
+          done
+          test -d prev || { echo "no earlier run with a silent video on $BRANCH; run once with mode=full"; exit 1; }
+          mkdir -p apps/video/out
+          cp "$(find prev -name wavecast-film-silent.mp4 | head -1)" "$(find prev -name render-info.txt | head -1)" apps/video/out/
+      - name: Render (mode=${{ env.FILM_MODE }}, quality=${{ env.FILM_QUALITY }}, range=${{ env.FILM_RANGE || 'full' }})
         run: pnpm --dir apps/video render
       - name: Check outputs
         working-directory: apps/video
         run: |
           cat out/render-info.txt
           pnpm exec remotion ffprobe -v error -show_entries format=duration:stream=codec_name,width,height,r_frame_rate -of default=nw=1 out/wavecast-film-silent.mp4
-          pnpm exec remotion ffprobe -v error -show_entries format=duration -of default=nw=1 out/wavecast-sfx.wav
+          for f in wavecast-sfx.wav wavecast-music.wav wavecast-mix.wav wavecast-film.mp4; do
+            echo "$f:"; pnpm exec remotion ffprobe -v error -show_entries format=duration -of default=nw=1 "out/$f"
+          done
           size=$(stat -c %s out/wavecast-film-silent.mp4); echo "video: $size bytes"; test "$size" -lt 524288000
           test -s out/music-cues.md
       - uses: actions/upload-artifact@v4
         with:
-          name: wavecast-film-${{ env.FILM_QUALITY }}-${{ env.FILM_RANGE || 'full' }}-${{ github.sha }}
+          name: wavecast-film-${{ env.FILM_MODE }}-${{ github.sha }}
           path: |
+            apps/video/out/wavecast-film.mp4
             apps/video/out/wavecast-film-silent.mp4
             apps/video/out/wavecast-sfx.wav
+            apps/video/out/wavecast-music.wav
+            apps/video/out/wavecast-mix.wav
             apps/video/out/music-cues.md
             apps/video/out/render-info.txt
           retention-days: 30

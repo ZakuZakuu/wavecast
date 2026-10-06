@@ -1,43 +1,14 @@
-import { BRAND, WALL_TITLES } from "../content";
+import { BRAND } from "../content";
+import { TILES, tileAppearAt } from "./wallLayout";
 import { Cover } from "../components/Cover";
 import { SANS } from "../fonts";
-import { ei, eio, eo, lerp, p, rng } from "../lib/math";
+import { ei, eio, eo, lerp, p } from "../lib/math";
 import { logoMarkSvg } from "../../../web/lib/brand/logo-mark";
 import { END, NEXT } from "../timeline";
 import { textIn } from "./Text";
 
-const COLS = 9;
-const ROWS = 6;
-const PITCH = 200;
 const SIZE = 172;
 
-/** 9 × 6 grid around the phone (two middle cells) minus the disclaimer corner: 50 covers. */
-const TILES = (() => {
-  const R = rng(2468);
-  const out: Array<{ x: number; y: number; d: number; station: (typeof WALL_TITLES)[number][0]; heading: string; seed: number; jitter: number }> = [];
-  let k = 0;
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      if (c === 4 && (r === 2 || r === 3)) continue;
-      // Keep the bottom-right corner clear for the disclaimer.
-      if (r === ROWS - 1 && c >= COLS - 2) continue;
-      const x = 960 + (c - 4) * PITCH;
-      const y = 540 + (r - 2.5) * PITCH;
-      const d = Math.hypot((x - 960) / PITCH, (y - 540) / PITCH);
-      out.push({ x, y, d, station: "casual", heading: "", seed: 0, jitter: R() * 0.25 });
-      k++;
-    }
-  }
-  // Titles are dealt out so neighbours differ; every tile gets its own seed.
-  const order = out.map((_, i) => i).sort((a, b) => (a * 7919) % 53 - (b * 7919) % 53);
-  order.forEach((tileIdx, n) => {
-    const [station, heading] = WALL_TITLES[n % WALL_TITLES.length];
-    out[tileIdx].station = station;
-    out[tileIdx].heading = heading;
-    out[tileIdx].seed = 300 + n * 37 + Math.floor(n / WALL_TITLES.length) * 11;
-  });
-  return out;
-})();
 export const WALL_COUNT = TILES.length;
 
 export function Wall({ t }: { t: number }) {
@@ -48,7 +19,7 @@ export function Wall({ t }: { t: number }) {
     <div style={{ position: "absolute", inset: 0 }}>
       {TILES.map((tile, i) => {
         // Waves from the centre outwards.
-        const at = w0 + 0.5 + tile.d * 0.42 + tile.jitter;
+        const at = tileAppearAt(tile);
         const appear = eo(p(t, at, at + 0.6));
         if (appear < 0.002) return null;
         const build = p(t, at, at + 1.3);

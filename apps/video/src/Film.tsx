@@ -26,8 +26,8 @@ export function Film() {
       <Grain t={t} />
       <Disclaimer t={t} />
       <FadeOut t={t} />
-      {/* Sound effects only (no voice, no music); built by scripts/build-sfx.ts. */}
-      <Audio src={staticFile("sfx.wav")} />
+      {/* Sound for Studio previews (renders are muted; scripts/render.ts muxes the mix). Built by scripts/build-audio.ts. */}
+      <Audio src={staticFile("mix.wav")} />
     </AbsoluteFill>
   );
 }
