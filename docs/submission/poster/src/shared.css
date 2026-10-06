@@ -1,0 +1,18 @@
+@font-face{font-family:"WC Serif";font-weight:500;src:url(../fonts/serif-500.ttf)}
+@font-face{font-family:"WC Serif";font-weight:900;src:url(../fonts/serif-900.ttf)}
+@font-face{font-family:"WC Sans";font-weight:200;src:url(../fonts/sans-200.ttf)}
+@font-face{font-family:"WC Sans";font-weight:300;src:url(../fonts/sans-300.ttf)}
+@font-face{font-family:"WC Sans";font-weight:400;src:url(../fonts/sans-400.ttf)}
+@font-face{font-family:"WC Sans";font-weight:500;src:url(../fonts/sans-500.ttf)}
+@font-face{font-family:"WC Sans";font-weight:700;src:url(../fonts/sans-700.ttf)}
+:root{--serif:"WC Serif",serif;--sans:"WC Sans",sans-serif;--num:"WC Sans",sans-serif;--accent:#FF6B2C;
+ --s1:#E8834A;--s2:#3E9C8C;--s3:#C9A04A;--s4:#5C7CE0;--s5:#6E62B6}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1200px;height:1800px;overflow:hidden}
+body{font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.poster{position:relative;width:1200px;height:1800px;overflow:hidden}
+.abs{position:absolute}
+.grain{position:absolute;inset:0;pointer-events:none;opacity:.10;mix-blend-mode:overlay;
+ background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .5  0 0 0 0 .5  0 0 0 0 .5  0 0 0 1.2 -.1'/></filter><rect width='300' height='300' filter='url(%23n)'/></svg>")}
+.cover-wrap{position:relative}
+.cover-wrap>div{width:100%}

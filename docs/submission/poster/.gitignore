@@ -1,0 +1,5 @@
+fonts/*.ttf
+fonts/*.css
+dist/
+out/
+node_modules/
