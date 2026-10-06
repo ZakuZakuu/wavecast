@@ -36,7 +36,7 @@
 
 ## 海报任务交接
 
-**状态（2026-10-07）：V7 已成稿，待用户最终确认；成图 2400×3600 PNG 在聊天中交付，不入库。** 此前 B/B2、Claude 的 A/B/C 候选均因偏吵、与视频和前端不统一而放弃；GPT 的候选只作参考。源码与导出步骤见分支 `claude/kind-carson-sv2kei` 的 `docs/submission/poster/README.md`（未合并，字体和 PNG 为 gitignore）。
+**状态（2026-10-07）：V7 已定稿（用户确认），随初赛材料提交；成图 2400×3600 PNG 在聊天中交付，不入库。** 此前 B/B2、Claude 的 A/B/C 候选均因偏吵、与视频和前端不统一而放弃；GPT 的候选只作参考。源码与导出步骤见分支 `claude/kind-carson-sv2kei` 的 `docs/submission/poster/README.md`（未合并，字体和 PNG 为 gitignore）。
 
 **构图：** 暖纸色底（取自视频早晨场景）；超大衬线标题“你的专属 AI 电台”，后带橙色小点；中间一部手机，屏幕为按 `docs/design/frost/Frost-Home.dc.html` 还原的真实首页；一圈封面从屏幕“弹”出，三张主角封面带 3D 倾斜，远处封面做景深；毛玻璃卡片“AI 主持在说”；下方是照 Frost 调谐窗还原的刻度窗（指针对准 93.1）；底部为二维码、网址与说明。封面全部来自产品封面生成器。
 
