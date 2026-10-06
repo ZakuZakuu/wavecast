@@ -35,6 +35,8 @@ In particular:
 - avoid another broad player/runtime rewrite unless a concrete blocker makes it unavoidable;
 - if an existing implementation invariant conflicts with the current product target, do not silently optimize the invariant. Reconcile the conflict against the product target first.
 
+Positioning (see `docs/PRELIMINARY_PRODUCT_TARGET.md` section 0): the differentiator is niche, personalised programmes that would not otherwise exist, not out-doing human hosts or other radio/podcast apps. The music is real; AI researches, selects, writes and narrates. Do not market or optimise the product as "AI beats human radio", and do not claim features that have not been verified live.
+
 ---
 
 ## Source of truth
