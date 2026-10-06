@@ -22,11 +22,12 @@ on:
         type: string
         required: false
         default: ""
-  # TEMPORARY: on the concept-film PR, rebuild the sound and mux it into the
-  # latest preview video. Remove before merging.
+  # TEMPORARY: render the accepted whole film at 1080p with sound on this PR.
+  # Remove the PR trigger before merging.
   pull_request:
     paths:
       - "apps/video/**"
+      - ".github/workflows/film.yml"
 
 concurrency:
   group: film-${{ github.ref }}
@@ -41,9 +42,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      FILM_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'audio' }}
-      # The PR trigger always renders the whole film at preview quality.
-      FILM_QUALITY: ${{ github.event_name == 'workflow_dispatch' && inputs.quality || 'preview' }}
+      FILM_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'full' }}
+      # The PR trigger renders final quality; manual inputs remain selectable.
+      FILM_QUALITY: ${{ github.event_name == 'workflow_dispatch' && inputs.quality || 'final' }}
       FILM_RANGE: ${{ github.event_name == 'workflow_dispatch' && inputs.range || '' }}
     steps:
       - uses: actions/checkout@v4
@@ -97,6 +98,8 @@ jobs:
             echo "$f:"; pnpm exec remotion ffprobe -v error -show_entries format=duration -of default=nw=1 "out/$f"
           done
           size=$(stat -c %s out/wavecast-film-silent.mp4); echo "video: $size bytes"; test "$size" -lt 524288000
+          size=$(stat -c %s out/wavecast-film.mp4); echo "final film: $size bytes"; test "$size" -lt 500000000
+          pnpm exec remotion ffprobe -v error -show_entries format=duration:stream=codec_name,width,height,r_frame_rate -of default=nw=1 out/wavecast-film.mp4
           test -s out/music-cues.md
       - uses: actions/upload-artifact@v4
         with:
