@@ -16,7 +16,7 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 
 1. **初赛海报 V7 已定稿（用户 2026-10-07 确认），随初赛材料一并提交。** 简介沿用原稿小幅调整，用户已定稿，仅提交时使用，不入仓库。海报的信息层级与最终文案见 [提交材料](submission/preliminary.md)；源码与导出方法在分支 `claude/kind-carson-sv2kei` 的 `docs/submission/poster/`（未合并，PNG 不入库）。旧的 B/B2 与 A/B/C 候选均已放弃。
 2. 待用户决定：提交前是否保留易进入的首页选题，再加入一两个具体、有吸引力且真实试听通过的主题（只涉及 `apps/web/lib/featured.ts`，低风险）；线上 AI 推荐规划器：用户反馈生产已设为 DeepSeek，尚未由我们核实线上实际表现，对外只写“收听兴趣带来推荐”，不写“创意选题”。
-3. Codex 整理项目上下文、维护计划及交接；初赛介绍、视频信息和提交待办集中在 [提交材料](submission/preliminary.md)。
+3. 提交前浏览器引导已实现，待 integration 预览/真机验收：微信首次访问复用 Safari 安装卡样式，引导外部浏览器并支持复制当前链接、失败手动复制和继续体验；桌面补浏览器建议，二维码固定本站首页。仅前端改动，未发布 main；本地 203 tests、lint、typecheck、生产构建通过，截图为模拟 UA，不代表微信真机播放验收。
 4. 提交前以材料和具体阻塞为主，避免无关功能发布；初赛后按确认的优先级处理已知问题，再评估电台风格后端接线、主持词和 TTS 精校。没有授权启动新的广泛运行时重构。
 
 ## 已交付与边界
@@ -31,14 +31,13 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 
 ## 分支、部署与验证
 
-2026-10-06 核对的 Git 状态（随下一次发布更新）：
+2026-10-07 核对的 Git 状态（随下一次发布更新）：
 
 | 分支/PR | 状态 |
 | --- | --- |
 | `main` | `bd0abad`，#168 release 合并提交 |
-| `integration` | `5b021b6`，#175 文档整理已合并，包含 #169 Vercel ignore-build 修复；当前与 main 并非同一提交 |
+| `integration` | `09cc552`，#175–#177 文档更新已合并，包含 #169 Vercel ignore-build 修复；当前与 main 并非同一提交 |
 | `feat/concept-film` / [#174](https://github.com/ZakuZakuu/wavecast/pull/174) | 独立宣传片 PR，未合并；head `3dc5145` |
-| `docs/status-2026-10` | Claude 的文档草稿 `d105b75`；有效信息已吸收，本整理替代其新增 CURRENT_STATUS 入口，不需另行合并 |
 
 正式 Web 由 Vercel 跟随 main，Railway API 为正式后端；用户已完成正式域名/OAuth/Railway 配置。此处 Git SHA 不等于重新核实的线上部署 SHA。部署运行规则及域名登录见 [runbook](deployment/railway-vercel.md)，CI 选择见 [ci.md](deployment/ci.md)。
 
