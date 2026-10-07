@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 
 import { LibraryIdentityBridge } from "../components/library-identity-bridge";
+import { BrowserGuidance } from "../components/browser-guidance";
 import { DesktopStage } from "../components/desktop-stage";
 import { GlobalChrome } from "../components/global-chrome";
 import { KeyboardShortcuts } from "../components/keyboard-shortcuts";
@@ -52,6 +53,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               {children}
               <PlayerOverlay />
               <GlobalChrome />
+              <BrowserGuidance />
             </div>
           </PlaybackProvider>
         </LibraryIdentityBridge>

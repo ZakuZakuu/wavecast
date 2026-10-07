@@ -161,3 +161,18 @@
   .login-nudge { animation: fade-in-plain var(--dur-fast) linear both; }
   .login-nudge.is-leaving { animation: none; }
 }
+
+
+/* Same frosted card, numbered steps and entry/exit motion as the Safari guide. */
+.browser-guide-card { bottom: max(var(--safe-bottom), 20px); max-height: calc(100dvh - 100px); overflow-y: auto; }
+.browser-guide-card:focus { outline: none; }
+.browser-guide-card .browser-guide-note { display: block; font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+.browser-guide-manual { display: block; width: 100%; font-size: 13px; }
+.browser-guide-manual input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid var(--separator); border-radius: 12px; font-size: 16px; }
+.browser-guide-arrow { position: absolute; right: 20px; top: max(env(safe-area-inset-top, 0px), 24px); color: white; display: flex; align-items: center; gap: 12px; font-size: 14px; pointer-events: none; }
+.browser-desktop-hint { display: none; }
+@media (min-width: 768px) {
+  .browser-desktop-hint { display: flex; position: fixed; top: 24px; right: 16px; z-index: 75; align-items: flex-start; flex-direction: column; gap: 4px; width: calc((100vw - var(--frame-max)) / 2 - 32px); max-width: 240px; padding: 12px; border-radius: 16px; background: var(--surface); color: var(--ink-2); font-size: 13px; box-shadow: 0 4px 20px rgba(0,0,0,.08); }
+  .browser-desktop-hint button { flex-shrink: 0; width: 44px; height: 44px; border: 0; background: transparent; color: var(--ink-2); font-size: 24px; }
+}
+@media (min-width: 1100px) { .browser-desktop-hint { display: none; } }

@@ -1,6 +1,5 @@
 "use client";
 
-import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { qrPath, type QrPath } from "../lib/qr";
@@ -11,7 +10,7 @@ import { useNowPlaying } from "./player/playback-provider";
 /**
  * Wide screens (≥ 768px): the app stays a centred 430px column; behind it a
  * designed backdrop whose glows follow the current station, and (≥ 1100px) a
- * side card with a QR code of the current address. Hidden on phones by CSS.
+ * side card with a stable QR code of the app entry address. Hidden on phones by CSS.
  */
 export function DesktopStage() {
   const np = useNowPlaying();
@@ -29,18 +28,16 @@ export function DesktopStage() {
 }
 
 function DesktopSideCard() {
-  const pathname = usePathname();
   const [qr, setQr] = useState<QrPath | null>(null);
 
-  // The current address (client only), refreshed as the route changes.
+  // Stable app entry, not the current tab/programme or transient query string.
   useEffect(() => {
-    if (!window.matchMedia?.("(min-width: 1100px)").matches) return;
     try {
-      setQr(qrPath(window.location.href));
+      setQr(qrPath(`${window.location.origin}/`));
     } catch {
       setQr(null);
     }
-  }, [pathname]);
+  }, []);
 
   const quiet = 2;
   return (
@@ -54,14 +51,14 @@ function DesktopSideCard() {
             viewBox={`${-quiet} ${-quiet} ${qr.size + quiet * 2} ${qr.size + quiet * 2}`}
             shapeRendering="crispEdges"
             role="img"
-            aria-label="当前网址的二维码"
+            aria-label="WaveCast 首页二维码"
           >
             <rect x={-quiet} y={-quiet} width={qr.size + quiet * 2} height={qr.size + quiet * 2} fill="#FFFFFF" />
             <path d={qr.d} fill="#1D1D1F" />
           </svg>
         ) : null}
       </span>
-      <p className="desk-card-foot">用手机扫码打开，可以添加到主屏幕</p>
+      <p className="desk-card-foot">推荐用 iPhone Safari 体验，桌面端建议用 Chrome 或 Edge。扫码后若在微信中打开，请从右上角菜单切换到浏览器。</p>
     </aside>
   );
 }
