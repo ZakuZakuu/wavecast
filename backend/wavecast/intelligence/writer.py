@@ -28,6 +28,8 @@ ZH_CN_RADIO_WRITING_GUIDANCE = (
     "减少论文腔与名词化。区分事实、听感和编辑判断，文化描述具体克制，避免宽泛的族群化概括。 "
     "TRACK_INTRO/TRANSITION 要说明下一首为什么值得听；时长服从 presentation mode 和 application 给出的 target，先给 concrete listen-for 再给最多一个必要背景解释，编辑动作完成就停。OUTRO 回扣本期 thesis 或前面真实听到的细节；如果上下文提供了已经听过的中间 artist/track/listen-for detail，至少具体回扣其中一个再落回 thesis，不要用模板式总结。 "
     "不要用模板式总结。不要为了高级感强造比喻、大词或结论。"
+    "口播里不要交代依据或确定程度，例如“不是证据上的结论”“资料显示”“据说”；没有把握的内容直接不说，"
+    "或只说你在听感上确实能描述的部分。"
 )
 
 
@@ -113,7 +115,10 @@ class WriterService:
             "each provided slot, never multiple blocks for the same slot, and do not add "
             "extra blocks just to fill the target duration. The single final narration "
             "slot is marked `is_final: true` and must return exactly one `outro` block; "
-            "do not return any additional block for that final slot. "
+            "do not return any additional block for that final slot. That outro closes the "
+            "programme: it must not mention a next chapter, next track, a continuation or "
+            "anything still to come. Spoken text must not discuss the status of the evidence "
+            "or how certain a statement is; leave out what you cannot support. "
             f"{empty_scope_instruction}\n"
             f"Write in output language {selected_language.value}.\n"
             f"{language_guidance}\n"
