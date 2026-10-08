@@ -141,10 +141,13 @@ class SidecarMusicProvider(MusicProvider):
             method="GET",
             url=f"{self.base_url}{path}",
             max_attempts=1,
-            headers={"Accept": "application/json"},
+            headers=self._request_headers(),
             params=params,
         )
         return payload
+
+    def _request_headers(self) -> dict[str, str]:
+        return {"Accept": "application/json"}
 
     def _base_url_from_settings(self, settings: ProviderSettings) -> str | None:
         raise NotImplementedError

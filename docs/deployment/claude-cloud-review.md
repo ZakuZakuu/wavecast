@@ -1,7 +1,7 @@
 # Claude 云端节目精校环境
 
 2026-10-08。独立运行修改后的 API、测试数据库和音频目录；不改 Railway/Vercel，
-不连接正式用户数据库。先建立可复现基线，再精校内容。当前代码基线为 integration。
+不连接正式用户数据库。音乐链路可选本机或带专用鉴权的 Railway 调试网关。先建立可复现基线，再精校内容。当前代码基线为 integration。
 
 ## 用户配置
 
@@ -50,6 +50,45 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 设置首次执行后会缓存文件，但不会保留运行进程；启动服务仍在每次会话执行。
 若安装超过平台约五分钟预算，移到会话执行并记录失败，不要无限重试。
 官方环境说明：https://code.claude.com/docs/en/cloud-environments
+
+## Railway 音乐调试网关（云端上游风控时使用）
+
+当 Claude VM 的直连上游持续返回 `-460`，可以改用鉴权的 Railway Function（复用已结束、无 cron 的 `music-sidecar-probe`；
+不新增服务，原一次性源码存为 `scripts/cloud/music-probe-legacy.ts`）。它只访问现有 private music-sidecar，不访问正式节目 API 或用户数据库。
+入口源文件是 `scripts/cloud/music-gateway.ts`；Node 24 下运行
+`node --test scripts/cloud/music-gateway.test.mjs` 做无网络测试。
+
+Claude 环境只需替换/新增这两项（地址以实际部署交付为准）：
+
+```dotenv
+NETEASE_MUSIC_API_BASE_URL=https://music-sidecar-probe-production.up.railway.app
+NETEASE_MUSIC_API_BEARER_TOKEN=<专用调试密钥>
+```
+
+使用包含本次适配器改动的分支；旧版不会发鉴权 header。令牌只在 sidecar 查询请求里发送，
+不会转发到音源下载、浏览器、QQ provider 或节目评审导出。不要把密钥写进 git、URL、日志
+或聊天。保持开发专用模型 key、本机数据库和本机音频目录；无需复制生产数据库、OAuth
+或 Railway 账户凭据。停止 VM 中自己的 music sidecar/upstream；不再运行 start-music.sh。
+其他 mock/live API 启动步骤不变，重启 API 才会读取新的配置。
+
+网关 Railway 变量：`PORT=8080`、`MUSIC_GATEWAY_TOKEN`（至少 32 字符），
+`MUSIC_SIDECAR_URL=http://music-sidecar.railway.internal:${{music-sidecar.PORT}}`。
+网关的 `/health` 只检查本机配置；真实查询需 bearer。仅开放 GET `/ready`、`/search`
+和数字 ID 的 `/tracks/<id>`、`/timing`、`/playback`；限 120 请求/分钟、3 并发，超限返回
+429。它不缓存播放 URL、不自动重试、不把调用方 header 转发给私网上游。
+
+公网入口会增加少量 Railway 服务/网络用量；仍共享生产的音乐上游，不能保证不会风控。
+先最多一次指定搜索确认，遇到 502/429 立即停下诊断，不连续探测或反复重生成节目。
+成功后只跑一期基线。需要下载音源时仍由 Claude VM 的出口访问音乐 CDN，网关不会代理
+音频字节，因此查询成功不等于该 VM 一定能下载音频；另做一次有界下载验收。
+`/ready` 本身会查询上游，不是无副作用的轮询健康检查。
+
+2026-10-09 部署 `d5d97f53-82d5-4636-bc7d-adb3d9d8cb20` SUCCESS；公网 `/health` 200、
+无密钥 search 401、一次鉴权 search 成功。未调用模型/TTS，未验证 Claude VM 的音源下载
+或完整生成。取 key：用户在 Railway → music-sidecar-probe → Variables 复制
+`MUSIC_GATEWAY_TOKEN` 到 Claude 的 `NETEASE_MUSIC_API_BEARER_TOKEN`，不要发到对话。
+首次新建服务被 Railway 的 Free plan resource provision limit 拒绝，因此复用一次性探针；
+其他四个正式服务的部署 ID 未变。当前源码和 legacy 源码分别保留在仓库，便于回退。
 
 ## 云端本地音乐链路（替代 Railway）
 
