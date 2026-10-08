@@ -35,6 +35,8 @@ In particular:
 - avoid another broad player/runtime rewrite unless a concrete blocker makes it unavoidable;
 - if an existing implementation invariant conflicts with the current product target, do not silently optimize the invariant. Reconcile the conflict against the product target first.
 
+Positioning (see `docs/PRELIMINARY_PRODUCT_TARGET.md` section 0): turn a listener's specific musical interest into a coherent programme of music and its stories, reducing the effort of searching and assembling scattered content. Long-tail interests demonstrate the value; everyday companion listening remains in scope. The music is real and the host voice is synthetic. Quality means grounded narration, relevant selection, natural listening and a coherent route with a genuine ending. Do not claim superiority to human radio or features that have not been verified live.
+
 ---
 
 ## Source of truth
@@ -58,6 +60,30 @@ If implementation and docs disagree, do not silently redefine the product. Prese
 After a consequential milestone, architecture, provider, or runtime change,
 update `docs/PROJECT_STATE.md` so a fresh session can recover the active state
 without duplicating the long-lived handoff or ADRs.
+
+---
+
+## Session context and scoped contributors
+
+`docs/PROJECT_STATE.md` is the only current-state entry point. Keep it a short
+snapshot, not an append-only session transcript (aim for about 8 KB or less).
+Move superseded execution history to `docs/history/`; keep deployment procedures
+in `docs/deployment/`, design sources in `docs/design/`, and submission copy/assets
+in `docs/submission/`. Do not create a competing `CURRENT_STATUS.md`.
+
+Codex owns cross-project planning, verified context, and canonical state updates.
+Claude is a scoped contributor: give it the task goal, exact relevant files/assets,
+constraints, acceptance criteria, and expected deliverables. It reports changes,
+checks and unresolved gaps rather than re-summarising all project history.
+
+A scoped contributor reads AGENTS, the preliminary product target and the short
+current state, then only the relevant sections of handoffs/ADRs/tests. The broad
+reading list above applies when choosing cross-project or architecture work;
+it does not require an isolated poster/UI task to ingest every historical note.
+Source-of-truth and runtime invariants still apply. If its task exposes an API or
+architecture decision, hand that decision back to the owner rather than silently
+expanding scope. Short task packets may be delivered in conversation; do not
+create a new permanent handoff file for every small assignment.
 
 ---
 

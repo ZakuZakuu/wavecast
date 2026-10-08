@@ -13,6 +13,19 @@ state is maintained in `docs/PROJECT_STATE.md`.
 
 ---
 
+## Reading this document economically
+
+Start with the short current state, not this entire historical contract. For a
+scoped design/UI/submission assignment, read the relevant design specification
+and task packet; use architecture sections only when the assignment touches
+those contracts. Codex maintains the unified plan and current state; scoped
+contributors report their task delta and do not create parallel status files.
+
+The hosted Actions failure described below is a dated September incident, not
+a current CI limitation. Successful October CI/render runs are recorded in the
+current state and submission notes. Historical instructions to stop at Listening
+P0 or UI P0 are completed milestones, not pending acceptance tasks.
+
 ## Historical handoff: Narration P0
 
 > **Superseded as the active product contract.** The implementation details in
