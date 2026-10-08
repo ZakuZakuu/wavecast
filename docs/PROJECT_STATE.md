@@ -19,6 +19,7 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 3. 浏览器引导 #178 已合入 integration（`52ad738`），尚未发布 main；微信外部浏览器引导、桌面建议和固定首页二维码已实现，本地 203 tests/lint/typecheck/build 通过，真机验收待用户完成。
 4. 用户已用 Google 登录原 GitHub 同邮箱账号；Google 保持基础权限 Testing。邮箱 OTP 登录正在准备：Resend 发信、同邮箱复用用户 ID、账户显示邮箱；本地 213 tests/lint/typecheck/build/rewrite smoke 通过；待发信域名/API Key 和限流表迁移，真机/真实投递未验收。绑定管理/改邮箱/账号合并后续再做。
 5. 提交前以材料和具体阻塞为主，避免无关功能发布；初赛后按确认的优先级处理已知问题，再评估电台风格后端接线、主持词和 TTS 精校。没有授权启动新的广泛运行时重构。
+6. **iOS PWA 切回前台白屏/播放状态丢失（根因已定位，待真机验收）：** `LibraryIdentityBridge` 把 Better Auth 每次 refetch 时游客的 `isPending=true` 当成身份未知，卸载整个应用并重跑身份切换（该库 1.7.6 在 `data===null` 时 refetch 即置 pending，切回前台必触发）。修复为只有首次会话查询阻塞应用，PR 回 integration；真机验证：游客状态切走 2 秒再回，页面与播放不应重置。登录页精简与验证码流程 `sessionStorage` 恢复尚未开始。
 
 ## 已交付与边界
 
@@ -37,7 +38,8 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 | 分支/PR | 状态 |
 | --- | --- |
 | `main` | `bd0abad`，#168 release 合并提交 |
-| `integration` | `52ad738`，#175–#178 已合并；与 main 不同 |
+| `integration` | `113b91b`，#175–#180 已合并（含邮箱验证码登录 #179）；与 main 不同 |
+| `fix/session-refetch-remount` | 待合并：修复切回前台整应用重挂载，见上方第 6 条 |
 | `feat/concept-film` / [#174](https://github.com/ZakuZakuu/wavecast/pull/174) | 独立宣传片 PR，未合并；head `3dc5145` |
 
 正式 Web 由 Vercel 跟随 main，Railway API 为正式后端；用户已完成正式域名/OAuth/Railway 配置。Google 配置已重部署原 main `bd0abad`（Vercel `dpl_5BxCo7bJXqRxjk9tPubmfQqtHpPK` READY）；没有连带发布 integration。部署运行规则及域名登录见 [runbook](deployment/railway-vercel.md)，CI 选择见 [ci.md](deployment/ci.md)。
