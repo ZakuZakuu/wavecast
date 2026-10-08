@@ -13,6 +13,7 @@ from wavecast.proposals import (
     ProgramProposalGenerationError,
     ProposalGenerationRequest,
 )
+from wavecast.providers.contracts import TrackMetadata
 from wavecast.providers.fakes import MockMusicProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.registry import MusicProviderRegistry
@@ -272,3 +273,84 @@ def test_llm_generator_requires_exact_requested_proposal_count() -> None:
                 ProposalGenerationRequest(prompt="给我两个节目", count=2)
             )
         )
+
+
+class _VariantCatalog:
+    """Catalog that spells the artist in Japanese shinjitai, unlike the proposer."""
+
+    def __init__(self) -> None:
+        self.tracks = [
+            TrackMetadata(
+                track_ref="netease:442682",
+                artist="久石譲",
+                title="天空の城ラピュタ",
+                duration_seconds=235,
+                playable=True,
+            ),
+            TrackMetadata(
+                track_ref="netease:28457548",
+                artist="久石譲",
+                title="娜乌西卡安魂曲",
+                duration_seconds=240,
+                playable=True,
+            ),
+        ]
+
+    async def search(self, query: str, *, limit: int = 5) -> list[TrackMetadata]:
+        del query
+        return self.tracks[:limit]
+
+    async def resolve_track(self, track_ref: str) -> TrackMetadata:
+        return next(track for track in self.tracks if track.track_ref == track_ref)
+
+
+def _variant_generator(
+    batch: ProgramProposalDraftBatch,
+) -> LLMProgramProposalGenerator:
+    retrieval = MusicRetrievalService(
+        MusicProviderRegistry({"netease": _VariantCatalog()}, preference=("netease",))
+    )
+    return LLMProgramProposalGenerator(_ProposalLLM(batch), retrieval)
+
+
+def _hisaishi_draft(*candidates: OpeningTrackCandidate) -> ProgramProposalDraftBatch:
+    return ProgramProposalDraftBatch(
+        proposals=[
+            ProgramProposalDraft(
+                title="久石让的宫崎骏配乐",
+                short_description="沿着旋律听电影背后的故事。",
+                editorial_route=["从开场曲进入", "再展开配乐的线索"],
+                opening_track_candidates=list(candidates),
+            )
+        ]
+    )
+
+
+def test_opening_track_resolves_when_proposer_uses_a_script_variant_of_the_artist() -> None:
+    generator = _variant_generator(
+        _hisaishi_draft(
+            OpeningTrackCandidate(artist="久石让", title="娜乌西卡安魂曲"),
+        )
+    )
+
+    proposal = asyncio.run(
+        generator.generate(ProposalGenerationRequest(prompt="久石让为宫崎骏电影写的配乐"))
+    )[0]
+
+    assert proposal.opening_track_ref == "netease:28457548"
+    assert proposal.opening_track_artist == "久石譲"
+
+
+def test_same_artist_fallback_matches_a_script_variant_of_the_artist() -> None:
+    generator = _variant_generator(
+        _hisaishi_draft(
+            OpeningTrackCandidate(artist="久石让", title="Definitely Not In Catalog"),
+        )
+    )
+
+    proposal = asyncio.run(
+        generator.generate(ProposalGenerationRequest(prompt="久石让为宫崎骏电影写的配乐"))
+    )[0]
+
+    assert proposal.opening_track_artist == "久石譲"
+    assert proposal.opening_track_ref in {"netease:442682", "netease:28457548"}
