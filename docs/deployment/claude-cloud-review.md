@@ -19,6 +19,9 @@ MINIMAX_API_KEY=<开发专用 key>
 NETEASE_MUSIC_API_BASE_URL=http://127.0.0.1:3101
 NETEASE_UPSTREAM_BASE_URL=http://127.0.0.1:3100
 NETEASE_UPSTREAM_TIMEOUT_SECONDS=10
+ENABLE_RANDOM_CN_IP=true
+ENABLE_FLAC=false
+ENABLE_GENERAL_UNBLOCK=false
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-flash
 DEEPSEEK_TIMEOUT_SECONDS=20
@@ -88,6 +91,20 @@ curl --fail --silent http://127.0.0.1:3101/ready
 启动阶段 `xeapi public key is missing` 单行不是退出证据：副仓 README 解释了后续
 自动获取 key 的 bootstrap 顺序；核对监听端口、后续日志和退出状态。不添加 Cookie、
 登录或手工 key 来消除该提示，不改变地域/付费限制相关开关。
+
+上游的 `ENABLE_RANDOM_CN_IP`、`ENABLE_FLAC`、`ENABLE_GENERAL_UNBLOCK` 按用户在 2026-10-08
+提供的生产设置镜像（`true`/`false`/`false`；生产端口 3000 在本地仍用 3100）。这三项在上方的
+环境变量里设置即可，`start-music.sh` 启动的上游会继承它们；不设置时上游默认全部关闭。
+
+**上游风控（2026-10-08 实测）：** 云端 VM 是海外云 IP。短时间内较多请求后，NetEase 会返回
+`code -460「检测到您的网络环境存在风险，请稍后再试」`，sidecar 对外表现为 502
+`music upstream unavailable`，持续数分钟。观察到启用随机国内 IP 后**仍然会被拒绝**：它只改
+请求头，不改 TCP 出口 IP，所以不能当作解决办法。实际做法：
+
+- 评审实验之间留出间隔，不要连续多轮生成或探针；
+- 出现连续 502 时先停手，只用 `/ready` 做低频探测，数分钟后再继续；
+- WaveCast 侧的 sidecar 适配器对 `search` 与曲目详情做短时缓存、合并相同请求，并在连续临时
+  失败后暂停新请求（`providers/call_guard.py`），避免失败期间继续加重限制。
 
 两服务只在 Claude VM 中运行，不请求 Railway；网络仍会访问音乐平台。
 重启时先停止上游（`kill $(cat .wavecast-data/cloud/ncm-upstream.pid)`）和 sidecar 再运行；
