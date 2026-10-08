@@ -53,9 +53,9 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 
 ## 云端本地音乐链路（替代 Railway）
 
-Claude 会话关联主仓 `ZakuZakuu/wavecast`，还需要读取私有副仓
-`ZakuZakuu/wavecast-music-dev`。确认 Claude 的 GitHub 连接也允许访问副仓；如果
-云端代理拒绝读取未关联仓库，先解决仓库授权或由用户提供副仓源码，不把仓库公开，
+Claude 会话关联主仓 `ZakuZakuu/wavecast`，还需要读取副仓
+`ZakuZakuu/wavecast-music-dev`。副仓当前为公开仓库（2026-10-08 已核对），可匿名读取；如果
+云端代理拒绝读取副仓，先检查访问配置或由用户提供副仓源码，不改仓库可见性，
 不往环境里加全权限 GitHub token 来绕开限制。
 
 先在会话运行（独立后台任务，不放进 VM Setup script）：
@@ -130,7 +130,7 @@ bash scripts/cloud/start-api.sh --live
 ```
 
 只想评审选曲和文稿、不合成语音时用 `bash scripts/cloud/start-api.sh --live --no-tts`：
-研究、选曲、写稿仍走真实 provider，TTS 用 mock（不调用 MiniMax，时长为估算值）。
+研究、选曲、写稿仍走真实 provider，TTS 用 mock（不调用 MiniMax，也不要求 MiniMax key/voice ID，时长为估算值）。
 
 `--live` 显式打开现有各阶段，包括 MiniMax，配置检查不会发 provider 请求；
 服务启动后新建节目会花费额度。先从本地 API `/docs` 核对请求合同，使用固定的

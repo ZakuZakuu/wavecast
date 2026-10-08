@@ -29,8 +29,9 @@ unset WAVECAST_AUTH_ISSUER WAVECAST_AUTH_AUDIENCE
 if [[ "$mode" == --live ]]; then
   python3 - <<'PY'
 import os
-required = ['DEEPSEEK_API_KEY', 'EXA_API_KEY', 'TAVILY_API_KEY',
-            'MINIMAX_API_KEY', 'MINIMAX_TTS_VOICE_ID']
+required = ['DEEPSEEK_API_KEY', 'EXA_API_KEY', 'TAVILY_API_KEY']
+if os.environ.get('WAVECAST_TTS_PROVIDER') != 'mock':
+    required.extend(['MINIMAX_API_KEY', 'MINIMAX_TTS_VOICE_ID'])
 missing = [key for key in required if not os.environ.get(key, '').strip()]
 if not any(os.environ.get(key, '').strip() for key in
            ['NETEASE_MUSIC_API_BASE_URL', 'QQ_MUSIC_API_BASE_URL']):

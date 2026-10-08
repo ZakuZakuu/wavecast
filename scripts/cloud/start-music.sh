@@ -58,14 +58,23 @@ else
   # NODE_EXTRA_CA_CERTS lets Node trust the sandbox proxy CA when present.
   ca_bundle=${NODE_EXTRA_CA_CERTS:-/root/.ccr/ca-bundle.crt}
   [[ -f "$ca_bundle" ]] && export NODE_EXTRA_CA_CERTS="$ca_bundle"
-  (cd "$upstream_dir" && NODE_ENV=production PORT=3100 HOST=127.0.0.1 \
+  (cd "$upstream_dir"
+    NODE_ENV=production PORT=3100 HOST=127.0.0.1 \
     nohup node app.js > "$data_dir/ncm-upstream.log" 2>&1 &
     echo $! > "$data_dir/ncm-upstream.pid")
   echo "Upstream log: $data_dir/ncm-upstream.log (pid file ncm-upstream.pid)"
+  upstream_ready=false
   for _ in $(seq 1 30); do
-    curl --silent --output /dev/null --max-time 2 http://127.0.0.1:3100/ && break
+    if curl --silent --output /dev/null --max-time 2 http://127.0.0.1:3100/; then
+      upstream_ready=true
+      break
+    fi
     sleep 1
   done
+  if [[ "$upstream_ready" != true ]]; then
+    echo 'Upstream did not become reachable; inspect its local log before proceeding.' >&2
+    exit 1
+  fi
 fi
 export NETEASE_UPSTREAM_BASE_URL=http://127.0.0.1:3100
 export NETEASE_UPSTREAM_TIMEOUT_SECONDS=10
