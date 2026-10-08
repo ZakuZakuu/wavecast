@@ -37,7 +37,7 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 模型/TTS 行是仓库默认值，不是已核实的线上配置。首次对照时让用户确认生产的
 非秘密模型、音色、速度，再保持一致。本方案不需要 Railway 地址或 Audius key。
 两个 localhost 地址不是同一个服务：WaveCast → sidecar 3101 → upstream 3100
-（Docker 内部 3000）。Next 前端仍用 3000，因此不要把 upstream 映射到主机 3000。
+（原生 Node，监听 127.0.0.1:3100；`--docker` 时容器内部 3000）。Next 前端仍用 3000，因此不要把 upstream 映射到主机 3000。
 
 第一版使用普通环境变量。Network secrets 注入 HTTP header，但程序还检查 key
 环境变量，Tavily 当前也在请求 JSON 里传 api_key；尚未实现/验证代理注入兼容。
@@ -64,11 +64,16 @@ Claude 会话关联主仓 `ZakuZakuu/wavecast`，还需要读取私有副仓
 bash scripts/cloud/start-music.sh
 ```
 
-脚本要求 Docker daemon 可用，将副仓 clone 到 gitignored 数据目录，打印版本 SHA，
-使用副仓现有 `Dockerfile.upstream`（固定上游 commit
-`a8c781fd64faab17fedfd46e0615a2609307f163`），主机只监听 127.0.0.1:3100；
-然后启动 native Python sidecar 于 127.0.0.1:3101。不会调用模型、搜索或 TTS。
-不会自动更新已 clone 的副仓，也不会接管已存在的同名容器；要先核对版本和进程。
+脚本默认**原生运行**：将副仓 clone 到 gitignored 数据目录并打印版本 SHA；按固定上游
+commit `a8c781fd64faab17fedfd46e0615a2609307f163` 在 `.wavecast-data/cloud/ncm-upstream`
+拉取，`pnpm@9 install --frozen-lockfile --prod --ignore-scripts` 后用 Node 监听
+127.0.0.1:3100（日志与 pid 在 `.wavecast-data/cloud/`），再启动 native Python sidecar 于
+127.0.0.1:3101。原生是默认值，因为 Claude 云端 Docker 构建不信任沙箱代理 CA，
+且 Docker Hub 匿名拉取会 429 限流。不会调用模型、搜索或 TTS。不会自动更新已 clone
+的副仓；3100 已有监听时拒绝启动，需先核对进程。
+
+`bash scripts/cloud/start-music.sh --docker` 保留原容器流程（`Dockerfile.upstream`），仅在
+有 Docker daemon 且构建不经代理时使用；云端 VM 里 `dockerd` 默认不运行。
 
 启动后先检查 `/health`（仅进程），再检查 `/ready`（一次有界目录请求）：
 
@@ -85,9 +90,11 @@ curl --fail --silent http://127.0.0.1:3101/ready
 登录或手工 key 来消除该提示，不改变地域/付费限制相关开关。
 
 两服务只在 Claude VM 中运行，不请求 Railway；网络仍会访问音乐平台。
-重启时停止本机 `wavecast-cloud-netease` 容器（`docker stop wavecast-cloud-netease`）
-以及 sidecar 后再运行；`--rm` 会移除已停止容器。不要清理其他 Docker 资源。
-Claude 环境 Docker、私有副仓授权和外部音源实际可达性仍待首次运行验证。
+重启时先停止上游（`kill $(cat .wavecast-data/cloud/ncm-upstream.pid)`）和 sidecar 再运行；
+`--docker` 模式则 `docker stop wavecast-cloud-netease`。不要清理其他进程或 Docker 资源。
+2026-10-08 在 Claude 云端验证：原生链路 `/health`、`/ready`、search → playback → 音频下载
+（全长时长与元数据一致）通过；副仓为公开仓库，匿名读取可用。版权受限曲目（如周杰伦原唱）
+无法播放属预期，选题时需避开。
 
 ## 每次会话：从 mock 到真实基线
 
