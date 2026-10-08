@@ -7,7 +7,6 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   avatarInitial,
   libraryProgrammeCount,
-  providerLabel,
   signInProviders,
   tasteSummary,
   type AuthAvailability,
@@ -19,6 +18,7 @@ import { lastTabPathOr } from "../lib/nav-memory";
 import { readLocalTaste } from "../lib/taste";
 import { emptyUserLibrary, readUserLibrary, subscribeUserLibrary } from "../lib/user-library";
 import { GitHubMark, GoogleMark } from "./account/brand-icons";
+import { EmailLogin } from "./account/email-login";
 import { IosInstallGuide } from "./install/install-prompt";
 import { LogoMark } from "./logo-mark";
 import { OnboardingSheet } from "./onboarding/onboarding-sheet";
@@ -95,9 +95,11 @@ function LoginView({ availability }: { availability: AuthAvailability | null }) 
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<SocialProvider | null>(null);
+  const [emailBusy, setEmailBusy] = useState(false);
   const providers = signInProviders(availability);
+  const emailEnabled = Boolean(availability?.enabled && availability.emailOtp);
   const known = availability !== null;
-  const signInOff = known && providers.length === 0;
+  const signInOff = known && providers.length === 0 && !emailEnabled;
 
   const signIn = async (provider: SocialProvider) => {
     setError(null);
@@ -112,7 +114,7 @@ function LoginView({ availability }: { availability: AuthAvailability | null }) 
   };
 
   return (
-    <div className="acct acct-login">
+    <div className={`acct acct-login${emailEnabled ? " has-email" : ""}`}>
       <div className="acct-body">
         <BackButton />
         <div className="login-brand">
@@ -134,14 +136,20 @@ function LoginView({ availability }: { availability: AuthAvailability | null }) 
         </ul>
 
         <div className="login-actions">
+          {emailEnabled ? <EmailLogin disabled={busy !== null} onBusyChange={setEmailBusy} onSuccess={() => {
+            clearApiAuthToken();
+            router.push("/onboarding");
+            router.refresh();
+          }} /> : null}
+          {emailEnabled && providers.length > 0 ? <p className="login-divider">或使用其他方式</p> : null}
           {providers.includes("github") ? (
-            <button type="button" className="login-button is-github" disabled={busy !== null} onClick={() => void signIn("github")}>
+            <button type="button" className="login-button is-github" disabled={busy !== null || emailBusy} onClick={() => void signIn("github")}>
               <GitHubMark />
               {busy === "github" ? "正在跳转…" : "使用 GitHub 继续"}
             </button>
           ) : null}
           {providers.includes("google") ? (
-            <button type="button" className="login-button is-google" disabled={busy !== null} onClick={() => void signIn("google")}>
+            <button type="button" className="login-button is-google" disabled={busy !== null || emailBusy} onClick={() => void signIn("google")}>
               <GoogleMark />
               {busy === "google" ? "正在跳转…" : "使用 Google 继续"}
             </button>
@@ -169,7 +177,6 @@ function useLibraryCount(): number {
 type InstallRow = "ios" | "prompt" | null;
 
 function AccountView({ name, email }: { name: string; email: string | null | undefined }) {
-  const [provider, setProvider] = useState<string | null>(null);
   const [editingTaste, setEditingTaste] = useState(false);
   const [taste, setTaste] = useState<string | null>(null);
   const [installRow, setInstallRow] = useState<InstallRow>(null);
@@ -179,20 +186,6 @@ function AccountView({ name, email }: { name: string; email: string | null | und
   useEffect(() => {
     setTaste(tasteSummary(readLocalTaste()));
   }, [editingTaste]);
-
-  useEffect(() => {
-    let active = true;
-    authClient.listAccounts()
-      .then((result) => {
-        const accounts = (result as { data?: Array<{ providerId?: string; provider?: string }> | null }).data ?? [];
-        const first = accounts.find((account) => account.providerId === "github" || account.providerId === "google") ?? accounts[0];
-        if (active) setProvider(first?.providerId ?? first?.provider ?? null);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, []);
 
   // Only where installing is possible and not done yet.
   useEffect(() => {
@@ -230,7 +223,7 @@ function AccountView({ name, email }: { name: string; email: string | null | und
         <div className="acct-profile">
           <span className="acct-avatar" aria-hidden="true">{avatarInitial(name, email)}</span>
           <h1>{name || email}</h1>
-          <p>{providerLabel(provider) ?? email ?? ""}</p>
+          <p>{email ?? ""}</p>
         </div>
 
         <h2 className="acct-group-title">收听</h2>

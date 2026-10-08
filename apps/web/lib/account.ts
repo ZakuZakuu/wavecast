@@ -2,7 +2,7 @@
 import type { LocalTaste } from "./taste";
 import type { UserLibraryState } from "./user-library";
 
-export type AuthAvailability = { enabled: boolean; providers: string[] };
+export type AuthAvailability = { enabled: boolean; providers: string[]; emailOtp?: boolean };
 export type SocialProvider = "github" | "google";
 
 /** Sign-in buttons to show, GitHub first (as designed); none when sign-in is off. */

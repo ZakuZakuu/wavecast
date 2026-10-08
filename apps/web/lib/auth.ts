@@ -2,7 +2,10 @@ import { Pool } from "pg";
 import { PostgresDialect } from "kysely";
 import { betterAuth } from "better-auth";
 import { jwt } from "better-auth/plugins";
+import { emailOTP } from "better-auth/plugins/email-otp";
+import { APIError } from "better-auth/api";
 import { resolveAuthDatabaseUrl } from "./auth-database-url";
+import { isEmailOtpConfigured, markEmailDeliveryFailed, sendLoginOtp } from "./email-otp";
 
 export class AuthNotConfiguredError extends Error {
   constructor() {
@@ -57,7 +60,35 @@ export function createAuth() {
       schemaName: process.env.BETTER_AUTH_SCHEMA ?? "auth",
     },
     socialProviders,
+    // Shared counters survive serverless instance changes. Apply auth:migrate
+    // with mail credentials configured before enabling email login in production.
+    ...(isEmailOtpConfigured() ? {
+      rateLimit: {
+        enabled: true,
+        storage: "database" as const,
+        customRules: {
+          "/email-otp/send-verification-otp": { window: 60, max: 3 },
+        },
+      },
+    } : {}),
     plugins: [
+      ...(isEmailOtpConfigured() ? [emailOTP({
+        otpLength: 6,
+        expiresIn: 300,
+        allowedAttempts: 3,
+        storeOTP: "hashed",
+        async sendVerificationOTP({ email, otp, type }) {
+          if (type !== "sign-in") {
+            throw new APIError("BAD_REQUEST", { message: "Unsupported email operation" });
+          }
+          try {
+            await sendLoginOtp({ email, otp });
+          } catch {
+            markEmailDeliveryFailed();
+            throw new APIError("SERVICE_UNAVAILABLE", { message: "Email delivery unavailable" });
+          }
+        },
+      })] : []),
       jwt({
         jwt: {
           issuer: baseURL,
