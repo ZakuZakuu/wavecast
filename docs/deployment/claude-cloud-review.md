@@ -16,7 +16,9 @@ DEEPSEEK_API_KEY=<开发专用 key>
 EXA_API_KEY=<开发专用 key>
 TAVILY_API_KEY=<开发专用 key>
 MINIMAX_API_KEY=<开发专用 key>
-NETEASE_MUSIC_API_BASE_URL=<现有音乐 sidecar 地址，不是 wavecast.space 或节目 API>
+NETEASE_MUSIC_API_BASE_URL=http://127.0.0.1:3101
+NETEASE_UPSTREAM_BASE_URL=http://127.0.0.1:3100
+NETEASE_UPSTREAM_TIMEOUT_SECONDS=10
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-flash
 DEEPSEEK_TIMEOUT_SECONDS=20
@@ -33,10 +35,9 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 模型/TTS 行是仓库默认值，不是已核实的线上配置。首次对照时让用户确认生产的
-非秘密模型、音色、速度和音源选择，再保持一致。使用 QQ 上游时填
-`QQ_MUSIC_API_BASE_URL`；不需要 Audius key，除非专门验收 Audius。
-音乐上游复用的是目录/播放地址接口，不会把生成任务发送到正式 API；它的可达性
-和音源快照仍须在云端实际检查，不能凭 URL 认为已验收。
+非秘密模型、音色、速度，再保持一致。本方案不需要 Railway 地址或 Audius key。
+两个 localhost 地址不是同一个服务：WaveCast → sidecar 3101 → upstream 3100
+（Docker 内部 3000）。Next 前端仍用 3000，因此不要把 upstream 映射到主机 3000。
 
 第一版使用普通环境变量。Network secrets 注入 HTTP header，但程序还检查 key
 环境变量，Tavily 当前也在请求 JSON 里传 api_key；尚未实现/验证代理注入兼容。
@@ -49,6 +50,44 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 设置首次执行后会缓存文件，但不会保留运行进程；启动服务仍在每次会话执行。
 若安装超过平台约五分钟预算，移到会话执行并记录失败，不要无限重试。
 官方环境说明：https://code.claude.com/docs/en/cloud-environments
+
+## 云端本地音乐链路（替代 Railway）
+
+Claude 会话关联主仓 `ZakuZakuu/wavecast`，还需要读取私有副仓
+`ZakuZakuu/wavecast-music-dev`。确认 Claude 的 GitHub 连接也允许访问副仓；如果
+云端代理拒绝读取未关联仓库，先解决仓库授权或由用户提供副仓源码，不把仓库公开，
+不往环境里加全权限 GitHub token 来绕开限制。
+
+先在会话运行（独立后台任务，不放进 VM Setup script）：
+
+```bash
+bash scripts/cloud/start-music.sh
+```
+
+脚本要求 Docker daemon 可用，将副仓 clone 到 gitignored 数据目录，打印版本 SHA，
+使用副仓现有 `Dockerfile.upstream`（固定上游 commit
+`a8c781fd64faab17fedfd46e0615a2609307f163`），主机只监听 127.0.0.1:3100；
+然后启动 native Python sidecar 于 127.0.0.1:3101。不会调用模型、搜索或 TTS。
+不会自动更新已 clone 的副仓，也不会接管已存在的同名容器；要先核对版本和进程。
+
+启动后先检查 `/health`（仅进程），再检查 `/ready`（一次有界目录请求）：
+
+```bash
+curl --fail --silent http://127.0.0.1:3101/health
+curl --fail --silent http://127.0.0.1:3101/ready
+```
+
+再验收一个指定歌曲的 search → track → playback → 音频可下载，按副仓 README
+合同读取。播放 URL 可能带签名，不输出到对话/日志/提交。请求成功不等于歌曲全长
+可播；应检查下载内容类型/时长。音乐链路失败时不开始付费节目生成。
+启动阶段 `xeapi public key is missing` 单行不是退出证据：副仓 README 解释了后续
+自动获取 key 的 bootstrap 顺序；核对监听端口、后续日志和退出状态。不添加 Cookie、
+登录或手工 key 来消除该提示，不改变地域/付费限制相关开关。
+
+两服务只在 Claude VM 中运行，不请求 Railway；网络仍会访问音乐平台。
+重启时停止本机 `wavecast-cloud-netease` 容器（`docker stop wavecast-cloud-netease`）
+以及 sidecar 后再运行；`--rm` 会移除已停止容器。不要清理其他 Docker 资源。
+Claude 环境 Docker、私有副仓授权和外部音源实际可达性仍待首次运行验证。
 
 ## 每次会话：从 mock 到真实基线
 
