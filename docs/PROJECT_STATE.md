@@ -16,10 +16,10 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 
 1. **初赛海报 V7 已定稿（用户 2026-10-07 确认），随初赛材料一并提交。** 简介沿用原稿小幅调整，用户已定稿，仅提交时使用，不入仓库。海报的信息层级与最终文案见 [提交材料](submission/preliminary.md)；源码与导出方法在分支 `claude/kind-carson-sv2kei` 的 `docs/submission/poster/`（未合并，PNG 不入库）。旧的 B/B2 与 A/B/C 候选均已放弃。
 2. 待用户决定：提交前是否保留易进入的首页选题，再加入一两个具体、有吸引力且真实试听通过的主题（只涉及 `apps/web/lib/featured.ts`，低风险）；线上 AI 推荐规划器：用户反馈生产已设为 DeepSeek，尚未由我们核实线上实际表现，对外只写“收听兴趣带来推荐”，不写“创意选题”。
-3. 浏览器引导 #178 已合入 integration（`52ad738`），尚未发布 main；微信外部浏览器引导、桌面建议和固定首页二维码已实现，本地 203 tests/lint/typecheck/build 通过，真机验收待用户完成。
-4. 用户已用 Google 登录原 GitHub 同邮箱账号；Google 保持基础权限 Testing。邮箱 OTP 登录正在准备：Resend 发信、同邮箱复用用户 ID、账户显示邮箱；本地 213 tests/lint/typecheck/build/rewrite smoke 通过；待发信域名/API Key 和限流表迁移，真机/真实投递未验收。绑定管理/改邮箱/账号合并后续再做。
+3. 浏览器引导 #178 已随 #180 发布到 main；微信外部浏览器引导、桌面建议和固定首页二维码已实现，本地 203 tests/lint/typecheck/build 通过，真机验收待用户完成。
+4. 邮箱验证码登录已发布 main（#179/#180）：Resend 发信、同邮箱复用用户 ID、账户显示邮箱；Google 保持基础权限 Testing。2026-10-08 用户在正式环境确认新登录页显示正常、登录可用。绑定管理/改邮箱/账号合并后续再做；预览环境未配置登录，认证流程在 wavecast.space 验收。
 5. 提交前以材料和具体阻塞为主，避免无关功能发布；初赛后按确认的优先级处理已知问题，再评估电台风格后端接线、主持词和 TTS 精校。没有授权启动新的广泛运行时重构。
-6. **iOS PWA 切回前台白屏已修复（用户真机确认，#181 在 integration `e722630`，尚未发布 main）：** 根因是 `LibraryIdentityBridge` 把游客 refetch 时的 `isPending` 当成身份未知而卸载整个应用；现仅首次会话查询阻塞应用。登录页精简与验证码流程 `sessionStorage` 恢复在 `feat/login-page-mobile`（PR 待合并，真机“发码→切邮箱→返回→登录”待验收）。
+6. **已发布 main（#183，2026-10-08）：** ① iOS PWA 切回前台白屏/播放状态丢失已修复，用户真机确认。根因是 `LibraryIdentityBridge` 把游客 refetch 时 Better Auth 置位的 `isPending` 当成身份未知而卸载整个应用，现仅首次会话查询阻塞应用（#181）。② 登录页单屏化、邮箱主入口、Google/GitHub 并排，验证码流程用 `sessionStorage` 保存邮箱/步骤/冷却并在刷新或页面被丢弃后恢复且不自动重发（#182）；用户真机确认登录页与登录正常；“发码→切邮箱 App→返回”已验收：临时切出不再白屏，切出较久时 iOS 仍会丢弃页面并刷新一次（系统行为，不可避免），刷新后回到验证码界面，可继续输入登录。
 
 ## 已交付与边界
 
@@ -33,16 +33,15 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 
 ## 分支、部署与验证
 
-2026-10-08 核对的 Git 状态（随下一次发布更新）：
+2026-10-08 核对的 Git 状态（随下一次发布更新）；生产 Vercel `dpl_5vURkhhcq5L1akgxd4MndXGaoyQz` READY：
 
 | 分支/PR | 状态 |
 | --- | --- |
-| `main` | `bd0abad`，#168 release 合并提交 |
-| `integration` | `113b91b`，#175–#180 已合并（含邮箱验证码登录 #179）；与 main 不同 |
-| `feat/login-page-mobile` | 登录页单屏化 + 验证码流程恢复，PR 待合并，见上方第 6 条 |
+| `main` | `8442029`，#183 release 合并提交（含 #179–#182） |
+| `integration` | 已快进到 `8442029`；之后仅有文档提交 |
 | `feat/concept-film` / [#174](https://github.com/ZakuZakuu/wavecast/pull/174) | 独立宣传片 PR，未合并；head `3dc5145` |
 
-正式 Web 由 Vercel 跟随 main，Railway API 为正式后端；用户已完成正式域名/OAuth/Railway 配置。Google 配置已重部署原 main `bd0abad`（Vercel `dpl_5BxCo7bJXqRxjk9tPubmfQqtHpPK` READY）；没有连带发布 integration。部署运行规则及域名登录见 [runbook](deployment/railway-vercel.md)，CI 选择见 [ci.md](deployment/ci.md)。
+正式 Web 由 Vercel 跟随 main，Railway API 为正式后端；用户已完成正式域名/OAuth/Railway 配置。邮箱验证码登录与上述修复已随 #180/#183 发布；后端无改动，Railway 未重新部署。部署运行规则及域名登录见 [runbook](deployment/railway-vercel.md)，CI 选择见 [ci.md](deployment/ci.md)。
 
 开发：功能分支 → PR 到 integration → 合并后的托管预览验收 → release PR integration → main（普通 merge commit）→ integration 快进到 main 合并提交；不 force push。不为了获得预览把未验收工作推 main。integration/main 保留，保护长期分支，避免合并后自动删除 integration。
 
