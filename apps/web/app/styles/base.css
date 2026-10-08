@@ -3,7 +3,7 @@
 
 html,
 body {
-  height: 100%;
+  height: var(--root-h);
   margin: 0;
   overflow: hidden;
   overscroll-behavior: none;
@@ -50,7 +50,7 @@ h1, h2, h3, p { margin-top: 0; }
 /* The fixed-height device frame. Phone layout is centred on wide screens. */
 .app-root {
   position: relative;
-  height: 100dvh;
+  height: var(--app-h);
   width: 100%;
   max-width: var(--frame-max);
   margin: 0 auto;
@@ -166,7 +166,7 @@ h1, h2, h3, p { margin-top: 0; }
 /* Shown only until the first session lookup settles; keeps cold start on the
    app background instead of an unstyled empty block. */
 .library-identity-loading {
-  min-height: 100dvh;
+  min-height: var(--app-h);
   display: grid;
   place-content: center;
   gap: 12px;
