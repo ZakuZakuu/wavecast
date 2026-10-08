@@ -413,12 +413,16 @@ class LLMProgramProposalGenerator:
         retrieval: MusicRetrievalService,
         *,
         max_opening_candidates: int = 3,
+        pool_builder: CatalogPoolBuilder | None = None,
     ) -> None:
         if max_opening_candidates < 1 or max_opening_candidates > 4:
             raise ValueError("max_opening_candidates must be between 1 and 4")
         self.llm = llm
         self.retrieval = retrieval
         self.max_opening_candidates = max_opening_candidates
+        # Optional (ADR 0022): when the model's own candidates and the first few
+        # same-artist search results are all unplayable, look deeper in the artist's catalog.
+        self.pool_builder = pool_builder
 
     async def generate(self, request: ProposalGenerationRequest) -> list[ProgramProposal]:
         raw = await self.llm.structured(
@@ -521,6 +525,37 @@ class LLMProgramProposalGenerator:
                 if _proposal_catalog_name(resolved_fallback.canonical_artist) != artist_key:
                     continue
                 return resolved_fallback, duration, timing_profile
+        return await self._deeper_artist_fallback(candidates)
+
+    async def _deeper_artist_fallback(
+        self, candidates: list[OpeningTrackCandidate]
+    ) -> tuple[ResolvedTrack | None, int | None, TrackTimingProfile | None]:
+        """Find any playable track credited to the named artists, beyond the first results.
+
+        Search ranks popular songs first, and those are often the unplayable ones, so the
+        first five results can all be unplayable while the artist still has playable songs.
+        """
+
+        if self.pool_builder is None:
+            return None, None, None
+        artists: list[str] = []
+        for candidate in candidates:
+            if all(_proposal_catalog_name(candidate.artist) != _proposal_catalog_name(a) for a in artists):
+                artists.append(candidate.artist)
+        try:
+            pool = await self.pool_builder.build(artist_queries=artists)
+        except Exception:  # noqa: BLE001 - the deeper look is optional
+            logger.warning("opening_track_pool_fallback_failed")
+            return None, None, None
+        for entry in pool.entries:
+            verified = await self._verified_playable_track(entry.resolved_track())
+            if verified is not None:
+                logger.info(
+                    "opening_track_pool_fallback entries=%d verifications=%d",
+                    len(pool.entries),
+                    pool.verification_count,
+                )
+                return verified
         return None, None, None
 
     async def _classify_unresolved(self, draft: ProgramProposalDraft) -> str:

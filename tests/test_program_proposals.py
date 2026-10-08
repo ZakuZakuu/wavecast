@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 from pydantic import BaseModel, ValidationError
+from wavecast.catalog_pool import CatalogPoolBuilder
 from wavecast.proposals import (
     DeterministicMockProgramProposalGenerator,
     DurationIntent,
@@ -398,3 +399,77 @@ def test_failure_reason_says_catalog_unavailable_when_the_catalog_is_down() -> N
 
 def test_failure_reason_says_not_found_when_nothing_matches() -> None:
     assert _failure_reason(_VariantCatalog(), "Nobody", "Nothing") == "opening_track_not_found"
+
+
+class _DeepCatalog:
+    """Popular songs rank first and cannot be played; a playable one sits past the first five."""
+
+    def __init__(self) -> None:
+        self.tracks = [
+            TrackMetadata(
+                track_ref=f"netease:{index}",
+                artist="椎名林檎",
+                title=f"Hit {index}",
+                duration_seconds=200,
+                playable=index == 7,
+            )
+            for index in range(8)
+        ]
+
+    async def search(self, query: str, *, limit: int = 5) -> list[TrackMetadata]:
+        # Like the real sidecar, search results never carry playability.
+        return [track.model_copy(update={"playable": False}) for track in self.tracks[:limit]]
+
+    async def resolve_track(self, track_ref: str) -> TrackMetadata:
+        return next(track for track in self.tracks if track.track_ref == track_ref)
+
+
+def _deep_generator(*, with_pool: bool) -> LLMProgramProposalGenerator:
+    retrieval = MusicRetrievalService(
+        MusicProviderRegistry({"netease": _DeepCatalog()}, preference=("netease",))  # type: ignore[dict-item]
+    )
+    return LLMProgramProposalGenerator(
+        _ProposalLLM(_hisaishi_draft(OpeningTrackCandidate(artist="椎名林檎", title="Hit 0"))),
+        retrieval,
+        pool_builder=CatalogPoolBuilder(retrieval) if with_pool else None,
+    )
+
+
+def test_without_the_pool_an_artist_whose_top_results_are_unplayable_fails() -> None:
+    with pytest.raises(ProgramProposalGenerationError) as failure:
+        asyncio.run(
+            _deep_generator(with_pool=False).generate(ProposalGenerationRequest(prompt="椎名林檎"))
+        )
+
+    assert failure.value.reason == "opening_track_unplayable"
+
+
+def test_the_pool_finds_a_playable_track_by_the_artist_beyond_the_first_results() -> None:
+    proposal = asyncio.run(
+        _deep_generator(with_pool=True).generate(ProposalGenerationRequest(prompt="椎名林檎"))
+    )[0]
+
+    assert proposal.opening_track_artist == "椎名林檎"
+    assert proposal.opening_track_title == "Hit 7"
+    assert proposal.opening_track_duration_seconds == 200
+
+
+def test_the_pool_fallback_still_fails_when_the_artist_has_nothing_playable() -> None:
+    class AllUnplayable(_DeepCatalog):
+        def __init__(self) -> None:
+            super().__init__()
+            self.tracks = [track.model_copy(update={"playable": False}) for track in self.tracks]
+
+    retrieval = MusicRetrievalService(
+        MusicProviderRegistry({"netease": AllUnplayable()}, preference=("netease",))  # type: ignore[dict-item]
+    )
+    generator = LLMProgramProposalGenerator(
+        _ProposalLLM(_hisaishi_draft(OpeningTrackCandidate(artist="椎名林檎", title="Hit 0"))),
+        retrieval,
+        pool_builder=CatalogPoolBuilder(retrieval),
+    )
+
+    with pytest.raises(ProgramProposalGenerationError) as failure:
+        asyncio.run(generator.generate(ProposalGenerationRequest(prompt="椎名林檎")))
+
+    assert failure.value.reason == "opening_track_unplayable"

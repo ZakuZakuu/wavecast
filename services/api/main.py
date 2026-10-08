@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from wavecast.arrangement import MixPlan, plan_episode_mix
 from wavecast.assembly import create_episode_assembly_service
 from wavecast.auth import AuthPrincipal, AuthTokenError, JwksJWTVerifier
+from wavecast.catalog_pool import CatalogPoolBuilder, PoolBuildConfig
 from wavecast.deployment import audio_root_from_env, normalize_database_url
 from wavecast.materialization import (
     MusicSnapshotError,
@@ -149,6 +150,19 @@ from wavecast.user_context import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_logging() -> None:
+    """Make the counts-only ``wavecast.*`` INFO diagnostics visible in the API log."""
+
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.WARNING, format="%(levelname)s [%(name)s] %(message)s"
+        )
+    logging.getLogger("wavecast").setLevel(os.getenv("WAVECAST_LOG_LEVEL", "INFO").upper())
+
+
+_configure_logging()
 
 LISTENER_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 DATABASE_URL = os.getenv("WAVECAST_DATABASE_URL")
@@ -383,9 +397,18 @@ def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGene
     live_settings = settings.for_live_capability()
     live_settings.credential_for("deepseek")
     ledger = UsageLedger()
+    retrieval = MusicRetrievalService(build_music_registry(settings))
     return LLMProgramProposalGenerator(
         DeepSeekLLMProvider(live_settings, ledger=ledger),
-        MusicRetrievalService(build_music_registry(settings)),
+        retrieval,
+        pool_builder=(
+            CatalogPoolBuilder(
+                retrieval,
+                PoolBuildConfig(max_verifications=12, concurrency=2, timeout_seconds=20.0),
+            )
+            if settings.catalog_pool
+            else None
+        ),
     )
 
 
