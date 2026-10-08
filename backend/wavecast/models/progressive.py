@@ -53,7 +53,7 @@ class ProgressiveAssemblySession(BaseModel):
     topic: str = Field(min_length=1, max_length=300)
     listener_taste_context: str | None = Field(default=None, max_length=1000)
     desired_duration_seconds: int = Field(gt=0)
-    max_tracks: int = Field(ge=2, le=8)
+    max_tracks: int = Field(ge=2, le=16)
     max_chapters: int = Field(ge=2, le=32)
     output_language: OutputLanguage
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)

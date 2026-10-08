@@ -75,14 +75,17 @@ class StagedProgressiveRuntimeAdapter:
             canonical_artist=opening_artist,
             canonical_title=opening_title,
         )
-        from wavecast.assembly import LiveEpisodeAssemblyRequest
+        from wavecast.assembly import LiveEpisodeAssemblyRequest, route_limits_for_duration
 
+        max_tracks, max_chapters = route_limits_for_duration(
+            episode.program_estimated_duration_seconds, scaled=self.assembly.duration_scaling
+        )
         request = LiveEpisodeAssemblyRequest(
             topic=episode.topic,
             anchor_tracks=[opening.title],
             desired_duration_seconds=episode.program_estimated_duration_seconds,
-            max_tracks=5,
-            max_chapters=8,
+            max_tracks=max_tracks,
+            max_chapters=max_chapters,
             presentation_intent=episode.presentation_intent,
             output_language=OutputLanguage.AUTO,
         )
@@ -299,14 +302,17 @@ class StagedProgressiveRuntimeAdapter:
             canonical_artist=artist,
             canonical_title=title,
         )
-        from wavecast.assembly import LiveEpisodeAssemblyRequest
+        from wavecast.assembly import LiveEpisodeAssemblyRequest, route_limits_for_duration
 
+        max_tracks, max_chapters = route_limits_for_duration(
+            episode.program_estimated_duration_seconds, scaled=self.assembly.duration_scaling
+        )
         request = LiveEpisodeAssemblyRequest(
             topic=episode.topic,
             anchor_tracks=[opening.title],
             desired_duration_seconds=episode.program_estimated_duration_seconds,
-            max_tracks=5,
-            max_chapters=8,
+            max_tracks=max_tracks,
+            max_chapters=max_chapters,
             presentation_intent=episode.presentation_intent,
             output_language=OutputLanguage.AUTO,
         )
