@@ -378,3 +378,15 @@ def test_the_locked_successor_is_not_offered_to_the_curator_again(tmp_path) -> N
     offered = llm.curator_prompts[0].split("Available:")[1]
     assert "Midnight Transfer" not in offered
     assert "Afterimage Avenue" in offered
+
+
+def test_pool_artist_queries_are_the_distinct_artists_the_model_named_capped_at_three() -> None:
+    from wavecast.assembly import _pool_artist_queries
+
+    proposals = [
+        TrackProposal(artist=name, title=f"Song {index}", confidence=0.9)
+        for index, name in enumerate(["久石譲", "久石让", "Bill Evans", "bill evans", "Oscar", "Extra"])
+    ]
+
+    assert _pool_artist_queries(proposals) == ["久石譲", "Bill Evans", "Oscar"]
+    assert _pool_artist_queries([]) == []

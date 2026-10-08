@@ -7,6 +7,7 @@ are used only to *compare* names; display text and playback identity never chang
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from functools import lru_cache
 
@@ -30,6 +31,20 @@ def canonical_name(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value)
     folded = traditional_to_simplified.convert(japanese_to_traditional.convert(normalized))
     return " ".join(folded.casefold().split())
+
+
+_FEATURE_CREDIT = re.compile(
+    r"\s*(?:[\(\[（]\s*(?:feat|ft|featuring|with)\b\.?[^\)\]）]*[\)\]）]"
+    r"|-\s*(?:feat|ft|featuring)\b.*)\s*$",
+    re.IGNORECASE,
+)
+
+
+def without_feature_credit(title: str) -> str:
+    """Drop a trailing ``(feat. X)`` credit: the same song is listed with and without it."""
+
+    stripped = _FEATURE_CREDIT.sub("", title).strip()
+    return stripped or title
 
 
 def same_catalog_name(left: str, right: str) -> bool:

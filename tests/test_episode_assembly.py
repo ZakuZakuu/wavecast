@@ -2802,3 +2802,25 @@ def test_live_factory_requires_a_real_music_provider(monkeypatch) -> None:
 
     with pytest.raises(ProviderConfigurationError, match="real music provider"):
         create_episode_assembly_service(ProviderSettings(mode="live"))
+
+
+def test_song_identity_ignores_feature_credits_and_credit_order() -> None:
+    listed = ResolvedTrack(
+        track_ref="netease:one", canonical_artist="椎名林檎, TOWA TEI", canonical_title="APPLE"
+    )
+    reordered_with_feature = ResolvedTrack(
+        track_ref="netease:two",
+        canonical_artist="TOWA TEI, 椎名林檎",
+        canonical_title="APPLE (feat. 椎名林檎)",
+    )
+    other_song = ResolvedTrack(
+        track_ref="netease:three", canonical_artist="TOWA TEI, 椎名林檎", canonical_title="Other"
+    )
+    other_cover = ResolvedTrack(
+        track_ref="netease:four", canonical_artist="Someone Else", canonical_title="APPLE"
+    )
+
+    assert _same_song_identity(listed, reordered_with_feature) is True
+    assert _same_song_identity(reordered_with_feature, listed) is True
+    assert _same_song_identity(listed, other_song) is False
+    assert _same_song_identity(listed, other_cover) is False

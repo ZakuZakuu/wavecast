@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.retrieval import MusicRetrievalService, RetrievedTrack, VersionKind
-from wavecast.text_identity import canonical_name, same_catalog_name
+from wavecast.text_identity import canonical_name, same_catalog_name, without_feature_credit
 
 # Catalog credits separate artists with commas; "&", "/" and "x" appear inside real
 # names (Simon & Garfunkel, AC/DC, X Japan), so they are deliberately not separators.
@@ -270,10 +270,14 @@ class _Verified:
 
 
 def _song_key(track: RetrievedTrack) -> str:
+    """Identity of a song across catalog entries: credited artists as a set, title without
+    a trailing ``(feat. X)``, and the version kind.  ``A, B`` and ``B, A`` are one credit."""
+
+    artists = sorted({canonical_name(part) for part in split_artists(track.artist)})
     return "|".join(
         (
-            canonical_name(primary_artist(track.artist)),
-            canonical_name(track.base_title or track.title),
+            "/".join(artists),
+            canonical_name(without_feature_credit(track.base_title or track.title)),
             track.version_kind.value,
         )
     )

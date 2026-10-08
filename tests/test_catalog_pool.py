@@ -382,3 +382,22 @@ def test_a_failed_search_is_a_provider_error_not_a_missing_track() -> None:
     assert pool.outcomes[0].status is AvailabilityStatus.PROVIDER_ERROR
     assert pool.search_failure_count > 0
     assert pool.count(AvailabilityStatus.NOT_FOUND) == 0
+
+
+def test_one_song_listed_with_reordered_credits_and_a_feature_suffix_is_a_single_entry() -> None:
+    catalog = SidecarLikeCatalog(
+        [
+            track("1", "椎名林檎, TOWA TEI", "APPLE"),
+            track("2", "TOWA TEI, 椎名林檎", "APPLE (feat. 椎名林檎)"),
+            track("3", "椎名林檎, TOWA TEI", "Different Song"),
+        ],
+        {"椎名林檎": ["1", "2", "3"]},
+    )
+
+    pool = asyncio.run(builder(catalog).build(artist_queries=["椎名林檎"]))
+
+    titles = [entry.title for entry in pool.entries]
+    assert len(titles) == 2
+    assert "Different Song" in titles
+    assert sum(title.startswith("APPLE") for title in titles) == 1  # one entry per song
+    assert len(catalog.detail_calls) == 2  # the second listing was never verified

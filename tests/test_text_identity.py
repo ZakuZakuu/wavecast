@@ -37,3 +37,23 @@ def test_canonical_name_is_only_a_comparison_key() -> None:
     canonical_name(original)
     assert original == "久石譲"
     assert canonical_name(original) == canonical_name("久石让")
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("APPLE (feat. 椎名林檎)", "APPLE"),
+        ("APPLE [ft. Someone]", "APPLE"),
+        ("APPLE（featuring 椎名林檎）", "APPLE"),
+        ("APPLE - feat. Someone", "APPLE"),
+        ("APPLE (Live)", "APPLE (Live)"),  # a version label is not a feature credit
+        ("Feat of Strength", "Feat of Strength"),
+        ("(feat. Someone)", "(feat. Someone)"),  # never reduce a title to nothing
+    ],
+)
+def test_without_feature_credit_only_removes_a_trailing_feature_credit(
+    title: str, expected: str
+) -> None:
+    from wavecast.text_identity import without_feature_credit
+
+    assert without_feature_credit(title) == expected

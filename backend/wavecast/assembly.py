@@ -110,7 +110,7 @@ from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.search import ExaSearchProvider, TavilySearchProvider
 from wavecast.providers.usage import UsageLedger, UsageTotals, usage_diagnostics
 from wavecast.storage.assets import LocalObjectStorageProvider
-from wavecast.text_identity import canonical_name
+from wavecast.text_identity import canonical_name, without_feature_credit
 from wavecast.timing import (
     ProgramTimingPlan,
     ProgramTimingSummary,
@@ -310,6 +310,30 @@ def _pool_proposals(fast_plan: FastStartPlan, bundle: ResearchBundle) -> list[Tr
         seen.add(key)
         unique.append(proposal)
     return unique[:_POOL_PROPOSAL_LIMIT]
+
+
+_POOL_ARTIST_LIMIT = 3
+
+
+def _pool_artist_queries(proposals: Sequence[TrackProposal]) -> list[str]:
+    """Distinct artists the model named, in order.
+
+    An artist whose own catalog is mostly unplayable (licensing) still leads to related
+    playable music through the artists the model associates with the topic; the pool caps
+    how many tracks any one artist can contribute.
+    """
+
+    artists: list[str] = []
+    seen: set[str] = set()
+    for proposal in proposals:
+        key = canonical_name(proposal.artist)
+        if key in seen:
+            continue
+        seen.add(key)
+        artists.append(proposal.artist)
+        if len(artists) >= _POOL_ARTIST_LIMIT:
+            break
+    return artists
 
 
 def _proposal_identity_key(proposal: TrackProposal) -> tuple[str, str]:
@@ -1403,8 +1427,10 @@ class LiveEpisodeAssemblyService:
         if builder is None:
             return None
         try:
+            proposals = _pool_proposals(fast_plan, bundle)
             pool = await builder.build(
-                proposals=_pool_proposals(fast_plan, bundle),
+                proposals=proposals,
+                artist_queries=_pool_artist_queries(proposals),
                 keyword_queries=[request.topic],
             )
         except Exception as error:  # noqa: BLE001 - optional optimisation, degrade quietly
@@ -1943,8 +1969,8 @@ def _same_song_identity(left: ResolvedTrack | None, right: ResolvedTrack) -> boo
         return False
     if left.track_ref == right.track_ref:
         return True
-    if _identity_words(left.canonical_title) != _identity_words(
-        right.canonical_title
+    if _identity_words(without_feature_credit(left.canonical_title)) != _identity_words(
+        without_feature_credit(right.canonical_title)
     ):
         return False
     left_artist = _artist_identity_words(left.canonical_artist)
