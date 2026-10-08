@@ -14,6 +14,7 @@ from wavecast.proposals import (
     ProposalGenerationRequest,
 )
 from wavecast.providers.contracts import TrackMetadata
+from wavecast.providers.errors import ProviderUnavailableError
 from wavecast.providers.fakes import MockMusicProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.registry import MusicProviderRegistry
@@ -241,7 +242,7 @@ def test_llm_generator_fails_closed_when_no_opening_candidate_resolves() -> None
         )
     )
 
-    with pytest.raises(ProgramProposalGenerationError, match="opening_track_unresolved"):
+    with pytest.raises(ProgramProposalGenerationError, match="opening_track_not_found"):
         asyncio.run(
             generator.generate(
                 ProposalGenerationRequest(prompt="给我一个无法解析的测试节目")
@@ -354,3 +355,46 @@ def test_same_artist_fallback_matches_a_script_variant_of_the_artist() -> None:
 
     assert proposal.opening_track_artist == "久石譲"
     assert proposal.opening_track_ref in {"netease:442682", "netease:28457548"}
+
+
+class _UnplayableCatalog(_VariantCatalog):
+    """Every track exists in the catalog but none can be played (e.g. licensing)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tracks = [track.model_copy(update={"playable": False}) for track in self.tracks]
+
+
+class _DownCatalog:
+    async def search(self, query: str, *, limit: int = 5) -> list[TrackMetadata]:
+        raise ProviderUnavailableError("music upstream unavailable")
+
+    async def resolve_track(self, track_ref: str) -> TrackMetadata:
+        raise ProviderUnavailableError("music upstream unavailable")
+
+
+def _failure_reason(catalog: object, artist: str, title: str) -> str:
+    retrieval = MusicRetrievalService(
+        MusicProviderRegistry({"netease": catalog}, preference=("netease",))  # type: ignore[dict-item]
+    )
+    generator = LLMProgramProposalGenerator(
+        _ProposalLLM(_hisaishi_draft(OpeningTrackCandidate(artist=artist, title=title))), retrieval
+    )
+    with pytest.raises(ProgramProposalGenerationError) as failure:
+        asyncio.run(generator.generate(ProposalGenerationRequest(prompt="久石让")))
+    return failure.value.reason
+
+
+def test_failure_reason_says_unplayable_when_the_track_exists_but_cannot_be_played() -> None:
+    assert (
+        _failure_reason(_UnplayableCatalog(), "久石让", "娜乌西卡安魂曲")
+        == "opening_track_unplayable"
+    )
+
+
+def test_failure_reason_says_catalog_unavailable_when_the_catalog_is_down() -> None:
+    assert _failure_reason(_DownCatalog(), "久石让", "娜乌西卡安魂曲") == "catalog_unavailable"
+
+
+def test_failure_reason_says_not_found_when_nothing_matches() -> None:
+    assert _failure_reason(_VariantCatalog(), "Nobody", "Nothing") == "opening_track_not_found"

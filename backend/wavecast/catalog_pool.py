@@ -409,6 +409,7 @@ class CatalogPoolBuilder:
         if proposal.title != queries[0]:
             queries.append(proposal.title)
         exact: list[RetrievedTrack] = []
+        search_failed = False
         for query in queries:
             async with state.semaphore:
                 report = await self.retrieval.search_report(
@@ -418,6 +419,7 @@ class CatalogPoolBuilder:
                     limit=self.config.search_limit,
                 )
             state.search_failures += len(report.failures)
+            search_failed = search_failed or bool(report.failures)
             exact = [
                 track
                 for track in report.candidates
@@ -428,9 +430,14 @@ class CatalogPoolBuilder:
             if exact:
                 break
         if not exact:
+            # A failed search is an outage, not evidence the track is missing from the catalog.
             return _Verified(
                 source=PoolSource.LLM_CANDIDATE,
-                status=AvailabilityStatus.NOT_FOUND,
+                status=(
+                    AvailabilityStatus.PROVIDER_ERROR
+                    if search_failed
+                    else AvailabilityStatus.NOT_FOUND
+                ),
                 artist=proposal.artist,
                 title=proposal.title,
             )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from datetime import datetime
 from enum import StrEnum
@@ -10,6 +11,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from wavecast.audio_timing import TrackTimingProfile
+from wavecast.catalog_pool import AvailabilityStatus, CatalogPoolBuilder, PoolBuildConfig
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.models.episode import CoverParams, EpisodeSeed, utc_now
@@ -114,6 +116,15 @@ class ProgramProposal(BaseModel):
 
 class ProgramProposalBatch(BaseModel):
     proposals: list[ProgramProposal]
+
+
+logger = logging.getLogger(__name__)
+
+# Why no opening track could be resolved.  Only these codes (plus the legacy
+# ``opening_track_unresolved``) are safe to map to listener-facing guidance.
+REASON_CATALOG_UNAVAILABLE = "catalog_unavailable"
+REASON_OPENING_UNPLAYABLE = "opening_track_unplayable"
+REASON_OPENING_NOT_FOUND = "opening_track_not_found"
 
 
 class OpeningTrackCandidate(BaseModel):
@@ -428,7 +439,7 @@ class LLMProgramProposalGenerator:
                 await self._resolve_opening_track(draft)
             )
             if resolved is None or opening_duration_seconds is None:
-                raise ProgramProposalGenerationError("opening_track_unresolved")
+                raise ProgramProposalGenerationError(await self._classify_unresolved(draft))
 
             proposal_id = f"proposal-{uuid4().hex}"
             proposals.append(
@@ -511,6 +522,41 @@ class LLMProgramProposalGenerator:
                     continue
                 return resolved_fallback, duration, timing_profile
         return None, None, None
+
+    async def _classify_unresolved(self, draft: ProgramProposalDraft) -> str:
+        """Tell an outage, an unplayable catalog and a missing track apart.
+
+        Runs only on the failure path, with a small bounded catalog check of the
+        candidates the model named.  A failed catalog call is never reported as
+        "unplayable"; any error here falls back to the legacy generic reason.
+        """
+
+        candidates = draft.opening_track_candidates[: self.max_opening_candidates]
+        try:
+            pool = await CatalogPoolBuilder(
+                self.retrieval,
+                PoolBuildConfig(max_verifications=0, concurrency=2, timeout_seconds=12.0),
+            ).build(proposals=[candidate.to_track_proposal() for candidate in candidates])
+        except Exception:  # noqa: BLE001 - classification must never mask the real failure
+            logger.warning("opening_track_classification_failed")
+            return "opening_track_unresolved"
+        if pool.count(AvailabilityStatus.PROVIDER_ERROR) or pool.truncated:
+            reason = REASON_CATALOG_UNAVAILABLE
+        elif pool.count(AvailabilityStatus.UNPLAYABLE):
+            reason = REASON_OPENING_UNPLAYABLE
+        else:
+            reason = REASON_OPENING_NOT_FOUND
+        logger.info(
+            "opening_track_unresolved reason=%s candidates=%d unplayable=%d not_found=%d "
+            "provider_error=%d search_failures=%d",
+            reason,
+            len(candidates),
+            pool.count(AvailabilityStatus.UNPLAYABLE),
+            pool.count(AvailabilityStatus.NOT_FOUND),
+            pool.count(AvailabilityStatus.PROVIDER_ERROR),
+            pool.search_failure_count,
+        )
+        return reason
 
     async def _verified_playable_track(
         self,

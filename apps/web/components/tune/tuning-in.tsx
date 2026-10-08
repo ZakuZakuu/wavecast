@@ -16,12 +16,15 @@ export function TuningInScreen({
   station,
   steps,
   error,
+  retryable = true,
   onCancel,
   onRetry,
 }: {
   station: Station;
   steps: TuningStep[];
   error: string | null;
+  /** False for failures that retrying cannot fix; the action then returns to the input. */
+  retryable?: boolean;
   onCancel: () => void;
   onRetry: () => void;
 }) {
@@ -102,7 +105,11 @@ export function TuningInScreen({
         {error ? (
           <div className="tuning-error" role="alert">
             <p>{error}</p>
-            <button type="button" className="pill-button" onClick={onRetry}>重试</button>
+            {retryable ? (
+              <button type="button" className="pill-button" onClick={onRetry}>重试</button>
+            ) : (
+              <button type="button" className="pill-button" onClick={onCancel}>换个说法</button>
+            )}
           </div>
         ) : null}
 

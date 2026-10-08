@@ -12,7 +12,7 @@ from wavecast.catalog_pool import (
 )
 from wavecast.intelligence.models import TrackProposal
 from wavecast.providers.contracts import AudioAsset, AudioAssetType, TrackMetadata
-from wavecast.providers.errors import ProviderInvalidResponseError
+from wavecast.providers.errors import ProviderInvalidResponseError, ProviderUnavailableError
 from wavecast.providers.registry import MusicProviderRegistry
 from wavecast.providers.retrieval import MusicRetrievalService
 
@@ -39,7 +39,9 @@ class SidecarLikeCatalog:
         *,
         fail: set[str] = frozenset(),  # type: ignore[assignment]
         delays: dict[str, float] | None = None,
+        fail_search: bool = False,
     ) -> None:
+        self.fail_search = fail_search
         self.by_ref = {item.track_ref: item for item in tracks}
         self.results = results or {}
         self.fail = fail
@@ -51,6 +53,8 @@ class SidecarLikeCatalog:
 
     async def search(self, query: str, *, limit: int = 5) -> list[TrackMetadata]:
         self.queries.append(query)
+        if self.fail_search:
+            raise ProviderUnavailableError("music upstream unavailable")
         refs = self.results.get(query, [])
         return [
             self.by_ref[f"netease:{ref}"].model_copy(update={"playable": False})
@@ -367,3 +371,14 @@ def test_a_song_judged_unplayable_through_an_llm_candidate_is_not_verified_again
 def test_config_rejects_zero_attempts_per_song() -> None:
     with pytest.raises(ValueError):
         PoolBuildConfig(max_refs_per_song=0)
+
+
+def test_a_failed_search_is_a_provider_error_not_a_missing_track() -> None:
+    catalog = SidecarLikeCatalog([track("1", "A", "One")], {"A One": ["1"]}, fail_search=True)
+
+    pool = asyncio.run(builder(catalog).build(proposals=[proposal("A", "One")]))
+
+    assert pool.entries == []
+    assert pool.outcomes[0].status is AvailabilityStatus.PROVIDER_ERROR
+    assert pool.search_failure_count > 0
+    assert pool.count(AvailabilityStatus.NOT_FOUND) == 0
