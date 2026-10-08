@@ -39,6 +39,13 @@ class PoolSource(StrEnum):
     KEYWORD_SEARCH = "keyword_search"
 
 
+_SOURCE_ORDER = {
+    PoolSource.LLM_CANDIDATE: 0,
+    PoolSource.ARTIST_SEARCH: 1,
+    PoolSource.KEYWORD_SEARCH: 2,
+}
+
+
 class AvailabilityStatus(StrEnum):
     PLAYABLE = "playable"
     UNPLAYABLE = "unplayable"
@@ -63,6 +70,22 @@ def artist_credit_includes(credit: str, artist: str) -> bool:
     return any(same_catalog_name(part, artist) for part in split_artists(credit)) or (
         same_catalog_name(credit, artist)
     )
+
+
+def artist_named_in_query(query: str, credit: str) -> bool:
+    """True when a credited artist is literally named in ``query`` (script variants folded)."""
+
+    folded_query = canonical_name(query)
+    for part in split_artists(credit):
+        name = canonical_name(part)
+        if len(name) < 2:
+            continue
+        if name.isascii():
+            if re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", folded_query):
+                return True
+        elif name in folded_query:
+            return True
+    return False
 
 
 class PoolEntry(BaseModel):
@@ -111,6 +134,56 @@ class CatalogPool(BaseModel):
 
     def count(self, status: AvailabilityStatus) -> int:
         return sum(1 for outcome in self.outcomes if outcome.status is status)
+
+    def find(self, artist: str, title: str) -> PoolEntry | None:
+        """The entry for a Curator-chosen track: credited to ``artist`` with the same title."""
+
+        for entry in self.entries:
+            if same_catalog_name(entry.title, title) and artist_credit_includes(
+                entry.artist, artist
+            ):
+                return entry
+        return None
+
+    def listing(
+        self, *, max_entries: int = 40, max_per_artist: int = 3, max_per_anchor_artist: int = 6
+    ) -> list[PoolEntry]:
+        """Entries offered to the Curator, most trusted first, with a per-artist cap.
+
+        Artists named by the listener (``ARTIST_SEARCH`` entries) get a higher cap so a
+        career-focused programme can still stay on that artist.  The cap is enforced here,
+        in code, so the Curator can never choose more tracks by one artist than allowed.
+        """
+
+        anchors = {
+            canonical_name(entry.primary_artist)
+            for entry in self.entries
+            if entry.source is PoolSource.ARTIST_SEARCH
+        }
+        ranked = sorted(
+            enumerate(self.entries), key=lambda pair: (_SOURCE_ORDER[pair[1].source], pair[0])
+        )
+        counts: dict[str, int] = {}
+        listed: list[PoolEntry] = []
+        for _index, entry in ranked:
+            artist = canonical_name(entry.primary_artist)
+            cap = max_per_anchor_artist if artist in anchors else max_per_artist
+            if counts.get(artist, 0) >= cap:
+                continue
+            counts[artist] = counts.get(artist, 0) + 1
+            listed.append(entry)
+            if len(listed) >= max_entries:
+                break
+        return listed
+
+    def unavailable(self, limit: int = 12) -> list[dict[str, str]]:
+        """Known unplayable tracks, so the Curator does not propose them again."""
+
+        return [
+            {"artist": outcome.artist, "title": outcome.title}
+            for outcome in self.outcomes
+            if outcome.status is AvailabilityStatus.UNPLAYABLE
+        ][:limit]
 
     def unplayable_artists(self) -> list[str]:
         """Primary artists with candidates that exist in the catalog but cannot be played."""
@@ -273,8 +346,19 @@ class CatalogPoolBuilder:
                 for track in tracks
                 if artist_credit_includes(track.artist, artist)
             )
-        for tracks in keyword_batches:
-            candidates.extend((track, PoolSource.KEYWORD_SEARCH) for track in tracks)
+        for query, tracks in zip(keyword_queries, keyword_batches, strict=True):
+            # A keyword query that names an artist ("椎名林檎") is also an artist search:
+            # tracks credited to that artist are trusted like an explicit artist query.
+            candidates.extend(
+                (
+                    track,
+                    PoolSource.ARTIST_SEARCH
+                    if artist_named_in_query(query, track.artist)
+                    else PoolSource.KEYWORD_SEARCH,
+                )
+                for track in tracks
+            )
+        candidates.sort(key=lambda item: item[1] is not PoolSource.ARTIST_SEARCH)
 
         # Stage 3: group candidates by song (one song often has several catalog entries,
         # not all playable), then verify within the budget in deterministic order.

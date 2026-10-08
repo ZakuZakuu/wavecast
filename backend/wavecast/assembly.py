@@ -20,6 +20,12 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from wavecast.catalog_pool import (
+    AvailabilityStatus,
+    CatalogPool,
+    CatalogPoolBuilder,
+    PoolBuildConfig,
+)
 from wavecast.composer import EpisodeComposer, PreparedMusicAsset
 from wavecast.intelligence.background import BackgroundIntelligencePipeline
 from wavecast.intelligence.curation import CuratorContractError, CuratorService
@@ -231,6 +237,7 @@ class _PreparedIntelligence:
     background_research_ms: int
     curator_ms: int
     resolution_ms: int
+    catalog_pool: CatalogPool | None = None
 
 
 _ESTIMATED_TRACK_DURATION_SECONDS = 180
@@ -281,6 +288,28 @@ _NOVELTY_RANK = {
     NoveltyDistance.DISCOVERY: 3,
     NoveltyDistance.SURPRISE: 4,
 }
+
+
+_POOL_PROPOSAL_LIMIT = 12
+
+
+def _pool_proposals(fast_plan: FastStartPlan, bundle: ResearchBundle) -> list[TrackProposal]:
+    """LLM-named tracks worth verifying: FastStart's route first, then research candidates."""
+
+    ordered: list[TrackProposal] = []
+    if fast_plan.selected_next_track is not None:
+        ordered.append(fast_plan.selected_next_track)
+    ordered.extend(fast_plan.next_candidates)
+    ordered.extend(bundle.candidates)
+    seen: set[tuple[str, str]] = set()
+    unique: list[TrackProposal] = []
+    for proposal in ordered:
+        key = _proposal_identity_key(proposal)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(proposal)
+    return unique[:_POOL_PROPOSAL_LIMIT]
 
 
 def _proposal_identity_key(proposal: TrackProposal) -> tuple[str, str]:
@@ -357,7 +386,9 @@ class LiveEpisodeAssemblyService:
         materializer: NarrationMaterializer,
         ledger: UsageLedger | None = None,
         narration_ratio: float = 0.15,
+        catalog_pool_builder: CatalogPoolBuilder | None = None,
     ) -> None:
+        self.catalog_pool_builder = catalog_pool_builder
         self.fast_path = fast_path
         self.background_pipeline = background_pipeline
         self.retrieval = retrieval
@@ -639,6 +670,7 @@ class LiveEpisodeAssemblyService:
         resolved_chapters: list[_ResolvedChapter],
         used_tracks: list[ResolvedTrack],
         trace: GenerationTrace,
+        catalog_pool: CatalogPool | None = None,
     ) -> tuple[list[_ResolvedChapter], list[UnresolvedAssemblyProposal]]:
         """Ask Curator once for topic-driven continuation before emergency catalog fill."""
 
@@ -714,6 +746,7 @@ class LiveEpisodeAssemblyService:
                 ),
                 topic=request.topic,
                 trace=trace,
+                catalog_pool=catalog_pool,
             )
         except (CuratorContractError, ProviderError) as error:
             trace.mark(
@@ -758,10 +791,7 @@ class LiveEpisodeAssemblyService:
                 last_resolution_reason = "no exact playable catalog match"
                 for candidate_rank, proposal in enumerate(candidates):
                     try:
-                        candidate = await resolve_track_proposal_across_providers(
-                            self.retrieval,
-                            proposal,
-                        )
+                        candidate = await self._resolve_proposal_track(proposal, catalog_pool)
                     except ProviderError as error:
                         candidate = None
                         last_resolution_reason = (
@@ -1122,6 +1152,17 @@ class LiveEpisodeAssemblyService:
         background_research_ms = _elapsed_ms(background_started)
         trace.mark("background_research_ready", elapsed_ms=background_research_ms)
 
+        catalog_pool = await self._build_catalog_pool(
+            request,
+            fast_plan=fast_result.plan,
+            bundle=bundle,
+            reserved_tracks=(
+                (*reserved_tracks, locked_successor)
+                if locked_successor is not None
+                else reserved_tracks
+            ),
+            trace=trace,
+        )
         curator_started = perf_counter()
         trace.mark("curator_started")
         try:
@@ -1139,6 +1180,7 @@ class LiveEpisodeAssemblyService:
                 output_language=resolve_output_language(request.output_language, request.topic),
                 topic=request.topic,
                 trace=trace,
+                catalog_pool=catalog_pool,
             )
         except CuratorContractError as error:
             raise EpisodeAssemblyError(
@@ -1189,9 +1231,7 @@ class LiveEpisodeAssemblyService:
                 last_resolution_reason = "no exact playable catalog match"
                 for candidate_rank, proposal in enumerate(candidates):
                     try:
-                        candidate = await resolve_track_proposal_across_providers(
-                            self.retrieval, proposal
-                        )
+                        candidate = await self._resolve_proposal_track(proposal, catalog_pool)
                     except ProviderError as error:
                         candidate = None
                         last_resolution_reason = (
@@ -1297,6 +1337,7 @@ class LiveEpisodeAssemblyService:
                     resolved_chapters=resolved_chapters,
                     used_tracks=used_tracks,
                     trace=trace,
+                    catalog_pool=catalog_pool,
                 )
             )
             curator_ms += _elapsed_ms(continuation_started)
@@ -1341,7 +1382,83 @@ class LiveEpisodeAssemblyService:
             background_research_ms=background_research_ms,
             curator_ms=curator_ms,
             resolution_ms=resolution_ms,
+            catalog_pool=catalog_pool,
         )
+
+    async def _build_catalog_pool(
+        self,
+        request: LiveEpisodeAssemblyRequest,
+        *,
+        fast_plan: FastStartPlan,
+        bundle: ResearchBundle,
+        reserved_tracks: Sequence[ResolvedTrack],
+        trace: GenerationTrace,
+    ) -> CatalogPool | None:
+        """Build the verified-playable pool, or None when disabled or unavailable.
+
+        The pool only improves selection; any failure here must never stop generation.
+        """
+
+        builder = self.catalog_pool_builder
+        if builder is None:
+            return None
+        try:
+            pool = await builder.build(
+                proposals=_pool_proposals(fast_plan, bundle),
+                keyword_queries=[request.topic],
+            )
+        except Exception as error:  # noqa: BLE001 - optional optimisation, degrade quietly
+            logger.warning("catalog_pool_failed error_type=%s", type(error).__name__)
+            trace.mark("catalog_pool_failed", error_type=type(error).__name__)
+            return None
+        # Never offer a song the programme has already reserved (e.g. the opening track).
+        pool = pool.model_copy(
+            update={
+                "entries": [
+                    entry
+                    for entry in pool.entries
+                    if not any(
+                        _same_song_identity(reserved, entry.resolved_track())
+                        for reserved in reserved_tracks
+                    )
+                ]
+            }
+        )
+        logger.info(
+            "catalog_pool_ready entries=%d playable=%d unplayable=%d not_found=%d "
+            "provider_error=%d verifications=%d search_failures=%d elapsed_ms=%d truncated=%s",
+            len(pool.entries),
+            pool.count(AvailabilityStatus.PLAYABLE),
+            pool.count(AvailabilityStatus.UNPLAYABLE),
+            pool.count(AvailabilityStatus.NOT_FOUND),
+            pool.count(AvailabilityStatus.PROVIDER_ERROR),
+            pool.verification_count,
+            pool.search_failure_count,
+            pool.elapsed_ms,
+            pool.truncated,
+        )
+        trace.mark(
+            "catalog_pool_ready",
+            entry_count=len(pool.entries),
+            playable_count=pool.count(AvailabilityStatus.PLAYABLE),
+            unplayable_count=pool.count(AvailabilityStatus.UNPLAYABLE),
+            not_found_count=pool.count(AvailabilityStatus.NOT_FOUND),
+            verification_count=pool.verification_count,
+            elapsed_ms=pool.elapsed_ms,
+            truncated=pool.truncated,
+        )
+        return pool
+
+    async def _resolve_proposal_track(
+        self, proposal: TrackProposal, catalog_pool: CatalogPool | None
+    ) -> ResolvedTrack | None:
+        """Resolve a Curator proposal, trusting only entries already verified playable."""
+
+        if catalog_pool is not None:
+            entry = catalog_pool.find(proposal.artist, proposal.title)
+            if entry is not None:
+                return entry.resolved_track()
+        return await resolve_track_proposal_across_providers(self.retrieval, proposal)
 
     async def assemble(
         self,
@@ -3538,11 +3655,17 @@ def create_episode_assembly_service(
         curator=CuratorService(curator_llm),
         writer=WriterService(writer_llm),
     )
+    retrieval = MusicRetrievalService(music_registry)
     return LiveEpisodeAssemblyService(
         fast_path=fast_path,
         background_pipeline=background_pipeline,
-        retrieval=MusicRetrievalService(music_registry),
+        retrieval=retrieval,
         composer=EpisodeComposer(music_registry),
         materializer=NarrationMaterializer(tts, storage),
         ledger=ledger,
+        catalog_pool_builder=(
+            CatalogPoolBuilder(retrieval, PoolBuildConfig(timeout_seconds=30.0))
+            if settings.catalog_pool
+            else None
+        ),
     )

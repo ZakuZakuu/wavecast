@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.text_identity import canonical_name
@@ -20,6 +21,9 @@ from .models import (
     resolve_output_language,
 )
 from .trace import GenerationTrace
+
+if TYPE_CHECKING:
+    from wavecast.catalog_pool import CatalogPool
 
 
 class CuratorContractError(ValueError):
@@ -53,6 +57,7 @@ class CuratorService:
         output_language: OutputLanguage = OutputLanguage.AUTO,
         topic: str = "",
         trace: GenerationTrace | None = None,
+        catalog_pool: CatalogPool | None = None,
     ) -> ProgramSkeleton:
         committed = committed_chapters or []
         research_context, fast_context = _build_curator_context(bundle, fast_plan)
@@ -114,6 +119,7 @@ class CuratorService:
             f"Research context: {_compact_json(research_context)}\n"
             f"FastStart context: {_compact_json(fast_context)}\n"
             f"Committed: {_compact_json([item.model_dump(mode='json') for item in committed])}\n"
+            f"{_catalog_pool_context(catalog_pool)}"
             f"Duration: {desired_duration_seconds}\n"
             f"Output language: {resolve_output_language(output_language, topic).value}"
         )
@@ -133,6 +139,40 @@ class CuratorService:
         _validate_curator_contract(normalized, bundle)
         normalized = _restore_committed_prefix(normalized, committed)
         return ensure_distance_curve(normalized)
+
+
+_POOL_INSTRUCTIONS = (
+    "Available catalog tracks were verified playable just now. Choose each TrackProposal "
+    "from this list whenever it fits the topic, copying artist and title exactly as written; "
+    "propose a track outside the list only when the list cannot serve the topic. Prefer "
+    "source llm_candidate, then artist_search, then keyword_search. Never propose a track "
+    "named in Unavailable.\n"
+)
+
+
+def _catalog_pool_context(pool: CatalogPool | None) -> str:
+    """Prompt section for the verified catalog pool; empty (no change) without a pool."""
+
+    if pool is None:
+        return ""
+    listed = pool.listing()
+    if not listed:
+        return ""
+    available = [
+        {
+            "artist": entry.artist,
+            "title": entry.title,
+            "seconds": entry.duration_seconds,
+            "source": entry.source.value,
+        }
+        for entry in listed
+    ]
+    unavailable = pool.unavailable()
+    return (
+        _POOL_INSTRUCTIONS
+        + f"Available: {_compact_json(available)}\n"
+        + (f"Unavailable: {_compact_json(unavailable)}\n" if unavailable else "")
+    )
 
 
 def _build_curator_context(
