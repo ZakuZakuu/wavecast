@@ -36,7 +36,10 @@
   color: #FFFFFF;
 }
 /* Player overlay (MOTION.md §4.1): the page beneath stays mounted and dims. */
-.player-layer { position: absolute; inset: 0; z-index: 40; }
+/* Fixed (not absolute): iOS tints the status bar from fixed-position elements at
+   the top edge; an absolute layer left it veiled in the light page background.
+   Wide screens keep it inside the app column (desktop.css). */
+.player-layer { position: fixed; inset: 0; z-index: 40; }
 .player-scrim { position: absolute; inset: 0; background: #000; opacity: .3; pointer-events: none; }
 .player-sheet { position: absolute; inset: 0; overflow: hidden; }
 
