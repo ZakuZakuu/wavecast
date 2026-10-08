@@ -88,6 +88,32 @@
 .login-error { margin: 0; text-align: center; font-size: 14px; color: var(--danger); }
 .login-foot { margin: 2px 0 0; text-align: center; font-size: 12px; line-height: 1.6; color: var(--ink-3); }
 
+.has-email .login-brand { margin-top: 20px; }
+.has-email .login-logo { transform: scale(.75); margin: -12px; }
+.has-email .login-brand h1 { margin-top: 16px; }
+.has-email .login-benefits { margin-top: 24px; }
+.has-email .login-actions { padding-top: 24px; }
+.login-email { display: flex; flex-direction: column; gap: 10px; }
+.login-email label { font-size: 14px; font-weight: 600; }
+.login-email input {
+  box-sizing: border-box; width: 100%; min-height: 52px; padding: 12px 16px;
+  border: 1px solid var(--mat-card-border); border-radius: 16px;
+  background: var(--surface); color: var(--ink); font: inherit; font-size: 16px;
+}
+.login-email input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.login-button.is-email { border: 0; background: var(--ink); color: var(--bg); }
+.login-email-note { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink-2); overflow-wrap: anywhere; }
+.login-email-note strong { font-weight: 500; color: var(--ink); }
+.login-email-options { display: flex; justify-content: space-between; gap: 12px; }
+.login-email-options button { min-height: 44px; border: 0; background: transparent; color: var(--ink-2); font: inherit; font-size: 14px; }
+.login-email-options button:disabled { opacity: .5; }
+.login-divider { display: flex; align-items: center; gap: 12px; margin: 6px 0; color: var(--ink-3); font-size: 12px; }
+.login-divider::before, .login-divider::after { content: ""; flex: 1; height: 1px; background: var(--mat-card-border); }
+.acct-profile p { max-width: 100%; overflow-wrap: anywhere; }
+@media (max-height: 740px) {
+  .has-email .login-benefits { display: none; }
+}
+
 /* Account */
 .acct-profile { margin-top: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; }
 .acct-avatar {

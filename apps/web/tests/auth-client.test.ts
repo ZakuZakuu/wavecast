@@ -5,7 +5,7 @@ const { tokenRequest } = vi.hoisted(() => ({ tokenRequest: vi.fn() }));
 vi.mock("better-auth/react", () => ({
   createAuthClient: () => ({ token: tokenRequest }),
 }));
-vi.mock("better-auth/client/plugins", () => ({ jwtClient: () => ({}) }));
+vi.mock("better-auth/client/plugins", () => ({ jwtClient: () => ({}), emailOTPClient: () => ({}) }));
 
 import {
   clearApiAuthToken,

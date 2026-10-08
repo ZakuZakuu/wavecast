@@ -162,6 +162,49 @@ standard PostgreSQL URL expected by `pg`. The auth CLI uses the same resolver.
 It uses Better Auth's Kysely PostgreSQL adapter and its dedicated `auth`
 schema; do not point it at a public or unrelated database.
 
+### Email-code login (Resend)
+
+The Web uses Better Auth's email-OTP plugin; it does not introduce another user
+database or require a Railway API change. A verified code signs into the existing
+same-email user ID, or creates a verified user for a new email. The account page
+shows that email, rather than assuming the first linked OAuth provider was used.
+Google remains on basic `openid email profile` scopes; Testing mode has Google's
+basic-identity exception and is not restricted to the test-user list for this flow.
+
+Setup order (before releasing/enabling the mail credentials):
+
+1. Create a Resend account and verify a sending subdomain such as
+   `auth.wavecast.space`. Add the exact SPF/DKIM/MX records shown in Resend to
+   the current DNS provider. Do not replace the website A/CNAME records or an
+   existing root-domain mail service. Disable open/click tracking for auth mail.
+2. Create a sending-only API key scoped to that verified domain. Configure
+   server-only `RESEND_API_KEY` and `WAVECAST_EMAIL_FROM` on the Web; the latter
+   can be `WaveCast <login@auth.wavecast.space>`. Do not use `resend.dev` as the
+   public sender or put any key in `NEXT_PUBLIC_*`.
+3. With the existing auth database/secret/base URL **and both mail variables**
+   available, run `pnpm --filter @wavecast/web auth:migrate` against the new code.
+   Email OTP uses the existing verification table; database-backed rate limiting
+   also requires Better Auth's `rateLimit` table in the same auth schema. This is
+   an additive auth-schema migration, not a WaveCast Alembic migration. Inspect
+   the proposed migration first; do not reset/delete existing users or accounts.
+4. Publish via the normal integration acceptance → main release flow. The email
+   form and plugin remain absent until both mail variables exist. Production-only
+   auth settings are not implicitly copied to Preview; never enable mail there
+   against the production auth database just to test a screenshot.
+5. Check `/api/auth/providers` includes `emailOtp: true`. On the configured auth
+   origin, test one existing OAuth email (same account/library), one new email,
+   expiry/incorrect-code UI and delivery to QQ/163/Gmail inboxes. Unit tests use
+   fake mail and an in-memory auth adapter; they do not establish deliverability.
+
+Codes are six digits, expire after five minutes, are stored hashed and have three
+incorrect attempts. The UI has a 60-second resend cooldown; the shared database
+limiter allows up to three sends per IP per minute (so a shared network is not
+limited to a single user). There is no automatic mail-provider retry. Provider
+errors are sanitized and the HTTP route reports failed delivery instead of the
+library's default misleading success. Do not log OTPs, recipients, provider
+bodies, cookies or tokens. Binding/unbinding, changing email and merging accounts
+are deferred; different-email OAuth accounts are not implicitly merged.
+
 ## Vercel Web
 
 Import the same repository as a separate Vercel project:

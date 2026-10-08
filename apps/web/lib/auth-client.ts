@@ -1,7 +1,7 @@
 import { createAuthClient } from "better-auth/react";
-import { jwtClient } from "better-auth/client/plugins";
+import { emailOTPClient, jwtClient } from "better-auth/client/plugins";
 
-export const authClient = createAuthClient({ plugins: [jwtClient()] });
+export const authClient = createAuthClient({ plugins: [jwtClient(), emailOTPClient()] });
 
 let cachedToken: string | undefined;
 let tokenExpiresAt = 0;
