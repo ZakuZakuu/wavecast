@@ -1,6 +1,6 @@
 "use client";
 
-import { createElement, useEffect, useState, type ReactNode } from "react";
+import { createElement, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { authClient, clearApiAuthToken } from "../lib/auth-client";
 import {
@@ -12,21 +12,27 @@ import {
 
 export function LibraryIdentityBridge({ children }: { children: ReactNode }) {
   const { data: session, isPending } = authClient.useSession();
-  const identity = isPending ? null : session?.user?.id ?? "guest";
+  // Only the first session lookup may hold the app back. Better Auth sets
+  // isPending again on every refetch while signed out (data is null), which
+  // fires each time the page returns to the foreground; treating that as a new
+  // identity would unmount the whole app, player included.
+  const settled = useRef(false);
+  if (!isPending) settled.current = true;
+  const identity = settled.current ? session?.user?.id ?? "guest" : null;
   const [readyIdentity, setReadyIdentity] = useState<string | null>(null);
   const [failedIdentity, setFailedIdentity] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
 
   useEffect(() => {
-    if (isPending) {
+    if (identity === null) {
       setReadyIdentity(null);
       setFailedIdentity(null);
       return;
     }
 
     let active = true;
-    const userId = session?.user?.id;
-    const nextIdentity = userId ?? "guest";
+    const userId = identity === "guest" ? undefined : identity;
+    const nextIdentity = identity;
     const generation = beginLibraryIdentityTransition();
     setReadyIdentity(null);
     setFailedIdentity(null);
@@ -44,9 +50,9 @@ export function LibraryIdentityBridge({ children }: { children: ReactNode }) {
       active = false;
       cancelLibraryIdentityTransition(generation);
     };
-  }, [isPending, session?.user?.id, retryGeneration]);
+  }, [identity, retryGeneration]);
 
-  if (isPending || readyIdentity !== identity) {
+  if (identity === null || readyIdentity !== identity) {
     if (identity !== null && failedIdentity === identity) {
       return createElement("div", {
         className: "library-identity-loading",

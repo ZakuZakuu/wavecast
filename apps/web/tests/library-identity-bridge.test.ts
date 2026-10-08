@@ -234,4 +234,58 @@ describe("global library identity bridge", () => {
     );
     expect(accountCache.createdProgramIds).not.toContain("guest-after-logout");
   });
+  it("keeps the app mounted when a signed-out session refetches on return to the foreground", async () => {
+    mocks.session = { data: null, isPending: false };
+    const lifecycle = { mounted: 0, unmounted: 0 };
+    function Probe() {
+      useEffect(() => {
+        lifecycle.mounted += 1;
+        return () => { lifecycle.unmounted += 1; };
+      }, []);
+      return createElement("div", { "data-testid": "route-ready" });
+    }
+    const tree = () => createElement(LibraryIdentityBridge, null, createElement(Probe));
+    const { root, container } = mount(tree());
+    roots.push(root);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(container.querySelector('[data-testid="route-ready"]')).not.toBeNull();
+    expect(lifecycle).toEqual({ mounted: 1, unmounted: 0 });
+    const clearsBefore = mocks.clearToken.mock.calls.length;
+
+    // Better Auth: visibilitychange -> refetch -> isPending is true while data is null.
+    mocks.session = { data: null, isPending: true };
+    await act(async () => {
+      root.render(tree());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.querySelector('[data-testid="route-ready"]')).not.toBeNull();
+
+    mocks.session = { data: null, isPending: false };
+    await act(async () => {
+      root.render(tree());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.querySelector('[data-testid="route-ready"]')).not.toBeNull();
+    expect(lifecycle).toEqual({ mounted: 1, unmounted: 0 });
+    expect(mocks.clearToken.mock.calls.length).toBe(clearsBefore);
+  });
+
+  it("still switches identity when a refetch reveals a new sign-in", async () => {
+    mocks.session = { data: null, isPending: false };
+    mocks.getUserId.mockResolvedValue("account-one");
+    mocks.merge.mockResolvedValue(emptyUserLibrary());
+    mocks.getLibrary.mockResolvedValue(emptyUserLibrary());
+    const tree = () => createElement(LibraryIdentityBridge, null, createElement(DirectPlayerAndTuneWrites));
+    const { root } = mount(tree());
+    roots.push(root);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(mocks.merge).not.toHaveBeenCalled();
+
+    mocks.session = { data: null, isPending: true };
+    await act(async () => { root.render(tree()); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    mocks.session = { data: { user: { id: "account-one" } }, isPending: false };
+    await act(async () => { root.render(tree()); await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    expect(mocks.merge).toHaveBeenCalledTimes(1);
+  });
 });
