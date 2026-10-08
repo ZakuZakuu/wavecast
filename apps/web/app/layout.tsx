@@ -22,7 +22,11 @@ export const metadata: Metadata = {
   applicationName: "WaveCast",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "default",
+    // "default" makes iOS veil the status bar in near-white (harsh over dark
+    // pages like the player). Translucent lets the page show through and iOS
+    // picks black or white status text from what is underneath. Pages already
+    // pad for env(safe-area-inset-top). Read when the PWA is added to the home screen.
+    statusBarStyle: "black-translucent",
     title: "WaveCast",
   },
   icons: {
