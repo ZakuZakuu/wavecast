@@ -2,6 +2,13 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { authClient } from "../../lib/auth-client";
+import {
+  CODE_VALID_MS,
+  RESEND_COOLDOWN_MS,
+  clearPendingEmailLogin,
+  readPendingEmailLogin,
+  writePendingEmailLogin,
+} from "../../lib/email-login-state";
 
 function errorMessage(error: { code?: string; status?: number }, sending: boolean): string {
   if (error.status === 429) return "操作有点频繁，请稍等一分钟再试。";
@@ -11,18 +18,23 @@ function errorMessage(error: { code?: string; status?: number }, sending: boolea
   return sending ? "验证码暂时没发出去，请稍后再试。" : "暂时无法登录，请稍后再试。";
 }
 
-export function EmailLogin({ disabled, onBusyChange, onSuccess }: {
+export function EmailLogin({ disabled, onBusyChange, onSuccess, onStepChange }: {
   disabled: boolean;
   onBusyChange: (busy: boolean) => void;
   onSuccess: () => void;
+  /** True while waiting for the code, so the page can drop everything else. */
+  onStepChange?: (verifying: boolean) => void;
 }) {
-  const [email, setEmail] = useState("");
-  const [sentTo, setSentTo] = useState<string | null>(null);
+  // Picks up where a reload or an iOS page discard left off. Never re-sends.
+  const [restored] = useState(() => readPendingEmailLogin());
+  const [email, setEmail] = useState(restored?.email ?? "");
+  const [sentTo, setSentTo] = useState<string | null>(restored?.step === "code" ? restored.email : null);
   const [otp, setOtp] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
-  const [resendAt, setResendAt] = useState(0);
+  const expiresAt = useRef(restored?.expiresAt ?? 0);
+  const [resendAt, setResendAt] = useState(restored?.resendAt ?? 0);
   const [remaining, setRemaining] = useState(0);
   const codeInput = useRef<HTMLInputElement>(null);
 
@@ -36,7 +48,8 @@ export function EmailLogin({ disabled, onBusyChange, onSuccess }: {
 
   useEffect(() => {
     if (sentTo) codeInput.current?.focus();
-  }, [sentTo]);
+    onStepChange?.(Boolean(sentTo));
+  }, [sentTo, onStepChange]);
 
   async function run(sending: boolean) {
     if (lock.current || disabled) return;
@@ -52,12 +65,30 @@ export function EmailLogin({ disabled, onBusyChange, onSuccess }: {
         : await authClient.signIn.emailOtp({ email: address, otp });
       if (result.error) {
         setError(errorMessage(result.error, sending));
-        if (result.error.status === 429) setResendAt(Date.now() + 60_000);
+        if (result.error.status === 429) {
+          const next = Date.now() + RESEND_COOLDOWN_MS;
+          setResendAt(next);
+          writePendingEmailLogin({
+            email: address,
+            step: sentTo ? "code" : "email",
+            resendAt: next,
+            expiresAt: sentTo ? expiresAt.current : next,
+          });
+        }
       } else if (sending) {
+        const now = Date.now();
+        expiresAt.current = now + CODE_VALID_MS;
+        writePendingEmailLogin({
+          email: address,
+          step: "code",
+          resendAt: now + RESEND_COOLDOWN_MS,
+          expiresAt: expiresAt.current,
+        });
         setSentTo(address);
         setOtp("");
-        setResendAt(Date.now() + 60_000);
+        setResendAt(now + RESEND_COOLDOWN_MS);
       } else {
+        clearPendingEmailLogin();
         onSuccess();
       }
     } catch {
@@ -74,12 +105,20 @@ export function EmailLogin({ disabled, onBusyChange, onSuccess }: {
     void run(!sentTo);
   }
 
+  function changeEmail() {
+    clearPendingEmailLogin();
+    if (sentTo) setEmail(sentTo);
+    setSentTo(null);
+    setOtp("");
+    setError(null);
+  }
+
   return (
     <form className="login-email" onSubmit={submit} aria-label="邮箱验证码登录">
       {sentTo ? (
         <>
           <p className="login-email-note" role="status">验证码已发送至 <strong>{sentTo}</strong></p>
-          <label htmlFor="login-otp">验证码</label>
+          <label className="visually-hidden" htmlFor="login-otp">验证码</label>
           <input ref={codeInput} id="login-otp" type="text" inputMode="numeric" autoComplete="one-time-code"
             pattern="[0-9]{6}" maxLength={6} required placeholder="6 位验证码" value={otp}
             onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))} disabled={busy || disabled}
@@ -88,7 +127,7 @@ export function EmailLogin({ disabled, onBusyChange, onSuccess }: {
             {busy ? "正在处理…" : "登录并继续"}
           </button>
           <div className="login-email-options">
-            <button type="button" disabled={busy || disabled} onClick={() => { setSentTo(null); setOtp(""); setError(null); }}>
+            <button type="button" disabled={busy || disabled} onClick={changeEmail}>
               换个邮箱
             </button>
             <button type="button" disabled={busy || disabled || remaining > 0} onClick={() => void run(true)}>
@@ -98,9 +137,9 @@ export function EmailLogin({ disabled, onBusyChange, onSuccess }: {
         </>
       ) : (
         <>
-          <label htmlFor="login-email">邮箱</label>
+          <label className="visually-hidden" htmlFor="login-email">邮箱</label>
           <input id="login-email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false}
-            maxLength={254} required placeholder="输入你的邮箱" value={email}
+            maxLength={254} required placeholder="输入邮箱，收验证码登录" value={email}
             onChange={(event) => setEmail(event.target.value)} disabled={busy || disabled}
             aria-describedby="login-email-help" />
           <button className="login-button is-email" type="submit" disabled={busy || disabled || !email.trim() || remaining > 0}>

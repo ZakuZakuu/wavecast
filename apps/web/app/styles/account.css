@@ -42,36 +42,59 @@
   place-items: center;
 }
 
-/* Login */
-.login-brand { margin-top: 56px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+/* Login: one screen, never scrolls. The brand block takes whatever height is
+   left over and shrinks first; the form and the other options keep their size. */
+.acct-login { overflow-y: auto; }
+.acct-login .acct-body {
+  height: 100%;
+  min-height: 0;
+  padding: calc(var(--safe-top) + 10px) 24px max(var(--safe-bottom), 20px);
+  /* The three Frost-Login glows as radial gradients painted in the page
+     background. Large filter: blur() layers here made iOS Safari leave an
+     unpainted box behind the logo (and reload the page under memory
+     pressure); gradients need no compositing. */
+  background:
+    radial-gradient(circle 270px at 60px 100px, rgba(232, 131, 74, .28), rgba(232, 131, 74, .14) 50%, rgba(232, 131, 74, 0)),
+    radial-gradient(circle 260px at calc(100% - 30px) 290px, rgba(110, 98, 182, .26), rgba(110, 98, 182, .12) 50%, rgba(110, 98, 182, 0)),
+    radial-gradient(ellipse 240px 220px at 170px 460px, rgba(62, 156, 140, .18), rgba(62, 156, 140, .08) 50%, rgba(62, 156, 140, 0));
+}
+
+.acct-back {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  margin: 2px 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(118, 118, 128, .14);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+}
+
+.login-brand {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
 /* box-shadow on the tile's own radius (rx 22.5 of 100), not filter: drop-shadow —
    iOS Safari can paint a filter inside a scroll container as a grey box. */
 .login-logo { line-height: 0; border-radius: 22.5%; box-shadow: 0 12px 24px rgba(29, 29, 31, .16); }
-.login-brand h1 { margin: 22px 0 0; font-size: 32px; font-weight: 700; letter-spacing: -0.01em; }
-.login-brand p { margin: 8px 0 0; font-size: 17px; color: var(--ink-2); }
-
-.login-benefits {
-  list-style: none;
-  margin: 44px 0 0;
-  padding: 18px;
-  border-radius: 20px;
-  background: var(--mat-card);
-  backdrop-filter: var(--blur-card);
-  -webkit-backdrop-filter: var(--blur-card);
-  border: .5px solid var(--mat-card-border);
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+.login-brand h1 { margin: 18px 0 0; font-size: 30px; font-weight: 700; letter-spacing: -0.01em; }
+.login-brand p { margin: 6px 0 0; font-size: 16px; color: var(--ink-2); }
+@media (max-height: 640px) {
+  .login-logo { transform: scale(.78); margin: -8px; }
+  .login-brand h1 { margin-top: 10px; font-size: 26px; }
+  .login-brand p { display: none; }
 }
-.login-benefits li { display: flex; align-items: center; gap: 14px; }
-.login-benefit-icon { width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px; display: grid; place-items: center; }
-.login-benefit-copy { display: flex; flex-direction: column; gap: 2px; }
-.login-benefit-title { font-size: 16px; font-weight: 600; }
-.login-benefit-line { font-size: 13px; color: var(--ink-2); }
 
-.login-actions { margin-top: auto; padding-top: 32px; display: flex; flex-direction: column; gap: 10px; }
+.login-actions { flex: 0 0 auto; padding-top: 16px; display: flex; flex-direction: column; gap: 10px; }
 .login-button {
-  height: 54px;
+  height: 52px;
   border-radius: 999px;
   font-size: 17px;
   font-weight: 600;
@@ -80,39 +103,37 @@
   justify-content: center;
   gap: 10px;
 }
-.login-button.is-github { border: 0; background: #1D1D1F; color: #FFFFFF; }
-.login-button.is-google { border: .5px solid rgba(60, 60, 67, .22); background: #FFFFFF; color: #1D1D1F; }
 .login-button:disabled { opacity: .6; }
-.login-skip { height: 48px; border: 0; background: transparent; color: var(--ink); font-size: 16px; font-weight: 500; }
+.login-button.is-email { border: 0; background: var(--ink); color: var(--bg); }
+.login-social { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 10px; }
+.login-button.is-social {
+  height: 48px;
+  font-size: 15px;
+  font-weight: 500;
+  border: .5px solid rgba(60, 60, 67, .22);
+  background: rgba(255, 255, 255, .72);
+  color: #1D1D1F;
+}
+.login-skip { height: 44px; border: 0; background: transparent; color: var(--ink-2); font-size: 15px; font-weight: 500; }
 .login-off { margin: 0 0 4px; text-align: center; font-size: 15px; line-height: 1.5; color: var(--ink-2); }
 .login-error { margin: 0; text-align: center; font-size: 14px; color: var(--danger); }
-.login-foot { margin: 2px 0 0; text-align: center; font-size: 12px; line-height: 1.6; color: var(--ink-3); }
+.login-foot { margin: 0; text-align: center; font-size: 12px; line-height: 1.5; color: var(--ink-3); }
 
-.has-email .login-brand { margin-top: 20px; }
-.has-email .login-logo { transform: scale(.75); margin: -12px; }
-.has-email .login-brand h1 { margin-top: 16px; }
-.has-email .login-benefits { margin-top: 24px; }
-.has-email .login-actions { padding-top: 24px; }
 .login-email { display: flex; flex-direction: column; gap: 10px; }
-.login-email label { font-size: 14px; font-weight: 600; }
 .login-email input {
   box-sizing: border-box; width: 100%; min-height: 52px; padding: 12px 16px;
   border: 1px solid var(--mat-card-border); border-radius: 16px;
   background: var(--surface); color: var(--ink); font: inherit; font-size: 16px;
 }
 .login-email input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-.login-button.is-email { border: 0; background: var(--ink); color: var(--bg); }
 .login-email-note { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink-2); overflow-wrap: anywhere; }
 .login-email-note strong { font-weight: 500; color: var(--ink); }
 .login-email-options { display: flex; justify-content: space-between; gap: 12px; }
 .login-email-options button { min-height: 44px; border: 0; background: transparent; color: var(--ink-2); font: inherit; font-size: 14px; }
 .login-email-options button:disabled { opacity: .5; }
-.login-divider { display: flex; align-items: center; gap: 12px; margin: 6px 0; color: var(--ink-3); font-size: 12px; }
+.login-divider { display: flex; align-items: center; gap: 12px; margin: 2px 0; color: var(--ink-3); font-size: 12px; }
 .login-divider::before, .login-divider::after { content: ""; flex: 1; height: 1px; background: var(--mat-card-border); }
 .acct-profile p { max-width: 100%; overflow-wrap: anywhere; }
-@media (max-height: 740px) {
-  .has-email .login-benefits { display: none; }
-}
 
 /* Account */
 .acct-profile { margin-top: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; }

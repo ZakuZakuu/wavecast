@@ -67,35 +67,12 @@ export function AccountPage() {
   return <LoginView availability={availability} />;
 }
 
-const BENEFITS = [
-  {
-    title: "节目库跟着账号走",
-    line: "换了设备，也能接着上次的地方听",
-    tint: "rgba(62, 156, 140, .16)",
-    color: "#2E7D70",
-    icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round"><rect x="4" y="4" width="4" height="16" rx="1" /><rect x="10" y="4" width="4" height="16" rx="1" /><path d="m16 5.4 3.4-0.9 2.9 13.9-3.4 0.9z" /></svg>,
-  },
-  {
-    title: "推荐越来越准",
-    line: "按你的口味和收听记录准备节目",
-    tint: "rgba(232, 131, 74, .16)",
-    color: "#B5562A",
-    icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3.5l2.4 5 5.4.6-4 3.7 1.1 5.4L12 15.5l-4.9 2.7 1.1-5.4-4-3.7 5.4-.6z" /></svg>,
-  },
-  {
-    title: "调过的节目都留着",
-    line: "随时回来重听",
-    tint: "rgba(110, 98, 182, .16)",
-    color: "#5A4FA0",
-    icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><rect x="2.5" y="8" width="19" height="9" rx="4.5" /><path d="M13.5 5.5v13" /></svg>,
-  },
-];
-
 function LoginView({ availability }: { availability: AuthAvailability | null }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<SocialProvider | null>(null);
   const [emailBusy, setEmailBusy] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const providers = signInProviders(availability);
   const emailEnabled = Boolean(availability?.enabled && availability.emailOtp);
   const known = availability !== null;
@@ -113,53 +90,47 @@ function LoginView({ availability }: { availability: AuthAvailability | null }) 
     }
   };
 
+  // Waiting for the emailed code, the page is only about the code.
+  const showSocial = providers.length > 0 && !verifying;
+
   return (
-    <div className={`acct acct-login${emailEnabled ? " has-email" : ""}`}>
+    <div className="acct acct-login">
       <div className="acct-body">
         <BackButton />
         <div className="login-brand">
-          <span className="login-logo"><LogoMark size={96} /></span>
+          <span className="login-logo"><LogoMark size={72} /></span>
           <h1>WaveCast</h1>
           <p>轻主持的 AI 音乐电台</p>
         </div>
 
-        <ul className="login-benefits">
-          {BENEFITS.map((benefit) => (
-            <li key={benefit.title}>
-              <span className="login-benefit-icon" aria-hidden="true" style={{ background: benefit.tint, color: benefit.color }}>{benefit.icon}</span>
-              <span className="login-benefit-copy">
-                <span className="login-benefit-title">{benefit.title}</span>
-                <span className="login-benefit-line">{benefit.line}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-
         <div className="login-actions">
-          {emailEnabled ? <EmailLogin disabled={busy !== null} onBusyChange={setEmailBusy} onSuccess={() => {
+          {emailEnabled ? <EmailLogin disabled={busy !== null} onBusyChange={setEmailBusy} onStepChange={setVerifying} onSuccess={() => {
             clearApiAuthToken();
             router.push("/onboarding");
             router.refresh();
           }} /> : null}
-          {emailEnabled && providers.length > 0 ? <p className="login-divider">或使用其他方式</p> : null}
-          {providers.includes("github") ? (
-            <button type="button" className="login-button is-github" disabled={busy !== null || emailBusy} onClick={() => void signIn("github")}>
-              <GitHubMark />
-              {busy === "github" ? "正在跳转…" : "使用 GitHub 继续"}
-            </button>
-          ) : null}
-          {providers.includes("google") ? (
-            <button type="button" className="login-button is-google" disabled={busy !== null || emailBusy} onClick={() => void signIn("google")}>
-              <GoogleMark />
-              {busy === "google" ? "正在跳转…" : "使用 Google 继续"}
-            </button>
+          {showSocial && emailEnabled ? <p className="login-divider">或</p> : null}
+          {showSocial ? (
+            <div className="login-social">
+              {providers.includes("google") ? (
+                <button type="button" className="login-button is-social" aria-label="使用 Google 继续" disabled={busy !== null || emailBusy} onClick={() => void signIn("google")}>
+                  <GoogleMark />
+                  {busy === "google" ? "跳转中…" : "Google"}
+                </button>
+              ) : null}
+              {providers.includes("github") ? (
+                <button type="button" className="login-button is-social" aria-label="使用 GitHub 继续" disabled={busy !== null || emailBusy} onClick={() => void signIn("github")}>
+                  <GitHubMark />
+                  {busy === "github" ? "跳转中…" : "GitHub"}
+                </button>
+              ) : null}
+            </div>
           ) : null}
           {signInOff ? <p className="login-off" role="status">当前版本暂不支持登录，可以直接开始收听</p> : null}
           {error ? <p className="login-error" role="alert">{error}</p> : null}
           <button type="button" className="login-skip" onClick={() => router.push("/")}>
             {signInOff ? "开始收听" : "先不登录，直接收听"}
           </button>
-          {signInOff ? null : <p className="login-foot">登录只用于同步节目库和推荐。</p>}
         </div>
       </div>
     </div>
