@@ -129,6 +129,9 @@ integration 托管检查点。不要假设平台已提供公开端口。
 bash scripts/cloud/start-api.sh --live
 ```
 
+只想评审选曲和文稿、不合成语音时用 `bash scripts/cloud/start-api.sh --live --no-tts`：
+研究、选曲、写稿仍走真实 provider，TTS 用 mock（不调用 MiniMax，时长为估算值）。
+
 `--live` 显式打开现有各阶段，包括 MiniMax，配置检查不会发 provider 请求；
 服务启动后新建节目会花费额度。先从本地 API `/docs` 核对请求合同，使用固定的
 `X-Wavecast-Listener`（如 `claude-review-01`）贯穿提案、开播、获取、渲染请求。

@@ -4,10 +4,14 @@ set -euo pipefail
 export PATH="${HOME}/.local/bin:$PATH"
 cd "$(dirname "$0")/../.."
 mode=${1:---mock}
+no_tts=${2:-}
+if [[ -n "$no_tts" && "$no_tts" != --no-tts ]]; then
+  echo 'Usage: bash scripts/cloud/start-api.sh --mock|--live [--no-tts]' >&2; exit 2
+fi
 case "$mode" in
   --mock) export WAVECAST_PROVIDER_MODE=mock ;;
   --live) export WAVECAST_PROVIDER_MODE=live ;;
-  *) echo 'Usage: bash scripts/cloud/start-api.sh --mock|--live' >&2; exit 2 ;;
+  *) echo 'Usage: bash scripts/cloud/start-api.sh --mock|--live [--no-tts]' >&2; exit 2 ;;
 esac
 # Explicit selectors avoid inherited environment settings activating paid work.
 export WAVECAST_RECOMMENDATION_PLANNER=deterministic
@@ -15,6 +19,8 @@ export WAVECAST_PROPOSAL_PLANNER=inherit WAVECAST_MUSIC_PROVIDER=inherit
 export WAVECAST_FAST_START_PROVIDER=inherit WAVECAST_RESEARCH_PROVIDER=inherit
 export WAVECAST_CURATOR_PROVIDER=inherit WAVECAST_WRITER_PROVIDER=inherit
 export WAVECAST_TTS_PROVIDER=inherit
+# --no-tts keeps research/curation/writing live but synthesizes no speech (no MiniMax calls).
+[[ "$no_tts" == --no-tts ]] && export WAVECAST_TTS_PROVIDER=mock
 export WAVECAST_DATABASE_URL=postgresql+asyncpg://wavecast_cloud:wavecast_cloud@127.0.0.1:5432/wavecast_cloud
 export WAVECAST_AUDIO_ROOT="$PWD/.wavecast-data/cloud/audio"
 # No production identity or email capabilities are needed by this API.
