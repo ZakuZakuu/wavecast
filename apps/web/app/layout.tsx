@@ -47,7 +47,11 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" suppressHydrationWarning>
+      <head>
+        {/* Fallback for the home-screen PWA height fix (tokens.css) where display-mode does not match. */}
+        <script dangerouslySetInnerHTML={{ __html: 'try{if(navigator.standalone)document.documentElement.setAttribute("data-standalone","")}catch(e){}' }} />
+      </head>
       <body>
         <LibraryIdentityBridge>
           <PlaybackProvider>

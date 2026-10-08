@@ -36,7 +36,7 @@
 .ob-field input:focus-visible { box-shadow: 0 0 0 2px rgba(29, 29, 31, .25); }
 .ob-next { margin-top: 16px; min-height: 54px; width: 100%; flex: 0 0 auto; }
 
-.install-layer { position: fixed; inset: 0; z-index: 85; display: flex; justify-content: center; }
+.install-layer { position: fixed; inset: 0; bottom: var(--fixed-bottom); height: var(--fixed-h); z-index: 85; display: flex; justify-content: center; }
 .install-card {
   position: absolute;
   bottom: calc(var(--nav-height) + 12px);
