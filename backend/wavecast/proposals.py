@@ -11,7 +11,13 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from wavecast.audio_timing import TrackTimingProfile
-from wavecast.catalog_pool import AvailabilityStatus, CatalogPoolBuilder, PoolBuildConfig
+from wavecast.catalog_pool import (
+    AvailabilityStatus,
+    CatalogPoolBuilder,
+    PoolBuildConfig,
+    artist_credit_includes,
+    primary_artist,
+)
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.language import OutputLanguage
@@ -373,6 +379,10 @@ def _proposal_catalog_name(value: str) -> str:
     return canonical_name(value)
 
 
+# A catalog credit must lead at least this many of the top results to count as the artist's alias.
+_ALIAS_MIN_RESULTS = 3
+
+
 def _uses_cjk(value: str) -> bool:
     return any("\u3400" <= character <= "\u9fff" for character in value)
 
@@ -568,6 +578,9 @@ class LLMProgramProposalGenerator:
         for candidate in candidates:
             if all(_proposal_catalog_name(candidate.artist) != _proposal_catalog_name(a) for a in artists):
                 artists.append(candidate.artist)
+        for alias in await self._catalog_credit_aliases(artists):
+            if all(_proposal_catalog_name(alias) != _proposal_catalog_name(a) for a in artists):
+                artists.append(alias)
         try:
             pool = await self.pool_builder.build(artist_queries=artists)
         except Exception:  # noqa: BLE001 - the deeper look is optional
@@ -583,6 +596,35 @@ class LLMProgramProposalGenerator:
                 )
                 return verified
         return None, None, None
+
+    async def _catalog_credit_aliases(self, artists: list[str]) -> list[str]:
+        """Catalog credits for artists the catalog files under another script.
+
+        "Joe Hisaishi" is credited as 久石譲, so a pool filtered on the Latin name would drop
+        every track.  A credit counts as an alias only when it is the primary artist of
+        several of the top results and the requested name appears in no credit at all.
+        """
+
+        aliases: list[str] = []
+        for artist in artists:
+            try:
+                results = await self.retrieval.search(artist, limit=10)
+            except ProviderError:
+                continue
+            if any(artist_credit_includes(result.artist, artist) for result in results):
+                continue
+            counts: dict[str, int] = {}
+            names: dict[str, str] = {}
+            for result in results:
+                name = primary_artist(result.artist)
+                key = _proposal_catalog_name(name)
+                counts[key] = counts.get(key, 0) + 1
+                names.setdefault(key, name)
+            if counts:
+                key = max(counts, key=lambda k: counts[k])
+                if counts[key] >= _ALIAS_MIN_RESULTS:
+                    aliases.append(names[key])
+        return aliases
 
     async def _classify_unresolved(self, draft: ProgramProposalDraft) -> str:
         """Tell an outage, an unplayable catalog and a missing track apart.

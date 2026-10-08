@@ -550,3 +550,60 @@ def test_seeds_saved_before_the_language_field_default_to_auto() -> None:
     del payload["output_language"]
 
     assert EpisodeSeed.model_validate(payload).output_language is OutputLanguage.AUTO
+
+
+class _CjkCreditCatalog(_DeepCatalog):
+    """The catalog credits the artist in kanji only, whatever script the query uses."""
+
+    def __init__(self, credits: list[str] | None = None) -> None:
+        super().__init__()
+        names = credits or ["久石譲"] * 8
+        self.tracks = [
+            track.model_copy(update={"artist": names[index], "playable": index == 7})
+            for index, track in enumerate(self.tracks)
+        ]
+
+
+def _alias_generator(catalog: _DeepCatalog) -> LLMProgramProposalGenerator:
+    retrieval = MusicRetrievalService(
+        MusicProviderRegistry({"netease": catalog}, preference=("netease",))  # type: ignore[dict-item]
+    )
+    return LLMProgramProposalGenerator(
+        _ProposalLLM(_hisaishi_draft(OpeningTrackCandidate(artist="Joe Hisaishi", title="Hit 0"))),
+        retrieval,
+        pool_builder=CatalogPoolBuilder(retrieval),
+    )
+
+
+def test_a_latin_artist_name_reaches_tracks_the_catalog_credits_in_another_script() -> None:
+    proposal = asyncio.run(
+        _alias_generator(_CjkCreditCatalog()).generate(
+            ProposalGenerationRequest(prompt="the piano music of Joe Hisaishi")
+        )
+    )[0]
+
+    assert proposal.opening_track_artist == "久石譲"
+    assert proposal.opening_track_title == "Hit 7"
+
+
+def test_an_unrelated_dominant_credit_is_not_taken_as_an_alias() -> None:
+    # Only two of the ten results share a credit, which is too weak to call an alias.
+    catalog = _CjkCreditCatalog(["久石譲", "A", "B", "C", "D", "E", "F", "久石譲"])
+
+    with pytest.raises(ProgramProposalGenerationError):
+        asyncio.run(
+            _alias_generator(catalog).generate(
+                ProposalGenerationRequest(prompt="the piano music of Joe Hisaishi")
+            )
+        )
+
+
+def test_no_alias_is_looked_up_when_the_requested_name_is_credited_as_written() -> None:
+    credits = ["久石譲", "久石譲", "久石譲", "Joe Hisaishi", "Joe Hisaishi", "X", "Y", "久石譲"]
+
+    with pytest.raises(ProgramProposalGenerationError):
+        asyncio.run(
+            _alias_generator(_CjkCreditCatalog(credits)).generate(
+                ProposalGenerationRequest(prompt="the piano music of Joe Hisaishi")
+            )
+        )
