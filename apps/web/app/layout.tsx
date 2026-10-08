@@ -22,7 +22,11 @@ export const metadata: Metadata = {
   applicationName: "WaveCast",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "default",
+    // "default" makes iOS veil the status bar in near-white (harsh over dark
+    // pages like the player). Translucent lets the page show through and iOS
+    // picks black or white status text from what is underneath. Pages already
+    // pad for env(safe-area-inset-top). Read when the PWA is added to the home screen.
+    statusBarStyle: "black-translucent",
     title: "WaveCast",
   },
   icons: {
@@ -43,7 +47,11 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" suppressHydrationWarning>
+      <head>
+        {/* Fallback for the home-screen PWA height fix (tokens.css) where display-mode does not match. */}
+        <script dangerouslySetInnerHTML={{ __html: 'try{if(navigator.standalone)document.documentElement.setAttribute("data-standalone","")}catch(e){}' }} />
+      </head>
       <body>
         <LibraryIdentityBridge>
           <PlaybackProvider>

@@ -49,6 +49,14 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --frame-max: 430px;
 
+  /* Full-height variables. Standalone (home-screen) iOS PWAs with a translucent
+     status bar report dvh/innerHeight short by the status-bar height (812 vs a
+     874px screen) while lvh is right; overridden below. */
+  --root-h: 100%;
+  --app-h: 100dvh;
+  --fixed-bottom: 0;
+  --fixed-h: auto;
+
   /* Materials (§4.4). Dark mode is reserved for later; only tokens exist. */
   --mat-card: rgba(255, 255, 255, .62);
   --mat-card-border: rgba(255, 255, 255, .8);
@@ -88,5 +96,25 @@
     --blur-card: none;
     --blur-nav: none;
     --blur-sheet: none;
+  }
+}
+
+/* Home-screen PWA: size to the large viewport so the app reaches the bottom edge.
+   data-standalone is set from navigator.standalone (layout.tsx) as a fallback for
+   engines that do not match display-mode. */
+@supports (height: 100lvh) {
+  @media (display-mode: standalone) {
+    :root {
+      --root-h: 100lvh;
+      --app-h: 100lvh;
+      --fixed-bottom: auto;
+      --fixed-h: 100lvh;
+    }
+  }
+  :root[data-standalone] {
+    --root-h: 100lvh;
+    --app-h: 100lvh;
+    --fixed-bottom: auto;
+    --fixed-h: 100lvh;
   }
 }

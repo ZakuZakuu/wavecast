@@ -342,7 +342,7 @@
 @keyframes fade-up { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
 /* ---------- Sheets ---------- */
-.sheet-layer { position: fixed; inset: 0; z-index: 80; display: flex; justify-content: center; align-items: flex-end; }
+.sheet-layer { position: fixed; inset: 0; bottom: var(--fixed-bottom); height: var(--fixed-h); z-index: 80; display: flex; justify-content: center; align-items: flex-end; }
 .sheet-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, .35); }
 @keyframes fade-in-plain { from { opacity: 0; } to { opacity: 1; } }
 .sheet {
