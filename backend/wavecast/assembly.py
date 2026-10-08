@@ -1408,6 +1408,7 @@ class LiveEpisodeAssemblyService:
                 keyword_queries=[request.topic],
             )
         except Exception as error:  # noqa: BLE001 - optional optimisation, degrade quietly
+            logger.warning("catalog_pool_failed error_type=%s", type(error).__name__)
             trace.mark("catalog_pool_failed", error_type=type(error).__name__)
             return None
         # Never offer a song the programme has already reserved (e.g. the opening track).
@@ -1422,6 +1423,19 @@ class LiveEpisodeAssemblyService:
                     )
                 ]
             }
+        )
+        logger.info(
+            "catalog_pool_ready entries=%d playable=%d unplayable=%d not_found=%d "
+            "provider_error=%d verifications=%d search_failures=%d elapsed_ms=%d truncated=%s",
+            len(pool.entries),
+            pool.count(AvailabilityStatus.PLAYABLE),
+            pool.count(AvailabilityStatus.UNPLAYABLE),
+            pool.count(AvailabilityStatus.NOT_FOUND),
+            pool.count(AvailabilityStatus.PROVIDER_ERROR),
+            pool.verification_count,
+            pool.search_failure_count,
+            pool.elapsed_ms,
+            pool.truncated,
         )
         trace.mark(
             "catalog_pool_ready",
