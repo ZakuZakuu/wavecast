@@ -6,6 +6,7 @@ import json
 from collections.abc import Sequence
 
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
+from wavecast.text_identity import canonical_name
 
 from .fast_start import FastStructuredProvider
 from .models import (
@@ -239,7 +240,7 @@ def normalize_curator_skeleton(
                     )
                 )
             track = track.model_copy(update={"evidence_ids": track_ids})
-            seen_track_keys = {(track.artist.casefold().strip(), track.title.casefold().strip())}
+            seen_track_keys = {(canonical_name(track.artist), canonical_name(track.title))}
             for alternate in chapter.track_alternates:
                 alternate_ids, dropped, remaining = _retain_evidence_ids(
                     alternate.evidence_ids, available
@@ -257,8 +258,8 @@ def normalize_curator_skeleton(
                     update={"evidence_ids": alternate_ids}
                 )
                 key = (
-                    normalized_alternate.artist.casefold().strip(),
-                    normalized_alternate.title.casefold().strip(),
+                    canonical_name(normalized_alternate.artist),
+                    canonical_name(normalized_alternate.title),
                 )
                 if key in seen_track_keys:
                     diagnostics.append(

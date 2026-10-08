@@ -18,6 +18,7 @@ from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
+from wavecast.text_identity import canonical_name
 
 
 class DurationIntent(StrEnum):
@@ -352,7 +353,7 @@ def _prompt_excerpt(prompt: str, *, limit: int = 26) -> str:
 
 
 def _proposal_catalog_name(value: str) -> str:
-    return " ".join(value.casefold().split())
+    return canonical_name(value)
 
 
 def _uses_cjk(value: str) -> bool:

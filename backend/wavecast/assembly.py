@@ -104,6 +104,7 @@ from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.search import ExaSearchProvider, TavilySearchProvider
 from wavecast.providers.usage import UsageLedger, UsageTotals, usage_diagnostics
 from wavecast.storage.assets import LocalObjectStorageProvider
+from wavecast.text_identity import canonical_name
 from wavecast.timing import (
     ProgramTimingPlan,
     ProgramTimingSummary,
@@ -284,8 +285,8 @@ _NOVELTY_RANK = {
 
 def _proposal_identity_key(proposal: TrackProposal) -> tuple[str, str]:
     return (
-        " ".join(proposal.artist.casefold().split()),
-        " ".join(proposal.title.casefold().split()),
+        canonical_name(proposal.artist),
+        canonical_name(proposal.title),
     )
 
 
@@ -406,7 +407,7 @@ class LiveEpisodeAssemblyService:
         async def prepare_candidate(
             proposal: TrackProposal,
         ) -> GeneratedChapter | None:
-            proposal_key = (proposal.artist.casefold(), proposal.title.casefold())
+            proposal_key = (canonical_name(proposal.artist), canonical_name(proposal.title))
             if proposal_key in seen:
                 return None
             seen.add(proposal_key)
@@ -576,9 +577,9 @@ class LiveEpisodeAssemblyService:
             artist_proposals.append(chapter.track)
         artist_proposals.extend(chapter.track_alternates)
         for candidate_proposal in artist_proposals:
-            normalized = " ".join(candidate_proposal.artist.casefold().split())
+            normalized = canonical_name(candidate_proposal.artist)
             if normalized and normalized not in {
-                " ".join(item.casefold().split()) for item in artists
+                canonical_name(item) for item in artists
             }:
                 artists.append(candidate_proposal.artist)
         for artist in artists[:_CATALOG_REPLACEMENT_LIMIT]:
@@ -590,11 +591,11 @@ class LiveEpisodeAssemblyService:
                 )
             except ProviderError:
                 continue
-            artist_key = " ".join(artist.casefold().split())
+            artist_key = canonical_name(artist)
             for alternative in alternatives:
                 if not alternative.playable:
                     continue
-                if " ".join(alternative.artist.casefold().split()) != artist_key:
+                if canonical_name(alternative.artist) != artist_key:
                     continue
                 candidate = ResolvedTrack(
                     track_ref=alternative.track_ref,
@@ -924,7 +925,7 @@ class LiveEpisodeAssemblyService:
         unique_seeds: list[TrackProposal] = []
         seen_artists: set[str] = set()
         for seed in artist_seeds:
-            artist_key = " ".join(seed.artist.casefold().split())
+            artist_key = canonical_name(seed.artist)
             if not artist_key or artist_key in seen_artists:
                 continue
             seen_artists.add(artist_key)
@@ -952,7 +953,7 @@ class LiveEpisodeAssemblyService:
             if not needs_more_music():
                 return False
 
-            artist_key = " ".join(seed.artist.casefold().split())
+            artist_key = canonical_name(seed.artist)
             try:
                 alternatives = await self.retrieval.search(
                     seed.artist,
@@ -963,7 +964,7 @@ class LiveEpisodeAssemblyService:
                 return False
 
             for alternative in alternatives:
-                if " ".join(alternative.artist.casefold().split()) != artist_key:
+                if canonical_name(alternative.artist) != artist_key:
                     continue
 
                 proposal = TrackProposal(
@@ -1801,7 +1802,7 @@ _GENERIC_ARTIST_WORDS = {
 
 
 def _identity_words(value: str) -> tuple[str, ...]:
-    return tuple(re.findall(r"[\w]+", value.casefold(), flags=re.UNICODE))
+    return tuple(re.findall(r"[\w]+", canonical_name(value), flags=re.UNICODE))
 
 
 def _artist_identity_words(value: str) -> frozenset[str]:
@@ -1833,8 +1834,8 @@ def _same_song_identity(left: ResolvedTrack | None, right: ResolvedTrack) -> boo
     right_artist = _artist_identity_words(right.canonical_artist)
     if not left_artist or not right_artist:
         return (
-            left.canonical_artist.casefold().strip()
-            == right.canonical_artist.casefold().strip()
+            canonical_name(left.canonical_artist)
+            == canonical_name(right.canonical_artist)
         )
     return left_artist <= right_artist or right_artist <= left_artist
 

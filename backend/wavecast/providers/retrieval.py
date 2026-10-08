@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import re
-import unicodedata
 from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
+
+from wavecast.text_identity import canonical_name
 
 from .contracts import MusicProvider, TrackMetadata
 from .errors import ProviderError
@@ -345,7 +346,7 @@ def _group_candidates(candidates: list[RetrievedTrack]) -> list[RetrievedTrackGr
 
 
 def _normalize_text(value: str) -> str:
-    normalized = unicodedata.normalize("NFKC", value).casefold()
+    normalized = canonical_name(value)
     return " ".join(re.sub(r"[^\w]+", " ", normalized, flags=re.UNICODE).split())
 
 

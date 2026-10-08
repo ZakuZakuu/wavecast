@@ -343,3 +343,48 @@ def test_program_skeleton_schema_bounds_chapter_count() -> None:
 
     assert chapters_schema["minItems"] == 1
     assert chapters_schema["maxItems"] == 32
+
+
+def test_curator_treats_script_variant_alternate_as_duplicate_of_the_primary() -> None:
+    primary = TrackProposal(
+        artist="久石譲", title="現実を嗤う", evidence_ids=["e1"], confidence=0.9
+    )
+    skeleton = ProgramSkeleton(
+        thesis="fixture",
+        estimated_duration_seconds=60,
+        chapters=[
+            ChapterPlan(
+                index=0,
+                track=primary,
+                track_alternates=[
+                    TrackProposal(
+                        artist="久石让", title="现实を嗤う", evidence_ids=["e1"], confidence=0.8
+                    )
+                ],
+                narrative_role=NarrativeRole.BRIDGE,
+                reason="fixture",
+                novelty_distance=NoveltyDistance.CLOSE,
+                evidence_ids=["e1"],
+                narration_goal="connect",
+            )
+        ],
+    )
+    trace = GenerationTrace(request_id="fixture")
+
+    result = asyncio.run(
+        CuratorService(CuratorFixture(skeleton)).curate(
+            ResearchBundle(
+                anchors=[], taste_hypotheses=[], evidence=[evidence("e1")], candidates=[]
+            ),
+            fast_plan(),
+            desired_duration_seconds=60,
+            trace=trace,
+        )
+    )
+
+    assert result.chapters[0].track_alternates == []
+    assert "duplicate_track_alternate" in {
+        event.metadata.get("reference_kind")
+        for event in trace.events
+        if event.name == "curator_reference_normalized"
+    }
