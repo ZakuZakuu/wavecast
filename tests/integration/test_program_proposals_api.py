@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 from wavecast.proposals import InMemoryProgramProposalRepository, ProgramProposalGenerationError
 
@@ -68,7 +69,9 @@ def test_valid_bearer_keeps_listener_identity_and_resolves_user(monkeypatch) -> 
     captured: dict[str, str | None] = {}
 
     class CapturingRepository(InMemoryProgramProposalRepository):
-        def save_many(self, proposals, *, owner_listener_id=None, owner_user_id=None, source="tune"):
+        def save_many(
+            self, proposals, *, owner_listener_id=None, owner_user_id=None, source="tune"
+        ):
             captured["listener"] = owner_listener_id
             captured["user"] = owner_user_id
             super().save_many(
@@ -148,3 +151,34 @@ def test_proposal_generation_returns_safe_gateway_error(monkeypatch) -> None:
     assert response.json()["detail"] == (
         "Program proposal generation failed (opening_track_unresolved)"
     )
+
+
+@pytest.mark.parametrize(
+    ("reason", "status", "needle"),
+    [
+        ("opening_track_unplayable", 422, "版权"),
+        ("opening_track_not_found", 422, "写法"),
+        ("catalog_unavailable", 503, "稍后再试"),
+    ],
+)
+def test_proposal_failures_with_a_known_cause_return_listener_guidance(
+    monkeypatch, reason: str, status: int, needle: str
+) -> None:
+    class FailingGenerator:
+        async def generate(self, body):
+            del body
+            raise ProgramProposalGenerationError(reason)
+
+    client = TestClient(api_module.app)
+    monkeypatch.setattr(api_module, "proposal_generator", FailingGenerator())
+
+    response = client.post(
+        "/api/program-proposals",
+        json={"prompt": "椎名林檎", "duration_intent": "AUTO", "count": 1},
+    )
+
+    assert response.status_code == status
+    detail = response.json()["detail"]
+    assert needle in detail
+    assert reason not in detail  # internal codes never reach the listener
+    assert "opening_track" not in detail

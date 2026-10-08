@@ -42,6 +42,8 @@ class ProviderSettings:
     curator_provider: LLMCapabilitySelector = "inherit"
     writer_provider: LLMCapabilitySelector = "inherit"
     tts_provider: TTSCapabilitySelector = "inherit"
+    # ADR 0022: build a verified-playable catalog pool before the Curator chooses tracks.
+    catalog_pool: bool = False
 
     # Search remains deliberately short. Structured synthesis can be materially larger.
     timeout_seconds: float = 20.0
@@ -124,6 +126,7 @@ class ProviderSettings:
                     {"inherit", "mock", "minimax"},
                 ),
             ),
+            catalog_pool=_flag_from_env("WAVECAST_CATALOG_POOL"),
             deepseek_timeout_seconds=_positive_float_from_env(
                 "DEEPSEEK_TIMEOUT_SECONDS", default=20.0
             ),
@@ -236,6 +239,15 @@ def _selector_from_env(name: str, allowed: set[str]) -> str:
         choices = ", ".join(sorted(allowed))
         raise ProviderConfigurationError(f"{name} must be one of: {choices}")
     return value
+
+
+def _flag_from_env(name: str) -> bool:
+    value = getenv(name, "off").strip().lower()
+    if value in {"on", "true", "1"}:
+        return True
+    if value in {"off", "false", "0", ""}:
+        return False
+    raise ProviderConfigurationError(f"{name} must be on or off")
 
 
 def _positive_float_from_env(name: str, *, default: float) -> float:

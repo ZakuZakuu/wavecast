@@ -15,6 +15,7 @@ import httpx
 
 from wavecast.audio_timing import TrackTimingProfile, track_timing_profile_from_payload
 
+from .call_guard import CatalogCallGuard
 from .config import ProviderSettings
 from .contracts import AudioAsset, AudioAssetType, MusicProvider, TrackMetadata
 from .errors import ProviderConfigurationError, ProviderError, ProviderInvalidResponseError
@@ -26,6 +27,9 @@ if TYPE_CHECKING:
 
 
 TIMING_PROFILE_TIMEOUT_SECONDS = 1.5
+# Metadata lookups only: signed playback URLs are never cached.
+SEARCH_CACHE_TTL_SECONDS = 300.0
+DETAIL_CACHE_TTL_SECONDS = 60.0
 
 
 class SidecarMusicProvider(MusicProvider):
@@ -41,6 +45,7 @@ class SidecarMusicProvider(MusicProvider):
         *,
         client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
+        guard: CatalogCallGuard | None = None,
     ) -> None:
         settings = settings or ProviderSettings()
         configured_url = base_url or self._base_url_from_settings(settings)
@@ -52,14 +57,23 @@ class SidecarMusicProvider(MusicProvider):
         self.base_url = configured_url.rstrip("/")
         self.client = client or httpx.AsyncClient(timeout=settings.timeout_seconds)
         self._owns_client = client is None
+        self.guard = guard or CatalogCallGuard()
 
     async def search(self, query: str, *, limit: int = 5) -> list[TrackMetadata]:
-        payload = await self._request("/search", params={"query": query, "limit": limit})
+        payload = await self.guard.call(
+            ("search", query, limit),
+            SEARCH_CACHE_TTL_SECONDS,
+            lambda: self._request("/search", params={"query": query, "limit": limit}),
+        )
         return [self._normalize_track(item) for item in _track_items(payload)]
 
     async def resolve_track(self, track_ref: str) -> TrackMetadata:
         provider_id = _provider_id(track_ref, self.track_ref_prefix)
-        payload = await self._request(f"/tracks/{quote(provider_id, safe='')}")
+        payload = await self.guard.call(
+            ("detail", provider_id),
+            DETAIL_CACHE_TTL_SECONDS,
+            lambda: self._request(f"/tracks/{quote(provider_id, safe='')}"),
+        )
         items = _track_items(payload)
         if not items:
             raise ProviderInvalidResponseError(f"{self.provider_name} returned no track metadata")

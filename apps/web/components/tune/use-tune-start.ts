@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
 import { useImmersiveOverlay } from "../../lib/chrome-visibility";
-import { friendlyError } from "../../lib/friendly-error";
+import { failureCanRetry, friendlyError } from "../../lib/friendly-error";
 import { rememberCoverSource } from "../../lib/cover/programme-cover";
 import { DUR } from "../../lib/motion/easing";
 import { isPlaybackReadySegment } from "../../lib/playback";
@@ -31,6 +31,8 @@ type Phase =
     coverId?: string;
     proposal: ProgramProposal | null;
     error: string | null;
+    /** False when the failure is deterministic (no playable source): rephrase instead. */
+    retryable?: boolean;
   };
 
 export type TuneStart = ReturnType<typeof useTuneStart>;
@@ -84,6 +86,7 @@ export function useTuneStart() {
         ...base,
         proposal: null,
         error: reason instanceof Error && /[一-鿿]/.test(reason.message) ? reason.message : "开播失败了，可以再试一次",
+        retryable: failureCanRetry(reason),
       });
     }
   }, [open]);
@@ -173,5 +176,6 @@ export function useTuneStart() {
     retry,
     steps,
     error,
+    retryable: phase.kind === "tuning" ? phase.retryable !== false : true,
   };
 }

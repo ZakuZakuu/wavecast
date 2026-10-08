@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from wavecast.arrangement import MixPlan, plan_episode_mix
 from wavecast.assembly import create_episode_assembly_service
 from wavecast.auth import AuthPrincipal, AuthTokenError, JwksJWTVerifier
+from wavecast.catalog_pool import CatalogPoolBuilder, PoolBuildConfig
 from wavecast.deployment import audio_root_from_env, normalize_database_url
 from wavecast.materialization import (
     MusicSnapshotError,
@@ -60,6 +61,9 @@ from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeR
 from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
 from wavecast.presentation import HostMode
 from wavecast.proposals import (
+    REASON_CATALOG_UNAVAILABLE,
+    REASON_OPENING_NOT_FOUND,
+    REASON_OPENING_UNPLAYABLE,
     DeterministicMockProgramProposalGenerator,
     InMemoryProgramProposalRepository,
     LLMProgramProposalGenerator,
@@ -146,6 +150,19 @@ from wavecast.user_context import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_logging() -> None:
+    """Make the counts-only ``wavecast.*`` INFO diagnostics visible in the API log."""
+
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.WARNING, format="%(levelname)s [%(name)s] %(message)s"
+        )
+    logging.getLogger("wavecast").setLevel(os.getenv("WAVECAST_LOG_LEVEL", "INFO").upper())
+
+
+_configure_logging()
 
 LISTENER_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 DATABASE_URL = os.getenv("WAVECAST_DATABASE_URL")
@@ -380,9 +397,18 @@ def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGene
     live_settings = settings.for_live_capability()
     live_settings.credential_for("deepseek")
     ledger = UsageLedger()
+    retrieval = MusicRetrievalService(build_music_registry(settings))
     return LLMProgramProposalGenerator(
         DeepSeekLLMProvider(live_settings, ledger=ledger),
-        MusicRetrievalService(build_music_registry(settings)),
+        retrieval,
+        pool_builder=(
+            CatalogPoolBuilder(
+                retrieval,
+                PoolBuildConfig(max_verifications=12, concurrency=2, timeout_seconds=20.0),
+            )
+            if settings.catalog_pool
+            else None
+        ),
     )
 
 
@@ -1053,10 +1079,7 @@ async def materialize_recommendation(
     except ProgramProposalGenerationError as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
         await restore_available()
-        raise HTTPException(
-            status_code=502,
-            detail=f"Program proposal generation failed ({error.reason})",
-        ) from error
+        raise _proposal_failure_http_error(error) from error
     except ProviderError as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
         await restore_available()
@@ -1376,7 +1399,7 @@ async def create_program_proposals(
         return ProgramProposalBatch(proposals=proposals)
     except ProgramProposalGenerationError as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
-        raise HTTPException(status_code=502, detail=f"Program proposal generation failed ({error.reason})") from error
+        raise _proposal_failure_http_error(error) from error
     except ProviderError as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
         raise HTTPException(status_code=502, detail="Program proposal provider failed") from error
@@ -1386,6 +1409,36 @@ async def create_program_proposals(
     except BaseException:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
         raise
+
+
+# Listener-facing guidance for failures whose cause we can tell apart.  Anything else keeps
+# the generic English gateway detail, which the web client replaces with its own fallback.
+_PROPOSAL_FAILURE_GUIDANCE: dict[str, tuple[int, str]] = {
+    REASON_OPENING_UNPLAYABLE: (
+        422,
+        "没能找到可以播放的开场歌。这位艺人或这个主题的不少作品，可能因为版权暂时没有合适的音源。"
+        "换个说法，或试试相近的艺人和风格。",
+    ),
+    REASON_OPENING_NOT_FOUND: (
+        422,
+        "没有找到和这个说法对得上的歌曲。检查一下写法，或换个更常见的名字试试。",
+    ),
+    REASON_CATALOG_UNAVAILABLE: (
+        503,
+        "音乐服务暂时不太稳定，请稍后再试。",
+    ),
+}
+
+
+def _proposal_failure_http_error(error: ProgramProposalGenerationError) -> HTTPException:
+    guidance = _PROPOSAL_FAILURE_GUIDANCE.get(error.reason)
+    if guidance is not None:
+        status_code, detail = guidance
+        return HTTPException(status_code=status_code, detail=detail)
+    return HTTPException(
+        status_code=502,
+        detail=f"Program proposal generation failed ({error.reason})",
+    )
 
 
 async def _prepare_opening_host(

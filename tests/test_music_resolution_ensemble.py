@@ -366,3 +366,76 @@ def test_provider_detail_error_isolated_from_another_provider() -> None:
 
     assert resolved is not None
     assert resolved.track_ref == "audius:target"
+
+
+def test_resolution_accepts_cjk_script_variants_of_the_same_artist_and_title() -> None:
+    catalog = [
+        TrackMetadata(
+            track_ref="netease:nausicaa",
+            artist="久石譲",
+            title="娜乌西卡安魂曲",
+            duration_seconds=240,
+            playable=True,
+        ),
+        TrackMetadata(
+            track_ref="netease:genjitsu",
+            artist="東京事変",
+            title="現実を嗤う",
+            duration_seconds=264,
+            playable=True,
+        ),
+    ]
+    retrieval = MusicRetrievalService(
+        MusicProviderRegistry({"netease": ResolutionFixture(catalog)})
+    )
+
+    by_simplified_artist = asyncio.run(
+        resolve_track_proposal_across_providers(
+            retrieval,
+            TrackProposal(artist="久石让", title="娜乌西卡安魂曲", confidence=0.9),
+        )
+    )
+    by_simplified_title = asyncio.run(
+        resolve_track_proposal_across_providers(
+            retrieval,
+            TrackProposal(artist="东京事变", title="现实を嗤う", confidence=0.9),
+        )
+    )
+
+    assert by_simplified_artist is not None
+    assert by_simplified_artist.track_ref == "netease:nausicaa"
+    # Canonical catalog spelling is returned, never the proposer's variant.
+    assert by_simplified_artist.canonical_artist == "久石譲"
+    assert by_simplified_title is not None
+    assert by_simplified_title.canonical_title == "現実を嗤う"
+
+
+def test_script_variant_folding_does_not_accept_a_different_artist_or_version() -> None:
+    catalog = [
+        TrackMetadata(
+            track_ref="netease:nausicaa",
+            artist="久石譲",
+            title="娜乌西卡安魂曲",
+            duration_seconds=240,
+            playable=True,
+        )
+    ]
+    retrieval = MusicRetrievalService(
+        MusicProviderRegistry({"netease": ResolutionFixture(catalog)})
+    )
+
+    wrong_artist = asyncio.run(
+        resolve_track_proposal_across_providers(
+            retrieval,
+            TrackProposal(artist="宇多田光", title="娜乌西卡安魂曲", confidence=0.9),
+        )
+    )
+    other_version = asyncio.run(
+        resolve_track_proposal_across_providers(
+            retrieval,
+            TrackProposal(artist="久石让", title="娜乌西卡安魂曲 (Live)", confidence=0.9),
+        )
+    )
+
+    assert wrong_artist is None
+    assert other_version is None

@@ -222,6 +222,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
           station={tune.tuning}
           steps={tune.steps}
           error={tune.error}
+          retryable={tune.retryable}
           onCancel={tune.cancel}
           onRetry={tune.retry}
         />

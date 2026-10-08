@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from datetime import datetime
 from enum import StrEnum
@@ -10,6 +11,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from wavecast.audio_timing import TrackTimingProfile
+from wavecast.catalog_pool import AvailabilityStatus, CatalogPoolBuilder, PoolBuildConfig
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.models.episode import CoverParams, EpisodeSeed, utc_now
@@ -18,6 +20,7 @@ from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
+from wavecast.text_identity import canonical_name
 
 
 class DurationIntent(StrEnum):
@@ -113,6 +116,15 @@ class ProgramProposal(BaseModel):
 
 class ProgramProposalBatch(BaseModel):
     proposals: list[ProgramProposal]
+
+
+logger = logging.getLogger(__name__)
+
+# Why no opening track could be resolved.  Only these codes (plus the legacy
+# ``opening_track_unresolved``) are safe to map to listener-facing guidance.
+REASON_CATALOG_UNAVAILABLE = "catalog_unavailable"
+REASON_OPENING_UNPLAYABLE = "opening_track_unplayable"
+REASON_OPENING_NOT_FOUND = "opening_track_not_found"
 
 
 class OpeningTrackCandidate(BaseModel):
@@ -352,7 +364,7 @@ def _prompt_excerpt(prompt: str, *, limit: int = 26) -> str:
 
 
 def _proposal_catalog_name(value: str) -> str:
-    return " ".join(value.casefold().split())
+    return canonical_name(value)
 
 
 def _uses_cjk(value: str) -> bool:
@@ -401,12 +413,16 @@ class LLMProgramProposalGenerator:
         retrieval: MusicRetrievalService,
         *,
         max_opening_candidates: int = 3,
+        pool_builder: CatalogPoolBuilder | None = None,
     ) -> None:
         if max_opening_candidates < 1 or max_opening_candidates > 4:
             raise ValueError("max_opening_candidates must be between 1 and 4")
         self.llm = llm
         self.retrieval = retrieval
         self.max_opening_candidates = max_opening_candidates
+        # Optional (ADR 0022): when the model's own candidates and the first few
+        # same-artist search results are all unplayable, look deeper in the artist's catalog.
+        self.pool_builder = pool_builder
 
     async def generate(self, request: ProposalGenerationRequest) -> list[ProgramProposal]:
         raw = await self.llm.structured(
@@ -427,7 +443,7 @@ class LLMProgramProposalGenerator:
                 await self._resolve_opening_track(draft)
             )
             if resolved is None or opening_duration_seconds is None:
-                raise ProgramProposalGenerationError("opening_track_unresolved")
+                raise ProgramProposalGenerationError(await self._classify_unresolved(draft))
 
             proposal_id = f"proposal-{uuid4().hex}"
             proposals.append(
@@ -509,7 +525,73 @@ class LLMProgramProposalGenerator:
                 if _proposal_catalog_name(resolved_fallback.canonical_artist) != artist_key:
                     continue
                 return resolved_fallback, duration, timing_profile
+        return await self._deeper_artist_fallback(candidates)
+
+    async def _deeper_artist_fallback(
+        self, candidates: list[OpeningTrackCandidate]
+    ) -> tuple[ResolvedTrack | None, int | None, TrackTimingProfile | None]:
+        """Find any playable track credited to the named artists, beyond the first results.
+
+        Search ranks popular songs first, and those are often the unplayable ones, so the
+        first five results can all be unplayable while the artist still has playable songs.
+        """
+
+        if self.pool_builder is None:
+            return None, None, None
+        artists: list[str] = []
+        for candidate in candidates:
+            if all(_proposal_catalog_name(candidate.artist) != _proposal_catalog_name(a) for a in artists):
+                artists.append(candidate.artist)
+        try:
+            pool = await self.pool_builder.build(artist_queries=artists)
+        except Exception:  # noqa: BLE001 - the deeper look is optional
+            logger.warning("opening_track_pool_fallback_failed")
+            return None, None, None
+        for entry in pool.entries:
+            verified = await self._verified_playable_track(entry.resolved_track())
+            if verified is not None:
+                logger.info(
+                    "opening_track_pool_fallback entries=%d verifications=%d",
+                    len(pool.entries),
+                    pool.verification_count,
+                )
+                return verified
         return None, None, None
+
+    async def _classify_unresolved(self, draft: ProgramProposalDraft) -> str:
+        """Tell an outage, an unplayable catalog and a missing track apart.
+
+        Runs only on the failure path, with a small bounded catalog check of the
+        candidates the model named.  A failed catalog call is never reported as
+        "unplayable"; any error here falls back to the legacy generic reason.
+        """
+
+        candidates = draft.opening_track_candidates[: self.max_opening_candidates]
+        try:
+            pool = await CatalogPoolBuilder(
+                self.retrieval,
+                PoolBuildConfig(max_verifications=0, concurrency=2, timeout_seconds=12.0),
+            ).build(proposals=[candidate.to_track_proposal() for candidate in candidates])
+        except Exception:  # noqa: BLE001 - classification must never mask the real failure
+            logger.warning("opening_track_classification_failed")
+            return "opening_track_unresolved"
+        if pool.count(AvailabilityStatus.PROVIDER_ERROR) or pool.truncated:
+            reason = REASON_CATALOG_UNAVAILABLE
+        elif pool.count(AvailabilityStatus.UNPLAYABLE):
+            reason = REASON_OPENING_UNPLAYABLE
+        else:
+            reason = REASON_OPENING_NOT_FOUND
+        logger.info(
+            "opening_track_unresolved reason=%s candidates=%d unplayable=%d not_found=%d "
+            "provider_error=%d search_failures=%d",
+            reason,
+            len(candidates),
+            pool.count(AvailabilityStatus.UNPLAYABLE),
+            pool.count(AvailabilityStatus.NOT_FOUND),
+            pool.count(AvailabilityStatus.PROVIDER_ERROR),
+            pool.search_failure_count,
+        )
+        return reason
 
     async def _verified_playable_track(
         self,
