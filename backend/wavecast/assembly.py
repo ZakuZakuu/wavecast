@@ -407,7 +407,7 @@ class LiveEpisodeAssemblyService:
         async def prepare_candidate(
             proposal: TrackProposal,
         ) -> GeneratedChapter | None:
-            proposal_key = (proposal.artist.casefold(), proposal.title.casefold())
+            proposal_key = (canonical_name(proposal.artist), canonical_name(proposal.title))
             if proposal_key in seen:
                 return None
             seen.add(proposal_key)
