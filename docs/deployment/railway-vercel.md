@@ -196,6 +196,19 @@ Setup order (before releasing/enabling the mail credentials):
    expiry/incorrect-code UI and delivery to QQ/163/Gmail inboxes. Unit tests use
    fake mail and an in-memory auth adapter; they do not establish deliverability.
 
+Production checkpoint (2026-10-08): #179 was released by #180 at main
+`113b91b`; Vercel `dpl_BCp6LAucTYbvBg4ZBHDt14z4tsrW` reached READY.
+Resend domain verification and production mail variables were confirmed. A
+one-off migration inside a pinned Vercel build used platform-held credentials:
+the guard allowed only creation of `auth.rateLimit`, rejected other schema
+changes, and checked the migration plan was empty afterwards. Logs confirmed
+that table was created and verified. The temporary plain code variable
+`WAVECAST_AUTH_MIGRATION_SCRIPT` was cleared to an empty string afterwards;
+there was no permanent build-setting change. Do not restore it for normal builds.
+Production probes confirmed providers advertise email OTP, guest session works,
+and a fake invalid code returns `INVALID_OTP`, with no email sent. Real inbox
+receipt and existing/new-user login still require user acceptance.
+
 Codes are six digits, expire after five minutes, are stored hashed and have three
 incorrect attempts. The UI has a 60-second resend cooldown; the shared database
 limiter allows up to three sends per IP per minute (so a shared network is not

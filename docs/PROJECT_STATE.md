@@ -14,10 +14,10 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 
 ## 现在做什么
 
-1. **初赛海报 V7 已定稿（用户 2026-10-07 确认），随初赛材料一并提交。** 简介沿用原稿小幅调整，用户已定稿，仅提交时使用，不入仓库。海报的信息层级与最终文案见 [提交材料](submission/preliminary.md)；源码与导出方法在分支 `claude/kind-carson-sv2kei` 的 `docs/submission/poster/`（未合并，PNG 不入库）。旧的 B/B2 与 A/B/C 候选均已放弃。
+1. **初赛海报 V7 已定稿（用户 2026-10-07 确认），随初赛材料一并提交。** 简介沿用原稿小幅调整，用户已定稿，仅提交时使用，不入仓库。海报的信息层级与最终文案见 [提交材料](submission/preliminary.md)；源码与导出方法在分支 `claude/kind-carson-sv2kei` 的 `docs/submission/poster/`（未合并，PNG 不入库）。
 2. 待用户决定：提交前是否保留易进入的首页选题，再加入一两个具体、有吸引力且真实试听通过的主题（只涉及 `apps/web/lib/featured.ts`，低风险）；线上 AI 推荐规划器：用户反馈生产已设为 DeepSeek，尚未由我们核实线上实际表现，对外只写“收听兴趣带来推荐”，不写“创意选题”。
-3. 浏览器引导 #178 已合入 integration（`52ad738`），尚未发布 main；微信外部浏览器引导、桌面建议和固定首页二维码已实现，本地 203 tests/lint/typecheck/build 通过，真机验收待用户完成。
-4. 用户已用 Google 登录原 GitHub 同邮箱账号；Google 保持基础权限 Testing。邮箱 OTP 登录正在准备：Resend 发信、同邮箱复用用户 ID、账户显示邮箱；本地 213 tests/lint/typecheck/build/rewrite smoke 通过；待发信域名/API Key 和限流表迁移，真机/真实投递未验收。绑定管理/改邮箱/账号合并后续再做。
+3. 浏览器引导 #178 与邮箱登录 #179 已通过 #180 发布正式环境：微信外部浏览器引导、桌面建议、固定首页二维码。真机体验待用户验收。
+4. Google/GitHub 同邮箱已由用户验证复用账号；Google 保持基础权限 Testing。邮箱 OTP 已上线：Resend 域名验证、生产变量和 auth.rateLimit 增量迁移完成；账户以邮箱显示。本地 213 tests/lint/typecheck/build/rewrite smoke 与发布全量 CI 通过；线上 providers/session/无效验证码接口通过。真实收信、新邮箱注册、原账号资料保留仍待用户验收；绑定管理/改邮箱/账号合并后续做。
 5. 提交前以材料和具体阻塞为主，避免无关功能发布；初赛后按确认的优先级处理已知问题，再评估电台风格后端接线、主持词和 TTS 精校。没有授权启动新的广泛运行时重构。
 
 ## 已交付与边界
@@ -27,7 +27,7 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 - 封面 v2 已在 `apps/web/lib/cover/build-cover.ts`；五台配置在 `apps/web/lib/stations.ts`，每台三个候选模板、按 seed 参数化。五台为随便听 88.7、唱片行 93.1、人物志 97.4、来龙去脉 101.5、夜里 105.8。
 - 电台选择目前是前端配置/关键词匹配，不能声称后端已按五台分别编排。P1 方案见 Frost HANDOFF 第 9 节，尚待独立任务验证实施。
 - 登录推荐是 programme proposals；游客“先听这几档”是固定选题入口，点击后真实生成，并非预制 mock 音频节目。不要把所有固定选题等同于 mock。
-- 封面/账户设计原稿部分未入 integration；以现有实现为准，不引用不存在的原稿链接。
+- 封面/账户以现有实现为准，部分原稿未入 integration。
 - 纯 mock 音源带参数的渲染路径此前存在不能完整播放的问题；不能用注入假 manifest 的截图证明真实音频验收。
 
 ## 分支、部署与验证
@@ -36,11 +36,11 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 
 | 分支/PR | 状态 |
 | --- | --- |
-| `main` | `bd0abad`，#168 release 合并提交 |
-| `integration` | `52ad738`，#175–#178 已合并；与 main 不同 |
+| `main` | `113b91b`，#180 release 普通合并提交 |
+| `integration` | 发布后已无 force 快进到 `113b91b`；后续文档 PR 不改变线上版本 |
 | `feat/concept-film` / [#174](https://github.com/ZakuZakuu/wavecast/pull/174) | 独立宣传片 PR，未合并；head `3dc5145` |
 
-正式 Web 由 Vercel 跟随 main，Railway API 为正式后端；用户已完成正式域名/OAuth/Railway 配置。Google 配置已重部署原 main `bd0abad`（Vercel `dpl_5BxCo7bJXqRxjk9tPubmfQqtHpPK` READY）；没有连带发布 integration。部署运行规则及域名登录见 [runbook](deployment/railway-vercel.md)，CI 选择见 [ci.md](deployment/ci.md)。
+正式 Web 跟随 main；#180 的 Vercel `dpl_BCp6LAucTYbvBg4ZBHDt14z4tsrW` 已观察 READY，绑定 wavecast.space/www。本次没有后端代码改动。邮箱迁移在 Vercel 内执行并核验只新增 auth.rateLimit，用户/账号表未改；临时代码变量已清空，没有永久修改构建规则。部署/登录见 [runbook](deployment/railway-vercel.md)，CI 见 [ci.md](deployment/ci.md)。
 
 开发：功能分支 → PR 到 integration → 合并后的托管预览验收 → release PR integration → main（普通 merge commit）→ integration 快进到 main 合并提交；不 force push。不为了获得预览把未验收工作推 main。integration/main 保留，保护长期分支，避免合并后自动删除 integration。
 
