@@ -20,7 +20,7 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 4. 邮箱验证码登录已发布 main（#179/#180）：Resend 发信、同邮箱复用用户 ID、账户显示邮箱；Google 保持基础权限 Testing。2026-10-08 用户在正式环境确认新登录页显示正常、登录可用。绑定管理/改邮箱/账号合并后续再做；预览环境未配置登录，认证流程在 wavecast.space 验收。
 5. 提交前以材料和具体阻塞为主，避免无关功能发布；初赛后按确认的优先级处理已知问题，再评估电台风格后端接线、主持词和 TTS 精校。没有授权启动新的广泛运行时重构。
 6. **已发布 main（#183，2026-10-08）：** ① iOS PWA 切回前台白屏/播放状态丢失已修复，用户真机确认。根因是 `LibraryIdentityBridge` 把游客 refetch 时 Better Auth 置位的 `isPending` 当成身份未知而卸载整个应用，现仅首次会话查询阻塞应用（#181）。② 登录页单屏化、邮箱主入口、Google/GitHub 并排，验证码流程用 `sessionStorage` 保存邮箱/步骤/冷却并在刷新或页面被丢弃后恢复且不自动重发（#182）；用户真机确认登录页与登录正常；“发码→切邮箱 App→返回”已验收：临时切出不再白屏，切出较久时 iOS 仍会丢弃页面并刷新一次（系统行为，不可避免），刷新后回到验证码界面，可继续输入登录。
-7. **iOS 主屏幕 PWA 状态栏与底部白边（已修复，用户真机确认白边消失、顶部渐变更好看；在 integration `3963d4f`，尚未发布 main）：** 顶部浅色带是 `statusBarStyle: "default"` 下 iOS 叠的近白雾面；已改 `black-translucent`（#186），首页/调频页过渡柔和，播放页顶部仍有雾面，**接受为 iOS 行为**（`theme-color` 在主屏幕 PWA 无效；改 fixed 图层 #187 无益，已撤销 #188）。该模式带来**底部白边**，真机诊断（诊断页已删）读数：`screen.height` 874，`innerHeight`/`100dvh`/`100svh`/`.app-root` 均 812（少了状态栏 62），`100lvh` 874；`fixed` 层同样停在 812。修复：主屏幕 PWA 下用 `100lvh` 作满屏高度——`tokens.css` 的 `--root-h/--app-h/--fixed-bottom/--fixed-h` 在 `(display-mode: standalone)` 或 `html[data-standalone]`（`layout.tsx` 用 `navigator.standalone` 设置）时切换，作用于 `html/body`、`.app-root`、`.sheet-layer`、`.install-layer`。新增满屏层/fixed 层时请用这些变量，不要直接写 `100dvh`/`inset: 0`。发布 main 后，正式版主屏幕图标需删除重新添加才会使用新状态栏样式。
+7. **iOS 主屏幕 PWA 状态栏与底部白边（已修复，用户真机确认白边消失、顶部渐变更好看；已随 #192 发布 main `821aa59`，生产部署 READY）：** 顶部浅色带是 `statusBarStyle: "default"` 下 iOS 叠的近白雾面；已改 `black-translucent`（#186），首页/调频页过渡柔和，播放页顶部仍有雾面，**接受为 iOS 行为**（`theme-color` 在主屏幕 PWA 无效；改 fixed 图层 #187 无益，已撤销 #188）。该模式带来**底部白边**，真机诊断（诊断页已删）读数：`screen.height` 874，`innerHeight`/`100dvh`/`100svh`/`.app-root` 均 812（少了状态栏 62），`100lvh` 874；`fixed` 层同样停在 812。修复：主屏幕 PWA 下用 `100lvh` 作满屏高度——`tokens.css` 的 `--root-h/--app-h/--fixed-bottom/--fixed-h` 在 `(display-mode: standalone)` 或 `html[data-standalone]`（`layout.tsx` 用 `navigator.standalone` 设置）时切换，作用于 `html/body`、`.app-root`、`.sheet-layer`、`.install-layer`。新增满屏层/fixed 层时请用这些变量，不要直接写 `100dvh`/`inset: 0`。**正式版（wavecast.space）主屏幕图标需删除后重新添加**才会使用新状态栏样式。
 
 ## 已交付与边界
 
@@ -34,12 +34,12 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 
 ## 分支、部署与验证
 
-2026-10-08 核对的 Git 状态（随下一次发布更新）；生产 Vercel `dpl_5vURkhhcq5L1akgxd4MndXGaoyQz` READY：
+2026-10-08 核对的 Git 状态（随下一次发布更新）；生产 Vercel `dpl_HzfZMFu8ZVkny1B7pRMAgPfRWg79` READY：
 
 | 分支/PR | 状态 |
 | --- | --- |
-| `main` | `8442029`，#183 release 合并提交（含 #179–#182） |
-| `integration` | 已快进到 `8442029`；之后仅有文档提交 |
+| `main` | `821aa59`，#192 release 合并提交（含 #179–#183 与状态栏/白边修复） |
+| `integration` | 已快进到 `821aa59`，与 main 一致 |
 | `feat/concept-film` / [#174](https://github.com/ZakuZakuu/wavecast/pull/174) | 独立宣传片 PR，未合并；head `3dc5145` |
 
 正式 Web 由 Vercel 跟随 main，Railway API 为正式后端；用户已完成正式域名/OAuth/Railway 配置。邮箱验证码登录与上述修复已随 #180/#183 发布；后端无改动，Railway 未重新部署。部署运行规则及域名登录见 [runbook](deployment/railway-vercel.md)，CI 选择见 [ci.md](deployment/ci.md)。
