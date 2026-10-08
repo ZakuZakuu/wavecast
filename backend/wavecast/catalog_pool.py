@@ -23,7 +23,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.retrieval import MusicRetrievalService, RetrievedTrack, VersionKind
-from wavecast.text_identity import canonical_name, same_catalog_name, without_feature_credit
+from wavecast.text_identity import (
+    base_title_key,
+    canonical_name,
+    same_catalog_name,
+    without_feature_credit,
+)
 
 # Catalog credits separate artists with commas; "&", "/" and "x" appear inside real
 # names (Simon & Garfunkel, AC/DC, X Japan), so they are deliberately not separators.
@@ -163,9 +168,21 @@ class CatalogPool(BaseModel):
         ranked = sorted(
             enumerate(self.entries), key=lambda pair: (_SOURCE_ORDER[pair[1].source], pair[0])
         )
+        # A keyword hit that only repeats a trusted entry's song under another artist is a
+        # cover or re-release of it; do not offer it as a second song.
+        trusted_songs = {
+            base_title_key(entry.title)
+            for entry in self.entries
+            if entry.source is not PoolSource.KEYWORD_SEARCH
+        }
         counts: dict[str, int] = {}
         listed: list[PoolEntry] = []
         for _index, entry in ranked:
+            if (
+                entry.source is PoolSource.KEYWORD_SEARCH
+                and base_title_key(entry.title) in trusted_songs
+            ):
+                continue
             artist = canonical_name(entry.primary_artist)
             cap = max_per_anchor_artist if artist in anchors else max_per_artist
             if counts.get(artist, 0) >= cap:

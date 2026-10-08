@@ -57,3 +57,22 @@ def test_without_feature_credit_only_removes_a_trailing_feature_credit(
     from wavecast.text_identity import without_feature_credit
 
     assert without_feature_credit(title) == expected
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "same"),
+    [
+        ("Summer", "Summer (《菊次郎的夏天》钢琴版)", True),
+        ("Summer", "Summer (Live) [Remastered]", True),
+        ("APPLE (feat. 椎名林檎)", "APPLE", True),
+        ("Summer", "Summer Rain", False),
+        ("(Live)", "(Live)", True),  # a title that is only a group is kept as it is
+        ("(Live)", "Live", False),
+    ],
+)
+def test_base_title_key_ignores_every_trailing_descriptive_group(
+    left: str, right: str, same: bool
+) -> None:
+    from wavecast.text_identity import base_title_key
+
+    assert (base_title_key(left) == base_title_key(right)) is same

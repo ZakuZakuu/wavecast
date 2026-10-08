@@ -47,6 +47,25 @@ def without_feature_credit(title: str) -> str:
     return stripped or title
 
 
+_TRAILING_GROUP = re.compile(r"\s*[\(\[（][^\)\]）]*[\)\]）]\s*$")
+
+
+def base_title_key(title: str) -> str:
+    """Comparison key for a song title with every trailing ``(...)`` group removed.
+
+    ``Summer`` and ``Summer (《菊次郎的夏天》钢琴版)`` share a key, so a cover listed with a
+    descriptive suffix can be recognised as another take on the same song.
+    """
+
+    stripped = title
+    while True:
+        reduced = _TRAILING_GROUP.sub("", stripped).strip()
+        if not reduced or reduced == stripped:
+            break
+        stripped = reduced
+    return canonical_name(stripped)
+
+
 def same_catalog_name(left: str, right: str) -> bool:
     """True when two catalog names are identical after folding script variants."""
 
