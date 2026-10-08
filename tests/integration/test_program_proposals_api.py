@@ -182,3 +182,26 @@ def test_proposal_failures_with_a_known_cause_return_listener_guidance(
     assert needle in detail
     assert reason not in detail  # internal codes never reach the listener
     assert "opening_track" not in detail
+
+
+def test_programme_language_travels_from_request_to_started_episode() -> None:
+    client = TestClient(api_module.app)
+    headers = {"X-Wavecast-Listener": "language-flow-listener"}
+    previous_repository = api_module.proposal_repository
+    api_module.proposal_repository = InMemoryProgramProposalRepository()
+
+    try:
+        response = client.post(
+            "/api/program-proposals",
+            json={"prompt": "late night synth drive", "count": 1, "output_language": "zh-CN"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        proposal = response.json()["proposals"][0]
+        assert proposal["output_language"] == "zh-CN"
+
+        started = client.post(f"/api/episodes/from-seed/{proposal['id']}", headers=headers)
+        assert started.status_code == 200
+        assert started.json()["output_language"] == "zh-CN"
+    finally:
+        api_module.proposal_repository = previous_repository

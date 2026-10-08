@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from wavecast.intelligence.models import OutputLanguage, ResolvedTrack
+from wavecast.intelligence.models import ResolvedTrack
 from wavecast.models.episode import (
     GenerationMode,
     LiveEpisode,
@@ -87,7 +87,7 @@ class StagedProgressiveRuntimeAdapter:
             max_tracks=max_tracks,
             max_chapters=max_chapters,
             presentation_intent=episode.presentation_intent,
-            output_language=OutputLanguage.AUTO,
+            output_language=episode.output_language,
         )
         return await self.assembly.prepare_fast_successor(
             request,
@@ -219,7 +219,7 @@ class StagedProgressiveRuntimeAdapter:
                 ),
                 host_mode=episode.presentation_intent.host_mode,
                 target_duration_seconds=target_seconds,
-                output_language=OutputLanguage.AUTO,
+                output_language=episode.output_language,
                 topic=episode.topic,
                 slot_contexts=[slot],
                 inference_profile=InferenceProfile.FAST,
@@ -314,7 +314,7 @@ class StagedProgressiveRuntimeAdapter:
             max_tracks=max_tracks,
             max_chapters=max_chapters,
             presentation_intent=episode.presentation_intent,
-            output_language=OutputLanguage.AUTO,
+            output_language=episode.output_language,
         )
         locked_segment = next(
             (

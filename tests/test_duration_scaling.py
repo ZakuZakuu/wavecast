@@ -157,3 +157,29 @@ def test_duration_scaling_flag_defaults_off_and_is_validated(monkeypatch) -> Non
     monkeypatch.setenv("WAVECAST_DURATION_SCALING", "sometimes")
     with pytest.raises(ProviderConfigurationError):
         ProviderSettings.from_env()
+
+
+def test_the_runtime_passes_the_episode_language_to_assembly() -> None:
+    from wavecast.language import OutputLanguage
+
+    assembly = create_episode_assembly_service(ProviderSettings(mode="mock"))
+    seen: list[OutputLanguage] = []
+    original = assembly.prepare_progressive_session
+
+    async def spy(request, *args, **kwargs):
+        seen.append(request.output_language)
+        return await original(request, *args, **kwargs)
+
+    assembly.prepare_progressive_session = spy  # type: ignore[method-assign]
+    seed = _seed(20).model_copy(update={"output_language": OutputLanguage.ZH_CN})
+    orchestrator = EpisodeOrchestrator(
+        InMemoryEpisodeRepository(), progressive_runtime=StagedProgressiveRuntimeAdapter(assembly)
+    )
+    episode = orchestrator.start(seed)
+    assert episode.output_language is OutputLanguage.ZH_CN
+
+    asyncio.run(
+        orchestrator.ensure_buffer_async(episode.id, target_chapters=1, target_ahead_seconds=300)
+    )
+
+    assert seen and set(seen) == {OutputLanguage.ZH_CN}
