@@ -6,8 +6,7 @@
 
 /* Sheets and dialogs portal into <body>; keep them inside the app column. */
 .sheet-layer,
-.install-layer,
-.player-layer {
+.install-layer {
   left: max(0px, calc(50% - var(--frame-max) / 2));
   right: max(0px, calc(50% - var(--frame-max) / 2));
 }
