@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from pydantic import BaseModel, ValidationError
 from wavecast.catalog_pool import CatalogPoolBuilder
+from wavecast.language import OutputLanguage
 from wavecast.proposals import (
     DeterministicMockProgramProposalGenerator,
     DurationIntent,
@@ -473,3 +474,136 @@ def test_the_pool_fallback_still_fails_when_the_artist_has_nothing_playable() ->
         asyncio.run(generator.generate(ProposalGenerationRequest(prompt="椎名林檎")))
 
     assert failure.value.reason == "opening_track_unplayable"
+
+
+def _english_request_draft_batch() -> ProgramProposalDraftBatch:
+    return ProgramProposalDraftBatch(
+        proposals=[
+            ProgramProposalDraft(
+                title="Night Drive",
+                short_description="A slow electronic drive through the city.",
+                editorial_route=["slow start", "build", "exit"],
+                opening_host_note="Let the night open up first.",
+                opening_track_candidates=[
+                    OpeningTrackCandidate(artist="Signal Garden", title="Midnight Transfer")
+                ],
+            )
+        ]
+    )
+
+
+def test_an_explicit_programme_language_reaches_the_proposal_prompt_and_the_seed() -> None:
+    generator, llm = _live_generator(_english_request_draft_batch())
+
+    proposal = asyncio.run(
+        generator.generate(
+            ProposalGenerationRequest(
+                prompt="late night synth drive", output_language=OutputLanguage.ZH_CN
+            )
+        )
+    )[0]
+
+    assert "Simplified Chinese (zh-CN)" in llm.prompt
+    assert "whatever language the request uses" in llm.prompt
+    assert proposal.output_language is OutputLanguage.ZH_CN
+    assert proposal.to_episode_seed().output_language is OutputLanguage.ZH_CN
+    # The opening line follows the chosen language even though the request text is English.
+    assert proposal.opening_narration_text is not None
+    assert "我们先从" in proposal.opening_narration_text
+
+
+def test_without_an_explicit_language_the_request_text_still_decides() -> None:
+    generator, llm = _live_generator(_english_request_draft_batch())
+
+    proposal = asyncio.run(
+        generator.generate(ProposalGenerationRequest(prompt="late night synth drive"))
+    )[0]
+
+    assert "Match the listener's natural language." in llm.prompt
+    assert proposal.output_language is OutputLanguage.AUTO
+    assert proposal.opening_narration_text is not None
+    assert "我们先从" not in proposal.opening_narration_text
+
+
+def test_an_explicit_english_choice_overrides_a_chinese_request_for_the_opening_line() -> None:
+    generator, _llm = _live_generator(_english_request_draft_batch())
+
+    proposal = asyncio.run(
+        generator.generate(
+            ProposalGenerationRequest(prompt="夜里开车", output_language=OutputLanguage.EN_US)
+        )
+    )[0]
+
+    assert proposal.opening_narration_text is not None
+    assert "我们先从" not in proposal.opening_narration_text
+
+
+def test_seeds_saved_before_the_language_field_default_to_auto() -> None:
+    from wavecast.models.episode import EpisodeSeed
+
+    proposal = asyncio.run(
+        DeterministicMockProgramProposalGenerator().generate(
+            ProposalGenerationRequest(prompt="Persona 游戏音乐")
+        )
+    )[0]
+    payload = proposal.to_episode_seed().model_dump(mode="json")
+    del payload["output_language"]
+
+    assert EpisodeSeed.model_validate(payload).output_language is OutputLanguage.AUTO
+
+
+class _CjkCreditCatalog(_DeepCatalog):
+    """The catalog credits the artist in kanji only, whatever script the query uses."""
+
+    def __init__(self, credits: list[str] | None = None) -> None:
+        super().__init__()
+        names = credits or ["久石譲"] * 8
+        self.tracks = [
+            track.model_copy(update={"artist": names[index], "playable": index == 7})
+            for index, track in enumerate(self.tracks)
+        ]
+
+
+def _alias_generator(catalog: _DeepCatalog) -> LLMProgramProposalGenerator:
+    retrieval = MusicRetrievalService(
+        MusicProviderRegistry({"netease": catalog}, preference=("netease",))  # type: ignore[dict-item]
+    )
+    return LLMProgramProposalGenerator(
+        _ProposalLLM(_hisaishi_draft(OpeningTrackCandidate(artist="Joe Hisaishi", title="Hit 0"))),
+        retrieval,
+        pool_builder=CatalogPoolBuilder(retrieval),
+    )
+
+
+def test_a_latin_artist_name_reaches_tracks_the_catalog_credits_in_another_script() -> None:
+    proposal = asyncio.run(
+        _alias_generator(_CjkCreditCatalog()).generate(
+            ProposalGenerationRequest(prompt="the piano music of Joe Hisaishi")
+        )
+    )[0]
+
+    assert proposal.opening_track_artist == "久石譲"
+    assert proposal.opening_track_title == "Hit 7"
+
+
+def test_an_unrelated_dominant_credit_is_not_taken_as_an_alias() -> None:
+    # Only two of the ten results share a credit, which is too weak to call an alias.
+    catalog = _CjkCreditCatalog(["久石譲", "A", "B", "C", "D", "E", "F", "久石譲"])
+
+    with pytest.raises(ProgramProposalGenerationError):
+        asyncio.run(
+            _alias_generator(catalog).generate(
+                ProposalGenerationRequest(prompt="the piano music of Joe Hisaishi")
+            )
+        )
+
+
+def test_no_alias_is_looked_up_when_the_requested_name_is_credited_as_written() -> None:
+    credits = ["久石譲", "久石譲", "久石譲", "Joe Hisaishi", "Joe Hisaishi", "X", "Y", "久石譲"]
+
+    with pytest.raises(ProgramProposalGenerationError):
+        asyncio.run(
+            _alias_generator(_CjkCreditCatalog(credits)).generate(
+                ProposalGenerationRequest(prompt="the piano music of Joe Hisaishi")
+            )
+        )

@@ -15,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from wavecast.language import OutputLanguage as OutputLanguage  # re-exported for callers
+
 
 class NoveltyDistance(StrEnum):
     VERY_CLOSE = "very_close"
@@ -22,15 +24,6 @@ class NoveltyDistance(StrEnum):
     BRIDGE = "bridge"
     DISCOVERY = "discovery"
     SURPRISE = "surprise"
-
-
-class OutputLanguage(StrEnum):
-    """Supported spoken-language choices for one assembled program."""
-
-    AUTO = "auto"
-    ZH_CN = "zh-CN"
-    EN_US = "en-US"
-    JA_JP = "ja-JP"
 
 
 def resolve_output_language(requested: OutputLanguage | str, topic: str) -> OutputLanguage:

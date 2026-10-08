@@ -8,6 +8,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from wavecast.audio_timing import TrackTimingProfile
+from wavecast.language import OutputLanguage
 from wavecast.presentation import PresentationIntent
 
 
@@ -79,6 +80,7 @@ class EpisodeSeed(BaseModel):
     opening_narration_text: str | None = Field(default=None, max_length=320)
     cover: CoverParams
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
+    output_language: OutputLanguage = OutputLanguage.AUTO
     generation_profile: str = "balanced"
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -179,6 +181,7 @@ class LiveEpisode(BaseModel):
     generation_mode: GenerationMode = GenerationMode.PROGRESSIVE
     program_estimated_duration_seconds: int = Field(gt=0)
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
+    output_language: OutputLanguage = OutputLanguage.AUTO
     progressive_session: ProgressiveAssemblySession | None = Field(
         default=None, exclude=True, repr=False
     )

@@ -17,6 +17,8 @@ import { useNowPlaying, usePlaybackControl } from "../player/playback-provider";
 import type { TuningStep } from "./tuning-in";
 
 export const LAST_STATION_KEY = "wavecast-last-station-v1";
+/** Spoken language of generated programmes; follows the (Chinese-only) interface language. */
+export const PROGRAMME_LANGUAGE = "zh-CN" as const;
 /** 开播中 stays under the player until its fade-in (DUR.slow) has finished. */
 const HANDOVER_MS = DUR.slow + 150;
 
@@ -71,6 +73,8 @@ export function useTuneStart() {
         duration_intent: duration,
         count: 1,
         taste_context: tasteContext(readLocalTaste()),
+        // The interface is Chinese: the programme follows it, not the language of the keyword.
+        output_language: PROGRAMME_LANGUAGE,
       });
       if (requestRef.current !== requestId) return;
       const proposal = batch.proposals[0];

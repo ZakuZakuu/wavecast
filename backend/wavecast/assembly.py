@@ -148,7 +148,7 @@ class LiveEpisodeAssemblyRequest(BaseModel):
     topic: str = Field(min_length=1, max_length=300)
     anchor_tracks: list[str] = Field(default_factory=list, max_length=8)
     desired_duration_seconds: int = Field(default=900, gt=0)
-    max_tracks: int = Field(default=4, ge=2, le=8)
+    max_tracks: int = Field(default=4, ge=2, le=16)
     max_chapters: int = Field(default=16, ge=2, le=32)
     listener_taste_context: str | None = Field(default=None, max_length=1000)
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
@@ -257,9 +257,13 @@ def _required_progressive_music_seconds(
     requested_music_seconds = int(
         request.desired_duration_seconds * (1.0 - target_narration_ratio)
     )
+    # The floor below which a route is refused stays tied to the fixed route size even when
+    # duration scaling raises the track cap: a longer request may add tracks when the catalog
+    # has them, but a catalog with fewer playable tracks must yield a shorter programme, not
+    # a failed one.
     bounded_music_target_seconds = min(
         requested_music_seconds,
-        request.max_tracks * _ESTIMATED_TRACK_DURATION_SECONDS,
+        min(request.max_tracks, _FIXED_ROUTE_LIMITS[0]) * _ESTIMATED_TRACK_DURATION_SECONDS,
     )
     return (
         bounded_music_target_seconds * _MIN_PROGRESSIVE_DURATION_COVERAGE_NUMERATOR
@@ -291,6 +295,33 @@ _NOVELTY_RANK = {
 
 
 _POOL_PROPOSAL_LIMIT = 12
+
+# Fixed route size used before duration scaling (kept as the default behaviour).
+_FIXED_ROUTE_LIMITS = (5, 8)
+# Typical length of a song in the catalog and the music share of a light-hosted programme.
+_SCALED_TRACK_SECONDS = 210
+_SCALED_MUSIC_SHARE = 0.9
+_SCALED_MIN_TRACKS = 3
+_SCALED_MAX_TRACKS = 14
+_SCALED_MAX_CHAPTERS = 32
+
+
+def route_limits_for_duration(desired_seconds: int, *, scaled: bool) -> tuple[int, int]:
+    """``(max_tracks, max_chapters)`` for a programme of the requested length.
+
+    Unscaled, a fixed route of 5 tracks / 8 chapters capped every programme near 18
+    minutes whatever length the listener chose.  Scaled, the cap follows the request:
+    enough tracks to fill the music share at a typical song length, plus room for the
+    narrative-only beats, within the schema ceilings.  The actual length still depends on
+    how many playable tracks the catalog offers.
+    """
+
+    if not scaled:
+        return _FIXED_ROUTE_LIMITS
+    tracks = -(-int(desired_seconds * _SCALED_MUSIC_SHARE) // _SCALED_TRACK_SECONDS)
+    tracks = max(_SCALED_MIN_TRACKS, min(_SCALED_MAX_TRACKS, tracks))
+    chapters = min(_SCALED_MAX_CHAPTERS, tracks + max(3, tracks // 2))
+    return tracks, chapters
 
 
 def _pool_proposals(fast_plan: FastStartPlan, bundle: ResearchBundle) -> list[TrackProposal]:
@@ -411,8 +442,10 @@ class LiveEpisodeAssemblyService:
         ledger: UsageLedger | None = None,
         narration_ratio: float = 0.15,
         catalog_pool_builder: CatalogPoolBuilder | None = None,
+        duration_scaling: bool = False,
     ) -> None:
         self.catalog_pool_builder = catalog_pool_builder
+        self.duration_scaling = duration_scaling
         self.fast_path = fast_path
         self.background_pipeline = background_pipeline
         self.retrieval = retrieval
@@ -3694,4 +3727,5 @@ def create_episode_assembly_service(
             if settings.catalog_pool
             else None
         ),
+        duration_scaling=settings.duration_scaling,
     )

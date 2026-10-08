@@ -390,3 +390,28 @@ def test_pool_artist_queries_are_the_distinct_artists_the_model_named_capped_at_
 
     assert _pool_artist_queries(proposals) == ["久石譲", "Bill Evans", "Oscar"]
     assert _pool_artist_queries([]) == []
+
+
+def test_a_keyword_hit_that_repeats_a_trusted_song_under_another_artist_is_not_offered() -> None:
+    pool = CatalogPool(
+        entries=[
+            entry("1", "久石譲", "Summer", PoolSource.ARTIST_SEARCH),
+            entry("2", "天弦唱片, 龙猫乐队", "Summer (《菊次郎的夏天》电影主题曲斯坦威钢琴版)"),
+            entry("3", "Someone Else", "A Different Song"),
+        ]
+    )
+
+    titles = [item.title for item in pool.listing()]
+
+    assert titles == ["Summer", "A Different Song"]
+
+
+def test_a_keyword_song_is_kept_when_no_trusted_entry_shares_its_title() -> None:
+    pool = CatalogPool(
+        entries=[
+            entry("1", "久石譲", "Summer", PoolSource.ARTIST_SEARCH),
+            entry("2", "Other", "Summer Rain (Live Piano)"),
+        ]
+    )
+
+    assert [item.title for item in pool.listing()] == ["Summer", "Summer Rain (Live Piano)"]

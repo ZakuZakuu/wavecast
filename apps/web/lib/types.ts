@@ -44,6 +44,8 @@ export type ProposalGenerationRequest = {
   count?: number;
   /** Optional listener taste summary; accepted by the backend (≤1000 chars). */
   taste_context?: string;
+  /** Spoken language of the programme; omitted lets the backend guess from the request text. */
+  output_language?: "zh-CN" | "en-US" | "ja-JP";
 };
 
 type SegmentBase = {

@@ -80,7 +80,8 @@ class CuratorService:
             "rather than expanding the episode just to fill duration. "
             "For explicit music-discovery or artist-to-artist, scene, genre, mood, or "
             "lineage route requests, when grounded candidates support it and max_tracks is at "
-            "least 3, prefer a 3-5 track-bearing listening arc rather than a brittle two-track "
+            f"least 3, prefer a {min(3, max_tracks)}-{max(5, max_tracks)} track-bearing listening "
+            "arc rather than a brittle two-track "
             "route. Treat a broad listener theme such as a mood or genre as a station brief, "
             "not as an instruction to turn whichever early artist was selected into an artist "
             "radio. Unless the listener explicitly asks for a single-artist deep dive, prefer "
@@ -120,6 +121,7 @@ class CuratorService:
             f"FastStart context: {_compact_json(fast_context)}\n"
             f"Committed: {_compact_json([item.model_dump(mode='json') for item in committed])}\n"
             f"{_catalog_pool_context(catalog_pool)}"
+            f"{_long_programme_guidance(desired_duration_seconds, max_tracks)}"
             f"Duration: {desired_duration_seconds}\n"
             f"Output language: {resolve_output_language(output_language, topic).value}"
         )
@@ -139,6 +141,19 @@ class CuratorService:
         _validate_curator_contract(normalized, bundle)
         normalized = _restore_committed_prefix(normalized, committed)
         return ensure_distance_curve(normalized)
+
+
+def _long_programme_guidance(desired_duration_seconds: int, max_tracks: int) -> str:
+    """Ask for a route that fills a long programme; empty for the default 5-track route."""
+
+    if max_tracks <= 5:
+        return ""
+    return (
+        f"The listener asked for about {round(desired_duration_seconds / 60)} minutes, so plan "
+        f"up to {max_tracks} track-bearing chapters, and not fewer than {max(3, max_tracks - 3)} "
+        "when the research and available tracks support them; still select fewer rather than "
+        "padding with unrelated tracks.\n"
+    )
 
 
 _POOL_INSTRUCTIONS = (
