@@ -152,7 +152,7 @@ def test_llm_generator_resolves_opening_track_before_creating_proposal() -> None
                     editorial_route=["先放慢速度", "沿着夜色推进", "留一个明亮出口"],
                     genre_tags=["Electronic"],
                     mood_tags=["夜晚", "流动"],
-                    opening_host_note="先听它把夜色拉开一点，我们再顺着这股空间感往前走。",
+                    opening_host_note="这首适合先开场，慢慢进入今天的路线。",
                     opening_track_candidates=[
                         OpeningTrackCandidate(
                             artist="Imaginary Artist", title="Imaginary Song"
@@ -184,7 +184,7 @@ def test_llm_generator_resolves_opening_track_before_creating_proposal() -> None
     assert proposal.opening_narration_text is not None
     assert "Signal Garden" in proposal.opening_narration_text
     assert "Midnight Transfer" in proposal.opening_narration_text
-    assert "先听它把夜色拉开一点" in proposal.opening_narration_text
+    assert "这首适合先开场，慢慢进入今天的路线。" in proposal.opening_narration_text
     assert proposal.anchor_artists == ["Signal Garden"]
     assert proposal.estimated_duration_seconds == 72 * 60
     assert "Taste context:" in llm.prompt
@@ -509,7 +509,7 @@ def test_an_explicit_programme_language_reaches_the_proposal_prompt_and_the_seed
     assert proposal.to_episode_seed().output_language is OutputLanguage.ZH_CN
     # The opening line follows the chosen language even though the request text is English.
     assert proposal.opening_narration_text is not None
-    assert "我们先从" in proposal.opening_narration_text
+    assert "《Midnight Transfer》" in proposal.opening_narration_text
 
 
 def test_without_an_explicit_language_the_request_text_still_decides() -> None:
@@ -522,7 +522,8 @@ def test_without_an_explicit_language_the_request_text_still_decides() -> None:
     assert "Match the listener's natural language." in llm.prompt
     assert proposal.output_language is OutputLanguage.AUTO
     assert proposal.opening_narration_text is not None
-    assert "我们先从" not in proposal.opening_narration_text
+    assert "《" not in proposal.opening_narration_text
+    assert "Let's start with" in proposal.opening_narration_text
 
 
 def test_an_explicit_english_choice_overrides_a_chinese_request_for_the_opening_line() -> None:
@@ -535,7 +536,7 @@ def test_an_explicit_english_choice_overrides_a_chinese_request_for_the_opening_
     )[0]
 
     assert proposal.opening_narration_text is not None
-    assert "我们先从" not in proposal.opening_narration_text
+    assert "《" not in proposal.opening_narration_text
 
 
 def test_seeds_saved_before_the_language_field_default_to_auto() -> None:
@@ -607,3 +608,91 @@ def test_no_alias_is_looked_up_when_the_requested_name_is_credited_as_written() 
                 ProposalGenerationRequest(prompt="the piano music of Joe Hisaishi")
             )
         )
+
+
+def _opening(prompt: str, station) -> str:
+    generator, _llm = _live_generator(_english_request_draft_batch())
+    proposal = asyncio.run(
+        generator.generate(
+            ProposalGenerationRequest(
+                prompt=prompt, output_language=OutputLanguage.ZH_CN, station=station
+            )
+        )
+    )[0]
+    assert proposal.opening_narration_text is not None
+    return proposal.opening_narration_text
+
+
+def test_the_opening_ends_with_the_station_ident_after_the_content() -> None:
+    from wavecast.stations import STATION_IDENTS, StationId
+
+    text = _opening("late night synth drive", StationId.CASUAL)
+
+    assert any(text.endswith(form) for form in STATION_IDENTS[StationId.CASUAL])
+    assert text.index("Midnight Transfer") < len(text) - 20  # content first, ident last
+
+
+def test_the_night_station_has_no_ident_and_a_programme_without_a_station_none() -> None:
+    from wavecast.stations import STATION_IDENTS, StationId
+
+    for station in (StationId.NIGHT, None):
+        text = _opening("late night synth drive", station)
+        assert not any(
+            form in text for forms in STATION_IDENTS.values() for form in forms
+        )
+
+
+def test_the_opening_wording_varies_between_programmes() -> None:
+    from wavecast.stations import StationId
+
+    openings = {_opening(f"topic {n}", StationId.CRATE) for n in range(30)}
+    markers = ("先放Signal Garden", "第一首，", "开场是", "Signal Garden，《")
+    used = {marker for marker in markers if any(marker in text for text in openings)}
+
+    assert len(openings) > 3
+    assert len(used) >= 3
+    # The host note sometimes comes first and sometimes after the track is named.
+    note_first = {text.startswith("Let the night open up first.") for text in openings}
+    assert note_first == {True, False}
+    assert not any("我们先从" in text for text in openings)
+
+
+def test_a_host_note_with_stock_phrasing_is_dropped_not_spoken() -> None:
+    from wavecast.stations import StationId
+
+    generator, _llm = _live_generator(
+        ProgramProposalDraftBatch(
+            proposals=[
+                ProgramProposalDraft(
+                    title="夜行",
+                    short_description="一段夜里的路线。",
+                    editorial_route=["起点", "转折", "收束"],
+                    opening_host_note="让鼓机和贝斯线把夜晚的街道铺开，注意合成器如何画出霓虹。",
+                    opening_track_candidates=[
+                        OpeningTrackCandidate(artist="Signal Garden", title="Midnight Transfer")
+                    ],
+                )
+            ]
+        )
+    )
+
+    proposal = asyncio.run(
+        generator.generate(
+            ProposalGenerationRequest(
+                prompt="夜里开车", output_language=OutputLanguage.ZH_CN, station=StationId.CASUAL
+            )
+        )
+    )[0]
+
+    assert proposal.opening_narration_text is not None
+    assert "霓虹" not in proposal.opening_narration_text
+    assert "Midnight Transfer" in proposal.opening_narration_text
+
+
+def test_the_prompt_asks_for_a_plain_host_note() -> None:
+    generator, llm = _live_generator(_english_request_draft_batch())
+
+    asyncio.run(generator.generate(ProposalGenerationRequest(prompt="夜里开车", output_language=OutputLanguage.ZH_CN)))
+
+    assert "use no figurative wording" in llm.prompt
+    assert "do not start with 先从 or 我们先" in llm.prompt

@@ -3170,12 +3170,14 @@ class StagedProgressiveChapterGenerator:
                 reason_code="narration_trackless_music_mismatch",
             )
 
+        # Everything already authored for this programme, not only what has been played:
+        # narration is written ahead of playback, so "committed" would let facts repeat.
         previous_context = " ".join(
             segment.narration_text
             for segment in episode.ordered_segments
             if (
                 isinstance(segment, NarrationSegment)
-                and segment.is_committed
+                and segment.state is not SegmentState.SKIPPED
                 and segment.narration_text
             )
         )[-1000:]

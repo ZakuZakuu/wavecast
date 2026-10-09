@@ -115,3 +115,23 @@ def test_the_station_is_carried_into_the_progressive_session() -> None:
 
     assert buffered.progressive_session is not None
     assert buffered.progressive_session.station is StationId.CRATE
+
+
+def test_idents_are_short_spoken_chinese_with_no_digits() -> None:
+    from wavecast.stations import STATION_IDENTS
+
+    assert set(STATION_IDENTS) == set(StationId) - {StationId.NIGHT}
+    for forms in STATION_IDENTS.values():
+        assert len(forms) >= 3
+        for form in forms:
+            assert len(form) <= 20
+            assert not any(char.isdigit() for char in form)
+
+
+def test_ident_choice_is_deterministic_and_varies_with_the_seed() -> None:
+    from wavecast.stations import pick_ident
+
+    assert pick_ident(StationId.CASUAL, "a") == pick_ident(StationId.CASUAL, "a")
+    assert len({pick_ident(StationId.CASUAL, f"seed-{n}") for n in range(40)}) == 3
+    assert pick_ident(StationId.NIGHT, "a") is None
+    assert pick_ident(None, "a") is None

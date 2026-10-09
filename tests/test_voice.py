@@ -267,3 +267,47 @@ def test_a_year_that_is_not_in_the_evidence_triggers_a_rewrite() -> None:
     assert len(llm.prompts) == 2
     assert "gives a year that is not in the evidence (1979)" in llm.prompts[1]
     assert result.blocks[0].text == "Jody 是 1980 年的歌。"
+
+
+def test_a_station_caps_the_spoken_window_whatever_the_plan_offers() -> None:
+    from wavecast.intelligence.voice import MAX_SECONDS, window_for
+
+    assert window_for(StationId.LINEAGE, 54) == MAX_SECONDS[StationId.LINEAGE] == 30
+    assert window_for(StationId.CASUAL, 54) == 15
+    assert window_for(StationId.CASUAL, 8) == 8  # a shorter plan is respected
+    assert window_for(None, 54) == 54  # no station, no cap
+    assert window_for(StationId.CASUAL, None) is None
+
+
+def test_the_capped_window_reaches_the_prompt_and_the_length_check() -> None:
+    long_text = "这首歌的故事很长很长。" * 20
+    llm = Sequenced(_script(long_text), _script("Jody 是同一个人写的。"))
+
+    asyncio.run(
+        WriterService(llm).write(
+            _chapter(),
+            [],
+            slot_context=_slot(),
+            target_duration_seconds=54,
+            output_language=OutputLanguage.ZH_CN,
+            station=StationId.CASUAL,
+            voice_seed="p",
+        )
+    )
+
+    assert "Target narration duration seconds: 15" in llm.prompts[0]
+    assert len(llm.prompts) == 2  # 200 characters is far over a 15 s window
+    assert "longer than its spoken window" in llm.prompts[1]
+
+
+def test_the_previous_context_is_kept_from_its_end() -> None:
+    llm = Sequenced(_script("Jody 是同一个人写的。"))
+    context = "旧" * 1200 + "最近说过的一句话"
+
+    asyncio.run(
+        WriterService(llm).write(
+            _chapter(), [], slot_context=_slot(), previous_committed_context=context
+        )
+    )
+
+    assert "最近说过的一句话" in llm.prompts[0]
