@@ -1748,6 +1748,47 @@ def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
     }
 
 
+@app.get("/api/episodes/{episode_id}/evidence")
+def episode_evidence(episode_id: str, request: Request) -> dict[str, Any]:
+    """The evidence behind each chapter's narration, for checking what the host said.
+
+    Source domain and title only (no full URLs, queries, prompts or raw responses), and only
+    for the episode's owner.  An episode with no stored plan has none.
+    """
+
+    owned(episode_id, principal(request))
+    current = orchestrator.get(episode_id)
+    session = current.progressive_session
+    if session is None:
+        return {"episode_id": current.id, "chapters": [], "evidence": []}
+    narration_by_chapter: dict[str, list[str]] = {}
+    for segment in current.ordered_segments:
+        if segment.kind is SegmentKind.NARRATION and segment.state is not SegmentState.SKIPPED:
+            narration_by_chapter.setdefault(segment.chapter_id, []).append(segment.id)
+    chapters = [
+        {
+            "chapter_id": item.chapter_id,
+            "evidence_ids": list(item.chapter.evidence_ids),
+            "narration_segment_ids": narration_by_chapter.get(item.chapter_id, []),
+        }
+        for item in session.chapters
+    ]
+    cited = {evidence_id for item in chapters for evidence_id in item["evidence_ids"]}
+    evidence = [
+        {
+            "id": item.id,
+            "claim": item.claim_or_excerpt[:400],
+            "source_domain": item.source_domain,
+            "source_title": item.source_title[:160],
+            "source_provider": item.source_provider,
+            "confidence": item.confidence,
+        }
+        for item in session.research.evidence
+        if item.id in cited
+    ]
+    return {"episode_id": current.id, "chapters": chapters, "evidence": evidence}
+
+
 def canonical_mix_plan_for_episode(episode_id: str, actor: AuthPrincipal) -> MixPlan:
     """Build the canonical arrangement for the currently ready timeline prefix."""
     current = orchestrator.get(episode_id)

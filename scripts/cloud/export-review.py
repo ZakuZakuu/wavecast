@@ -20,7 +20,7 @@ def review_payload(episode: dict) -> dict:
         'episode': {key: episode[key] for key in fields if key in episode},
         'segments': [{key: segment[key] for key in segment_fields if key in segment}
                      for segment in episode.get('segments', [])],
-        'limitations': ['Not a source/evidence export.',
+        'limitations': ['Evidence is source domain and title only (no URLs, queries or prompts).',
                         'Segment durations do not equal mix duration when speech overlaps music.',
                         'Future planned segments may not yet have audio.'],
     }
@@ -28,7 +28,16 @@ def review_payload(episode: dict) -> dict:
 
 def fetch_usage(episode_id: str, listener_id: str) -> dict | None:
     """Best-effort provider usage summary for this episode (counts and timings only)."""
-    request = Request('http://127.0.0.1:8000/api/episodes/' + quote(episode_id) + '/usage',
+    return fetch_local(episode_id, listener_id, 'usage')
+
+
+def fetch_evidence(episode_id: str, listener_id: str) -> dict | None:
+    """Best-effort evidence behind each chapter (claims, source domain and title)."""
+    return fetch_local(episode_id, listener_id, 'evidence')
+
+
+def fetch_local(episode_id: str, listener_id: str, resource: str) -> dict | None:
+    request = Request('http://127.0.0.1:8000/api/episodes/' + quote(episode_id) + '/' + resource,
                       headers={'X-Wavecast-Listener': listener_id})
     try:
         with urlopen(request, timeout=20) as response:
@@ -58,6 +67,7 @@ def main() -> int:
             episode = json.load(response)
         payload = review_payload(episode)
         payload['usage'] = fetch_usage(args.episode_id, args.listener_id)
+        payload['evidence'] = fetch_evidence(args.episode_id, args.listener_id)
         output = Path('.wavecast-data/cloud/reviews') / (args.episode_id + '.json')
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
