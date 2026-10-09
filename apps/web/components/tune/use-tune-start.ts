@@ -75,6 +75,7 @@ export function useTuneStart() {
         taste_context: tasteContext(readLocalTaste()),
         // The interface is Chinese: the programme follows it, not the language of the keyword.
         output_language: PROGRAMME_LANGUAGE,
+        station: target.id,
       });
       if (requestRef.current !== requestId) return;
       const proposal = batch.proposals[0];

@@ -10,6 +10,7 @@ from wavecast.presentation import HostMode, host_mode_prompt_guidance
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.spoken_form import KnownTrack, to_spoken_form
+from wavecast.stations import STATION_PROFILES, StationId
 
 from .fast_start import FastStructuredProvider
 from .models import (
@@ -52,6 +53,7 @@ class WriterService:
         host_mode: HostMode = HostMode.LIGHT,
         target_duration_seconds: int | None = None,
         output_language: OutputLanguage = OutputLanguage.AUTO,
+        station: StationId | None = None,
         topic: str = "",
         slot_context: NarrationSlotContext | None = None,
         slot_contexts: Sequence[NarrationSlotContext] | None = None,
@@ -86,6 +88,11 @@ class WriterService:
                     "is_final": False,
                 }
             ]
+        )
+        station_line = (
+            f"Station: {STATION_PROFILES[station].name} - {STATION_PROFILES[station].positioning}\n"
+            if station is not None
+            else ""
         )
         language_guidance = (
             ZH_CN_RADIO_WRITING_GUIDANCE
@@ -130,6 +137,7 @@ class WriterService:
             "transliterate a title yourself, and keep Japanese, Korean or other non-Chinese, "
             "non-English text out of `tts_text`.\n"
             f"{language_guidance}\n"
+            f"{station_line}"
             f"Chapter: {chapter.model_dump_json()}\n"
             f"Evidence: {[item.model_dump() for item in scoped]}\n"
             f"Previous context: {previous_committed_context[:1000]}\n"

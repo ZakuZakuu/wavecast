@@ -90,6 +90,7 @@ class StagedProgressiveRuntimeAdapter:
             max_chapters=max_chapters,
             presentation_intent=episode.presentation_intent,
             output_language=episode.output_language,
+            station=episode.station,
         )
         return await self.assembly.prepare_fast_successor(
             request,
@@ -223,6 +224,7 @@ class StagedProgressiveRuntimeAdapter:
                 host_mode=episode.presentation_intent.host_mode,
                 target_duration_seconds=target_seconds,
                 output_language=episode.output_language,
+                station=episode.station,
                 topic=episode.topic,
                 slot_contexts=[slot],
                 inference_profile=InferenceProfile.FAST,
@@ -319,6 +321,7 @@ class StagedProgressiveRuntimeAdapter:
             max_chapters=max_chapters,
             presentation_intent=episode.presentation_intent,
             output_language=episode.output_language,
+            station=episode.station,
         )
         locked_segment = next(
             (
