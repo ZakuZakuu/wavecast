@@ -199,6 +199,14 @@ def test_the_first_future_chapter_may_be_given_up_because_the_opening_is_reserve
     ]
 
 
+def test_a_patched_route_is_logged_with_counts_only(tmp_path, caplog) -> None:
+    with caplog.at_level("INFO", logger="wavecast.assembly"):
+        _prepare(service(tmp_path, _SouthboundOnlyLLM()), ["Signal Garden", "Nobody Known"])
+
+    logged = [r.getMessage() for r in caplog.records if "required_artists_checked" in r.getMessage()]
+    assert logged == ["required_artists_checked required=2 absent=2 patched=1 unpatched=1"]
+
+
 def test_the_swapped_chapter_talks_about_the_new_artist_not_the_old_one(tmp_path) -> None:
     session = _prepare(service(tmp_path, _SouthboundOnlyLLM()), ["Signal Garden"])
 

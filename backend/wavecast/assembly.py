@@ -1575,6 +1575,13 @@ class LiveEpisodeAssemblyService:
             absent_count=len(absent),
             patched_count=len(absent) - len(missing),
         )
+        logger.info(
+            "required_artists_checked required=%d absent=%d patched=%d unpatched=%d",
+            len(request.required_artists),
+            len(absent),
+            len(absent) - len(missing),
+            len(missing),
+        )
         return patched
 
     async def _build_coverage_pool(
@@ -2460,6 +2467,12 @@ def _reconcile_route_text(
                 chapter_index=item.writer_chapter.index,
                 cause=cause,
                 foreign_artist_count=len(foreign),
+            )
+            logger.info(
+                "chapter_text_neutralised chapter=%d cause=%s foreign_artists=%d",
+                item.writer_chapter.index,
+                cause,
+                len(foreign),
             )
             item = replace(
                 item,

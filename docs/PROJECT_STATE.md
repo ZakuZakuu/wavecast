@@ -1,6 +1,6 @@
 # WaveCast Project State
 
-Updated: 2026-10-08. **唯一的当前状态入口**；记录现状、下一步和已知问题，不累积会话日志。
+Updated: 2026-10-09（第 8 项）；其余 2026-10-08。**唯一的当前状态入口**；记录现状、下一步和已知问题，不累积会话日志。
 
 ## 当前阶段与产品
 
@@ -21,7 +21,7 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 5. 用户授权准备 Claude 独立云端节目精校环境，使用开发专用 key、本机 PG/音频与本地音乐 sidecar/upstream，不接正式数据库或 Railway 音乐服务。安装/启动/只读评审导出见 [cloud review](deployment/claude-cloud-review.md)。先 mock 验收再显式单档 live；当前仅完成本地无付费检查，云端启动/真实音源/付费生成待配置后验收。初赛正式环境保持稳定，不启动广泛运行时重构。
 6. **已发布 main（#183，2026-10-08）：** ① iOS PWA 切回前台白屏/播放状态丢失已修复，用户真机确认。根因是 `LibraryIdentityBridge` 把游客 refetch 时 Better Auth 置位的 `isPending` 当成身份未知而卸载整个应用，现仅首次会话查询阻塞应用（#181）。② 登录页单屏化、邮箱主入口、Google/GitHub 并排，验证码流程用 `sessionStorage` 保存邮箱/步骤/冷却并在刷新或页面被丢弃后恢复且不自动重发（#182）；用户真机确认登录页与登录正常；“发码→切邮箱 App→返回”已验收：临时切出不再白屏，切出较久时 iOS 仍会丢弃页面并刷新一次（系统行为，不可避免），刷新后回到验证码界面，可继续输入登录。
 7. **iOS 主屏幕 PWA 状态栏与底部白边（已修复，用户真机确认白边消失、顶部渐变更好看；已随 #192 发布 main `821aa59`，生产部署 READY）：** 顶部浅色带是 `statusBarStyle: "default"` 下 iOS 叠的近白雾面；已改 `black-translucent`（#186），首页/调频页过渡柔和，播放页顶部仍有雾面，**接受为 iOS 行为**（`theme-color` 在主屏幕 PWA 无效；改 fixed 图层 #187 无益，已撤销 #188）。该模式带来**底部白边**，真机诊断（诊断页已删）读数：`screen.height` 874，`innerHeight`/`100dvh`/`100svh`/`.app-root` 均 812（少了状态栏 62），`100lvh` 874；`fixed` 层同样停在 812。修复：主屏幕 PWA 下用 `100lvh` 作满屏高度——`tokens.css` 的 `--root-h/--app-h/--fixed-bottom/--fixed-h` 在 `(display-mode: standalone)` 或 `html[data-standalone]`（`layout.tsx` 用 `navigator.standalone` 设置）时切换，作用于 `html/body`、`.app-root`、`.sheet-layer`、`.install-layer`。新增满屏层/fixed 层时请用这些变量，不要直接写 `100dvh`/`inset: 0`。**正式版（wavecast.space）主屏幕图标需删除后重新添加**才会使用新状态栏样式。
-8. **选曲/时长/语言优化（#195，已合并 integration：#211、#212）：** 名字与重复歌曲识别、对上游的缓存/合并/熔断、调频失败的原因说明与「换个说法」、提案阶段的深层艺人兜底（含拉丁名↔日文署名别名，#213）、可播放候选池（`WAVECAST_CATALOG_POOL`，默认关，见 [ADR 0022](adr/0022-playable-candidate-pool.md)）、按时长伸缩路线（`WAVECAST_DURATION_SCALING`，默认关）、Writer 结尾收束与不说“依据”的规则、显式节目语言 `output_language`（前端传 zh-CN）。两个开关默认关，live 仅有零星对比（久石让 7 首/29 分 对 4 首/19 分基线），**未经用户试听，不要默认打开**。估算时长仍只在完成时修正。未做：#201 TTS 表现、#202 多样性、#203 观测、#204 后台生成。Railway 部署与线上表现尚未核实。
+8. **选曲/时长/语言/口播优化（#195，已合并 integration，2026-10-09 核对）：** 名字与重复歌曲识别、对上游的缓存/合并/熔断、调频失败的原因说明与「换个说法」、提案阶段的深层艺人兜底（#213）、可播放候选池（`WAVECAST_CATALOG_POOL`，默认关，[ADR 0022](adr/0022-playable-candidate-pool.md)）、按时长伸缩路线（`WAVECAST_DURATION_SCALING`，默认关）、显式节目语言 `output_language`。两个开关默认关，**未经用户试听，不要默认打开**。口播方面已合并：展示文本与播报文本分离（`spoken_form.py`：外语歌名读法、年份读法）、五台主持声线与不重复开场（`intelligence/voice.py`、`stations.py`；台标放在内容之后，夜里不口播）、Writer 一次有界改写与质量检查（`narration_quality.py`）、用量观测（`/api/episodes/{id}/usage`）。**口播与曲目一致（#222、#223）：** 请求点名的艺人（`required_artists`）必须进路线，漏了就从曲库补；补不上记为未兑现，口播不得提及；绑定后若实际播的是备选曲或章节文案写的是没在播的艺人，改用通用文案；Writer 一次改写后仍提到没放的艺人，丢弃该段。离线测试已覆盖；真实模型只验证了 1 档（Mogwai→Explosions in the Sky）。开发用 DeepSeek key 2026-10-09 返回 402 余额不足，继续实跑前需充值。未做：#201 TTS 表现、#202 多样性（含“不同演绎”的演奏者去重）、#204 后台生成；主持词精校草稿 `docs/design/host-voice-draft.md` 在分支 `docs/host-voice-draft`，未合并。已知口播问题：开场白仍有 AI 味，结尾偶有口号，末曲介绍与结尾会重复念同一句歌名。
 
 ## 已交付与边界
 
