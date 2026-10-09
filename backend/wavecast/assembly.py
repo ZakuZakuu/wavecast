@@ -135,7 +135,7 @@ from wavecast.route_duration import (
 )
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
-from wavecast.text_identity import canonical_name, strip_latin_accents, without_feature_credit
+from wavecast.text_identity import canonical_name, song_title_key, strip_latin_accents
 from wavecast.timing import (
     ProgramTimingPlan,
     ProgramTimingSummary,
@@ -2296,9 +2296,7 @@ def _same_song_identity(left: ResolvedTrack | None, right: ResolvedTrack) -> boo
         return False
     if left.track_ref == right.track_ref:
         return True
-    if _identity_words(without_feature_credit(left.canonical_title)) != _identity_words(
-        without_feature_credit(right.canonical_title)
-    ):
+    if song_title_key(left.canonical_title) != song_title_key(right.canonical_title):
         return False
     left_artist = _artist_identity_words(left.canonical_artist)
     right_artist = _artist_identity_words(right.canonical_artist)
