@@ -111,3 +111,12 @@ def test_a_year_missing_from_the_evidence_is_flagged_only_when_the_set_is_given(
     assert "unsupported_year:1979" in issues("1979 年的歌", supported_years={"1980"})
     assert not any(i.startswith("unsupported_year") for i in issues("1980 年的歌", supported_years={"1980"}))
     assert not any(i.startswith("unsupported_year") for i in issues("1979 年的歌"))
+
+
+def test_an_artist_that_is_planned_but_not_played_is_flagged_in_any_script_or_case() -> None:
+    found = issues("下一首之前，先说说 Explosions In The Sky。", unplayed_names=["explosions in the sky"])
+
+    assert "mentions_unplayed:explosions in the sky" in found
+    assert "mentions_unplayed:久石譲" in issues("久石让写的。", unplayed_names=["久石譲"])  # script variant
+    assert not any(i.startswith("mentions_unplayed") for i in issues("别的乐队。", unplayed_names=["Mogwai"]))
+    assert not any(i.startswith("mentions_unplayed") for i in issues("很短。", unplayed_names=["a"]))

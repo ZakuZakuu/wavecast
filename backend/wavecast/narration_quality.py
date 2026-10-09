@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from wavecast.spoken_form import KnownTrack, to_spoken_form
+from wavecast.text_identity import canonical_name
 
 # Stock figurative verbs and images that recur in generated Chinese music copy.
 FIGURATIVE_PHRASES: tuple[str, ...] = (
@@ -123,6 +124,7 @@ def check_block(
     tracks: Sequence[KnownTrack] = (),
     is_final: bool = False,
     supported_years: set[str] | None = None,
+    unplayed_names: Sequence[str] = (),
 ) -> BlockCheck:
     issues: list[str] = []
     figurative = [phrase for phrase in FIGURATIVE_PHRASES if phrase in text]
@@ -148,6 +150,11 @@ def check_block(
         issues.append("final_block_points_forward")
     if opener_of(text) in _STOCK_OPENERS:
         issues.append("stock_opener")
+    folded_text = canonical_name(text)
+    for name in unplayed_names:
+        folded = canonical_name(name)
+        if len(folded) >= 2 and folded in folded_text:
+            issues.append(f"mentions_unplayed:{name}")
     if supported_years is not None:
         for year in sorted(years_in(text) - supported_years):
             issues.append(f"unsupported_year:{year}")
@@ -173,6 +180,7 @@ _REWRITE_ISSUES = (
     "final_block_points_forward",
     "stock_opener",
     "unsupported_year",
+    "mentions_unplayed",
 )
 
 
@@ -199,6 +207,7 @@ _REASON_TEXT = {
     "final_block_points_forward": "points to what comes next in the closing block",
     "stock_opener": "starts with 刚才/接下来/我们先从/下一首",
     "unsupported_year": "gives a year that is not in the evidence",
+    "mentions_unplayed": "mentions an artist who is not played in this programme",
 }
 
 

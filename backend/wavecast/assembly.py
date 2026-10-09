@@ -2001,6 +2001,44 @@ def _artist_identity_words(value: str) -> frozenset[str]:
     )
 
 
+def _route_summary(
+    session: ProgressiveAssemblySession, episode: LiveEpisode
+) -> tuple[list[str], list[str]]:
+    """The tracks this programme really plays, and artists the plan named but will not play.
+
+    Narration is written from the plan's evidence; when a planned track could not be played the
+    Writer must not talk about it as if the listener heard it.
+    """
+
+    played: list[str] = []
+    played_artists: set[str] = set()
+
+    def add(artist: str, title: str) -> None:
+        label = f"{artist} - {title}"
+        if label not in played:
+            played.append(label)
+        played_artists.add(canonical_name(artist))
+
+    for segment in episode.ordered_segments:
+        if isinstance(segment, MusicSegment) and segment.artist and segment.title:
+            add(segment.artist, segment.title)
+    for item in session.chapters:
+        if item.resolved_track is not None:
+            add(item.resolved_track.canonical_artist, item.resolved_track.canonical_title)
+
+    unplayed: list[str] = []
+    for chapter in session.skeleton.chapters:
+        for proposal in (chapter.track, *chapter.track_alternates):
+            if proposal is None:
+                continue
+            folded = canonical_name(proposal.artist)
+            if any(folded in artist or artist in folded for artist in played_artists):
+                continue
+            if proposal.artist not in unplayed:
+                unplayed.append(proposal.artist)
+    return played, unplayed
+
+
 def _used_openers(episode: LiveEpisode) -> list[str]:
     """How the narration already authored for this programme begins, in order."""
 
@@ -3194,6 +3232,7 @@ class StagedProgressiveChapterGenerator:
             if upcoming is not None
             else ""
         )
+        route_tracks, unplayed_artists = _route_summary(self.session, episode)
         has_previous_music = any(
             isinstance(segment, MusicSegment) and segment.order < chapter_start_order
             for segment in episode.ordered_segments
@@ -3211,6 +3250,8 @@ class StagedProgressiveChapterGenerator:
                 station=self.session.station,
                 voice_seed=episode.seed_id,
                 used_openers=_used_openers(episode),
+                route_tracks=route_tracks,
+                unplayed_artists=unplayed_artists,
                 topic=self.session.topic,
                 slot_contexts=chapter.slot_contexts,
             )
