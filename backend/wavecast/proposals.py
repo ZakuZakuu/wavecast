@@ -651,13 +651,14 @@ class LLMProgramProposalGenerator:
             reason = REASON_OPENING_NOT_FOUND
         logger.info(
             "opening_track_unresolved reason=%s candidates=%d unplayable=%d not_found=%d "
-            "provider_error=%d search_failures=%d",
+            "provider_error=%d search_failures=%d failure_kinds=%s",
             reason,
             len(candidates),
             pool.count(AvailabilityStatus.UNPLAYABLE),
             pool.count(AvailabilityStatus.NOT_FOUND),
             pool.count(AvailabilityStatus.PROVIDER_ERROR),
             pool.search_failure_count,
+            dict(sorted(pool.failure_kinds.items())),
         )
         return reason
 

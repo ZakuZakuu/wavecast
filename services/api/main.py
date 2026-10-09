@@ -88,7 +88,7 @@ from wavecast.providers.netease import NeteaseMusicProvider
 from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
 from wavecast.providers.retrieval import MusicRetrievalService
-from wavecast.providers.usage import UsageLedger
+from wavecast.providers.usage import UsageLedger, usage_diagnostics
 from wavecast.recommendations import (
     DeterministicRecommendationPlanner,
     InMemoryProgramIdeaRepository,
@@ -1697,6 +1697,36 @@ def delete_my_saved(episode_id: str, request: Request) -> dict[str, Any]:
 def episode(episode_id: str, request: Request) -> LiveEpisode:
     owned(episode_id, principal(request))
     return orchestrator.get(episode_id)
+
+
+@app.get("/api/episodes/{episode_id}/usage")
+def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
+    """Provider usage and a programme summary for one episode, without prompts or URLs.
+
+    Usage is held in memory by the running API process, so it covers calls made since the
+    last restart; it is meant for reviewing one generation, not as a billing record.
+    """
+
+    owned(episode_id, principal(request))
+    current = orchestrator.get(episode_id)
+    ledger = progressive_runtime.assembly.ledger if progressive_runtime is not None else None
+    segments = current.timeline_segments
+    return {
+        "episode_id": current.id,
+        "programme": {
+            "state": current.state.value,
+            "estimated_duration_seconds": current.program_estimated_duration_seconds,
+            "timeline_duration_seconds": current.timeline_duration_seconds,
+            "music_segments": sum(1 for item in segments if item.kind is SegmentKind.MUSIC),
+            "narration_segments": sum(1 for item in segments if item.kind is SegmentKind.NARRATION),
+            "narration_skipped": sum(
+                1
+                for item in segments
+                if item.kind is SegmentKind.NARRATION and item.state is SegmentState.SKIPPED
+            ),
+        },
+        "providers": usage_diagnostics(ledger, scope=episode_id) if ledger is not None else None,
+    }
 
 
 def canonical_mix_plan_for_episode(episode_id: str, actor: AuthPrincipal) -> MixPlan:

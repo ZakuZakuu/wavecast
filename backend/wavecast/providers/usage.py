@@ -1,9 +1,45 @@
 """Small in-memory, provider-independent accounting for a single run."""
 
+import functools
+import logging
+from collections import deque
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger("wavecast.usage")
+
+# Which unit of work (an episode id, or "proposal") the provider calls below belong to.
+_usage_scope: ContextVar[str | None] = ContextVar("wavecast_usage_scope", default=None)
+
+# The ledger is process-wide and in memory; keep it bounded on a long-running API.
+DEFAULT_MAX_EVENTS = 4000
+
+
+@contextmanager
+def usage_scope(scope: str) -> Iterator[None]:
+    """Attribute every provider call made inside the block to ``scope``."""
+
+    token = _usage_scope.set(scope)
+    try:
+        yield
+    finally:
+        _usage_scope.reset(token)
+
+
+def scoped_to_episode[F: Callable[..., Awaitable[Any]]](method: F) -> F:
+    """Run an async method taking ``(self, episode, ...)`` inside ``usage_scope(episode.id)``."""
+
+    @functools.wraps(method)
+    async def wrapper(self: Any, episode: Any, *args: Any, **kwargs: Any) -> Any:
+        with usage_scope(str(episode.id)):
+            return await method(self, episode, *args, **kwargs)
+
+    return cast(F, wrapper)
 
 
 class UsageEvent(BaseModel):
@@ -19,6 +55,7 @@ class UsageEvent(BaseModel):
     actual_cost_usd: float | None = Field(default=None, ge=0)
     estimated_cost_usd: float | None = Field(default=None, ge=0)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    scope: str | None = Field(default_factory=lambda: _usage_scope.get())
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -41,11 +78,33 @@ class UsageDiagnostics(TypedDict):
 
 
 class UsageLedger:
-    def __init__(self) -> None:
-        self.events: list[UsageEvent] = []
+    def __init__(self, max_events: int = DEFAULT_MAX_EVENTS) -> None:
+        self._events: deque[UsageEvent] = deque(maxlen=max_events)
+
+    @property
+    def events(self) -> list[UsageEvent]:
+        return list(self._events)
 
     def record(self, event: UsageEvent) -> None:
-        self.events.append(event)
+        self._events.append(event)
+        # Counts, timings and cost only: never prompts, responses, URLs or user identifiers.
+        logger.info(
+            "provider_call provider=%s operation=%s stage=%s scope=%s ms=%d in=%s out=%s "
+            "chars=%s queries=%s cost_usd=%s",
+            event.provider,
+            event.operation,
+            event.metadata.get("stage") if isinstance(event.metadata.get("stage"), str) else None,
+            event.scope,
+            event.elapsed_ms,
+            event.input_tokens,
+            event.output_tokens,
+            event.usage_characters,
+            event.search_queries,
+            event.actual_cost_usd if event.actual_cost_usd is not None else event.estimated_cost_usd,
+        )
+
+    def for_scope(self, scope: str) -> list[UsageEvent]:
+        return [event for event in self._events if event.scope == scope]
 
     def totals(self) -> UsageTotals:
         return self._totals(self.events)
@@ -102,14 +161,19 @@ def safe_usage_event(event: UsageEvent) -> dict[str, object]:
     }
 
 
-def usage_diagnostics(ledger: UsageLedger) -> UsageDiagnostics:
+def usage_diagnostics(ledger: UsageLedger, scope: str | None = None) -> UsageDiagnostics:
+    """Summarise the ledger, or only the calls made for one ``scope`` (e.g. an episode)."""
+
+    events = ledger.events if scope is None else ledger.for_scope(scope)
     stages: dict[str, dict[str, object]] = {}
-    for event in ledger.events:
+    for event in events:
         stage = event.metadata.get("stage")
         if isinstance(stage, str) and stage and stage not in stages:
-            stages[stage] = ledger.totals_for_stage(stage).model_dump()
+            stages[stage] = UsageLedger._totals(
+                [item for item in events if item.metadata.get("stage") == stage]
+            ).model_dump()
     return {
-        "usage": ledger.totals().model_dump(),
+        "usage": UsageLedger._totals(events).model_dump(),
         "usage_by_stage": stages,
-        "provider_events": [safe_usage_event(event) for event in ledger.events],
+        "provider_events": [safe_usage_event(event) for event in events],
     }

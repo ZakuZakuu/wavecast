@@ -108,7 +108,12 @@ from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.search import ExaSearchProvider, TavilySearchProvider
-from wavecast.providers.usage import UsageLedger, UsageTotals, usage_diagnostics
+from wavecast.providers.usage import (
+    UsageLedger,
+    UsageTotals,
+    scoped_to_episode,
+    usage_diagnostics,
+)
 from wavecast.storage.assets import LocalObjectStorageProvider
 from wavecast.text_identity import canonical_name, without_feature_credit
 from wavecast.timing import (
@@ -1485,7 +1490,8 @@ class LiveEpisodeAssemblyService:
         )
         logger.info(
             "catalog_pool_ready entries=%d playable=%d unplayable=%d not_found=%d "
-            "provider_error=%d verifications=%d search_failures=%d elapsed_ms=%d truncated=%s",
+            "provider_error=%d verifications=%d search_failures=%d failure_kinds=%s elapsed_ms=%d "
+            "truncated=%s",
             len(pool.entries),
             pool.count(AvailabilityStatus.PLAYABLE),
             pool.count(AvailabilityStatus.UNPLAYABLE),
@@ -1493,6 +1499,7 @@ class LiveEpisodeAssemblyService:
             pool.count(AvailabilityStatus.PROVIDER_ERROR),
             pool.verification_count,
             pool.search_failure_count,
+            dict(sorted(pool.failure_kinds.items())),
             pool.elapsed_ms,
             pool.truncated,
         )
@@ -3005,6 +3012,7 @@ class StagedProgressiveChapterGenerator:
         self.composer = composer
         self.materializer = materializer
 
+    @scoped_to_episode
     async def generate_next(self, episode: LiveEpisode) -> GeneratedChapter | None:
         """Prepare the next route step without waiting for Writer or TTS."""
         chapter = self.session.next_chapter(episode)

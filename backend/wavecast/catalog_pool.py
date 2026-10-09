@@ -22,7 +22,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.providers.errors import ProviderError
-from wavecast.providers.retrieval import MusicRetrievalService, RetrievedTrack, VersionKind
+from wavecast.providers.retrieval import (
+    MusicRetrievalService,
+    RetrievalFailure,
+    RetrievedTrack,
+    VersionKind,
+)
 from wavecast.text_identity import (
     base_title_key,
     canonical_name,
@@ -131,6 +136,9 @@ class CatalogPool(BaseModel):
     outcomes: list[CandidateOutcome] = Field(default_factory=list)
     verification_count: int = 0
     search_failure_count: int = 0
+    # Why catalog calls failed, by "provider:ExceptionClass"; lets an outage, a refused
+    # credential and a rate limit be told apart without reading provider messages.
+    failure_kinds: dict[str, int] = Field(default_factory=dict)
     elapsed_ms: int = 0
     truncated: bool = False
 
@@ -221,6 +229,7 @@ class CatalogPool(BaseModel):
             "outcomes": {status.value: self.count(status) for status in AvailabilityStatus},
             "verification_count": self.verification_count,
             "search_failure_count": self.search_failure_count,
+            "failure_kinds": dict(sorted(self.failure_kinds.items())),
             "elapsed_ms": self.elapsed_ms,
             "truncated": self.truncated,
         }
@@ -419,6 +428,7 @@ class CatalogPoolBuilder:
             async with state.semaphore:
                 report = await self.retrieval.search_report(query, limit=self.config.search_limit)
             state.search_failures += len(report.failures)
+            state.note_failures(report.failures)
             return list(report.candidates)
 
         return list(await asyncio.gather(*(one(query) for query in queries)))
@@ -440,6 +450,7 @@ class CatalogPoolBuilder:
                     limit=self.config.search_limit,
                 )
             state.search_failures += len(report.failures)
+            state.note_failures(report.failures)
             search_failed = search_failed or bool(report.failures)
             exact = [
                 track
@@ -484,7 +495,8 @@ class CatalogPoolBuilder:
                         canonical_title=track.title[:160],
                     )
                 )
-            except (ProviderError, ValueError):
+            except (ProviderError, ValueError) as error:
+                state.note_failure(f"{track.provider}:{type(error).__name__}")
                 return _Verified.of(track, source, AvailabilityStatus.PROVIDER_ERROR)
         if metadata.playable and metadata.duration_seconds > 0:
             return _Verified.of(
@@ -527,6 +539,7 @@ class CatalogPoolBuilder:
             )
         pool.verification_count = state.verifications
         pool.search_failure_count = state.search_failures
+        pool.failure_kinds = dict(state.failure_kinds)
 
 
 @dataclass
@@ -537,6 +550,14 @@ class _BuildState:
     accepted: set[str] = field(default_factory=set)
     verifications: int = 0
     search_failures: int = 0
+    failure_kinds: dict[str, int] = field(default_factory=dict)
+
+    def note_failure(self, kind: str) -> None:
+        self.failure_kinds[kind] = self.failure_kinds.get(kind, 0) + 1
+
+    def note_failures(self, failures: Sequence[RetrievalFailure]) -> None:
+        for failure in failures:
+            self.note_failure(f"{failure.provider}:{failure.error_type or failure.kind}")
 
     def record(self, order: tuple[int, int], item: _Verified) -> None:
         """Store a finished result under its input position, so output order is stable."""

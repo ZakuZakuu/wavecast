@@ -179,6 +179,13 @@ uv run python scripts/cloud/export-review.py <episode-id> --listener-id claude-r
 事实来源时，针对该本地数据库加载已存储的结构化研究结果，另外做白名单导出。
 禁止 dump 全表/原始 prompt/response/reasoning。没有来源不能当作核实过的事实。
 
+导出文件还带 `usage`（来自 `GET /api/episodes/<id>/usage`，仅所有者可读）：节目的预估/
+实际时长、音乐与口播段数、被跳过的口播数，以及该节目各阶段的 provider 调用次数、耗时、
+token/字符/成本。用量保存在 API 进程内存里（有上限，重启即清空），只用于评审一次生成，
+不是账单。API 日志同时输出 `provider_call …`（每次调用的阶段、耗时、用量）、
+`catalog_pool_ready … failure_kinds={…}`（目录失败按 provider:异常类型计数，区分不可用、
+凭据被拒、限流）和 `episode_materialized …`（预估对实际时长）；都不含 prompt、响应、URL。
+
 先固定一个主题形成 baseline。标注：是否回答选题、事实依据、曲目与路线关系、
 口语自然程度、重复套话、转场/收尾、目标与实际时长；听感另看主持位置、压人声、
 停顿和音色。每条批评附具体片段及预期改进，不只写“更自然”。
