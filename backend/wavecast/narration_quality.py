@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from wavecast.spoken_form import KnownTrack, to_spoken_form
-from wavecast.text_identity import text_mentions_name
+from wavecast.text_identity import canonical_name, text_mentions_name
 
 # Stock figurative verbs and images that recur in generated Chinese music copy.
 FIGURATIVE_PHRASES: tuple[str, ...] = (
@@ -45,6 +45,17 @@ FIGURATIVE_PHRASES: tuple[str, ...] = (
     "光泽",
     "微光",
     "质感",
+    "之旅",
+    "立住",
+    "留出空间",
+    "站一边",
+    "长出来",
+    "几条线",
+    "连上了",
+    "堆到临界",
+    "自己就散",
+    "铺成",
+    "留点空白",
 )
 _CONTRAST_FRAME = re.compile(r"不是[^，。！？]{1,18}[，,]?(?:而是|更像|而像)|与其[^。]{1,18}?不如")
 _MORALISING = re.compile(r"这(?:也)?提醒我们|归根结底|某种意义上|说到底|让我们")
@@ -54,6 +65,13 @@ _PERSONAL_EXPERIENCE = re.compile(r"我(?:小时候|曾经|那时候|当年|记�
 _STOCK_OPENERS = ("刚才", "接下来", "我们先从", "下一首")
 _LISTEN_CUE = re.compile(r"留意|注意|听听|听它|听他|听她|你听|听着")
 _PARALLEL_LIST = re.compile(r"(?:[^，。、]{1,6}、){2}[^，。、]{1,6}")
+_SENTENCE_BREAK = re.compile(r"[。！？!?；;\n]+")
+_MIN_REPEAT_CHARS = 10
+# Share of the shorter sentence's character pairs found in the other.  Measured on real
+# programmes: a reworded repeat scores 0.67, unrelated sentences sharing a name 0.2 or less.
+_REPEAT_CONTAINMENT = 0.5
+_MIN_REPEAT_PAIRS = 8
+_RECAP_TITLES = 3
 _PUNCTUATION = re.compile(r"[\s，。！？、；：,.!?;:“”\"'‘’《》「」『』（）()\-—…·]")
 
 
@@ -115,6 +133,42 @@ def opener_of(text: str) -> str:
     return _PUNCTUATION.sub("", stripped)[:4]
 
 
+def _bigrams(sentence: str) -> set[str]:
+    folded = _PUNCTUATION.sub("", canonical_name(sentence))
+    return {folded[i : i + 2] for i in range(len(folded) - 1)}
+
+
+def repeated_sentence(text: str, earlier: str) -> str | None:
+    """A sentence of ``text`` that says (nearly) what a sentence of ``earlier`` already said."""
+
+    earlier_sets = [
+        _bigrams(sentence)
+        for sentence in _SENTENCE_BREAK.split(earlier)
+        if len(_PUNCTUATION.sub("", sentence)) >= _MIN_REPEAT_CHARS
+    ]
+    if not earlier_sets:
+        return None
+    for sentence in _SENTENCE_BREAK.split(text):
+        if len(_PUNCTUATION.sub("", sentence)) < _MIN_REPEAT_CHARS:
+            continue
+        mine = _bigrams(sentence)
+        for theirs in earlier_sets:
+            shorter = min(len(mine), len(theirs))
+            if shorter >= _MIN_REPEAT_PAIRS and len(mine & theirs) / shorter >= _REPEAT_CONTAINMENT:
+                return sentence.strip()
+    return None
+
+
+def titles_named(text: str, route_titles: Sequence[str]) -> list[str]:
+    """The distinct route track titles ``text`` writes out."""
+
+    named: list[str] = []
+    for title in route_titles:
+        if title and title not in named and text_mentions_name(text, title):
+            named.append(title)
+    return named
+
+
 def check_block(
     text: str,
     *,
@@ -125,6 +179,8 @@ def check_block(
     is_final: bool = False,
     supported_years: set[str] | None = None,
     unplayed_names: Sequence[str] = (),
+    route_titles: Sequence[str] = (),
+    earlier: str = "",
 ) -> BlockCheck:
     issues: list[str] = []
     figurative = [phrase for phrase in FIGURATIVE_PHRASES if phrase in text]
@@ -153,6 +209,10 @@ def check_block(
     for name in unplayed_names:
         if text_mentions_name(text, name):
             issues.append(f"mentions_unplayed:{name}")
+    if is_final and len(titles_named(text, route_titles)) >= _RECAP_TITLES:
+        issues.append("recap_list")
+    if earlier and repeated_sentence(text, earlier) is not None:
+        issues.append("repeats_earlier")
     if supported_years is not None:
         for year in sorted(years_in(text) - supported_years):
             issues.append(f"unsupported_year:{year}")
@@ -179,6 +239,8 @@ _REWRITE_ISSUES = (
     "stock_opener",
     "unsupported_year",
     "mentions_unplayed",
+    "recap_list",
+    "repeats_earlier",
 )
 
 
@@ -206,6 +268,8 @@ _REASON_TEXT = {
     "stock_opener": "starts with 刚才/接下来/我们先从/下一首",
     "unsupported_year": "gives a year that is not in the evidence",
     "mentions_unplayed": "mentions an artist who is not played in this programme",
+    "recap_list": "lists the tracks played one by one; name at most the last track, or none",
+    "repeats_earlier": "says again what an earlier block of this programme already said",
 }
 
 

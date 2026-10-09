@@ -124,3 +124,89 @@ def test_an_artist_is_matched_as_a_word_not_inside_another_word() -> None:
         for issue in check_block("久石让写的这段。", unplayed_names=["久石譲"]).issues
         if issue.startswith("mentions_unplayed")
     ]
+
+
+# --- closing and repetition (2026-10-09 live programmes) ------------------------------------
+
+
+def _final_slot():
+    from wavecast.intelligence.models import (
+        NarrationSlotContext,
+        NarrationSlotPlacement,
+        ResolvedTrack,
+    )
+
+    return NarrationSlotContext(
+        chapter_index=3,
+        placement=NarrationSlotPlacement.AFTER_FINAL_TRACK,
+        allowed_block_kinds=[RadioScriptBlockKind.OUTRO],
+        just_played_track=ResolvedTrack(
+            track_ref="n:4", canonical_artist="E", canonical_title="Your Hand in Mine"
+        ),
+        is_final=True,
+    )
+
+
+def _outro(text: str) -> RadioScript:
+    return RadioScript(
+        blocks=[RadioScriptBlock(kind=RadioScriptBlockKind.OUTRO, text=text, duration_seconds=10)]
+    )
+
+
+def _write_final(llm: Sequenced, **kwargs) -> RadioScript:
+    result = asyncio.run(
+        WriterService(llm).write(
+            _chapter(),
+            [],
+            slot_context=_final_slot(),
+            target_duration_seconds=20,
+            output_language=OutputLanguage.ZH_CN,
+            station=StationId.CASUAL,
+            voice_seed="programme-1",
+            **kwargs,
+        )
+    )
+    assert isinstance(result, RadioScript)
+    return result
+
+
+ROUTE_TRACKS = [
+    "Hammock - Breathturn",
+    "Mogwai - Take Me Somewhere Nice",
+    "Explosions In The Sky - Your Hand in Mine",
+]
+
+
+def test_an_outro_that_lists_the_route_is_rewritten() -> None:
+    recap = "从 Breathturn 到 Take Me Somewhere Nice，再到 Your Hand in Mine，就到这儿。"
+    plain = "最后是 Your Hand in Mine，就到这儿。"
+    llm = Sequenced(_outro(recap), _outro(plain))
+
+    result = _write_final(llm, route_tracks=ROUTE_TRACKS)
+
+    assert len(llm.prompts) == 2
+    assert "one by one" in llm.prompts[1]
+    assert [block.text for block in result.blocks] == [plain]
+
+
+def test_a_block_that_repeats_an_earlier_one_is_rewritten() -> None:
+    earlier = "他们受访时说，早年开始做纯器乐，就是因为受了 Mogwai 很大的影响。"
+    repeat = "他们说过，早年做纯器乐是受了 Mogwai 的影响。"
+    fresh = "今晚就到这儿。"
+    llm = Sequenced(_outro(repeat), _outro(fresh))
+
+    result = _write_final(llm, previous_committed_context=earlier, route_tracks=ROUTE_TRACKS)
+
+    assert len(llm.prompts) == 2
+    assert "already said" in llm.prompts[1]
+    assert [block.text for block in result.blocks] == [fresh]
+
+
+def test_the_closing_guidance_forbids_listing_the_route_and_repeating_earlier_blocks() -> None:
+    llm = Sequenced(_outro("今晚就到这儿。"))
+
+    _write_final(llm)
+
+    prompt = llm.prompts[0]
+    assert "Never list the tracks played" in prompt
+    assert "do not repeat anything an earlier block already said" in prompt

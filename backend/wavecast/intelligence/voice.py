@@ -214,8 +214,10 @@ def voice_instructions(
     lines = [f"Station: {profile.name} - {profile.positioning}", f"Voice: {voice.tone}"]
     if is_final:
         lines.append(
-            "This block closes the programme: refer to one or two tracks that were really "
-            "played and what the route was; say nothing about what comes next."
+            "This block closes the programme in one or two short sentences: say where the "
+            "route ended, naming at most the last track. Never list the tracks played, do not "
+            "repeat anything an earlier block already said, say nothing about what comes next, "
+            "and stop plainly."
         )
     elif is_opening:
         lines.append(

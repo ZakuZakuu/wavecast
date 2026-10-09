@@ -120,3 +120,78 @@ def test_an_artist_that_is_planned_but_not_played_is_flagged_in_any_script_or_ca
     assert "mentions_unplayed:久石譲" in issues("久石让写的。", unplayed_names=["久石譲"])  # script variant
     assert not any(i.startswith("mentions_unplayed") for i in issues("别的乐队。", unplayed_names=["Mogwai"]))
     assert not any(i.startswith("mentions_unplayed") for i in issues("很短。", unplayed_names=["a"]))
+
+
+# --- phrases and repetition seen in live programmes (2026-10-09) ---------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "这首歌能一下子把后摇的张力立住。",
+        "吉他和电子各站一边，中间留出空间。",
+        "安静里慢慢有东西长出来。",
+        "我想用这首歌来开始我们今天的后摇安静之旅。",
+        "把步调放慢一点，给这段留点空白。",
+        "几条线连上了。",
+        "安静堆到临界，自己就散了。",
+    ],
+)
+def test_abstract_stock_phrases_from_live_programmes_are_figurative_hits(text: str) -> None:
+    from wavecast.narration_quality import check_block, rewrite_reasons
+
+    assert rewrite_reasons(check_block(text))
+
+
+def test_plain_factual_sentences_are_not_flagged_by_the_new_phrases() -> None:
+    from wavecast.narration_quality import check_block, rewrite_reasons
+
+    for text in (
+        "Mogwai 是格拉斯哥的乐队。",
+        "这首歌出自二〇〇一年的专辑。",
+        "还是 Hammock，换成 Breathturn。",
+    ):
+        assert not rewrite_reasons(check_block(text))
+
+
+ROUTE = ["Breathturn", "Take Me Somewhere Nice", "Your Hand in Mine", "Tape"]
+
+
+def test_a_closing_block_that_lists_the_route_is_flagged() -> None:
+    text = "从 Breathturn 到 Take Me Somewhere Nice，再到 Your Hand in Mine，今晚就到这儿。"
+
+    assert "recap_list" in issues(text, is_final=True, route_titles=ROUTE)
+    assert "recap_list" not in issues(
+        "最后一首是 Your Hand in Mine，到这儿。", is_final=True, route_titles=ROUTE
+    )
+    assert "recap_list" not in issues(
+        "从 Breathturn 到 Take Me Somewhere Nice，再到 Tape。", route_titles=ROUTE
+    )  # only the closing block is held to this
+    assert "recap_list" not in issues(text, is_final=True)
+
+
+def test_a_sentence_that_repeats_an_earlier_one_is_flagged_even_if_reworded() -> None:
+    earlier = "他们受访时说，早年开始做纯器乐，就是因为受了 Mogwai 很大的影响。"
+
+    assert "repeats_earlier" in issues(
+        "他们说过，早年做纯器乐是受了 Mogwai 的影响。", earlier=earlier
+    )
+    assert "repeats_earlier" in issues(earlier, earlier=earlier)
+    assert "repeats_earlier" not in issues("他们来自德州，只用吉他和鼓。", earlier=earlier)
+    assert "repeats_earlier" not in issues("早年做纯器乐是受了 Mogwai 的影响。")  # nothing earlier
+
+
+def test_short_sentences_are_never_counted_as_repeats() -> None:
+    assert "repeats_earlier" not in issues("今晚到这儿。", earlier="今晚到这儿。好的。")
+
+
+def test_the_new_findings_are_worth_a_rewrite() -> None:
+    from wavecast.narration_quality import check_block, rewrite_reasons
+
+    recap = check_block(
+        "Breathturn、Take Me Somewhere Nice 和 Your Hand in Mine。", is_final=True, route_titles=ROUTE
+    )
+    repeat = check_block("早年做纯器乐是受了 Mogwai 的影响。", earlier="早年做纯器乐是受了 Mogwai 的影响。")
+
+    assert any("one by one" in reason for reason in rewrite_reasons(recap))
+    assert any("already said" in reason for reason in rewrite_reasons(repeat))
