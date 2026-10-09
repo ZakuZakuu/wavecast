@@ -66,6 +66,11 @@ FIGURATIVE_PHRASES: tuple[str, ...] = (
     "踮着脚",
     "拉到最大",
     "动静拉",
+    "撑起一片天",
+    "收到身边",
+    "情绪是",
+    "情绪收",
+    "情绪偏",
 )
 _CONTRAST_FRAME = re.compile(r"不是[^，。！？]{1,18}[，,]?(?:而是|更像|而像)|与其[^。]{1,18}?不如")
 _MORALISING = re.compile(r"这(?:也)?提醒我们|归根结底|某种意义上|说到底|让我们")
@@ -74,6 +79,8 @@ _EVIDENCE_TALK = re.compile(r"资料显示|据说|据了解|据称|证据|不确
 _PERSONAL_EXPERIENCE = re.compile(r"我(?:小时候|曾经|那时候|当年|记得|第一次听|翻开)|翻开(?:这张|了)")
 # A question put to the listener to hook them; a radio host states the thing instead.
 _RHETORICAL_HOOK = re.compile(r"有没有想过|你有没有|你知道吗|想象一下|不妨想想|是不是觉得")
+# A first sentence that is a question ("安静到底算什么？Mogwai 给了个答案。").
+_OPENS_WITH_QUESTION = re.compile(r"[^。！？!?\n]{2,40}[？?]")
 _STOCK_OPENERS = ("刚才", "接下来", "我们先从", "下一首")
 _LISTEN_CUE = re.compile(r"留意|注意|听听|听它|听他|听她|你听|听着")
 _PARALLEL_LIST = re.compile(r"(?:[^，。、]{1,6}、){2}[^，。、]{1,6}")
@@ -252,7 +259,7 @@ def check_block(
         issues.append("final_block_points_forward")
     if is_final and years_in(text):
         issues.append("final_block_gives_year")
-    if _RHETORICAL_HOOK.search(text):
+    if _RHETORICAL_HOOK.search(text) or _OPENS_WITH_QUESTION.match(text.lstrip()):
         issues.append("rhetorical_hook")
     if opener_of(text) in _STOCK_OPENERS:
         issues.append("stock_opener")
@@ -323,7 +330,7 @@ _REASON_TEXT = {
     "final_block_points_forward": "points to what comes next in the closing block",
     "stock_opener": "starts with 刚才/接下来/我们先从/下一首",
     "unsupported_year": "gives a year that is not in the evidence",
-    "unsupported_duration": "gives a length of time (minutes, hours) that is not in the evidence",
+    "unsupported_duration": "states how long a song is (minutes, hours); the length of the played version is not known",
     "mentions_unplayed": "mentions an artist who is not played in this programme",
     "final_block_gives_year": "gives a year in the closing; the closing only says where the route ended",
     "rhetorical_hook": "opens with a question to the listener (有没有想过, 你知道吗); state the thing instead",

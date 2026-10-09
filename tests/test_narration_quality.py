@@ -224,7 +224,7 @@ def test_an_invented_length_is_worth_a_rewrite() -> None:
 
     reasons = rewrite_reasons(check_block("八分钟的现场。", supported_durations=set()))
 
-    assert any("length of time" in reason for reason in reasons)
+    assert any("how long a song is" in reason for reason in reasons)
 
 
 @pytest.mark.parametrize(
@@ -284,3 +284,15 @@ def test_the_closing_year_and_the_hook_are_worth_a_rewrite() -> None:
     from wavecast.narration_quality import rewrite_reasons
 
     assert any("closing" in r for r in rewrite_reasons(check_block("二〇〇四年成形。", is_final=True)))
+
+
+def test_a_first_sentence_that_is_a_question_is_a_hook() -> None:
+    assert "rhetorical_hook" in issues("安静到底算什么？Mogwai 给了个答案。")
+    assert "rhetorical_hook" in issues("为什么后摇这么长? 因为它不赶时间。")
+    assert "rhetorical_hook" not in issues("Mogwai 给了个答案。安静到底算什么？")  # not the opening
+    assert "rhetorical_hook" not in issues("这首歌从头到尾没有人声。")
+
+
+@pytest.mark.parametrize("text", ["刚才那段即兴撑起一片天。", "这段把一切收到身边。", "纯器乐，情绪是温和的。"])
+def test_more_phrases_from_the_third_round_are_figurative_hits(text: str) -> None:
+    assert check_block(text).figurative_hits
