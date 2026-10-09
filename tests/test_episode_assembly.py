@@ -2328,7 +2328,18 @@ def test_max_tracks_limits_music_but_preserves_narrative_only_chapters(tmp_path)
 
     assert len(result.resolved_tracks) == 4
     assert [chapter.index for chapter in result.skeleton.chapters] == [0, 1, 2, 3, 4, 5]
-    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 3
+    # One Writer call per chapter; the fixture's near-identical beats may add bounded rewrites.
+    assert (
+        len(
+            [
+                call
+                for call in llm.calls
+                if call["output_type"] is RadioScript
+                and "Your previous draft had these problems" not in str(call["prompt"])
+            ]
+        )
+        == 3
+    )
     assert {"narrative beat 1", "narrative beat 3"}.issubset(
         {segment.narration_text for segment in result.playable_episode.segments}
     )
