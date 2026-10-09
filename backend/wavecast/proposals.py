@@ -25,7 +25,7 @@ from wavecast.language import OutputLanguage
 from wavecast.models.episode import CoverParams, EpisodeSeed, utc_now
 from wavecast.presentation import PresentationIntent
 from wavecast.providers.contracts import ProgressiveLLMProvider
-from wavecast.providers.errors import ProviderError
+from wavecast.providers.errors import ProviderError, ProviderSchemaValidationError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.stations import StationId, pick_ident, resolve_presentation_intent
@@ -572,17 +572,27 @@ class LLMProgramProposalGenerator:
         # same-artist search results are all unplayable, look deeper in the artist's catalog.
         self.pool_builder = pool_builder
 
-    async def generate(self, request: ProposalGenerationRequest) -> list[ProgramProposal]:
-        # Fixed before the model is called: the first id also picks the angle the model is
-        # asked to lean towards, and each id seeds the rotation of its programme's candidates.
-        proposal_ids = [f"proposal-{uuid4().hex}" for _ in range(request.count)]
-        raw = await self.llm.structured(
-            self._prompt(request, variety_seed=proposal_ids[0]),
+    async def _draft(self, prompt: str) -> object:
+        return await self.llm.structured(
+            prompt,
             ProgramProposalDraftBatch,
             transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
             profile=InferenceProfile.FAST,
             stage="program_proposal",
         )
+
+    async def generate(self, request: ProposalGenerationRequest) -> list[ProgramProposal]:
+        # Fixed before the model is called: the first id also picks the angle the model is
+        # asked to lean towards, and each id seeds the rotation of its programme's candidates.
+        proposal_ids = [f"proposal-{uuid4().hex}" for _ in range(request.count)]
+        prompt = self._prompt(request, variety_seed=proposal_ids[0])
+        try:
+            raw = await self._draft(prompt)
+        except ProviderSchemaValidationError:
+            # The fast profile makes a single attempt.  A reply that does not fit the schema
+            # is usually a one-off, and the listener is waiting on this answer, so ask once more.
+            logger.warning("program_proposal_schema_retry")
+            raw = await self._draft(prompt)
         if not isinstance(raw, ProgramProposalDraftBatch):
             raise ProgramProposalGenerationError("invalid_structured_output")
         if len(raw.proposals) != request.count:
