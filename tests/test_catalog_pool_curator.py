@@ -89,6 +89,26 @@ def test_artists_named_by_the_listener_get_a_higher_cap() -> None:
     assert sum(item.primary_artist == "Other" for item in listed) == 3
 
 
+def test_only_named_artists_are_anchors_when_the_pool_knows_who_was_named() -> None:
+    entries = [
+        *[entry(f"s{i}", "Godspeed", f"Song {i}", PoolSource.ARTIST_SEARCH) for i in range(8)],
+        *[entry(f"m{i}", "Mogwai", f"Mog {i}", PoolSource.ARTIST_SEARCH) for i in range(8)],
+    ]
+
+    generic = CatalogPool(entries=entries, named_artists=[]).listing(
+        max_per_artist=3, max_per_anchor_artist=6
+    )
+    named = CatalogPool(entries=entries, named_artists=["godspeed"]).listing(
+        max_per_artist=3, max_per_anchor_artist=6
+    )
+    legacy = CatalogPool(entries=entries).listing(max_per_artist=3, max_per_anchor_artist=6)
+
+    assert sum(item.primary_artist == "Godspeed" for item in generic) == 3
+    assert sum(item.primary_artist == "Godspeed" for item in named) == 6
+    assert sum(item.primary_artist == "Mogwai" for item in named) == 3
+    assert sum(item.primary_artist == "Godspeed" for item in legacy) == 6
+
+
 def test_listing_is_bounded_and_deterministic() -> None:
     pool = CatalogPool(entries=[entry(str(i), f"Artist {i}", f"Song {i}") for i in range(60)])
 

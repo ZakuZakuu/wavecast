@@ -148,6 +148,10 @@ class CatalogPool(BaseModel):
     failure_kinds: dict[str, int] = Field(default_factory=dict)
     elapsed_ms: int = 0
     truncated: bool = False
+    # Artists the listener named.  Only they may fill most of a programme; every other artist,
+    # including the one a generic request happened to open with, is held to the ordinary cap.
+    # ``None`` keeps the earlier rule (every searched artist is an anchor).
+    named_artists: list[str] | None = None
 
     def by_source(self, source: PoolSource) -> list[PoolEntry]:
         return [entry for entry in self.entries if entry.source is source]
@@ -184,10 +188,12 @@ class CatalogPool(BaseModel):
         in code, so the Curator can never choose more tracks by one artist than allowed.
         """
 
+        named = None if self.named_artists is None else {canonical_name(n) for n in self.named_artists}
         anchors = {
             canonical_name(entry.primary_artist)
             for entry in self.entries
             if entry.source is PoolSource.ARTIST_SEARCH
+            and (named is None or canonical_name(entry.primary_artist) in named)
         }
         ranked = sorted(
             enumerate(self.entries),

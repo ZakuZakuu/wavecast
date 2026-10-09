@@ -1698,6 +1698,7 @@ class LiveEpisodeAssemblyService:
                 ),
                 keyword_queries=[request.topic],
             )
+            pool.named_artists = list(request.required_artists)
         except Exception as error:  # noqa: BLE001 - optional optimisation, degrade quietly
             logger.warning("catalog_pool_failed error_type=%s", type(error).__name__)
             trace.mark("catalog_pool_failed", error_type=type(error).__name__)
