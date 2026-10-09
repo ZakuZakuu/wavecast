@@ -75,7 +75,7 @@ def test_known_tracks_get_spoken_forms_and_the_display_text_is_untouched() -> No
 def test_an_unspeakable_title_is_not_doubled_when_the_text_already_says_song() -> None:
     spoken = to_spoken_form("《天空の城ラピュタ》这首歌写于1986年。", [KnownTrack("久石譲", "天空の城ラピュタ")])
 
-    assert spoken.tts_text == "这首歌写于1986年。"
+    assert spoken.tts_text == "这首歌写于一九八六年。"
 
 
 def test_an_original_name_aside_is_dropped_from_speech() -> None:
@@ -215,3 +215,22 @@ def test_the_opening_host_line_is_spoken_in_a_readable_form() -> None:
     episode = api_module.orchestrator.start(unreadable, "spoken-listener-2")
     skipped = asyncio.run(api_module._prepare_opening_host(episode, unreadable))
     assert all(item.id != "segment-opening-host" for item in skipped.segments)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Sparkle 是 1982 年专辑里的第一首。", "Sparkle 是 一九八二年专辑里的第一首。"),
+        ("1975年出了专辑。", "一九七五年出了专辑。"),
+        ("2005 年之后", "二零零五年之后"),
+        ("1936 至 1939 年间录下", "一九三六至一九三九年间录下"),
+        ("1936-1939年", "一九三六至一九三九年"),
+        ("1980年代的歌", "一九八零年代的歌"),
+        ("80 年代的歌", "八十年代的歌"),
+        ("七十年代", "七十年代"),
+        ("第 5 首，共 12 首", "第 5 首，共 12 首"),  # other numbers are left alone
+        ("播放了 100000 次", "播放了 100000 次"),
+    ],
+)
+def test_years_are_spelled_the_way_they_are_said(text: str, expected: str) -> None:
+    assert to_spoken_form(text).tts_text == expected

@@ -46,6 +46,34 @@ _MAX_SPOKEN_TITLE_CHARS = 40
 _ARTIST_SEPARATORS = re.compile(r"\s*(?:,|，|、|;|；|\bfeat\.?|\bft\.?)\s*", re.IGNORECASE)
 
 
+_DIGIT_WORDS = "零一二三四五六七八九"
+_YEAR_RANGE = re.compile(r"(?<![\d.])(\d{4})\s*(至|到|~|-|—|–)\s*(\d{4})\s*(年代?)")
+_YEAR = re.compile(r"(?<![\d.])(\d{4})(\s*)(年代?)")
+_DECADE = re.compile(r"(?<![\d.])(\d)0(\s*)年代")
+_DECADE_WORDS = {"1": "十", "2": "二十", "3": "三十", "4": "四十", "5": "五十",
+                 "6": "六十", "7": "七十", "8": "八十", "9": "九十"}
+
+
+def speak_years(text: str) -> str:
+    """Write years the way they are said: 1982 年 -> 一九八二年, 80 年代 -> 八十年代.
+
+    The voice reads a bare "1982" as a quantity, which is wrong for a year.  Only a number
+    directly followed by 年 / 年代 is touched; other numbers are left to the voice.
+    """
+
+    def spell(digits: str) -> str:
+        return "".join(_DIGIT_WORDS[int(d)] for d in digits)
+
+    text = _YEAR_RANGE.sub(
+        lambda m: spell(m.group(1)) + ("至" if m.group(2) in "-—–~" else m.group(2)) + spell(m.group(3)) + m.group(4),
+        text,
+    )
+    spelled = _YEAR.sub(
+        lambda m: "".join(_DIGIT_WORDS[int(d)] for d in m.group(1)) + m.group(3), text
+    )
+    return _DECADE.sub(lambda m: _DECADE_WORDS[m.group(1)] + "年代", spelled)
+
+
 def has_unspeakable_script(text: str) -> bool:
     return UNSPEAKABLE_SCRIPTS.search(text) is not None
 
@@ -164,6 +192,7 @@ def to_spoken_form(
     while f"{GENERIC_SONG}{GENERIC_SONG}" in spoken:
         spoken = spoken.replace(f"{GENERIC_SONG}{GENERIC_SONG}", GENERIC_SONG)
     spoken = spoken.replace(f"{GENERIC_SONG}这首", GENERIC_SONG).replace(f"{GENERIC_SONG}这支", GENERIC_SONG)
+    spoken = speak_years(spoken)
     spoken = " ".join(spoken.split()) if "\n" in spoken else spoken
     leftovers = sorted(set(re.findall(rf"\S*{UNSPEAKABLE_SCRIPTS.pattern}\S*", spoken)))
     return SpokenForm(tts_text=spoken, unspeakable=leftovers)
