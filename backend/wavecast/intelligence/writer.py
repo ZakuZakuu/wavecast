@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import Sequence
 
-from wavecast.narration_quality import check_block, rewrite_reasons, years_in
+from wavecast.narration_quality import check_block, durations_in, rewrite_reasons, years_in
 from wavecast.presentation import HostMode, host_mode_prompt_guidance
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
@@ -202,6 +202,7 @@ class WriterService:
         known_tracks = _known_tracks(slot_contexts)
         route_titles = [label.split(" - ", 1)[-1] for label in route_tracks]
         supported = _supported_years(scoped, previous_committed_context, known_tracks)
+        supported_durations = _supported_durations(scoped, previous_committed_context)
         result = await self._attempt(prompt, chapter, evidence, known_tracks, inference_profile)
         for _ in range(self.max_revisions):
             if not isinstance(result, RadioScript):
@@ -211,10 +212,11 @@ class WriterService:
                 spoken_window,
                 known_tracks,
                 slots,
-                supported,
-                unplayed_artists,
-                route_titles,
-                previous_committed_context,
+                supported_years=supported,
+                supported_durations=supported_durations,
+                unplayed_names=unplayed_artists,
+                route_titles=route_titles,
+                earlier=previous_committed_context,
             )
             if not problems:
                 break
@@ -232,10 +234,11 @@ class WriterService:
                 spoken_window,
                 known_tracks,
                 slots,
-                supported,
-                unplayed_artists,
-                route_titles,
-                previous_committed_context,
+                supported_years=supported,
+                supported_durations=supported_durations,
+                unplayed_names=unplayed_artists,
+                route_titles=route_titles,
+                earlier=previous_committed_context,
             )
             logger.info(
                 "writer_revision problems_before=%d problems_after=%d",
@@ -338,7 +341,9 @@ def _problems(
     window_seconds: float | None,
     tracks: Sequence[KnownTrack],
     slots: Sequence[NarrationSlotContext],
+    *,
     supported_years: set[str] | None = None,
+    supported_durations: set[str] | None = None,
     unplayed_names: Sequence[str] = (),
     route_titles: Sequence[str] = (),
     earlier: str = "",
@@ -356,6 +361,7 @@ def _problems(
                 tracks=tracks,
                 is_final=is_final,
                 supported_years=supported_years,
+                supported_durations=supported_durations,
                 unplayed_names=unplayed_names,
                 route_titles=route_titles,
                 earlier=earlier,
@@ -378,6 +384,19 @@ def _supported_years(
     for text in texts:
         years |= years_in(text)
     return years
+
+
+def _supported_durations(evidence: Sequence[Evidence], previous_context: str) -> set[str]:
+    """Lengths of time the Writer may state: those in its scoped evidence or earlier narration.
+
+    The route's own track lengths are not given to the Writer, so it cannot know them; a
+    "八分钟" it writes for a five-minute song is invented.
+    """
+
+    lengths: set[str] = set()
+    for text in [*(item.claim_or_excerpt for item in evidence), previous_context]:
+        lengths |= durations_in(text)
+    return lengths
 
 
 def _revision_prompt(prompt: str, draft: RadioScript, problems: dict[int, list[str]]) -> str:

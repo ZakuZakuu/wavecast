@@ -210,3 +210,47 @@ def test_the_closing_guidance_forbids_listing_the_route_and_repeating_earlier_bl
     prompt = llm.prompts[0]
     assert "Never list the tracks played" in prompt
     assert "do not repeat anything an earlier block already said" in prompt
+
+
+def test_a_length_of_time_the_evidence_does_not_give_is_rewritten() -> None:
+    invented = "回到 Mogwai，这首歌八分钟，吉他慢慢堆起来。"
+    plain = "回到 Mogwai，这首歌的吉他从头到尾没停。"
+    llm = Sequenced(_script(invented), _script(plain))
+
+    result = _write(llm)
+
+    assert len(llm.prompts) == 2
+    assert "length of time" in llm.prompts[1]
+    assert [block.text for block in result.blocks] == [plain]
+
+
+def test_a_length_of_time_that_the_evidence_gives_is_allowed() -> None:
+    from wavecast.intelligence.models import Evidence
+
+    evidence = Evidence(
+        id="e1",
+        claim_or_excerpt="这首歌的现场版长达八分钟。",
+        source_url="https://example.com/a",
+        source_provider="fixture",
+        confidence=0.9,
+        query="fixture",
+    )
+    chapter = _chapter().model_copy(update={"evidence_ids": ["e1"]})
+    text = "回到 Mogwai，现场版有八分钟。"
+    llm = Sequenced(_script(text))
+
+    result = asyncio.run(
+        WriterService(llm).write(
+            chapter,
+            [evidence],
+            slot_context=_slot(),
+            target_duration_seconds=14,
+            output_language=OutputLanguage.ZH_CN,
+            station=StationId.CASUAL,
+            voice_seed="programme-1",
+        )
+    )
+
+    assert len(llm.prompts) == 1
+    assert isinstance(result, RadioScript)
+    assert [block.text for block in result.blocks] == [text]

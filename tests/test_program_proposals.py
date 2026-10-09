@@ -184,7 +184,8 @@ def test_llm_generator_resolves_opening_track_before_creating_proposal() -> None
     assert proposal.opening_narration_text is not None
     assert "Signal Garden" in proposal.opening_narration_text
     assert "Midnight Transfer" in proposal.opening_narration_text
-    assert "这首适合先开场，慢慢进入今天的路线。" in proposal.opening_narration_text
+    # The model's note is not spoken in a Chinese programme; the request names no artist here.
+    assert "这首适合先开场" not in proposal.opening_narration_text
     assert proposal.anchor_artists == ["Signal Garden"]
     assert proposal.estimated_duration_seconds == 72 * 60
     assert "Taste context:" in llm.prompt
@@ -651,13 +652,19 @@ def test_the_opening_wording_varies_between_programmes() -> None:
 
     assert len(openings) > 3
     assert len(used) >= 3
-    # The host note sometimes comes first and sometimes after the track is named.
-    note_first = {text.startswith("Let the night open up first.") for text in openings}
-    assert note_first == {True, False}
+    assert not any("Let the night open up first." in text for text in openings)
     assert not any("我们先从" in text for text in openings)
 
 
-def test_a_host_note_with_stock_phrasing_is_dropped_not_spoken() -> None:
+@pytest.mark.parametrize(
+    "note",
+    [
+        "让鼓机和贝斯线把夜晚的街道铺开，注意合成器如何画出霓虹。",
+        "这首歌能一下子把后摇的张力立住。",
+        "先放这首，因为它是个不错的起点。",
+    ],
+)
+def test_the_models_host_note_is_never_spoken_in_a_chinese_programme(note: str) -> None:
     from wavecast.stations import StationId
 
     generator, _llm = _live_generator(
@@ -667,7 +674,7 @@ def test_a_host_note_with_stock_phrasing_is_dropped_not_spoken() -> None:
                     title="夜行",
                     short_description="一段夜里的路线。",
                     editorial_route=["起点", "转折", "收束"],
-                    opening_host_note="让鼓机和贝斯线把夜晚的街道铺开，注意合成器如何画出霓虹。",
+                    opening_host_note=note,
                     opening_track_candidates=[
                         OpeningTrackCandidate(artist="Signal Garden", title="Midnight Transfer")
                     ],
@@ -685,8 +692,68 @@ def test_a_host_note_with_stock_phrasing_is_dropped_not_spoken() -> None:
     )[0]
 
     assert proposal.opening_narration_text is not None
-    assert "霓虹" not in proposal.opening_narration_text
+    assert note.rstrip("。") not in proposal.opening_narration_text
     assert "Midnight Transfer" in proposal.opening_narration_text
+
+
+def test_the_english_opening_still_uses_the_models_note() -> None:
+    generator, _llm = _live_generator(_english_request_draft_batch())
+
+    proposal = asyncio.run(
+        generator.generate(
+            ProposalGenerationRequest(prompt="late night synth drive", output_language=OutputLanguage.EN_US)
+        )
+    )[0]
+
+    assert proposal.opening_narration_text is not None
+    assert "Let the night open up first." in proposal.opening_narration_text
+
+
+_ECHOES = (
+    "你点了这个名字，那就先放它。",
+    "这是你点的名字，先从它开始。",
+    "名字是你点的，先放它。",
+)
+
+
+def test_the_opening_says_so_when_the_request_names_the_opening_artist() -> None:
+    from wavecast.stations import StationId
+
+    text = _opening("想听 Signal Garden 的歌", StationId.CASUAL)
+
+    assert sum(echo in text for echo in _ECHOES) == 1
+    identity_end = text.index("Midnight Transfer")
+    assert identity_end < min(text.index(echo) for echo in _ECHOES if echo in text)
+    assert text.count("Signal Garden") == 1  # the name is not said twice
+
+
+def test_the_opening_gives_no_reason_when_the_request_does_not_name_the_artist() -> None:
+    from wavecast.stations import StationId
+
+    for prompt in ("late night synth drive", "夜里开车听点电子乐", "想听 Mogwai"):
+        assert not any(echo in _opening(prompt, StationId.CASUAL) for echo in _ECHOES)
+
+
+def test_a_credit_with_several_artists_counts_when_any_of_them_is_named() -> None:
+    from wavecast.proposals import _request_names_artist
+
+    assert _request_names_artist("想听 Bill Evans 的现场", "Bill Evans, Jim Hall")
+    assert _request_names_artist("久石让的钢琴曲", "久石譲")
+    assert not _request_names_artist("想听 Evans", "Bill Evans, Jim Hall")  # whole names only
+    assert not _request_names_artist("下雨天的爵士", "Bill Evans")
+
+
+def test_the_reason_wording_varies_between_programmes() -> None:
+    from wavecast.stations import StationId
+
+    used = {
+        echo
+        for n in range(30)
+        for echo in _ECHOES
+        if echo in _opening(f"想听 Signal Garden {n}", StationId.CASUAL)
+    }
+
+    assert len(used) >= 2
 
 
 def test_the_prompt_asks_for_a_plain_host_note() -> None:

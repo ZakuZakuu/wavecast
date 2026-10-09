@@ -56,6 +56,13 @@ FIGURATIVE_PHRASES: tuple[str, ...] = (
     "自己就散",
     "铺成",
     "留点空白",
+    "旅程",
+    "声音世界",
+    "直接而有力",
+    "带你进入",
+    "堆起来",
+    "乱一阵",
+    "再散开",
 )
 _CONTRAST_FRAME = re.compile(r"不是[^，。！？]{1,18}[，,]?(?:而是|更像|而像)|与其[^。]{1,18}?不如")
 _MORALISING = re.compile(r"这(?:也)?提醒我们|归根结底|某种意义上|说到底|让我们")
@@ -73,6 +80,39 @@ _REPEAT_CONTAINMENT = 0.5
 _MIN_REPEAT_PAIRS = 8
 _RECAP_TITLES = 3
 _PUNCTUATION = re.compile(r"[\s，。！？、；：,.!?;:“”\"'‘’《》「」『』（）()\-—…·]")
+
+
+_DURATION_CLAIM = re.compile(r"([零〇一二三四五六七八九十两\d]{1,3})\s*(分钟|个小时|小时|秒钟)")
+_NUMERALS = {c: i for i, c in enumerate("零一二三四五六七八九")} | {"〇": 0, "两": 2}
+
+
+def _number(word: str) -> int | None:
+    """An Arabic or Chinese numeral up to 99 (``8``, ``八``, ``十二``), else None."""
+
+    if word.isdigit():
+        return int(word)
+    if word == "十":
+        return 10
+    if word.startswith("十") and len(word) == 2 and word[1] in _NUMERALS:
+        return 10 + _NUMERALS[word[1]]
+    if len(word) == 2 and word[1] == "十" and word[0] in _NUMERALS:
+        return _NUMERALS[word[0]] * 10
+    if len(word) == 3 and word[1] == "十" and word[0] in _NUMERALS and word[2] in _NUMERALS:
+        return _NUMERALS[word[0]] * 10 + _NUMERALS[word[2]]
+    if len(word) == 1 and word in _NUMERALS:
+        return _NUMERALS[word]
+    return None
+
+
+def durations_in(text: str) -> set[str]:
+    """Spoken lengths in ``text`` as ``"8分钟"`` (八分钟 and 8 分钟 give the same entry)."""
+
+    found: set[str] = set()
+    for amount, unit in _DURATION_CLAIM.findall(text):
+        value = _number(amount)
+        if value is not None:
+            found.add(f"{value}{'小时' if '小时' in unit else unit.replace('秒钟', '秒')}")
+    return found
 
 
 _ARABIC_YEAR = re.compile(r"(?<![\d.])((?:1[89]|20)\d{2})(?!\d)")
@@ -178,6 +218,7 @@ def check_block(
     tracks: Sequence[KnownTrack] = (),
     is_final: bool = False,
     supported_years: set[str] | None = None,
+    supported_durations: set[str] | None = None,
     unplayed_names: Sequence[str] = (),
     route_titles: Sequence[str] = (),
     earlier: str = "",
@@ -216,6 +257,9 @@ def check_block(
     if supported_years is not None:
         for year in sorted(years_in(text) - supported_years):
             issues.append(f"unsupported_year:{year}")
+    if supported_durations is not None:
+        for length in sorted(durations_in(text) - supported_durations):
+            issues.append(f"unsupported_duration:{length}")
     return BlockCheck(
         text=text,
         issues=issues,
@@ -238,6 +282,7 @@ _REWRITE_ISSUES = (
     "final_block_points_forward",
     "stock_opener",
     "unsupported_year",
+    "unsupported_duration",
     "mentions_unplayed",
     "recap_list",
     "repeats_earlier",
@@ -267,6 +312,7 @@ _REASON_TEXT = {
     "final_block_points_forward": "points to what comes next in the closing block",
     "stock_opener": "starts with 刚才/接下来/我们先从/下一首",
     "unsupported_year": "gives a year that is not in the evidence",
+    "unsupported_duration": "gives a length of time (minutes, hours) that is not in the evidence",
     "mentions_unplayed": "mentions an artist who is not played in this programme",
     "recap_list": "lists the tracks played one by one; name at most the last track, or none",
     "repeats_earlier": "says again what an earlier block of this programme already said",
