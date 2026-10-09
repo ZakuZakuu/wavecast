@@ -338,3 +338,12 @@ def test_a_different_song_with_the_same_title_is_a_tangent() -> None:
     assert "same_name_tangent" in issues(tangent)
     assert "same_name_tangent" not in issues("这首歌的吉他从头到尾没停。")
     assert any("shares the title" in reason for reason in rewrite_reasons(check_block(tangent)))
+
+
+def test_a_length_given_as_minutes_and_seconds_is_found() -> None:
+    from wavecast.narration_quality import durations_in
+
+    assert durations_in("七分十六秒的慢三拍") == {"7分16秒"}
+    assert durations_in("4分12秒，再加三分半") == {"4分12秒", "3分半"}
+    assert durations_in("十分好听，十分钟太长") == {"10分钟"}  # 十分 alone is "very"
+    assert "unsupported_duration:7分16秒" in issues("七分十六秒的慢三拍", supported_durations=set())
