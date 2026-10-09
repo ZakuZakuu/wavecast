@@ -311,3 +311,74 @@ def test_the_previous_context_is_kept_from_its_end() -> None:
     )
 
     assert "最近说过的一句话" in llm.prompts[0]
+
+
+def test_the_route_and_the_unplayed_artists_reach_the_prompt() -> None:
+    llm = Sequenced(_script("Jody 是同一个人写的。"))
+
+    _write(
+        llm,
+        route_tracks=["A - One", "A - Jody"],
+        unplayed_artists=["Explosions In The Sky"],
+    )
+
+    assert "the only ones that are played: A - One; A - Jody" in llm.prompts[0]
+    assert "do not mention them: Explosions In The Sky" in llm.prompts[0]
+
+
+def test_a_draft_that_mentions_an_unplayed_artist_is_rewritten() -> None:
+    llm = Sequenced(
+        _script("Jody 之后，Explosions In The Sky 会接上来。"),
+        _script("Jody 是同一个人写的。"),
+    )
+
+    result = _write(llm, unplayed_artists=["Explosions In The Sky"])
+
+    assert len(llm.prompts) == 2
+    assert "mentions an artist who is not played in this programme" in llm.prompts[1]
+    assert result.blocks[0].text == "Jody 是同一个人写的。"
+
+
+def test_the_route_summary_separates_played_from_planned_artists() -> None:
+    from wavecast.assembly import _route_summary, create_episode_assembly_service
+    from wavecast.intelligence.models import TrackProposal
+    from wavecast.models.episode import CoverParams, EpisodeSeed
+    from wavecast.orchestration.episode import EpisodeOrchestrator, InMemoryEpisodeRepository
+    from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
+    from wavecast.providers.config import ProviderSettings
+
+    seed = EpisodeSeed(
+        id="route-summary",
+        title="Route",
+        topic="A deterministic staged route",
+        short_description="x",
+        estimated_duration_seconds=900,
+        opening_track_ref="mock:opening",
+        opening_track_title="Opening Track",
+        opening_track_artist="Opening Artist",
+        cover=CoverParams(family="editorial", seed=1, palette=("#000", "#fff")),
+    )
+    orchestrator = EpisodeOrchestrator(
+        InMemoryEpisodeRepository(),
+        progressive_runtime=StagedProgressiveRuntimeAdapter(
+            create_episode_assembly_service(ProviderSettings(mode="mock"))
+        ),
+    )
+    episode = orchestrator.start(seed)
+    buffered = asyncio.run(
+        orchestrator.ensure_buffer_async(episode.id, target_chapters=1, target_ahead_seconds=300)
+    )
+    session = buffered.progressive_session
+    assert session is not None
+    ghost = TrackProposal(artist="Ghost Band", title="Never Played", reasons=["x"], confidence=0.5)
+    chapters = list(session.skeleton.chapters)
+    chapters[0] = chapters[0].model_copy(update={"track_alternates": [ghost]})
+    session = session.model_copy(
+        update={"skeleton": session.skeleton.model_copy(update={"chapters": chapters})}
+    )
+
+    played, unplayed = _route_summary(session, buffered)
+
+    assert any(label.startswith("Opening Artist") for label in played)
+    assert "Ghost Band" in unplayed
+    assert all("Opening Artist" != artist for artist in unplayed)

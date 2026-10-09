@@ -62,6 +62,8 @@ class WriterService:
         station: StationId | None = None,
         voice_seed: str = "",
         used_openers: Sequence[str] = (),
+        route_tracks: Sequence[str] = (),
+        unplayed_artists: Sequence[str] = (),
         topic: str = "",
         slot_context: NarrationSlotContext | None = None,
         slot_contexts: Sequence[NarrationSlotContext] | None = None,
@@ -117,6 +119,19 @@ class WriterService:
             if selected_language is OutputLanguage.ZH_CN and (station is not None or voice_seed)
             else (f"Station: {station.value}\n" if station is not None else "")
         )
+        route_line = ""
+        if route_tracks:
+            route_line += (
+                "Tracks in this programme, the only ones that are played: "
+                + "; ".join(route_tracks[-24:])
+                + ". Never say or imply that the listener heard or will hear anything else.\n"
+            )
+        if unplayed_artists:
+            route_line += (
+                "Planned earlier but NOT in this programme; do not mention them: "
+                + ", ".join(unplayed_artists[:12])
+                + ".\n"
+            )
         language_guidance = (
             ZH_CN_RADIO_WRITING_GUIDANCE
             if selected_language is OutputLanguage.ZH_CN
@@ -161,6 +176,7 @@ class WriterService:
             "non-English text out of `tts_text`.\n"
             f"{language_guidance}\n"
             f"{station_line}"
+            f"{route_line}"
             f"Chapter: {chapter.model_dump_json()}\n"
             f"Evidence: {[item.model_dump() for item in scoped]}\n"
             f"Previous context: {previous_committed_context[-1000:]}\n"
@@ -180,7 +196,9 @@ class WriterService:
         for _ in range(self.max_revisions):
             if not isinstance(result, RadioScript):
                 break
-            problems = _problems(result, spoken_window, known_tracks, slots, supported)
+            problems = _problems(
+                result, spoken_window, known_tracks, slots, supported, unplayed_artists
+            )
             if not problems:
                 break
             revised = await self._attempt(
@@ -192,7 +210,9 @@ class WriterService:
             )
             if not isinstance(revised, RadioScript):
                 break
-            revised_problems = _problems(revised, spoken_window, known_tracks, slots, supported)
+            revised_problems = _problems(
+                revised, spoken_window, known_tracks, slots, supported, unplayed_artists
+            )
             logger.info(
                 "writer_revision problems_before=%d problems_after=%d",
                 sum(len(item) for item in problems.values()),
@@ -259,6 +279,7 @@ def _problems(
     tracks: Sequence[KnownTrack],
     slots: Sequence[NarrationSlotContext],
     supported_years: set[str] | None = None,
+    unplayed_names: Sequence[str] = (),
 ) -> dict[int, list[str]]:
     """Per-block reasons a rewrite is worth asking for (empty when the draft is fine)."""
 
@@ -273,6 +294,7 @@ def _problems(
                 tracks=tracks,
                 is_final=is_final,
                 supported_years=supported_years,
+                unplayed_names=unplayed_names,
             )
         )
         if reasons:
