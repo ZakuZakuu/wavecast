@@ -243,8 +243,9 @@ def repeated_phrase(text: str, earlier: str) -> str | None:
     for clause in _CLAUSE_BREAK.split(canonical_name(text)):
         for run in _CJK_ONLY.findall(clause):
             for i in range(len(run) - _PHRASE_CHARS + 1):
-                if run[i : i + _PHRASE_CHARS] in seen:
-                    return run[i : i + _PHRASE_CHARS]
+                window = str(run[i : i + _PHRASE_CHARS])
+                if window in seen:
+                    return window
     return None
 
 
