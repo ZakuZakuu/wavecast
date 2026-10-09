@@ -322,6 +322,38 @@ def test_one_recording_listed_with_a_date_label_and_different_spacing_is_one_son
     assert _same_song_identity(spaced, live) is False
 
 
+def test_a_chinese_title_and_the_original_of_the_same_length_are_one_song() -> None:
+    original = ResolvedTrack(
+        track_ref="netease:one",
+        canonical_artist="Louis Armstrong",
+        canonical_title="What A Wonderful World:",
+        duration_seconds=139,
+    )
+    translated = ResolvedTrack(
+        track_ref="netease:two",
+        canonical_artist="Louis Armstrong",
+        canonical_title="多美妙的世界",
+        duration_seconds=138,
+    )
+    longer = translated.model_copy(update={"duration_seconds": 190})
+    unknown = translated.model_copy(update={"duration_seconds": None})
+    other_artist = translated.model_copy(update={"canonical_artist": "Ella Fitzgerald"})
+    another_latin_song = ResolvedTrack(
+        track_ref="netease:three",
+        canonical_artist="Louis Armstrong",
+        canonical_title="All of Me",
+        duration_seconds=139,
+    )
+
+    assert _same_song_identity(original, translated) is True
+    assert _same_song_identity(translated, original) is True
+    assert _same_song_identity(original, longer) is False
+    assert _same_song_identity(original, unknown) is False
+    assert _same_song_identity(original, other_artist) is False
+    # two Latin titles of equal length are not a translation pair
+    assert _same_song_identity(original, another_latin_song) is False
+
+
 def test_the_same_recording_listed_with_and_without_accents_is_one_song() -> None:
     accented = ResolvedTrack(
         track_ref="netease:one",
