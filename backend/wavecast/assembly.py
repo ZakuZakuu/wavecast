@@ -174,6 +174,8 @@ class LiveEpisodeAssemblyRequest(BaseModel):
     output_language: OutputLanguage = OutputLanguage.AUTO
     station: StationId | None = None
     required_artists: list[str] = Field(default_factory=list, max_length=4)
+    # Seeds the variety of choices (which tracks the Curator sees first); the programme's id.
+    variety_seed: str = Field(default="", max_length=120)
 
 
 class UnresolvedAssemblyProposal(BaseModel):
@@ -850,6 +852,7 @@ class LiveEpisodeAssemblyService:
                 trace=trace,
                 catalog_pool=catalog_pool,
                 required_artists=request.required_artists,
+                variety_seed=request.variety_seed,
             )
         except (CuratorContractError, ProviderError) as error:
             trace.mark(
@@ -1285,6 +1288,7 @@ class LiveEpisodeAssemblyService:
                 trace=trace,
                 catalog_pool=catalog_pool,
                 required_artists=request.required_artists,
+                variety_seed=request.variety_seed,
             )
         except CuratorContractError as error:
             raise EpisodeAssemblyError(

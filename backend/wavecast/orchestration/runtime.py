@@ -325,6 +325,7 @@ class StagedProgressiveRuntimeAdapter:
             output_language=episode.output_language,
             station=episode.station,
             required_artists=list(episode.required_artists),
+            variety_seed=episode.seed_id,
         )
         locked_segment = next(
             (

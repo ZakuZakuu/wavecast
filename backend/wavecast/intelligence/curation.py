@@ -59,6 +59,7 @@ class CuratorService:
         trace: GenerationTrace | None = None,
         catalog_pool: CatalogPool | None = None,
         required_artists: Sequence[str] = (),
+        variety_seed: str = "",
     ) -> ProgramSkeleton:
         committed = committed_chapters or []
         research_context, fast_context = _build_curator_context(bundle, fast_plan)
@@ -121,7 +122,7 @@ class CuratorService:
             f"Research context: {_compact_json(research_context)}\n"
             f"FastStart context: {_compact_json(fast_context)}\n"
             f"Committed: {_compact_json([item.model_dump(mode='json') for item in committed])}\n"
-            f"{_catalog_pool_context(catalog_pool)}"
+            f"{_catalog_pool_context(catalog_pool, variety_seed)}"
             f"{_required_artists_context(required_artists)}"
             f"{_long_programme_guidance(desired_duration_seconds, max_tracks)}"
             f"Duration: {desired_duration_seconds}\n"
@@ -177,17 +178,18 @@ _POOL_INSTRUCTIONS = (
     "Available catalog tracks were verified playable just now. Choose each TrackProposal "
     "from this list whenever it fits the topic, copying artist and title exactly as written; "
     "propose a track outside the list only when the list cannot serve the topic. Prefer "
-    "source llm_candidate, then artist_search, then keyword_search. Never propose a track "
-    "named in Unavailable.\n"
+    "source llm_candidate, then artist_search, then keyword_search; inside a source the order "
+    "means nothing, so when several tracks fit equally well do not favour the first ones. "
+    "Never propose a track named in Unavailable.\n"
 )
 
 
-def _catalog_pool_context(pool: CatalogPool | None) -> str:
+def _catalog_pool_context(pool: CatalogPool | None, seed: str = "") -> str:
     """Prompt section for the verified catalog pool; empty (no change) without a pool."""
 
     if pool is None:
         return ""
-    listed = pool.listing()
+    listed = pool.listing(seed=seed)
     if not listed:
         return ""
     available = [
