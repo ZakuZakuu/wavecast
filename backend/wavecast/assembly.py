@@ -2684,9 +2684,15 @@ def _build_progressive_session(
         narration_ratio,
     )
     # Real lengths where the catalog reported them: a route of a few long songs is as full as
-    # one of many short ones (the route was fitted to its time budget above).
-    estimated_resolved_music_seconds = track_seconds(opening_track.duration_seconds) + sum(
-        track_seconds(item.track.duration_seconds) for item in future if item.track is not None
+    # one of many short ones (the route was fitted to its time budget above).  A catalog of
+    # very short clips (previews, the mock provider) is still judged by track count, as it was
+    # before lengths were known, so the real-length view can only accept more routes.
+    resolved_lengths = [opening_track.duration_seconds] + [
+        item.track.duration_seconds for item in future if item.track is not None
+    ]
+    estimated_resolved_music_seconds = max(
+        sum(track_seconds(length) for length in resolved_lengths),
+        len(resolved_lengths) * _ESTIMATED_TRACK_DURATION_SECONDS,
     )
     if estimated_resolved_music_seconds < required_resolved_music_seconds:
         raise EpisodeAssemblyError(

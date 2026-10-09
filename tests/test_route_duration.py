@@ -249,6 +249,20 @@ def test_a_programme_is_cut_to_its_budget_when_the_songs_are_long(tmp_path) -> N
         )
     )
 
+    # A catalog of very short clips is judged by track count, as before lengths were known.
+    clips = MockMusicProvider()
+    for ref, track in list(clips._tracks.items()):
+        clips._tracks[ref] = track.model_copy(update={"duration_seconds": 25})
+    clip_session = asyncio.run(
+        service(tmp_path, music=clips).prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="fixture", desired_duration_seconds=1800, max_tracks=6, max_chapters=10
+            ),
+            opening_track=opening.model_copy(update={"duration_seconds": 25}),
+        )
+    )
+
+    assert tracks(clip_session) >= 2
     assert tracks(tiny) == 1  # never cut down to the opening alone
     assert tracks(short) == 1  # the opening (600 s) and one more already reach the budget
     assert tracks(long) >= 2  # a long request keeps what the catalog has
