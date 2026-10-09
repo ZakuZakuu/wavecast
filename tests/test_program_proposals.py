@@ -35,7 +35,7 @@ def test_mock_proposal_generation_is_deterministic_and_seed_compatible() -> None
 
     assert first.model_dump(exclude={"created_at"}) == second.model_dump(exclude={"created_at"})
     assert first.id.startswith("proposal-")
-    assert first.estimated_duration_seconds == 22 * 60
+    assert first.estimated_duration_seconds == 35 * 60
     assert "Jazz" in first.genre_tags
     assert len(first.editorial_route) >= 2
 
@@ -63,7 +63,7 @@ def test_mock_generator_can_return_a_bounded_proposal_batch() -> None:
 
     assert len(proposals) == 3
     assert len({proposal.id for proposal in proposals}) == 3
-    assert all(proposal.estimated_duration_seconds == 42 * 60 for proposal in proposals)
+    assert all(proposal.estimated_duration_seconds == 35 * 60 for proposal in proposals)
     assert all(proposal.title for proposal in proposals)
 
 
@@ -187,7 +187,7 @@ def test_llm_generator_resolves_opening_track_before_creating_proposal() -> None
     # The model's note is not spoken in a Chinese programme; the request names no artist here.
     assert "这首适合先开场" not in proposal.opening_narration_text
     assert proposal.anchor_artists == ["Signal Garden"]
-    assert proposal.estimated_duration_seconds == 72 * 60
+    assert proposal.estimated_duration_seconds == 60 * 60
     assert "Taste context:" in llm.prompt
     assert "opening_host_note" in llm.prompt
     opening_schema = ProgramProposalDraftBatch.model_json_schema()["$defs"][

@@ -96,10 +96,14 @@ export function formatFreq(freq: number): string {
   return freq.toFixed(1);
 }
 
+/**
+ * Two tiers, both "about": the programme ends on the track nearest the target, so the real
+ * length can differ by several minutes and the labels never promise an exact one.
+ * (STANDARD is the former middle tier; the backend treats it as the short one.)
+ */
 export const DURATIONS: Array<{ label: string; value: DurationIntent; minutes: number }> = [
-  { label: "15 分钟", value: "SHORT", minutes: 15 },
-  { label: "半小时", value: "STANDARD", minutes: 30 },
-  { label: "一小时", value: "DEEP", minutes: 60 },
+  { label: "短节目 · 30–40 分钟", value: "SHORT", minutes: 35 },
+  { label: "长节目 · 约 1 小时", value: "DEEP", minutes: 60 },
 ];
 
 const RULES: Array<{ station: StationId; patterns: RegExp[] }> = [

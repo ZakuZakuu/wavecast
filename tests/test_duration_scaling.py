@@ -32,10 +32,11 @@ def test_unscaled_limits_stay_fixed_whatever_the_request() -> None:
     ("seconds", "tracks", "chapters"),
     [
         (300, 3, 6),  # never fewer than three tracks
-        (1320, 6, 9),  # SHORT, 22 min
-        (2160, 10, 15),  # AUTO, 36 min
-        (2520, 11, 16),  # STANDARD, 42 min
-        (4320, 14, 21),  # DEEP, 72 min is capped
+        (1320, 7, 10),  # a 22 min request
+        (2100, 10, 15),  # the short tier, 35 min
+        (2520, 12, 18),  # 42 min
+        (3600, 16, 24),  # the long tier, 60 min
+        (4320, 16, 24),  # longer requests are capped
     ],
 )
 def test_scaled_limits_follow_the_requested_duration(
@@ -47,7 +48,7 @@ def test_scaled_limits_follow_the_requested_duration(
 def test_scaled_limits_stay_inside_the_schema_ceilings() -> None:
     for seconds in range(60, 20_000, 137):
         tracks, chapters = route_limits_for_duration(seconds, scaled=True)
-        assert 3 <= tracks <= 14
+        assert 3 <= tracks <= 16
         assert tracks < chapters <= 32
         LiveEpisodeAssemblyRequest(topic="x", desired_duration_seconds=seconds, max_tracks=tracks, max_chapters=chapters)
 
@@ -107,12 +108,12 @@ def test_curator_prompt_is_unchanged_for_the_default_five_track_route() -> None:
 
 
 def test_curator_is_asked_to_fill_a_long_programme_when_the_limit_is_raised() -> None:
-    prompt = _curator_prompt(11, 2520)
+    prompt = _curator_prompt(12, 2520)
 
-    assert "prefer a 3-11 track-bearing listening arc" in prompt
+    assert "prefer a 3-12 track-bearing listening arc" in prompt
     assert "about 42 minutes" in prompt
-    assert "up to 11 track-bearing chapters" in prompt
-    assert "not fewer than 8" in prompt
+    assert "up to 12 track-bearing chapters" in prompt
+    assert "not fewer than 9" in prompt
 
 
 def _seed(minutes: int) -> EpisodeSeed:
@@ -129,7 +130,7 @@ def _seed(minutes: int) -> EpisodeSeed:
     )
 
 
-@pytest.mark.parametrize(("scaling", "expected_tracks"), [(False, 5), (True, 11)])
+@pytest.mark.parametrize(("scaling", "expected_tracks"), [(False, 5), (True, 12)])
 def test_the_runtime_sizes_the_persisted_route_from_the_request(
     scaling: bool, expected_tracks: int
 ) -> None:
@@ -149,8 +150,10 @@ def test_the_runtime_sizes_the_persisted_route_from_the_request(
     assert buffered.progressive_session.max_tracks == expected_tracks
 
 
-def test_duration_scaling_flag_defaults_off_and_is_validated(monkeypatch) -> None:
+def test_duration_scaling_flag_defaults_on_and_is_validated(monkeypatch) -> None:
     monkeypatch.delenv("WAVECAST_DURATION_SCALING", raising=False)
+    assert ProviderSettings.from_env().duration_scaling is True
+    monkeypatch.setenv("WAVECAST_DURATION_SCALING", "off")
     assert ProviderSettings.from_env().duration_scaling is False
     monkeypatch.setenv("WAVECAST_DURATION_SCALING", "on")
     assert ProviderSettings.from_env().duration_scaling is True

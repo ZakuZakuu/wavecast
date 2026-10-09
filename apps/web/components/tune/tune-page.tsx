@@ -51,7 +51,7 @@ export function TunePage() {
   const [text, setText] = useState("");
   const [matched, setMatched] = useState(false);
   const manualRef = useRef(false);
-  const [duration, setDuration] = useState<DurationIntent>("STANDARD");
+  const [duration, setDuration] = useState<DurationIntent>("SHORT");
   const animRef = useRef<Cancel | null>(null);
   const lastLockedRef = useRef<string | null>(null);
   const { ref: windowRef, width } = useElementWidth<HTMLDivElement>();
