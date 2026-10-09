@@ -3,6 +3,7 @@ from wavecast.narration_quality import (
     check_block,
     estimate_seconds,
     opener_of,
+    rewrite_reasons,
     summarize,
 )
 from wavecast.spoken_form import KnownTrack
@@ -296,3 +297,44 @@ def test_a_first_sentence_that_is_a_question_is_a_hook() -> None:
 @pytest.mark.parametrize("text", ["刚才那段即兴撑起一片天。", "这段把一切收到身边。", "纯器乐，情绪是温和的。"])
 def test_more_phrases_from_the_third_round_are_figurative_hits(text: str) -> None:
     assert check_block(text).figurative_hits
+
+
+# --- the same turn of phrase, in a different sentence ---------------------------------------
+
+
+def test_a_stock_phrase_used_twice_in_a_programme_is_flagged() -> None:
+    earlier = "那首歌挂在他名下，听起来却不像他。"
+    later = "还有一首也挂在他们名下，写的是另一个夏天。"
+
+    assert "repeats_phrase" in check_block(later, earlier=earlier).issues
+    assert "repeats_phrase" not in check_block(later, earlier="").issues
+
+
+def test_the_same_long_wording_in_another_sentence_is_flagged() -> None:
+    earlier = "那张专辑的录音是在冬天一个废弃的教堂里完成的，而且几乎没有后期处理，也没有请别的乐手。"
+    later = "后来乐队把第二张专辑也搬去一个废弃的教堂里完成了大部分的录制工作，并且请来了新的鼓手。"
+
+    assert "repeats_phrase" in check_block(later, earlier=earlier).issues
+
+
+def test_short_overlaps_and_names_are_not_repeats() -> None:
+    earlier = "吉他一直没有停，节奏很稳。"
+    later = "鼓和吉他一起往前走，节奏很稳地推进。"
+    named = "Mogwai 的这首很长。"
+
+    assert "repeats_phrase" not in check_block(later, earlier=earlier).issues
+    assert "repeats_phrase" not in check_block(named, earlier="Mogwai 的这首很长。").issues
+
+
+def test_a_repeated_phrase_is_a_reason_to_rewrite() -> None:
+    check = check_block("还有一首也挂在他们名下。", earlier="那首歌挂在他名下。")
+
+    assert any("turn of phrase" in reason for reason in rewrite_reasons(check))
+
+
+def test_a_different_song_with_the_same_title_is_a_tangent() -> None:
+    tangent = "同样的名字，还有另一首《Your Hand in Mine》，Herman's Hermits 唱的。"
+
+    assert "same_name_tangent" in issues(tangent)
+    assert "same_name_tangent" not in issues("这首歌的吉他从头到尾没停。")
+    assert any("shares the title" in reason for reason in rewrite_reasons(check_block(tangent)))

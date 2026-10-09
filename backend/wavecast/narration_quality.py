@@ -78,6 +78,8 @@ _PODCAST_TALK = re.compile(r"下期|下一期|本期节目|各位听众|欢迎�
 _EVIDENCE_TALK = re.compile(r"资料显示|据说|据了解|据称|证据|不确定|传闻|有说法")
 _PERSONAL_EXPERIENCE = re.compile(r"我(?:小时候|曾经|那时候|当年|记得|第一次听|翻开)|翻开(?:这张|了)")
 # A question put to the listener to hook them; a radio host states the thing instead.
+# Talking about a different song that merely shares the title is a tangent, not the track.
+_SAME_NAME_TANGENT = re.compile(r"同名|同样的名字|同一个名字|重名|另一首同名")
 _RHETORICAL_HOOK = re.compile(r"有没有想过|你有没有|你知道吗|想象一下|不妨想想|是不是觉得")
 # A first sentence that is a question ("安静到底算什么？Mogwai 给了个答案。").
 _OPENS_WITH_QUESTION = re.compile(r"[^。！？!?\n]{2,40}[？?]")
@@ -211,6 +213,42 @@ def repeated_sentence(text: str, earlier: str) -> str | None:
     return None
 
 
+# Wording the Writer reaches for again and again; once a programme has used it, it is stock.
+_STOCK_PHRASES = (re.compile(r"挂在.{1,4}名下"),)
+_CLAUSE_BREAK = re.compile(r"[，。！？、；：,.!?;:\s“”\"'‘’《》「」『』（）()\-—…·]+")
+_CJK_ONLY = re.compile(r"[\u4e00-\u9fff]+")
+_PHRASE_CHARS = 8
+
+
+def repeated_phrase(text: str, earlier: str) -> str | None:
+    """A stock phrase, or a run of eight or more Chinese characters, ``earlier`` already used.
+
+    Sentence-level repetition is ``repeated_sentence``; this catches the same turn of phrase
+    reused inside a different sentence.  Runs containing Latin letters or digits are skipped,
+    so a name that has to come back (a track or artist) is never counted as a repeat.
+    """
+
+    if not earlier:
+        return None
+    for pattern in _STOCK_PHRASES:
+        found = pattern.search(text)
+        if found is not None and pattern.search(earlier) is not None:
+            return found.group(0)
+    seen: set[str] = set()
+    for clause in _CLAUSE_BREAK.split(canonical_name(earlier)):
+        for run in _CJK_ONLY.findall(clause):
+            seen.update(run[i : i + _PHRASE_CHARS] for i in range(len(run) - _PHRASE_CHARS + 1))
+    if not seen:
+        return None
+    for clause in _CLAUSE_BREAK.split(canonical_name(text)):
+        for run in _CJK_ONLY.findall(clause):
+            for i in range(len(run) - _PHRASE_CHARS + 1):
+                window = str(run[i : i + _PHRASE_CHARS])
+                if window in seen:
+                    return window
+    return None
+
+
 def titles_named(text: str, route_titles: Sequence[str]) -> list[str]:
     """The distinct route track titles ``text`` writes out."""
 
@@ -261,6 +299,8 @@ def check_block(
         issues.append("final_block_gives_year")
     if _RHETORICAL_HOOK.search(text) or _OPENS_WITH_QUESTION.match(text.lstrip()):
         issues.append("rhetorical_hook")
+    if _SAME_NAME_TANGENT.search(text):
+        issues.append("same_name_tangent")
     if opener_of(text) in _STOCK_OPENERS:
         issues.append("stock_opener")
     for name in unplayed_names:
@@ -270,6 +310,8 @@ def check_block(
         issues.append("recap_list")
     if earlier and repeated_sentence(text, earlier) is not None:
         issues.append("repeats_earlier")
+    elif earlier and repeated_phrase(text, earlier) is not None:
+        issues.append("repeats_phrase")
     if supported_years is not None:
         for year in sorted(years_in(text) - supported_years):
             issues.append(f"unsupported_year:{year}")
@@ -304,6 +346,8 @@ _REWRITE_ISSUES = (
     "mentions_unplayed",
     "recap_list",
     "repeats_earlier",
+    "repeats_phrase",
+    "same_name_tangent",
 )
 
 
@@ -336,6 +380,8 @@ _REASON_TEXT = {
     "rhetorical_hook": "opens with a question to the listener (有没有想过, 你知道吗); state the thing instead",
     "recap_list": "lists the tracks played one by one; name at most the last track, or none",
     "repeats_earlier": "says again what an earlier block of this programme already said",
+    "same_name_tangent": "talks about another song that only shares the title; it is not what is playing",
+    "repeats_phrase": "reuses a turn of phrase an earlier block of this programme already used; word it differently",
 }
 
 

@@ -255,7 +255,8 @@ def voice_instructions(
         "instead of adjectives. Every factual statement must come from the evidence or the "
         "track names; do not describe tempo, mood, volume or instrumentation unless the "
         "evidence says so. Do not claim personal memories or feelings you cannot have. Do not "
-        "talk about evidence or certainty."
+        "talk about evidence or certainty. If the evidence is about another artist's song with "
+        "the same title, or about a different work, leave it out: it is not about what is playing."
     )
     lines.append(
         "Never write: stock figurative phrases such as "

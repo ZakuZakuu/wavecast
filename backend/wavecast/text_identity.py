@@ -97,6 +97,44 @@ def base_title_key(title: str) -> str:
     return canonical_name(stripped)
 
 
+# A trailing group that only labels the file, not the performance: a date or number, or a
+# remaster / mono / stereo note.  "(Live)", "(Remix)", "(Piano Version)" are different
+# performances and are deliberately not listed.
+_FILE_LABEL = re.compile(
+    r"^[\d\s/.\-:,]*$|\b(?:remaster(?:ed)?|digital remaster|mono|stereo|bonus track)\b",
+    re.IGNORECASE,
+)
+_TRAILING_LABEL = re.compile(
+    r"\s*(?:[\(\[（]([^\)\]）]*)[\)\]）]|-\s*((?:\d{4}\s+)?(?:digital\s+)?remaster(?:ed)?(?:\s+\d{4})?|mono|stereo))\s*$",
+    re.IGNORECASE,
+)
+
+
+def song_title_key(title: str) -> str:
+    """Key under which two catalog listings of one recording coincide.
+
+    Folds script variants and Latin accents, drops a trailing feature credit and trailing
+    file labels (a date such as ``(04/23)``, ``Remastered 2010``, ``Mono``), and ignores
+    spacing, so ``Dippermouth Blues`` and ``Dipper Mouth Blues (04/23)`` are one song.
+    Words that name another performance (``Live``, ``Remix``, ``Piano Version``) stay.
+    """
+
+    stripped = without_feature_credit(title)
+    while True:
+        match = _TRAILING_LABEL.search(stripped)
+        if match is None:
+            break
+        group = match.group(1)
+        if group is not None and not _FILE_LABEL.search(group):
+            break
+        reduced = stripped[: match.start()].strip()
+        if not reduced:
+            break
+        stripped = reduced
+    words = re.findall(r"\w+", strip_latin_accents(canonical_name(stripped)))
+    return "".join(words)
+
+
 def same_catalog_name(left: str, right: str) -> bool:
     """True when two catalog names are identical after folding script variants."""
 

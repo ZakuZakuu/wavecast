@@ -303,6 +303,25 @@ def test_song_identity_collapses_catalog_aliases_without_merging_unrelated_cover
     assert _same_song_identity(bill_evans, unrelated_cover) is False
 
 
+def test_one_recording_listed_with_a_date_label_and_different_spacing_is_one_song() -> None:
+    spaced = ResolvedTrack(
+        track_ref="netease:one", canonical_artist="Louis Armstrong", canonical_title="Dippermouth Blues"
+    )
+    dated = ResolvedTrack(
+        track_ref="netease:two",
+        canonical_artist="Louis Armstrong",
+        canonical_title="Dipper Mouth Blues (04/23)",
+    )
+    live = ResolvedTrack(
+        track_ref="netease:three",
+        canonical_artist="Louis Armstrong",
+        canonical_title="Dippermouth Blues (Live)",
+    )
+
+    assert _same_song_identity(spaced, dated) is True
+    assert _same_song_identity(spaced, live) is False
+
+
 def test_the_same_recording_listed_with_and_without_accents_is_one_song() -> None:
     accented = ResolvedTrack(
         track_ref="netease:one",

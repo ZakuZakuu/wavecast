@@ -85,3 +85,41 @@ def test_latin_accents_are_dropped_but_kana_voicing_marks_are_kept() -> None:
     assert strip_latin_accents("ガ") == "ガ"
     assert strip_latin_accents("が ぱ") == "が ぱ"
     assert strip_latin_accents("久石譲") == "久石譲"
+
+
+# --- one recording listed twice ------------------------------------------------------------
+
+
+def test_spacing_and_a_date_label_do_not_make_another_song() -> None:
+    from wavecast.text_identity import song_title_key
+
+    assert song_title_key("Dippermouth Blues") == song_title_key("Dipper Mouth Blues (04/23)")
+
+
+def test_a_remaster_or_mono_label_does_not_make_another_song() -> None:
+    from wavecast.text_identity import song_title_key
+
+    plain = song_title_key("Take Five")
+    assert song_title_key("Take Five (Remastered 2010)") == plain
+    assert song_title_key("Take Five - 2009 Remaster") == plain
+    assert song_title_key("Take Five - Remastered") == plain
+    assert song_title_key("Take Five (Mono)") == plain
+    assert song_title_key("Take Five (feat. Someone)") == plain
+
+
+def test_a_different_performance_stays_a_different_song() -> None:
+    from wavecast.text_identity import song_title_key
+
+    plain = song_title_key("Summer")
+    assert song_title_key("Summer (Live)") != plain
+    assert song_title_key("Summer (Remix)") != plain
+    assert song_title_key("Summer (Piano Version)") != plain
+    assert song_title_key("Summer - Live at Budokan") != plain
+    assert song_title_key("Summer 2") != plain
+
+
+def test_a_title_that_is_only_a_label_is_kept() -> None:
+    from wavecast.text_identity import song_title_key
+
+    assert song_title_key("(1999)") == "1999"
+    assert song_title_key("Mono") == "mono"
