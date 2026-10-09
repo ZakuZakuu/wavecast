@@ -1732,7 +1732,7 @@ def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
             "narration_segments": sum(1 for item in segments if item.kind is SegmentKind.NARRATION),
             "narration_skipped": sum(
                 1
-                for item in segments
+                for item in current.ordered_segments
                 if item.kind is SegmentKind.NARRATION and item.state is SegmentState.SKIPPED
             ),
         },

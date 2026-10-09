@@ -115,7 +115,7 @@ from wavecast.providers.usage import (
     usage_diagnostics,
 )
 from wavecast.storage.assets import LocalObjectStorageProvider
-from wavecast.text_identity import canonical_name, without_feature_credit
+from wavecast.text_identity import canonical_name, strip_latin_accents, without_feature_credit
 from wavecast.timing import (
     ProgramTimingPlan,
     ProgramTimingSummary,
@@ -1985,7 +1985,9 @@ _GENERIC_ARTIST_WORDS = {
 
 
 def _identity_words(value: str) -> tuple[str, ...]:
-    return tuple(re.findall(r"[\w]+", canonical_name(value), flags=re.UNICODE))
+    return tuple(
+        re.findall(r"[\w]+", strip_latin_accents(canonical_name(value)), flags=re.UNICODE)
+    )
 
 
 def _artist_identity_words(value: str) -> frozenset[str]:
