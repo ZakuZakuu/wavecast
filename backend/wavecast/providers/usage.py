@@ -61,6 +61,10 @@ class UsageEvent(BaseModel):
 
 class UsageTotals(BaseModel):
     event_count: int
+    # Time spent waiting on providers (sum over calls, so calls that overlap add up), and
+    # the single slowest call: enough to see which stage is slow without a tracing system.
+    elapsed_ms: int
+    slowest_ms: int
     input_tokens: int
     output_tokens: int
     usage_characters: int
@@ -116,6 +120,8 @@ class UsageLedger:
     def _totals(events: list[UsageEvent]) -> UsageTotals:
         return UsageTotals(
             event_count=len(events),
+            elapsed_ms=sum(event.elapsed_ms for event in events),
+            slowest_ms=max((event.elapsed_ms for event in events), default=0),
             input_tokens=sum(event.input_tokens or 0 for event in events),
             output_tokens=sum(event.output_tokens or 0 for event in events),
             usage_characters=sum(event.usage_characters or 0 for event in events),

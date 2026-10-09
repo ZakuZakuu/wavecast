@@ -229,3 +229,19 @@ def test_skipped_narration_is_counted_even_though_the_timeline_leaves_it_out(cap
     api_module.repository.save(stored)
     body = client.get(f"/api/episodes/{created['id']}/usage", headers=headers).json()
     assert body["programme"]["narration_skipped"] == 1
+
+
+def test_each_stage_reports_how_long_providers_took() -> None:
+    ledger = UsageLedger()
+    with usage_scope("episode-t"):
+        ledger.record(UsageEvent(provider="deepseek", operation="a", elapsed_ms=300, metadata={"stage": "writer"}))
+        ledger.record(UsageEvent(provider="deepseek", operation="b", elapsed_ms=900, metadata={"stage": "writer"}))
+        ledger.record(UsageEvent(provider="exa", operation="c", elapsed_ms=50, metadata={"stage": "research"}))
+
+    report = usage_diagnostics(ledger, scope="episode-t")
+
+    assert report["usage_by_stage"]["writer"]["elapsed_ms"] == 1200
+    assert report["usage_by_stage"]["writer"]["slowest_ms"] == 900
+    assert report["usage_by_stage"]["research"]["slowest_ms"] == 50
+    assert report["usage"]["elapsed_ms"] == 1250
+    assert usage_diagnostics(UsageLedger())["usage"]["slowest_ms"] == 0
