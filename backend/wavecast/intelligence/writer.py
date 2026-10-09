@@ -64,6 +64,7 @@ class WriterService:
         used_openers: Sequence[str] = (),
         route_tracks: Sequence[str] = (),
         unplayed_artists: Sequence[str] = (),
+        unfulfilled_artists: Sequence[str] = (),
         topic: str = "",
         slot_context: NarrationSlotContext | None = None,
         slot_contexts: Sequence[NarrationSlotContext] | None = None,
@@ -131,6 +132,14 @@ class WriterService:
                 "Planned earlier but NOT in this programme; do not mention them: "
                 + ", ".join(unplayed_artists[:12])
                 + ".\n"
+            )
+        if unfulfilled_artists:
+            route_line += (
+                "The listener asked for "
+                + ", ".join(unfulfilled_artists[:4])
+                + ", but this programme does not play them. Never say or imply that the "
+                "programme covers, includes, or is heading to them, and never describe the "
+                "programme as a route that reaches them.\n"
             )
         language_guidance = (
             ZH_CN_RADIO_WRITING_GUIDANCE
@@ -223,6 +232,8 @@ class WriterService:
             ):
                 result = revised
             break
+        if isinstance(result, RadioScript):
+            result = _without_identity_conflicts(result, known_tracks, unplayed_artists)
         return result
 
     async def _attempt(
@@ -271,6 +282,40 @@ class WriterService:
         return result.model_copy(
             update={"tts_text": spoken.tts_text if spoken.tts_text != result.text else None}
         )
+
+
+def _without_identity_conflicts(
+    script: RadioScript, tracks: Sequence[KnownTrack], unplayed_names: Sequence[str]
+) -> RadioScript:
+    """Drop the blocks that still talk about an artist the listener will not hear.
+
+    The one bounded rewrite either fixed it or did not.  A host that names an artist the
+    programme does not play is wrong in a way no style fix repairs, so the block goes and the
+    music plays on; music continuity wins over optional narration.
+    """
+
+    if not unplayed_names:
+        return script
+    kept = []
+    for block in script.blocks:
+        found = [
+            issue
+            for issue in check_block(
+                block.text, tts_text=block.tts_text, tracks=tracks, unplayed_names=unplayed_names
+            ).issues
+            if issue.startswith("mentions_unplayed")
+        ]
+        if found:
+            logger.warning(
+                "writer_block_dropped reason=mentions_unplayed kind=%s count=%d",
+                block.kind.value,
+                len(found),
+            )
+            continue
+        kept.append(block)
+    if len(kept) == len(script.blocks):
+        return script
+    return script.model_copy(update={"blocks": kept})
 
 
 def _problems(

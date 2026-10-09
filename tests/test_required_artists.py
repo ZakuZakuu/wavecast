@@ -272,7 +272,7 @@ def test_a_failing_coverage_search_never_stops_generation(tmp_path, monkeypatch)
 # --- the request reaches the pipeline and the host --------------------------------------------
 
 
-def _started_episode(required: list[str]):  # type: ignore[no-untyped-def]
+def _started_episode(required: list[str], *, runtime_out: list | None = None):  # type: ignore[no-untyped-def,type-arg]
     seed = EpisodeSeed(
         id="required-artists",
         title="Route",
@@ -285,12 +285,12 @@ def _started_episode(required: list[str]):  # type: ignore[no-untyped-def]
         cover=CoverParams(family="editorial", seed=1, palette=("#000", "#fff")),
         required_artists=required,
     )
-    orchestrator = EpisodeOrchestrator(
-        InMemoryEpisodeRepository(),
-        progressive_runtime=StagedProgressiveRuntimeAdapter(
-            create_episode_assembly_service(ProviderSettings(mode="mock"))
-        ),
+    runtime = StagedProgressiveRuntimeAdapter(
+        create_episode_assembly_service(ProviderSettings(mode="mock"))
     )
+    if runtime_out is not None:
+        runtime_out.append(runtime)
+    orchestrator = EpisodeOrchestrator(InMemoryEpisodeRepository(), progressive_runtime=runtime)
     episode = orchestrator.start(seed)
     assert episode.required_artists == required
     return asyncio.run(
@@ -312,6 +312,27 @@ def test_the_seeds_artists_reach_the_session_and_what_is_not_played_is_off_limit
     assert any(label.startswith("Signal Garden") for label in played)
     assert "Nobody Known" in unplayed
     assert "Signal Garden" not in unplayed
+
+
+def test_the_writer_is_told_which_requested_artists_the_programme_does_not_play(
+    monkeypatch,
+) -> None:
+    from wavecast.intelligence.writer import WriterService
+
+    seen: list[tuple[str, ...]] = []
+    original = WriterService.write
+
+    async def recording(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        seen.append(tuple(kwargs.get("unfulfilled_artists", ())))
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(WriterService, "write", recording)
+    runtimes: list = []  # type: ignore[type-arg]
+    episode = _started_episode(["Signal Garden", "Nobody Known"], runtime_out=runtimes)
+
+    asyncio.run(runtimes[0].author_narration(episode, "chapter-2"))
+
+    assert seen == [("Nobody Known",)]
 
 
 def test_a_programme_that_names_no_artist_has_nothing_unfulfilled() -> None:
