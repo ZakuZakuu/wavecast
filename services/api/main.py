@@ -114,6 +114,7 @@ from wavecast.rendering import (
     resolve_mix_sources,
 )
 from wavecast.rendering.fingerprint import mix_plan_fingerprint
+from wavecast.spoken_form import KnownTrack, to_spoken_form
 from wavecast.storage import (
     EpisodeConcurrencyError,
     GenerationJobMode,
@@ -1458,6 +1459,15 @@ async def _prepare_opening_host(
     ):
         return episode
 
+    spoken = to_spoken_form(
+        text,
+        [KnownTrack(artist=seed.opening_track_artist, title=seed.opening_track_title)],
+    )
+    if not spoken.ok:
+        # The voice cannot read part of this line; the opening host is optional.
+        logger.warning("opening_narration_skipped episode_id=%s reason=unspeakable_script", episode.id)
+        return episode
+
     narration = NarrationSegment(
         id="segment-opening-host",
         chapter_id="chapter-1",
@@ -1466,6 +1476,7 @@ async def _prepare_opening_host(
         planned_duration_seconds=8,
         title="Track Intro",
         narration_text=text,
+        tts_text=spoken.tts_text if spoken.tts_text != text else None,
         narration_role=NarrationRole.INTRO,
     )
     try:

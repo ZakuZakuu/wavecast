@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Sequence
 
 from wavecast.presentation import HostMode, host_mode_prompt_guidance
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
+from wavecast.spoken_form import KnownTrack, to_spoken_form
 
 from .fast_start import FastStructuredProvider
 from .models import (
@@ -19,6 +21,8 @@ from .models import (
     RadioScript,
     resolve_output_language,
 )
+
+logger = logging.getLogger(__name__)
 
 ZH_CN_RADIO_WRITING_GUIDANCE = (
     "For zh-CN narration only, apply these concise radio-writing constraints: "
@@ -121,7 +125,10 @@ class WriterService:
             "or how certain a statement is; leave out what you cannot support. "
             f"{empty_scope_instruction}\n"
             f"Write in output language {selected_language.value}, whatever language the evidence "
-            "or track titles use; keep artist and track names in their original form.\n"
+            "or track titles use; keep artist and track names exactly as the slot contexts spell them. "
+            "The application decides how songs and artists are spoken, so never translate or "
+            "transliterate a title yourself, and keep Japanese, Korean or other non-Chinese, "
+            "non-English text out of `tts_text`.\n"
             f"{language_guidance}\n"
             f"Chapter: {chapter.model_dump_json()}\n"
             f"Evidence: {[item.model_dump() for item in scoped]}\n"
@@ -146,16 +153,49 @@ class WriterService:
         if not isinstance(result, (RadioScript, NarrationScript)):
             raise TypeError("writer returned an unexpected output model")
         _validate_evidence_references(result, chapter, evidence)
+        known_tracks = _known_tracks(slot_contexts)
         if isinstance(result, RadioScript):
             # Numeric playback placement is application-owned.  Strip any
             # compatibility field emitted by an older/faulty structured model
             # before assembly normalizes the parsed blocks into this slot.
+            blocks = []
+            for block in result.blocks:
+                spoken = to_spoken_form(block.text, known_tracks, tts_text=block.tts_text)
+                if not spoken.ok:
+                    # The voice cannot read this; music continuity wins over optional narration.
+                    logger.warning(
+                        "writer_block_dropped reason=unspeakable_script kind=%s", block.kind.value
+                    )
+                    continue
+                blocks.append(
+                    block.model_copy(
+                        update={
+                            "track_index": None,
+                            "tts_text": spoken.tts_text if spoken.tts_text != block.text else None,
+                        }
+                    )
+                )
+            result = result.model_copy(update={"blocks": blocks})
+        else:
+            spoken = to_spoken_form(result.text, known_tracks, tts_text=result.tts_text)
+            if not spoken.ok:
+                logger.warning("writer_script_unspeakable_script")
             result = result.model_copy(
-                update={
-                    "blocks": [block.model_copy(update={"track_index": None}) for block in result.blocks]
-                }
+                update={"tts_text": spoken.tts_text if spoken.tts_text != result.text else None}
             )
         return result
+
+
+def _known_tracks(slot_contexts: Sequence[NarrationSlotContext] | None) -> list[KnownTrack]:
+    """Songs named by the slots: the only entities whose spoken form the application sets."""
+
+    tracks: dict[tuple[str, str], KnownTrack] = {}
+    for context in slot_contexts or ():
+        for track in (context.chapter_track, context.just_played_track, context.upcoming_track):
+            if track is not None:
+                key = (track.canonical_artist, track.canonical_title)
+                tracks.setdefault(key, KnownTrack(artist=key[0], title=key[1]))
+    return list(tracks.values())
 
 
 def _validate_evidence_references(
