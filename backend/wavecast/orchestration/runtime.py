@@ -91,6 +91,7 @@ class StagedProgressiveRuntimeAdapter:
             presentation_intent=episode.presentation_intent,
             output_language=episode.output_language,
             station=episode.station,
+            required_artists=list(episode.required_artists),
         )
         return await self.assembly.prepare_fast_successor(
             request,
@@ -323,6 +324,7 @@ class StagedProgressiveRuntimeAdapter:
             presentation_intent=episode.presentation_intent,
             output_language=episode.output_language,
             station=episode.station,
+            required_artists=list(episode.required_artists),
         )
         locked_segment = next(
             (

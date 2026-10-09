@@ -58,6 +58,7 @@ class CuratorService:
         topic: str = "",
         trace: GenerationTrace | None = None,
         catalog_pool: CatalogPool | None = None,
+        required_artists: Sequence[str] = (),
     ) -> ProgramSkeleton:
         committed = committed_chapters or []
         research_context, fast_context = _build_curator_context(bundle, fast_plan)
@@ -121,6 +122,7 @@ class CuratorService:
             f"FastStart context: {_compact_json(fast_context)}\n"
             f"Committed: {_compact_json([item.model_dump(mode='json') for item in committed])}\n"
             f"{_catalog_pool_context(catalog_pool)}"
+            f"{_required_artists_context(required_artists)}"
             f"{_long_programme_guidance(desired_duration_seconds, max_tracks)}"
             f"Duration: {desired_duration_seconds}\n"
             f"Output language: {resolve_output_language(output_language, topic).value}"
@@ -153,6 +155,21 @@ def _long_programme_guidance(desired_duration_seconds: int, max_tracks: int) -> 
         f"up to {max_tracks} track-bearing chapters, and not fewer than {max(3, max_tracks - 3)} "
         "when the research and available tracks support them; still select fewer rather than "
         "padding with unrelated tracks.\n"
+    )
+
+
+def _required_artists_context(required: Sequence[str]) -> str:
+    """Artists the listener's request names; the route must play each of them."""
+
+    names = [name for name in required if name.strip()]
+    if not names:
+        return ""
+    return (
+        f"Required artists (the listener's request names them): {_compact_json(names)}. The route "
+        "must play at least one track by each of them, in the position that best serves the "
+        "request, taken from Available when it is listed there. A chapter's reason, "
+        "narration_goal and evidence_ids must describe the artist of its own track, never "
+        "another artist.\n"
     )
 
 

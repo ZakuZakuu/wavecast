@@ -187,6 +187,7 @@ class EpisodeOrchestrator:
             presentation_intent=seed.presentation_intent,
             output_language=seed.output_language,
             station=seed.station,
+            required_artists=list(seed.required_artists),
             segments=[opening],
             current_segment_id=opening.id,
             last_activity_at=now,

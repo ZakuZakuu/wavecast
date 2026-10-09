@@ -82,6 +82,7 @@ class ProgramProposal(BaseModel):
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     output_language: OutputLanguage = OutputLanguage.AUTO
     station: StationId | None = None
+    required_artists: list[str] = Field(default_factory=list, max_length=4)
     generation_profile: str = Field(default="balanced", min_length=1, max_length=64)
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -102,6 +103,7 @@ class ProgramProposal(BaseModel):
             presentation_intent=self.presentation_intent,
             output_language=self.output_language,
             station=self.station,
+            required_artists=list(self.required_artists),
             generation_profile=self.generation_profile,
             created_at=self.created_at,
         )
@@ -128,6 +130,7 @@ class ProgramProposal(BaseModel):
             presentation_intent=seed.presentation_intent,
             output_language=seed.output_language,
             station=seed.station,
+            required_artists=list(seed.required_artists),
             generation_profile=seed.generation_profile,
             created_at=seed.created_at,
         )
@@ -183,6 +186,8 @@ class ProgramProposalDraft(BaseModel):
     mood_tags: list[str] = Field(default_factory=list, max_length=8)
     opening_host_note: str | None = Field(default=None, max_length=220)
     opening_track_candidates: list[OpeningTrackCandidate] = Field(min_length=1, max_length=4)
+    # Artists the request names or clearly requires the programme to play; empty when none.
+    required_artists: list[str] = Field(default_factory=list, max_length=4)
 
     @field_validator("title", "short_description")
     @classmethod
@@ -424,6 +429,17 @@ _OPENING_IDENTITIES = (
 _OPENING_WINDOW_SECONDS = 12
 
 
+def _clean_artists(names: list[str]) -> list[str]:
+    """Required-artist names as the model wrote them: trimmed, deduplicated, bounded."""
+
+    cleaned: list[str] = []
+    for name in names:
+        value = " ".join(name.split())[:80]
+        if value and value.casefold() not in {item.casefold() for item in cleaned}:
+            cleaned.append(value)
+    return cleaned[:4]
+
+
 def _pick(seed: str, salt: str, count: int) -> int:
     digest = sha1(f"{salt}|{seed}".encode()).hexdigest()
     return int(digest[:8], 16) % count
@@ -545,6 +561,7 @@ class LLMProgramProposalGenerator:
                     presentation_intent=resolve_presentation_intent(request.prompt, request.station),
                     output_language=request.output_language,
                     station=request.station,
+                    required_artists=_clean_artists(draft.required_artists),
                     generation_profile="balanced",
                 )
             )
@@ -746,7 +763,10 @@ class LLMProgramProposalGenerator:
             "it sounds, use no figurative wording (for example 铺开, 一层层, 夜色, 霓虹, 画出), "
             "and do not start with 先从 or 我们先. Do not repeat artist or track names and do "
             "not make release-date, biography, chart, causal, or other factual claims that "
-            "would require research.\n"
+            "would require research. Also list in required_artists, in the listener's own "
+            "spelling, the artists the request names or clearly requires the programme to "
+            "play (for example “from Mogwai to Explosions in the Sky” requires both); leave it "
+            "empty when the request names no artist.\n"
             f"Duration intent: {request.duration_intent.value}\n"
             f"Taste context: {taste_context}\n"
             f"Listener request: {request.prompt.strip()}"

@@ -58,6 +58,9 @@ class ProgressiveAssemblySession(BaseModel):
     max_chapters: int = Field(ge=2, le=32)
     output_language: OutputLanguage
     station: StationId | None = None
+    required_artists: list[str] = Field(default_factory=list, max_length=4)
+    # Required artists the finished route does not play (nothing playable, or none found).
+    unfulfilled_artists: list[str] = Field(default_factory=list, max_length=4)
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     opening_track_ref: str | None = Field(default=None, max_length=300)
     fast_plan: FastStartPlan
