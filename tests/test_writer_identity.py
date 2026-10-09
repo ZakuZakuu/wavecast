@@ -254,3 +254,24 @@ def test_a_length_of_time_that_the_evidence_gives_is_allowed() -> None:
     assert len(llm.prompts) == 1
     assert isinstance(result, RadioScript)
     assert [block.text for block in result.blocks] == [text]
+
+
+def test_the_voice_instructions_forbid_questions_and_sound_similes() -> None:
+    llm = Sequenced(_script("Jody 是同一个人写的。"))
+
+    _write(llm)
+
+    assert "questions put to the listener" in llm.prompts[0]
+    assert "similes for how music sounds" in llm.prompts[0]
+
+
+def test_a_closing_with_a_year_is_rewritten() -> None:
+    bio = "最后停在 Breathturn。Hammock 2004 年前后在纳什维尔成形。"
+    plain = "最后停在 Hammock 的 Breathturn，就到这儿。"
+    llm = Sequenced(_outro(bio), _outro(plain))
+
+    result = _write_final(llm, route_tracks=ROUTE_TRACKS)
+
+    assert len(llm.prompts) == 2
+    assert "closing" in llm.prompts[1]
+    assert [block.text for block in result.blocks] == [plain]

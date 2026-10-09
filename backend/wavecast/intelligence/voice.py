@@ -261,7 +261,8 @@ def voice_instructions(
         "Never write: stock figurative phrases such as "
         + "、".join(FIGURATIVE_PHRASES[:12])
         + "; the frame “不是……而是……” or “更像……”; closing morals such as “这也提醒我们”; "
-        "lists of three adjectives or examples; “下期再见” or other podcast sign-offs."
+        "lists of three adjectives or examples; questions put to the listener (有没有想过, 你知道吗); "
+        "similes for how music sounds; “下期再见” or other podcast sign-offs."
     )
     examples = pick_examples(seed, station, index)
     if examples and voice.station is not StationId.NIGHT:
