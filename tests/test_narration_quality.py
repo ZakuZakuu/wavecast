@@ -345,5 +345,6 @@ def test_a_length_given_as_minutes_and_seconds_is_found() -> None:
 
     assert durations_in("七分十六秒的慢三拍") == {"7分16秒"}
     assert durations_in("4分12秒，再加三分半") == {"4分12秒", "3分半"}
+    assert durations_in("一口气十四分多，接下来三分出头") == {"14分多", "3分出头"}
     assert durations_in("十分好听，十分钟太长") == {"10分钟"}  # 十分 alone is "very"
     assert "unsupported_duration:7分16秒" in issues("七分十六秒的慢三拍", supported_durations=set())
