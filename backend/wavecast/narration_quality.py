@@ -99,6 +99,11 @@ _PUNCTUATION = re.compile(r"[\s，。！？、；：,.!?;:“”\"'‘’《》�
 
 
 _DURATION_CLAIM = re.compile(r"([零〇一二三四五六七八九十两\d]{1,3})\s*(分钟|个小时|小时|秒钟)")
+# "七分十六秒", "三分半": a length given as minutes and seconds.  "十分好听" (very good) has no
+# seconds or half after 分, so it is not matched.
+_MINUTE_SECOND_CLAIM = re.compile(
+    r"([零〇一二三四五六七八九十两\d]{1,3})\s*分\s*(?:([零〇一二三四五六七八九十两\d]{1,3})\s*秒|(半|多|出头|左右))"
+)
 _NUMERALS = {c: i for i, c in enumerate("零一二三四五六七八九")} | {"〇": 0, "两": 2}
 
 
@@ -128,6 +133,14 @@ def durations_in(text: str) -> set[str]:
         value = _number(amount)
         if value is not None:
             found.add(f"{value}{'小时' if '小时' in unit else unit.replace('秒钟', '秒')}")
+    for minutes, seconds, half in _MINUTE_SECOND_CLAIM.findall(text):
+        minute_value = _number(minutes)
+        if minute_value is None:
+            continue
+        if half:
+            found.add(f"{minute_value}分{half}")
+        elif (second_value := _number(seconds)) is not None:
+            found.add(f"{minute_value}分{second_value}秒")
     return found
 
 
