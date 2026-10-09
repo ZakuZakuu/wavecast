@@ -27,7 +27,7 @@ from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
-from wavecast.stations import StationId, resolve_presentation_intent
+from wavecast.stations import StationId, pick_ident, resolve_presentation_intent
 from wavecast.text_identity import canonical_name
 
 
@@ -410,6 +410,21 @@ def _proposal_language_instruction(language: OutputLanguage) -> str:
     )
 
 
+# How the opening names its first track.  Short and plain on purpose; the order of this and the
+# host note, and the form, vary with the programme.
+_OPENING_IDENTITIES = (
+    "先放{artist}的《{title}》。",
+    "{artist}，《{title}》。",
+    "第一首，{artist}的《{title}》。",
+    "开场是{artist}的《{title}》。",
+)
+
+
+def _pick(seed: str, salt: str, count: int) -> int:
+    digest = sha1(f"{salt}|{seed}".encode()).hexdigest()
+    return int(digest[:8], 16) % count
+
+
 def _opening_narration_text(
     request: ProposalGenerationRequest,
     draft: ProgramProposalDraft,
@@ -419,10 +434,19 @@ def _opening_narration_text(
     if request.output_language is OutputLanguage.ZH_CN or (
         request.output_language is not OutputLanguage.EN_US and _uses_cjk(request.prompt)
     ):
-        identity = (
-            f"我们先从 {resolved.canonical_artist} 的《{resolved.canonical_title}》开始。"
+        seed = f"{request.prompt}|{resolved.track_ref}"
+        artist, title = resolved.canonical_artist, resolved.canonical_title
+        identity = _OPENING_IDENTITIES[_pick(seed, "identity", len(_OPENING_IDENTITIES))].format(
+            artist=artist, title=title
         )
         fallback = "先别急着跳歌，听听它怎么把今天这条声音路线打开。"
+        parts = [note or fallback, identity]
+        if _pick(seed, "order", 2) == 0:
+            parts.reverse()
+        ident = pick_ident(request.station, seed)
+        if ident and request.station is not StationId.NIGHT:
+            parts.append(ident)
+        return "".join(parts).strip()
     else:
         identity = (
             f'Let\'s start with "{resolved.canonical_title}" by '
