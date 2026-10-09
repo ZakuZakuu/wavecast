@@ -225,6 +225,7 @@ class StagedProgressiveRuntimeAdapter:
                 target_duration_seconds=target_seconds,
                 output_language=episode.output_language,
                 station=episode.station,
+                voice_seed=episode.seed_id,
                 topic=episode.topic,
                 slot_contexts=[slot],
                 inference_profile=InferenceProfile.FAST,

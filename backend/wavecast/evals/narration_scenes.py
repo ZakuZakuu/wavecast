@@ -19,6 +19,7 @@ from wavecast.intelligence.models import (
     RadioScriptBlockKind,
     ResolvedTrack,
 )
+from wavecast.stations import StationId
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class NarrationScene:
     is_final: bool = False
     reason: str = "continue the programme's route"
     previous_context: str = ""
+    station: StationId | None = None
     extra: dict[str, str] = field(default_factory=dict)
 
     def chapter(self) -> ChapterPlan:
@@ -93,6 +95,7 @@ SCENES: tuple[NarrationScene, ...] = (
             "《Summer》是久石让为北野武的电影《菊次郎的夏天》（1999）写的主题曲，以钢琴为主，旋律简单而反复。",
             "《天空之城》（1986）是宫崎骏与久石让合作的第二部长片。",
         ),
+        station=StationId.PORTRAIT,
     ),
     NarrationScene(
         "casals-preludes",
@@ -104,6 +107,7 @@ SCENES: tuple[NarrationScene, ...] = (
             "卡萨尔斯在 20 世纪初把巴赫的无伴奏大提琴组曲带回了音乐会舞台。",
             "他在 1936 至 1939 年间录下了完整的六首组曲。",
         ),
+        station=StationId.CRATE,
     ),
     NarrationScene(
         "postrock-bridge",
@@ -115,6 +119,7 @@ SCENES: tuple[NarrationScene, ...] = (
             "Mogwai 来自苏格兰格拉斯哥，1995 年成军。",
             "Explosions in the Sky 来自美国得克萨斯州奥斯汀，1999 年成军，几乎只做器乐。",
         ),
+        station=StationId.LINEAGE,
     ),
     NarrationScene(
         "citypop-yamashita",
@@ -126,6 +131,7 @@ SCENES: tuple[NarrationScene, ...] = (
             "《Sparkle》是山下达郎 1982 年专辑《FOR YOU》的第一首。",
             "山下达郎早年在 Sugar Babe 乐队，1975 年出过专辑《SONGS》，大贯妙子也是成员。",
         ),
+        station=StationId.CASUAL,
     ),
     NarrationScene(
         "utada-japanese-artist",
@@ -137,6 +143,7 @@ SCENES: tuple[NarrationScene, ...] = (
             "《Automatic》是宇多田光 1998 年的出道单曲。",
             "专辑《First Love》1999 年发行。",
         ),
+        station=StationId.PORTRAIT,
     ),
     NarrationScene(
         "miles-modal",
@@ -145,6 +152,7 @@ SCENES: tuple[NarrationScene, ...] = (
         _track("m1", "Miles Davis", "So What"),
         _track("m2", "Miles Davis", "Blue in Green"),
         ("两首歌都收在 1959 年的专辑《Kind of Blue》里。",),
+        station=StationId.LINEAGE,
     ),
     NarrationScene(
         "chinese-no-evidence",
@@ -154,6 +162,7 @@ SCENES: tuple[NarrationScene, ...] = (
         _track("z2", "陈绮贞", "躺在你的衣柜"),
         (),
         reason="two songs by the same singer-songwriter, a quieter one next",
+        station=StationId.CASUAL,
     ),
     NarrationScene(
         "opening-postrock",
@@ -164,6 +173,7 @@ SCENES: tuple[NarrationScene, ...] = (
         ("Mogwai 来自苏格兰格拉斯哥，1995 年成军，以长时间的器乐推进著称。",),
         window_seconds=12,
         is_opening=True,
+        station=StationId.LINEAGE,
     ),
     NarrationScene(
         "opening-citypop",
@@ -174,6 +184,7 @@ SCENES: tuple[NarrationScene, ...] = (
         ("《Ride on Time》是山下达郎 1980 年的专辑和同名单曲。",),
         window_seconds=12,
         is_opening=True,
+        station=StationId.CASUAL,
     ),
     NarrationScene(
         "outro-casals",
@@ -188,5 +199,6 @@ SCENES: tuple[NarrationScene, ...] = (
         window_seconds=25,
         is_final=True,
         previous_context="本期放了卡萨尔斯演奏的前奏曲、萨拉班德和咏叹调。",
+        station=StationId.CRATE,
     ),
 )

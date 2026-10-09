@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from wavecast.intelligence.models import RadioScript
+from wavecast.intelligence.models import OutputLanguage, RadioScript
 from wavecast.intelligence.writer import WriterService
 from wavecast.presentation import HostMode
 from wavecast.proposals import (
@@ -70,7 +70,11 @@ def test_the_station_reaches_the_live_episode_and_the_writer_prompt() -> None:
 
     fixture = StructuredFixture(RadioScript(blocks=[]))
     chapter = skeleton().chapters[0].model_copy(update={"evidence_ids": []})
-    asyncio.run(WriterService(fixture).write(chapter, [], station=episode.station))
+    asyncio.run(
+        WriterService(fixture).write(
+            chapter, [], station=episode.station, output_language=OutputLanguage.ZH_CN
+        )
+    )
     assert "Station: 来龙去脉" in fixture.prompts[0]
 
     other = StructuredFixture(RadioScript(blocks=[]))

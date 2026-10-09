@@ -1,5 +1,5 @@
 import pytest
-from wavecast.evals.narration_checks import (
+from wavecast.narration_quality import (
     check_block,
     estimate_seconds,
     opener_of,
@@ -97,3 +97,17 @@ def test_summary_measures_repetition_and_flavour() -> None:
     assert summarize(varied).opener_diversity == 1.0
     assert summarize([check_block("一层层叠起来。")]).ai_flavour_rate == 1.0
     assert summarize([]).blocks == 0
+
+
+def test_years_are_read_in_digits_and_in_chinese() -> None:
+    from wavecast.narration_quality import years_in
+
+    assert years_in("1982 年，一九九八年和 2005年") == {"1982", "1998", "2005"}
+    assert years_in("第 1234 首") == set()  # not a year
+    assert years_in("播放了 19800 次") == set()
+
+
+def test_a_year_missing_from_the_evidence_is_flagged_only_when_the_set_is_given() -> None:
+    assert "unsupported_year:1979" in issues("1979 年的歌", supported_years={"1980"})
+    assert not any(i.startswith("unsupported_year") for i in issues("1980 年的歌", supported_years={"1980"}))
+    assert not any(i.startswith("unsupported_year") for i in issues("1979 年的歌"))
