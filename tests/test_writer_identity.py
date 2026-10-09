@@ -277,3 +277,56 @@ def test_a_closing_with_a_year_is_rewritten() -> None:
     assert len(llm.prompts) == 2
     assert "closing" in llm.prompts[1]
     assert [block.text for block in result.blocks] == [plain]
+
+
+# --- a block talks about the two tracks around it -------------------------------------------
+
+OTHER_TRACKS = ["A - One", "A - Jody", "A - Struttin' With Some Barbecue"]
+
+
+def test_a_block_about_a_track_that_is_neither_neighbour_is_rewritten() -> None:
+    stray = "Struttin' With Some Barbecue 是 Lil Hardin 写的，Jody 接着来。"
+    plain = "Jody 接着来，还是同一个人。"
+    llm = Sequenced(_script(stray), _script(plain))
+
+    result = _write(llm, route_tracks=OTHER_TRACKS)
+
+    assert len(llm.prompts) == 2
+    assert "neither the one just played nor the next one" in llm.prompts[1]
+    assert [block.text for block in result.blocks] == [plain]
+
+
+def test_naming_the_track_just_played_and_the_next_is_fine() -> None:
+    fine = "One 刚放完，Jody 是同一个人写的。"
+    llm = Sequenced(_script(fine))
+
+    result = _write(llm, route_tracks=OTHER_TRACKS)
+
+    assert len(llm.prompts) == 1
+    assert [block.text for block in result.blocks] == [fine]
+
+
+def test_a_very_short_title_is_not_counted_as_a_mention() -> None:
+    from wavecast.narration_quality import check_block
+
+    issues = check_block(
+        "他回到 Home 的路上，Jody 响起来。",
+        route_titles=["Home", "Jody"],
+        focus_titles=["Jody"],
+    ).issues
+
+    assert not [issue for issue in issues if issue.startswith("names_other_track")]
+
+
+def test_the_check_is_off_without_neighbours_and_in_the_closing() -> None:
+    from wavecast.narration_quality import check_block
+
+    text = "Struttin' With Some Barbecue 是最早的一首。"
+    titles = ["Jody", "Struttin' With Some Barbecue"]
+
+    assert not [i for i in check_block(text, route_titles=titles).issues if i.startswith("names_other")]
+    assert not [
+        i
+        for i in check_block(text, route_titles=titles, focus_titles=["Jody"], is_final=True).issues
+        if i.startswith("names_other")
+    ]

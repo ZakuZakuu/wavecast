@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from wavecast.spoken_form import KnownTrack, to_spoken_form
-from wavecast.text_identity import canonical_name, text_mentions_name
+from wavecast.text_identity import canonical_name, song_title_key, text_mentions_name
 
 # Stock figurative verbs and images that recur in generated Chinese music copy.
 FIGURATIVE_PHRASES: tuple[str, ...] = (
@@ -88,6 +88,8 @@ _LISTEN_CUE = re.compile(r"留意|注意|听听|听它|听他|听她|你听|听�
 _PARALLEL_LIST = re.compile(r"(?:[^，。、]{1,6}、){2}[^，。、]{1,6}")
 _SENTENCE_BREAK = re.compile(r"[。！？!?；;\n]+")
 _MIN_REPEAT_CHARS = 10
+# A route title shorter than this is too likely to be an ordinary word to count as a mention.
+_MIN_STRAY_TITLE_CHARS = 5
 # Share of the shorter sentence's character pairs found in the other.  Measured on real
 # programmes: a reworded repeat scores 0.67, unrelated sentences sharing a name 0.2 or less.
 _REPEAT_CONTAINMENT = 0.5
@@ -271,6 +273,7 @@ def check_block(
     supported_durations: set[str] | None = None,
     unplayed_names: Sequence[str] = (),
     route_titles: Sequence[str] = (),
+    focus_titles: Sequence[str] = (),
     earlier: str = "",
 ) -> BlockCheck:
     issues: list[str] = []
@@ -306,6 +309,11 @@ def check_block(
     for name in unplayed_names:
         if text_mentions_name(text, name):
             issues.append(f"mentions_unplayed:{name}")
+    if focus_titles and not is_final:
+        focus = {song_title_key(title) for title in focus_titles}
+        for title in titles_named(text, route_titles):
+            if len(canonical_name(title)) >= _MIN_STRAY_TITLE_CHARS and song_title_key(title) not in focus:
+                issues.append(f"names_other_track:{title}")
     if is_final and len(titles_named(text, route_titles)) >= _RECAP_TITLES:
         issues.append("recap_list")
     if earlier and repeated_sentence(text, earlier) is not None:
@@ -348,6 +356,7 @@ _REWRITE_ISSUES = (
     "repeats_earlier",
     "repeats_phrase",
     "same_name_tangent",
+    "names_other_track",
 )
 
 
@@ -380,6 +389,7 @@ _REASON_TEXT = {
     "rhetorical_hook": "opens with a question to the listener (有没有想过, 你知道吗); state the thing instead",
     "recap_list": "lists the tracks played one by one; name at most the last track, or none",
     "repeats_earlier": "says again what an earlier block of this programme already said",
+    "names_other_track": "talks about a track that is neither the one just played nor the next one; keep to those two",
     "same_name_tangent": "talks about another song that only shares the title; it is not what is playing",
     "repeats_phrase": "reuses a turn of phrase an earlier block of this programme already used; word it differently",
 }

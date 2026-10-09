@@ -354,6 +354,12 @@ def _problems(
     """Per-block reasons a rewrite is worth asking for (empty when the draft is fine)."""
 
     is_final = any(slot.is_final for slot in slots)
+    focus_titles = [
+        track.canonical_title
+        for slot in slots
+        for track in (slot.just_played_track, slot.upcoming_track)
+        if track is not None
+    ]
     found: dict[int, list[str]] = {}
     for index, block in enumerate(script.blocks):
         reasons = rewrite_reasons(
@@ -367,6 +373,7 @@ def _problems(
                 supported_durations=supported_durations,
                 unplayed_names=unplayed_names,
                 route_titles=route_titles,
+                focus_titles=focus_titles,
                 earlier=earlier,
             )
         )
