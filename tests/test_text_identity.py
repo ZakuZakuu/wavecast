@@ -76,3 +76,12 @@ def test_base_title_key_ignores_every_trailing_descriptive_group(
     from wavecast.text_identity import base_title_key
 
     assert (base_title_key(left) == base_title_key(right)) is same
+
+
+def test_latin_accents_are_dropped_but_kana_voicing_marks_are_kept() -> None:
+    from wavecast.text_identity import strip_latin_accents
+
+    assert strip_latin_accents("Prélude à l'après-midi d'un faune") == "Prelude a l'apres-midi d'un faune"
+    assert strip_latin_accents("ガ") == "ガ"
+    assert strip_latin_accents("が ぱ") == "が ぱ"
+    assert strip_latin_accents("久石譲") == "久石譲"
