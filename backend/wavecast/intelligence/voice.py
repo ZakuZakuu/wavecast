@@ -164,6 +164,25 @@ def max_characters(window_seconds: float | None) -> int | None:
     return max(12, int(window_seconds * CHARS_PER_SECOND))
 
 
+# The longest a station's host speaks in one block, whatever the programme timing plan offers.
+# The plan budgets FULL hosting generously (40-50 s), which reads as a lecture.
+MAX_SECONDS: dict[StationId, int] = {
+    StationId.CASUAL: 15,
+    StationId.CRATE: 20,
+    StationId.PORTRAIT: 30,
+    StationId.LINEAGE: 30,
+    StationId.NIGHT: 8,
+}
+
+
+def window_for(station: StationId | None, planned_seconds: float | None) -> float | None:
+    """The spoken window to write for: the plan's, capped by what the station's host does."""
+
+    if planned_seconds is None or station is None:
+        return planned_seconds
+    return min(planned_seconds, MAX_SECONDS[station])
+
+
 # Share of the window a station's block should use at least; a data-sheet reading of three
 # short facts is as unnatural as a lecture.
 MIN_FILL: dict[StationId, float] = {
@@ -223,6 +242,10 @@ def voice_instructions(
             "Openers already used in this programme (do not begin like any of them): "
             + "、".join(used_openers[-6:])
         )
+    lines.append(
+        "Do not repeat a fact, a date or a name's backstory that the previous context already "
+        "told; say something new or say less."
+    )
     lines.append(
         "Write plain spoken Chinese for the ear, as a person talks, not as notes: complete "
         "sentences, everyday verbs, one idea per sentence, ordinary connectives (其实, 不过, "

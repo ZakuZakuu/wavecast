@@ -23,7 +23,7 @@ from .models import (
     RadioScript,
     resolve_output_language,
 )
-from .voice import voice_instructions
+from .voice import voice_instructions, window_for
 
 logger = logging.getLogger(__name__)
 
@@ -99,12 +99,17 @@ class WriterService:
             ]
         )
         slots = list(slot_contexts or ())
+        spoken_window = (
+            window_for(station, target_duration_seconds)
+            if selected_language is OutputLanguage.ZH_CN
+            else target_duration_seconds
+        )
         station_line = (
             voice_instructions(
                 station=station,
                 seed=voice_seed or topic or chapter.reason,
                 index=chapter.index,
-                window_seconds=target_duration_seconds,
+                window_seconds=spoken_window,
                 used_openers=used_openers,
                 is_opening=any(slot.is_opening for slot in slots),
                 is_final=any(slot.is_final for slot in slots),
@@ -158,7 +163,7 @@ class WriterService:
             f"{station_line}"
             f"Chapter: {chapter.model_dump_json()}\n"
             f"Evidence: {[item.model_dump() for item in scoped]}\n"
-            f"Previous context: {previous_committed_context[:1000]}\n"
+            f"Previous context: {previous_committed_context[-1000:]}\n"
             f"Narration slot contexts: {json.dumps(playback_context, ensure_ascii=False)}\n"
             # Keep the old projection for compatibility with fixture callers;
             # it is explicitly not authoritative when typed slot contexts are present.
@@ -167,7 +172,7 @@ class WriterService:
             f"Next track metadata: {next_track_metadata[:500]}\n"
             f"Host style: {host_style}\n"
             f"Presentation mode: {host_mode.value}. {presentation_guidance}\n"
-            f"Target narration duration seconds: {target_duration_seconds or 'use chapter context'}"
+            f"Target narration duration seconds: {spoken_window or 'use chapter context'}"
         )
         known_tracks = _known_tracks(slot_contexts)
         supported = _supported_years(scoped, previous_committed_context, known_tracks)
@@ -175,7 +180,7 @@ class WriterService:
         for _ in range(self.max_revisions):
             if not isinstance(result, RadioScript):
                 break
-            problems = _problems(result, target_duration_seconds, known_tracks, slots, supported)
+            problems = _problems(result, spoken_window, known_tracks, slots, supported)
             if not problems:
                 break
             revised = await self._attempt(
@@ -187,9 +192,7 @@ class WriterService:
             )
             if not isinstance(revised, RadioScript):
                 break
-            revised_problems = _problems(
-                revised, target_duration_seconds, known_tracks, slots, supported
-            )
+            revised_problems = _problems(revised, spoken_window, known_tracks, slots, supported)
             logger.info(
                 "writer_revision problems_before=%d problems_after=%d",
                 sum(len(item) for item in problems.values()),
