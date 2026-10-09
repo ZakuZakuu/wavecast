@@ -214,8 +214,10 @@ uv run python scripts/cloud/export-review.py <episode-id> --listener-id claude-r
 
 结果在 gitignored `.wavecast-data/cloud/reviews/<episode-id>.json`：选曲、章节 ID、
 可见主持词、TTS 文本/cues、状态和时长；不包含音源 URL、用户身份或 provider 原始
-请求/响应。此导出不是研究证据包。API 的 progressive_session 不公开；需要核对
-事实来源时，针对该本地数据库加载已存储的结构化研究结果，另外做白名单导出。
+请求/响应。`evidence` 字段来自 `GET /api/episodes/<id>/evidence`（仅所有者可读）：
+每章引用了哪些证据、对应的主持词段 ID，以及证据的摘录（≤400 字）、来源域名与标题、
+provider 和置信度；不含完整 URL、检索词、prompt 或原始响应。核对事实时按
+`chapters[].narration_segment_ids` 找到主持词，再按 `evidence_ids` 对照证据。
 禁止 dump 全表/原始 prompt/response/reasoning。没有来源不能当作核实过的事实。
 
 导出文件还带 `usage`（来自 `GET /api/episodes/<id>/usage`，仅所有者可读）：节目的预估/
