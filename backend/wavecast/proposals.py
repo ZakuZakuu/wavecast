@@ -454,6 +454,18 @@ def _clean_artists(names: list[str]) -> list[str]:
     return cleaned[:4]
 
 
+def _rotated[T](items: list[T], seed: str) -> list[T]:
+    """``items`` starting at a position chosen by ``seed`` (unchanged without a seed).
+
+    A rotation keeps the model's order after the start, so a fallback still tries the others.
+    """
+
+    if not seed or len(items) < 2:
+        return list(items)
+    start = _pick(seed, "opening", len(items))
+    return [*items[start:], *items[:start]]
+
+
 def _pick(seed: str, salt: str, count: int) -> int:
     digest = sha1(f"{salt}|{seed}".encode()).hexdigest()
     return int(digest[:8], 16) % count
@@ -542,13 +554,15 @@ class LLMProgramProposalGenerator:
 
         proposals: list[ProgramProposal] = []
         for draft in raw.proposals:
+            # The id doubles as the variety seed: it picks where among the model's equally
+            # good opening candidates the search starts, and it is stored with the programme.
+            proposal_id = f"proposal-{uuid4().hex}"
             resolved, opening_duration_seconds, opening_timing_profile = (
-                await self._resolve_opening_track(draft)
+                await self._resolve_opening_track(draft, seed=proposal_id)
             )
             if resolved is None or opening_duration_seconds is None:
                 raise ProgramProposalGenerationError(await self._classify_unresolved(draft))
 
-            proposal_id = f"proposal-{uuid4().hex}"
             proposals.append(
                 ProgramProposal(
                     id=proposal_id,
@@ -583,8 +597,9 @@ class LLMProgramProposalGenerator:
     async def _resolve_opening_track(
         self,
         draft: ProgramProposalDraft,
+        seed: str = "",
     ) -> tuple[ResolvedTrack | None, int | None, TrackTimingProfile | None]:
-        candidates = draft.opening_track_candidates[: self.max_opening_candidates]
+        candidates = _rotated(draft.opening_track_candidates, seed)[: self.max_opening_candidates]
 
         # First preserve the strongest contract: the model-proposed exact
         # artist/title must independently resolve to a playable catalog item.
@@ -762,8 +777,11 @@ class LLMProgramProposalGenerator:
             "make one clear editorial promise with a concise title, description, two to eight "
             "route beats, and compact genre/mood tags. This is not a research stage: do not "
             "pretend to have searched the web and do not add factual claims that require "
-            "evidence. For each proposal, provide one to four opening-track candidates in "
-            "ranked order. Candidates are untrusted hypotheses only: use exact real artist and "
+            "evidence. For each proposal, provide one to four opening-track candidates. They are "
+            "not ranked: each should be a good, different way to begin (the application picks "
+            "among them so the same request does not always open the same way), differing in "
+            "artist or era where the request allows, and need not be the single most famous "
+            "song. Candidates are untrusted hypotheses only: use exact real artist and "
             "track titles you believe exist, never invent a catalog ID, URL, provider name, "
             "or playback reference. The application will independently resolve exact catalog "
             "identity and may reject the proposal. Duration is application-owned; do not emit "

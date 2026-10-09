@@ -12,6 +12,7 @@ Nothing in the runtime consumes the pool yet; later steps hand it to the Curator
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -132,6 +133,10 @@ class CandidateOutcome(BaseModel):
     track_ref: str | None = None
 
 
+def _shuffle_key(seed: str, track_ref: str) -> str:
+    return hashlib.sha1(f"{seed}|{track_ref}".encode()).hexdigest()
+
+
 class CatalogPool(BaseModel):
     entries: list[PoolEntry] = Field(default_factory=list)
     outcomes: list[CandidateOutcome] = Field(default_factory=list)
@@ -160,9 +165,18 @@ class CatalogPool(BaseModel):
         return None
 
     def listing(
-        self, *, max_entries: int = 40, max_per_artist: int = 3, max_per_anchor_artist: int = 6
+        self,
+        *,
+        max_entries: int = 40,
+        max_per_artist: int = 3,
+        max_per_anchor_artist: int = 6,
+        seed: str = "",
     ) -> list[PoolEntry]:
         """Entries offered to the Curator, most trusted first, with a per-artist cap.
+
+        With a ``seed`` the order inside each trust tier is a stable shuffle of it, so the same
+        request does not always show the model the same first tracks (language models favour
+        what is listed first); the tiers themselves, the caps and the contents are unchanged.
 
         Artists named by the listener (``ARTIST_SEARCH`` entries) get a higher cap so a
         career-focused programme can still stay on that artist.  The cap is enforced here,
@@ -175,7 +189,12 @@ class CatalogPool(BaseModel):
             if entry.source is PoolSource.ARTIST_SEARCH
         }
         ranked = sorted(
-            enumerate(self.entries), key=lambda pair: (_SOURCE_ORDER[pair[1].source], pair[0])
+            enumerate(self.entries),
+            key=lambda pair: (
+                _SOURCE_ORDER[pair[1].source],
+                _shuffle_key(seed, pair[1].track_ref) if seed else pair[0],
+                pair[0],
+            ),
         )
         # A keyword hit that only repeats a trusted entry's song under another artist is a
         # cover or re-release of it; do not offer it as a second song.
