@@ -2283,6 +2283,37 @@ def _used_openers(episode: LiveEpisode) -> list[str]:
     return openers
 
 
+_TRANSLATED_TITLE_SECONDS = 3
+
+
+def _is_cjk_only(title: str) -> bool:
+    letters = [char for char in title if char.isalpha()]
+    return bool(letters) and all("\u3040" <= char <= "\u9fff" for char in letters)
+
+
+def _is_latin_only(title: str) -> bool:
+    letters = [char for char in title if char.isalpha()]
+    return bool(letters) and all(char.isascii() for char in letters)
+
+
+def _translated_title_of_same_length(left: ResolvedTrack, right: ResolvedTrack) -> bool:
+    """One recording listed under its original title and a Chinese rendering of it.
+
+    The catalog lists "What A Wonderful World" and "多美妙的世界" as separate tracks of the
+    same artist.  Without a shared word the titles cannot be compared, so this accepts the
+    pair only when one title is entirely Chinese/Japanese, the other entirely Latin, and the
+    recordings' lengths agree to within a few seconds (both lengths must be known).
+    """
+
+    if left.duration_seconds is None or right.duration_seconds is None:
+        return False
+    if abs(left.duration_seconds - right.duration_seconds) > _TRANSLATED_TITLE_SECONDS:
+        return False
+    return (_is_cjk_only(left.canonical_title) and _is_latin_only(right.canonical_title)) or (
+        _is_latin_only(left.canonical_title) and _is_cjk_only(right.canonical_title)
+    )
+
+
 def _same_song_identity(left: ResolvedTrack | None, right: ResolvedTrack) -> bool:
     """Conservatively collapse catalog/version aliases of the same episode song.
 
@@ -2296,7 +2327,9 @@ def _same_song_identity(left: ResolvedTrack | None, right: ResolvedTrack) -> boo
         return False
     if left.track_ref == right.track_ref:
         return True
-    if song_title_key(left.canonical_title) != song_title_key(right.canonical_title):
+    if song_title_key(left.canonical_title) != song_title_key(right.canonical_title) and not (
+        _translated_title_of_same_length(left, right)
+    ):
         return False
     left_artist = _artist_identity_words(left.canonical_artist)
     right_artist = _artist_identity_words(right.canonical_artist)
