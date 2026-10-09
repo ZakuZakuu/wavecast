@@ -22,6 +22,7 @@ from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.language import OutputLanguage
 from wavecast.models.episode import CoverParams, EpisodeSeed, utc_now
+from wavecast.narration_quality import check_block, rewrite_reasons
 from wavecast.presentation import PresentationIntent
 from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError
@@ -420,6 +421,9 @@ _OPENING_IDENTITIES = (
 )
 
 
+_OPENING_WINDOW_SECONDS = 12
+
+
 def _pick(seed: str, salt: str, count: int) -> int:
     digest = sha1(f"{salt}|{seed}".encode()).hexdigest()
     return int(digest[:8], 16) % count
@@ -439,9 +443,14 @@ def _opening_narration_text(
         identity = _OPENING_IDENTITIES[_pick(seed, "identity", len(_OPENING_IDENTITIES))].format(
             artist=artist, title=title
         )
-        fallback = "先别急着跳歌，听听它怎么把今天这条声音路线打开。"
-        parts = [note or fallback, identity]
-        if _pick(seed, "order", 2) == 0:
+        # A note with stock phrasing is dropped rather than spoken; the identity (and the
+        # station ident) carry the opening on their own.
+        if note and rewrite_reasons(check_block(note, window_seconds=_OPENING_WINDOW_SECONDS)):
+            note = None
+        if note and note[-1] not in "。！？.!?":
+            note += "。"
+        parts = [note, identity] if note else [identity]
+        if note and _pick(seed, "order", 2) == 0:
             parts.reverse()
         ident = pick_ident(request.station, seed)
         if ident and request.station is not StationId.NIGHT:
@@ -732,10 +741,12 @@ class LLMProgramProposalGenerator:
             "requested listening direction while leaving room for later research and curation. "
             "Also provide one short opening_host_note in the listener's language. It will be "
             "spoken over the opening song after the application inserts the verified artist/title. "
-            "Keep it to one concise sentence, conversational rather than announcer-like, and use "
-            "only editorial listening guidance (why this is a good opening / what to notice). "
-            "Do not repeat artist or track names and do not make release-date, biography, chart, "
-            "causal, or other factual claims that would require research.\n"
+            "Keep it to one concise sentence of plain spoken language, conversational rather than "
+            "announcer-like, saying only why this is a good place to begin. Do not describe how "
+            "it sounds, use no figurative wording (for example 铺开, 一层层, 夜色, 霓虹, 画出), "
+            "and do not start with 先从 or 我们先. Do not repeat artist or track names and do "
+            "not make release-date, biography, chart, causal, or other factual claims that "
+            "would require research.\n"
             f"Duration intent: {request.duration_intent.value}\n"
             f"Taste context: {taste_context}\n"
             f"Listener request: {request.prompt.strip()}"
