@@ -224,7 +224,7 @@ def test_an_invented_length_is_worth_a_rewrite() -> None:
 
     reasons = rewrite_reasons(check_block("八分钟的现场。", supported_durations=set()))
 
-    assert any("length of time" in reason for reason in reasons)
+    assert any("how long a song is" in reason for reason in reasons)
 
 
 @pytest.mark.parametrize(
@@ -239,3 +239,60 @@ def test_phrases_from_the_second_live_round_are_figurative_hits(text: str) -> No
     from wavecast.narration_quality import rewrite_reasons
 
     assert rewrite_reasons(check_block(text))
+
+
+# --- third live round (2026-10-09): hooks, sound similes, bios in the closing -----------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "有没有想过，安静不一定靠小声？",
+        "你知道吗，这支乐队来自冰岛。",
+        "想象一下，一个人在空房间里弹琴。",
+        "是不是觉得这首歌越听越长？",
+    ],
+)
+def test_a_question_to_the_listener_is_flagged(text: str) -> None:
+    from wavecast.narration_quality import rewrite_reasons
+
+    assert "rhetorical_hook" in issues(text)
+    assert any("question" in reason for reason in rewrite_reasons(check_block(text)))
+
+
+def test_plain_statements_about_the_same_subject_are_not_hooks() -> None:
+    assert "rhetorical_hook" not in issues("这支乐队来自冰岛，这首歌八分钟。")
+    assert "rhetorical_hook" not in issues("安静不一定靠小声。")
+
+
+@pytest.mark.parametrize(
+    "text", ["鼓有时候像踮着脚进门。", "这次把动静拉到最大。", "把声音拉到最大。"]
+)
+def test_sound_similes_from_the_third_round_are_figurative_hits(text: str) -> None:
+    assert check_block(text).figurative_hits
+
+
+def test_a_closing_block_does_not_give_a_year() -> None:
+    bio = "最后停在 Hammock 的《Breathturn》。它 2004 年前后在纳什维尔成形。"
+
+    assert "final_block_gives_year" in issues(bio, is_final=True)
+    assert "final_block_gives_year" not in issues(bio)  # only the closing is held to it
+    assert "final_block_gives_year" not in issues("最后停在 Hammock 的《Breathturn》。", is_final=True)
+
+
+def test_the_closing_year_and_the_hook_are_worth_a_rewrite() -> None:
+    from wavecast.narration_quality import rewrite_reasons
+
+    assert any("closing" in r for r in rewrite_reasons(check_block("二〇〇四年成形。", is_final=True)))
+
+
+def test_a_first_sentence_that_is_a_question_is_a_hook() -> None:
+    assert "rhetorical_hook" in issues("安静到底算什么？Mogwai 给了个答案。")
+    assert "rhetorical_hook" in issues("为什么后摇这么长? 因为它不赶时间。")
+    assert "rhetorical_hook" not in issues("Mogwai 给了个答案。安静到底算什么？")  # not the opening
+    assert "rhetorical_hook" not in issues("这首歌从头到尾没有人声。")
+
+
+@pytest.mark.parametrize("text", ["刚才那段即兴撑起一片天。", "这段把一切收到身边。", "纯器乐，情绪是温和的。"])
+def test_more_phrases_from_the_third_round_are_figurative_hits(text: str) -> None:
+    assert check_block(text).figurative_hits

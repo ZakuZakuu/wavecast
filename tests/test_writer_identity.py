@@ -220,24 +220,26 @@ def test_a_length_of_time_the_evidence_does_not_give_is_rewritten() -> None:
     result = _write(llm)
 
     assert len(llm.prompts) == 2
-    assert "length of time" in llm.prompts[1]
+    assert "how long a song is" in llm.prompts[1]
     assert [block.text for block in result.blocks] == [plain]
 
 
-def test_a_length_of_time_that_the_evidence_gives_is_allowed() -> None:
+def test_a_length_of_time_is_rewritten_even_when_the_evidence_gives_it() -> None:
     from wavecast.intelligence.models import Evidence
 
+    # The evidence describes the album version; the file that plays can be shorter.
     evidence = Evidence(
         id="e1",
-        claim_or_excerpt="这首歌的现场版长达八分钟。",
+        claim_or_excerpt="这首歌的专辑版长达十六分钟。",
         source_url="https://example.com/a",
         source_provider="fixture",
         confidence=0.9,
         query="fixture",
     )
     chapter = _chapter().model_copy(update={"evidence_ids": ["e1"]})
-    text = "回到 Mogwai，现场版有八分钟。"
-    llm = Sequenced(_script(text))
+    stated = "回到 Mogwai，这首十六分钟，平静和轰鸣一直在换。"
+    plain = "回到 Mogwai，平静和轰鸣一直在换。"
+    llm = Sequenced(_script(stated), _script(plain))
 
     result = asyncio.run(
         WriterService(llm).write(
@@ -251,6 +253,27 @@ def test_a_length_of_time_that_the_evidence_gives_is_allowed() -> None:
         )
     )
 
-    assert len(llm.prompts) == 1
+    assert len(llm.prompts) == 2
     assert isinstance(result, RadioScript)
-    assert [block.text for block in result.blocks] == [text]
+    assert [block.text for block in result.blocks] == [plain]
+
+
+def test_the_voice_instructions_forbid_questions_and_sound_similes() -> None:
+    llm = Sequenced(_script("Jody 是同一个人写的。"))
+
+    _write(llm)
+
+    assert "questions put to the listener" in llm.prompts[0]
+    assert "similes for how music sounds; how long a song is" in llm.prompts[0]
+
+
+def test_a_closing_with_a_year_is_rewritten() -> None:
+    bio = "最后停在 Breathturn。Hammock 2004 年前后在纳什维尔成形。"
+    plain = "最后停在 Hammock 的 Breathturn，就到这儿。"
+    llm = Sequenced(_outro(bio), _outro(plain))
+
+    result = _write_final(llm, route_tracks=ROUTE_TRACKS)
+
+    assert len(llm.prompts) == 2
+    assert "closing" in llm.prompts[1]
+    assert [block.text for block in result.blocks] == [plain]
