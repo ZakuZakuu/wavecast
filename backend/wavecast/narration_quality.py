@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from wavecast.spoken_form import KnownTrack, to_spoken_form
-from wavecast.text_identity import canonical_name
+from wavecast.text_identity import text_mentions_name
 
 # Stock figurative verbs and images that recur in generated Chinese music copy.
 FIGURATIVE_PHRASES: tuple[str, ...] = (
@@ -150,10 +150,8 @@ def check_block(
         issues.append("final_block_points_forward")
     if opener_of(text) in _STOCK_OPENERS:
         issues.append("stock_opener")
-    folded_text = canonical_name(text)
     for name in unplayed_names:
-        folded = canonical_name(name)
-        if len(folded) >= 2 and folded in folded_text:
+        if text_mentions_name(text, name):
             issues.append(f"mentions_unplayed:{name}")
     if supported_years is not None:
         for year in sorted(years_in(text) - supported_years):

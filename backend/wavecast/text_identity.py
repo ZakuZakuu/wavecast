@@ -101,3 +101,21 @@ def same_catalog_name(left: str, right: str) -> bool:
     """True when two catalog names are identical after folding script variants."""
 
     return canonical_name(left) == canonical_name(right)
+
+
+def text_mentions_name(text: str, name: str) -> bool:
+    """True when ``name`` is written in ``text`` (script variants and case folded).
+
+    A name made of Latin letters and digits must stand as a whole word, so ``Cat`` is not
+    found in ``category``; a name in another script is matched as a plain substring.
+    """
+
+    folded_name = canonical_name(name)
+    if len(folded_name) < 2:
+        return False
+    folded_text = canonical_name(text)
+    if re.fullmatch(r"[a-z0-9][a-z0-9 '’&.\-]*", folded_name):
+        pattern = rf"(?<![a-z0-9]){re.escape(folded_name)}(?![a-z0-9])"
+        return re.search(pattern, folded_text) is not None
+    return folded_name in folded_text
+

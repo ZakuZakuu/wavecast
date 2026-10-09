@@ -14,7 +14,7 @@ import logging
 import re
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from uuid import uuid4
 
@@ -120,6 +120,12 @@ from wavecast.providers.usage import (
     UsageTotals,
     scoped_to_episode,
     usage_diagnostics,
+)
+from wavecast.route_consistency import (
+    foreign_artists,
+    known_artist_names,
+    track_true_chapter,
+    used_an_alternate,
 )
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
@@ -1400,24 +1406,7 @@ class LiveEpisodeAssemblyService:
                         )
             route_chapter = chapter
             if replacement_kind is not None and selected_proposal is not None:
-                route_chapter = chapter.model_copy(
-                    update={
-                        "track": selected_proposal,
-                        "track_alternates": [],
-                        "connection_from_previous_track": None,
-                        "reason": (
-                            "Use a catalog-resolved replacement while preserving "
-                            "this chapter's editorial role."
-                        ),
-                        "novelty_distance": selected_proposal.novelty_distance,
-                        "evidence_ids": list(selected_proposal.evidence_ids),
-                        "claim_support": [],
-                        "narration_goal": (
-                            "Connect this playable replacement to the programme "
-                            "direction without unsupported song-specific claims."
-                        ),
-                    }
-                )
+                route_chapter = track_true_chapter(chapter, selected_proposal)
             resolved_chapters.append(
                 _ResolvedChapter(
                     chapter=route_chapter,
@@ -1460,6 +1449,28 @@ class LiveEpisodeAssemblyService:
                 trace=trace,
             )
         resolved_chapters = _reindex_resolved_chapters(resolved_chapters)
+        resolved_chapters = _reconcile_route_text(
+            resolved_chapters,
+            known_artists=known_artist_names(
+                [
+                    *(
+                        proposal
+                        for chapter in chapters
+                        for proposal in (chapter.track, *chapter.track_alternates)
+                        if proposal is not None
+                    ),
+                    *_pool_proposals(fast_result.plan, bundle),
+                ],
+                request.required_artists,
+                request.topic,
+            ),
+            earlier_tracks=(
+                (*reserved_tracks, locked_successor)
+                if locked_successor is not None
+                else reserved_tracks
+            ),
+            trace=trace,
+        )
         resolution_ms = _elapsed_ms(resolution_started)
         trace.mark(
             "tracks_resolved",
@@ -2409,6 +2420,55 @@ def _bound_progressive_resolved_route(
         if item.track is not None:
             track_count += 1
     return bounded
+
+
+def _reconcile_route_text(
+    items: list[_ResolvedChapter],
+    *,
+    known_artists: Sequence[str],
+    earlier_tracks: Sequence[ResolvedTrack],
+    trace: GenerationTrace,
+) -> list[_ResolvedChapter]:
+    """Make every chapter's text describe the track that actually plays.
+
+    The Writer trusts a chapter's reason, goal, claims and evidence.  When resolution played
+    an alternate instead of the planned track, or the text is about an artist the listener is
+    not hearing, the chapter falls back to generic text for the played track.
+    """
+
+    heard = [track.canonical_artist for track in earlier_tracks]
+    result: list[_ResolvedChapter] = []
+    for item in items:
+        track = item.track
+        if track is None:
+            result.append(item)
+            continue
+        selected = item.writer_chapter.track
+        cause: str | None = None
+        foreign: list[str] = []
+        if used_an_alternate(item.chapter, selected):
+            cause = "alternate_track"
+        else:
+            foreign = foreign_artists(
+                item.writer_chapter, track.canonical_artist, known_artists, heard
+            )
+            if foreign:
+                cause = "text_names_other_artist"
+        if cause is not None:
+            trace.mark(
+                "chapter_text_neutralised",
+                chapter_index=item.writer_chapter.index,
+                cause=cause,
+                foreign_artist_count=len(foreign),
+            )
+            item = replace(
+                item,
+                chapter=track_true_chapter(item.chapter, selected),
+                writer_chapter=track_true_chapter(item.writer_chapter, selected),
+            )
+        heard.append(track.canonical_artist)
+        result.append(item)
+    return result
 
 
 def _reindex_resolved_chapters(
@@ -3405,6 +3465,7 @@ class StagedProgressiveChapterGenerator:
                 used_openers=_used_openers(episode),
                 route_tracks=route_tracks,
                 unplayed_artists=unplayed_artists,
+                unfulfilled_artists=self.session.unfulfilled_artists,
                 topic=self.session.topic,
                 slot_contexts=chapter.slot_contexts,
             )
