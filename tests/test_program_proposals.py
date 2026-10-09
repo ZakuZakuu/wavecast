@@ -16,7 +16,7 @@ from wavecast.proposals import (
     ProposalGenerationRequest,
 )
 from wavecast.providers.contracts import TrackMetadata
-from wavecast.providers.errors import ProviderUnavailableError
+from wavecast.providers.errors import ProviderSchemaValidationError, ProviderUnavailableError
 from wavecast.providers.fakes import MockMusicProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.registry import MusicProviderRegistry
@@ -763,3 +763,62 @@ def test_the_prompt_asks_for_a_plain_host_note() -> None:
 
     assert "use no figurative wording" in llm.prompt
     assert "do not start with 先从 or 我们先" in llm.prompt
+
+
+class _FlakyLLM(_ProposalLLM):
+    def __init__(self, batch: ProgramProposalDraftBatch, failures: list[Exception]) -> None:
+        super().__init__(batch)
+        self.failures = failures
+        self.calls = 0
+
+    async def structured(self, prompt, output_type, **kwargs):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        if self.failures:
+            raise self.failures.pop(0)
+        return await super().structured(prompt, output_type, **kwargs)
+
+
+def _flaky_generator(failures: list[Exception]) -> tuple[LLMProgramProposalGenerator, _FlakyLLM]:
+    base, _ = _live_generator(
+        ProgramProposalDraftBatch(
+            proposals=[
+                ProgramProposalDraft(
+                    title="夜色转场",
+                    short_description="一段夜色里的转场。",
+                    editorial_route=["start", "turn"],
+                    opening_track_candidates=[
+                        OpeningTrackCandidate(artist="Mira Fields", title="Neon First Light")
+                    ],
+                )
+            ]
+        )
+    )
+    llm = _FlakyLLM(base.llm.batch, failures)  # type: ignore[attr-defined]
+    return LLMProgramProposalGenerator(llm, base.retrieval), llm
+
+
+def test_one_schema_invalid_reply_is_retried_once() -> None:
+    generator, llm = _flaky_generator([ProviderSchemaValidationError("bad shape")])
+
+    proposals = asyncio.run(generator.generate(ProposalGenerationRequest(prompt="夜色")))
+
+    assert len(proposals) == 1
+    assert llm.calls == 2
+
+
+def test_two_schema_invalid_replies_still_fail() -> None:
+    generator, llm = _flaky_generator(
+        [ProviderSchemaValidationError("bad"), ProviderSchemaValidationError("bad again")]
+    )
+
+    with pytest.raises(ProviderSchemaValidationError):
+        asyncio.run(generator.generate(ProposalGenerationRequest(prompt="夜色")))
+    assert llm.calls == 2
+
+
+def test_other_provider_failures_are_not_retried_here() -> None:
+    generator, llm = _flaky_generator([ProviderUnavailableError("down")])
+
+    with pytest.raises(ProviderUnavailableError):
+        asyncio.run(generator.generate(ProposalGenerationRequest(prompt="夜色")))
+    assert llm.calls == 1
