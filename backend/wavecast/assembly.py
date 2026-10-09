@@ -114,6 +114,7 @@ from wavecast.providers.usage import (
     scoped_to_episode,
     usage_diagnostics,
 )
+from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
 from wavecast.text_identity import canonical_name, strip_latin_accents, without_feature_credit
 from wavecast.timing import (
@@ -158,6 +159,7 @@ class LiveEpisodeAssemblyRequest(BaseModel):
     listener_taste_context: str | None = Field(default=None, max_length=1000)
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     output_language: OutputLanguage = OutputLanguage.AUTO
+    station: StationId | None = None
 
 
 class UnresolvedAssemblyProposal(BaseModel):
@@ -2376,6 +2378,7 @@ def _build_progressive_session(
         max_tracks=request.max_tracks,
         max_chapters=request.max_chapters,
         output_language=resolve_output_language(request.output_language, request.topic),
+        station=request.station,
         presentation_intent=request.presentation_intent,
         opening_track_ref=opening_track.track_ref,
         fast_plan=prepared.fast_result.plan,
@@ -3186,6 +3189,7 @@ class StagedProgressiveChapterGenerator:
                 host_mode=self.session.presentation_intent.host_mode,
                 target_duration_seconds=chapter.target_narration_seconds,
                 output_language=self.session.output_language,
+                station=self.session.station,
                 topic=self.session.topic,
                 slot_contexts=chapter.slot_contexts,
             )

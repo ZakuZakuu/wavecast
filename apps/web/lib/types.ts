@@ -46,6 +46,8 @@ export type ProposalGenerationRequest = {
   taste_context?: string;
   /** Spoken language of the programme; omitted lets the backend guess from the request text. */
   output_language?: "zh-CN" | "en-US" | "ja-JP";
+  /** The station the listener tuned: sets the default hosting (夜里 means no host). */
+  station?: "casual" | "crate" | "portrait" | "lineage" | "night";
 };
 
 type SegmentBase = {

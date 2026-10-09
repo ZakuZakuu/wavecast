@@ -22,11 +22,12 @@ from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.language import OutputLanguage
 from wavecast.models.episode import CoverParams, EpisodeSeed, utc_now
-from wavecast.presentation import PresentationIntent, infer_presentation_intent
+from wavecast.presentation import PresentationIntent
 from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
+from wavecast.stations import StationId, resolve_presentation_intent
 from wavecast.text_identity import canonical_name
 
 
@@ -44,6 +45,8 @@ class ProposalGenerationRequest(BaseModel):
     taste_context: str | None = Field(default=None, max_length=1000)
     # Explicit programme language; AUTO falls back to guessing from the request text.
     output_language: OutputLanguage = OutputLanguage.AUTO
+    # The station the listener tuned; sets the default hosting and (later) the host's voice.
+    station: StationId | None = None
 
     @field_validator("prompt")
     @classmethod
@@ -77,6 +80,7 @@ class ProgramProposal(BaseModel):
     anchor_artists: list[str] = Field(default_factory=list, max_length=8)
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     output_language: OutputLanguage = OutputLanguage.AUTO
+    station: StationId | None = None
     generation_profile: str = Field(default="balanced", min_length=1, max_length=64)
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -96,6 +100,7 @@ class ProgramProposal(BaseModel):
             cover=self.cover,
             presentation_intent=self.presentation_intent,
             output_language=self.output_language,
+            station=self.station,
             generation_profile=self.generation_profile,
             created_at=self.created_at,
         )
@@ -121,6 +126,7 @@ class ProgramProposal(BaseModel):
             anchor_artists=[],
             presentation_intent=seed.presentation_intent,
             output_language=seed.output_language,
+            station=seed.station,
             generation_profile=seed.generation_profile,
             created_at=seed.created_at,
         )
@@ -503,8 +509,9 @@ class LLMProgramProposalGenerator:
                     genre_tags=list(draft.genre_tags),
                     mood_tags=list(draft.mood_tags),
                     anchor_artists=[resolved.canonical_artist],
-                    presentation_intent=infer_presentation_intent(request.prompt),
+                    presentation_intent=resolve_presentation_intent(request.prompt, request.station),
                     output_language=request.output_language,
+                    station=request.station,
                     generation_profile="balanced",
                 )
             )
@@ -745,8 +752,9 @@ class DeterministicMockProgramProposalGenerator:
                     genre_tags=list(genres),
                     mood_tags=list(moods),
                     anchor_artists=["Mira Fields"],
-                    presentation_intent=infer_presentation_intent(request.prompt),
+                    presentation_intent=resolve_presentation_intent(request.prompt, request.station),
                     output_language=request.output_language,
+                    station=request.station,
                 )
             )
         return proposals

@@ -35,3 +35,14 @@ it("sends the chosen programme language with the proposal request", async () => 
     count: 1,
   });
 });
+
+it("sends the tuned station with the proposal request", async () => {
+  await api.createProgramProposals({
+    prompt: "睡前听的安静音乐",
+    duration_intent: "STANDARD",
+    station: "night",
+  });
+
+  const [, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+  expect(JSON.parse(String(init?.body))).toMatchObject({ station: "night" });
+});
