@@ -27,6 +27,12 @@ from wavecast.catalog_pool import (
     PoolBuildConfig,
 )
 from wavecast.composer import EpisodeComposer, PreparedMusicAsset
+from wavecast.coverage import (
+    candidate_artist_names,
+    covered_artists,
+    ensure_required_coverage,
+    unfulfilled_artists,
+)
 from wavecast.intelligence.background import BackgroundIntelligencePipeline
 from wavecast.intelligence.curation import CuratorContractError, CuratorService
 from wavecast.intelligence.fast_start import FastPathCoordinator, FastPathResult, FastStartPlanner
@@ -161,6 +167,7 @@ class LiveEpisodeAssemblyRequest(BaseModel):
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     output_language: OutputLanguage = OutputLanguage.AUTO
     station: StationId | None = None
+    required_artists: list[str] = Field(default_factory=list, max_length=4)
 
 
 class UnresolvedAssemblyProposal(BaseModel):
@@ -246,6 +253,7 @@ class _PreparedIntelligence:
     curator_ms: int
     resolution_ms: int
     catalog_pool: CatalogPool | None = None
+    unfulfilled_artists: tuple[str, ...] = ()
 
 
 _ESTIMATED_TRACK_DURATION_SECONDS = 180
@@ -352,26 +360,49 @@ def _pool_proposals(fast_plan: FastStartPlan, bundle: ResearchBundle) -> list[Tr
 
 
 _POOL_ARTIST_LIMIT = 3
+_POOL_TOPIC_ARTIST_LIMIT = 2
+_COVERAGE_POOL_CONFIG = PoolBuildConfig(max_verifications=8, timeout_seconds=15.0)
 
 
-def _pool_artist_queries(proposals: Sequence[TrackProposal]) -> list[str]:
-    """Distinct artists the model named, in order.
+def _pool_artist_queries(
+    proposals: Sequence[TrackProposal],
+    required: Sequence[str] = (),
+    topic: str = "",
+) -> list[str]:
+    """Distinct artists to search: the ones the request names, then the model's, in order.
 
+    Artists the listener named come first and are never cut: the route has to play them.
     An artist whose own catalog is mostly unplayable (licensing) still leads to related
     playable music through the artists the model associates with the topic; the pool caps
-    how many tracks any one artist can contribute.
+    how many tracks any one artist can contribute.  Name-like phrases in the request itself
+    are searched too, so an artist the model forgot to propose can still be found.
     """
 
     artists: list[str] = []
     seen: set[str] = set()
-    for proposal in proposals:
-        key = canonical_name(proposal.artist)
-        if key in seen:
-            continue
+
+    def add(name: str) -> bool:
+        key = canonical_name(name)
+        if not key or key in seen:
+            return False
         seen.add(key)
-        artists.append(proposal.artist)
-        if len(artists) >= _POOL_ARTIST_LIMIT:
+        artists.append(name)
+        return True
+
+    for name in required:
+        add(name)
+    proposed = 0
+    for proposal in proposals:
+        if proposed >= _POOL_ARTIST_LIMIT:
             break
+        if add(proposal.artist):
+            proposed += 1
+    added = 0
+    for name in candidate_artist_names(topic, limit=_POOL_TOPIC_ARTIST_LIMIT + len(required)):
+        if added >= _POOL_TOPIC_ARTIST_LIMIT:
+            break
+        if add(name):
+            added += 1
     return artists
 
 
@@ -812,6 +843,7 @@ class LiveEpisodeAssemblyService:
                 topic=request.topic,
                 trace=trace,
                 catalog_pool=catalog_pool,
+                required_artists=request.required_artists,
             )
         except (CuratorContractError, ProviderError) as error:
             trace.mark(
@@ -1246,6 +1278,7 @@ class LiveEpisodeAssemblyService:
                 topic=request.topic,
                 trace=trace,
                 catalog_pool=catalog_pool,
+                required_artists=request.required_artists,
             )
         except CuratorContractError as error:
             raise EpisodeAssemblyError(
@@ -1279,6 +1312,16 @@ class LiveEpisodeAssemblyService:
             skeleton.chapters, request.max_tracks, request.max_chapters
         )
         chapters = _normalize_chapters(chapters)
+        if request.required_artists:
+            chapters = await self._cover_required_artists(
+                request,
+                chapters,
+                bundle=bundle,
+                catalog_pool=catalog_pool,
+                reserved_tracks=reserved_tracks,
+                locked_successor=locked_successor,
+                trace=trace,
+            )
         skeleton = skeleton.model_copy(update={"chapters": chapters})
         trace.mark("program_skeleton_ready", chapter_count=len(chapters))
 
@@ -1436,6 +1479,15 @@ class LiveEpisodeAssemblyService:
                 diagnostics={"narration_failure_boundary": "slot_derivation"},
             ) from error
 
+        route_tracks = [
+            *reserved_tracks,
+            *([locked_successor] if locked_successor is not None else []),
+            *(item.track for item in resolved_chapters if item.track is not None),
+        ]
+        unmet = unfulfilled_artists(request.required_artists, route_tracks)
+        if unmet:
+            trace.mark("required_artists_unfulfilled", count=len(unmet))
+
         return _PreparedIntelligence(
             fast_result=fast_result,
             bundle=bundle,
@@ -1448,6 +1500,99 @@ class LiveEpisodeAssemblyService:
             curator_ms=curator_ms,
             resolution_ms=resolution_ms,
             catalog_pool=catalog_pool,
+            unfulfilled_artists=tuple(unmet),
+        )
+
+    async def _cover_required_artists(
+        self,
+        request: LiveEpisodeAssemblyRequest,
+        chapters: list[ChapterPlan],
+        *,
+        bundle: ResearchBundle,
+        catalog_pool: CatalogPool | None,
+        reserved_tracks: Sequence[ResolvedTrack],
+        locked_successor: ResolvedTrack | None,
+        trace: GenerationTrace,
+    ) -> list[ChapterPlan]:
+        """Put every artist the request names into the plan, from verified-playable tracks.
+
+        The Curator is told to cover them, but it plans from a candidate list and memory and
+        can leave one out.  A missing artist is searched in the catalog (the pool already did
+        when enabled) and given the chapter of an artist the request did not name.
+        """
+
+        credited = [
+            *(track.canonical_artist for track in reserved_tracks),
+            *([locked_successor.canonical_artist] if locked_successor is not None else []),
+            *(chapter.track.artist for chapter in chapters if chapter.track is not None),
+        ]
+        absent = [
+            name
+            for name in request.required_artists
+            if not covered_artists([name], credited)
+        ]
+        if not absent:
+            return chapters
+        pool = catalog_pool
+        if pool is None:
+            pool = await self._build_coverage_pool(absent, reserved_tracks, trace)
+        # Without a reserved opening, the first chapter is the track the listener starts with.
+        protected = set() if reserved_tracks else {0}
+        if locked_successor is not None:
+            protected.update(
+                index
+                for index, chapter in enumerate(chapters)
+                if chapter.track is not None
+                and canonical_name(chapter.track.title)
+                == canonical_name(locked_successor.canonical_title)
+            )
+        patched, missing = ensure_required_coverage(
+            chapters,
+            pool,
+            request.required_artists,
+            bundle.evidence,
+            reserved=(
+                (*reserved_tracks, locked_successor)
+                if locked_successor is not None
+                else reserved_tracks
+            ),
+            protected_indices=sorted(protected),
+        )
+        trace.mark(
+            "required_artists_checked",
+            required_count=len(request.required_artists),
+            absent_count=len(absent),
+            patched_count=len(absent) - len(missing),
+        )
+        return patched
+
+    async def _build_coverage_pool(
+        self,
+        artists: Sequence[str],
+        reserved_tracks: Sequence[ResolvedTrack],
+        trace: GenerationTrace,
+    ) -> CatalogPool | None:
+        """A small pool of the named artists' playable tracks, when the full pool is off."""
+
+        try:
+            pool = await CatalogPoolBuilder(self.retrieval, _COVERAGE_POOL_CONFIG).build(
+                artist_queries=list(artists)
+            )
+        except Exception as error:  # noqa: BLE001 - optional optimisation, degrade quietly
+            logger.warning("coverage_pool_failed error_type=%s", type(error).__name__)
+            trace.mark("coverage_pool_failed", error_type=type(error).__name__)
+            return None
+        return pool.model_copy(
+            update={
+                "entries": [
+                    entry
+                    for entry in pool.entries
+                    if not any(
+                        _same_song_identity(reserved, entry.resolved_track())
+                        for reserved in reserved_tracks
+                    )
+                ]
+            }
         )
 
     async def _build_catalog_pool(
@@ -1471,7 +1616,9 @@ class LiveEpisodeAssemblyService:
             proposals = _pool_proposals(fast_plan, bundle)
             pool = await builder.build(
                 proposals=proposals,
-                artist_queries=_pool_artist_queries(proposals),
+                artist_queries=_pool_artist_queries(
+                    proposals, request.required_artists, request.topic
+                ),
                 keyword_queries=[request.topic],
             )
         except Exception as error:  # noqa: BLE001 - optional optimisation, degrade quietly
@@ -2026,7 +2173,11 @@ def _route_summary(
         if item.resolved_track is not None:
             add(item.resolved_track.canonical_artist, item.resolved_track.canonical_title)
 
-    unplayed: list[str] = []
+    # An artist the listener asked for but the route could not play is never to be talked
+    # about as if it were part of the programme.
+    unplayed: list[str] = [
+        name for name in session.unfulfilled_artists if canonical_name(name) not in played_artists
+    ]
     for chapter in session.skeleton.chapters:
         for proposal in (chapter.track, *chapter.track_alternates):
             if proposal is None:
@@ -2434,6 +2585,8 @@ def _build_progressive_session(
         max_chapters=request.max_chapters,
         output_language=resolve_output_language(request.output_language, request.topic),
         station=request.station,
+        required_artists=list(request.required_artists),
+        unfulfilled_artists=list(prepared.unfulfilled_artists),
         presentation_intent=request.presentation_intent,
         opening_track_ref=opening_track.track_ref,
         fast_plan=prepared.fast_result.plan,

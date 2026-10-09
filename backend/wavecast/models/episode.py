@@ -83,6 +83,8 @@ class EpisodeSeed(BaseModel):
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     output_language: OutputLanguage = OutputLanguage.AUTO
     station: StationId | None = None
+    # Artists the listener's request names or clearly requires the programme to play.
+    required_artists: list[str] = Field(default_factory=list, max_length=4)
     generation_profile: str = "balanced"
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -185,6 +187,7 @@ class LiveEpisode(BaseModel):
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     output_language: OutputLanguage = OutputLanguage.AUTO
     station: StationId | None = None
+    required_artists: list[str] = Field(default_factory=list, max_length=4)
     progressive_session: ProgressiveAssemblySession | None = Field(
         default=None, exclude=True, repr=False
     )
