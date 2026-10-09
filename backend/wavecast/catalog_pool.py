@@ -32,6 +32,7 @@ from wavecast.text_identity import (
     base_title_key,
     canonical_name,
     same_catalog_name,
+    strip_latin_accents,
     without_feature_credit,
 )
 
@@ -303,7 +304,9 @@ def _song_key(track: RetrievedTrack) -> str:
     return "|".join(
         (
             "/".join(artists),
-            canonical_name(without_feature_credit(track.base_title or track.title)),
+            strip_latin_accents(
+                canonical_name(without_feature_credit(track.base_title or track.title))
+            ),
             track.version_kind.value,
         )
     )
