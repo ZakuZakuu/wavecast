@@ -401,3 +401,19 @@ def test_one_song_listed_with_reordered_credits_and_a_feature_suffix_is_a_single
     assert "Different Song" in titles
     assert sum(title.startswith("APPLE") for title in titles) == 1  # one entry per song
     assert len(catalog.detail_calls) == 2  # the second listing was never verified
+
+
+def test_a_song_listed_with_and_without_accents_is_a_single_entry() -> None:
+    catalog = SidecarLikeCatalog(
+        [
+            track("1", "Pablo Casals", "Suite No. 1: I. Prélude"),
+            track("2", "Pablo Casals", "Suite No. 1: I. Prelude"),
+            track("3", "Pablo Casals", "Suite No. 1: IV. Sarabande"),
+        ],
+        {"Pablo Casals": ["1", "2", "3"]},
+    )
+
+    pool = asyncio.run(builder(catalog).build(artist_queries=["Pablo Casals"]))
+
+    assert len(pool.entries) == 2
+    assert len(catalog.detail_calls) == 2

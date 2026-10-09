@@ -166,4 +166,66 @@ def test_finishing_a_programme_logs_estimated_against_actual_length(caplog) -> N
     )
     assert "estimated_s=300" in line
     assert f"actual_s={done.timeline_duration_seconds}" in line
-    assert "music=" in line and "skipped=" in line
+    assert "music=" in line and "skipped=0" in line
+
+
+def test_skipped_narration_is_counted_even_though_the_timeline_leaves_it_out(caplog) -> None:
+    from wavecast.models.episode import (
+        CoverParams,
+        EpisodeSeed,
+        NarrationSegment,
+        SegmentState,
+    )
+    from wavecast.orchestration.episode import EpisodeOrchestrator, InMemoryEpisodeRepository
+
+    seed = EpisodeSeed(
+        id="seed-skip",
+        title="Skip",
+        topic="Test topic",
+        short_description="x",
+        estimated_duration_seconds=300,
+        opening_track_ref="mock:opening",
+        opening_track_title="Opening",
+        opening_track_artist="Artist",
+        cover=CoverParams(family="editorial", seed=1, palette=("#000", "#fff")),
+    )
+    repository = InMemoryEpisodeRepository()
+    orchestrator = EpisodeOrchestrator(repository)
+    episode = orchestrator.start(seed)
+    episode.segments.append(
+        NarrationSegment(
+            id="skipped-one",
+            chapter_id="chapter-9",
+            order=99,
+            state=SegmentState.SKIPPED,
+            planned_duration_seconds=1,
+            title="Optional narration skipped",
+        )
+    )
+    repository.save(episode)
+
+    with caplog.at_level(logging.INFO, logger="wavecast.orchestration.episode"):
+        orchestrator.materialize_all(episode.id)
+
+    line = next(
+        record.getMessage() for record in caplog.records if "episode_materialized" in record.getMessage()
+    )
+    assert "skipped=1" in line
+
+    client = TestClient(api_module.app)
+    headers = {"X-Wavecast-Listener": "skip-owner"}
+    created = client.post("/api/episodes/from-seed/synthpop-return", headers=headers).json()
+    stored = api_module.orchestrator.get(created["id"])
+    stored.segments.append(
+        NarrationSegment(
+            id="skipped-two",
+            chapter_id="chapter-9",
+            order=99,
+            state=SegmentState.SKIPPED,
+            planned_duration_seconds=1,
+            title="Optional narration skipped",
+        )
+    )
+    api_module.repository.save(stored)
+    body = client.get(f"/api/episodes/{created['id']}/usage", headers=headers).json()
+    assert body["programme"]["narration_skipped"] == 1

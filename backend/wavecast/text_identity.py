@@ -45,6 +45,25 @@ def to_simplified(value: str) -> str:
     return converted.replace("\u90de", "\u90ce")
 
 
+def strip_latin_accents(value: str) -> str:
+    """Drop accents on Latin letters (``Prélude`` -> ``Prelude``), leaving other scripts alone.
+
+    Kana voicing marks and similar combining marks on non-Latin letters carry meaning, so
+    only marks that follow a Latin base letter are removed.
+    """
+
+    kept: list[str] = []
+    base_is_latin = False
+    for char in unicodedata.normalize("NFKD", value):
+        if unicodedata.combining(char):
+            if not base_is_latin:
+                kept.append(char)
+            continue
+        base_is_latin = ord(char) < 0x250 and char.isalpha()
+        kept.append(char)
+    return unicodedata.normalize("NFC", "".join(kept))
+
+
 _FEATURE_CREDIT = re.compile(
     r"\s*(?:[\(\[（]\s*(?:feat|ft|featuring|with)\b\.?[^\)\]）]*[\)\]）]"
     r"|-\s*(?:feat|ft|featuring)\b.*)\s*$",

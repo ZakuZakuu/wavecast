@@ -1152,9 +1152,10 @@ class EpisodeOrchestrator:
             saved.timeline_duration_seconds,
             sum(1 for item in saved.timeline_segments if item.kind is SegmentKind.MUSIC),
             sum(1 for item in saved.timeline_segments if item.kind is SegmentKind.NARRATION),
+            # timeline_segments leaves SKIPPED ones out, so count them from the full list.
             sum(
                 1
-                for item in saved.timeline_segments
+                for item in saved.ordered_segments
                 if item.kind is SegmentKind.NARRATION and item.state is SegmentState.SKIPPED
             ),
         )

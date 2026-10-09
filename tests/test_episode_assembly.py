@@ -295,6 +295,27 @@ def test_song_identity_collapses_catalog_aliases_without_merging_unrelated_cover
     assert _same_song_identity(bill_evans, unrelated_cover) is False
 
 
+def test_the_same_recording_listed_with_and_without_accents_is_one_song() -> None:
+    accented = ResolvedTrack(
+        track_ref="netease:one",
+        canonical_artist="Pablo Casals",
+        canonical_title="Cello Suite No. 1 in G Major, Bwv 1007: I. Prélude",
+    )
+    plain = ResolvedTrack(
+        track_ref="netease:two",
+        canonical_artist="Pablo Casals",
+        canonical_title="Cello Suite No. 1 in G Major, BWV 1007:I. Prelude",
+    )
+    other_movement = ResolvedTrack(
+        track_ref="netease:three",
+        canonical_artist="Pablo Casals",
+        canonical_title="Cello Suite No. 1 in G Major, BWV 1007:IV. Sarabande",
+    )
+
+    assert _same_song_identity(accented, plain) is True
+    assert _same_song_identity(accented, other_movement) is False
+
+
 def test_progressive_route_drops_later_semantic_song_repeat_after_locked_prefix() -> None:
     opening = ResolvedTrack(
         track_ref="netease:opening",
