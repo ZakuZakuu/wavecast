@@ -1,6 +1,6 @@
 """Explicit, secret-safe provider configuration."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from math import isfinite
 from os import getenv
 from typing import Literal, cast
@@ -28,6 +28,7 @@ class ProviderSettings:
     audius_bearer_token: str | None = None
     audius_base_url: str = "https://api.audius.co/v1"
     netease_music_api_base_url: str | None = None
+    netease_music_api_bearer_token: str | None = field(default=None, repr=False)
     qq_music_api_base_url: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-flash"
@@ -76,6 +77,7 @@ class ProviderSettings:
             audius_bearer_token=getenv("AUDIUS_BEARER_TOKEN"),
             audius_base_url=getenv("AUDIUS_BASE_URL", "https://api.audius.co/v1"),
             netease_music_api_base_url=getenv("NETEASE_MUSIC_API_BASE_URL"),
+            netease_music_api_bearer_token=getenv("NETEASE_MUSIC_API_BEARER_TOKEN"),
             qq_music_api_base_url=getenv("QQ_MUSIC_API_BASE_URL"),
             deepseek_base_url=getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             deepseek_model=getenv("DEEPSEEK_MODEL", "deepseek-flash"),

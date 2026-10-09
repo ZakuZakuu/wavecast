@@ -74,6 +74,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
+      - name: Test cloud music gateway without network
+        run: node --test scripts/cloud/music-gateway.test.mjs
       - run: pnpm test:web
       - run: WAVECAST_INTERNAL_API_URL=https://api.example.test pnpm build
       - run: python3 scripts/vercel_rewrite_smoke.py --expected https://api.example.test/api/:path*
