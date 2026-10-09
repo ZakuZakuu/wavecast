@@ -200,13 +200,21 @@ class WriterService:
             f"Target narration duration seconds: {spoken_window or 'use chapter context'}"
         )
         known_tracks = _known_tracks(slot_contexts)
+        route_titles = [label.split(" - ", 1)[-1] for label in route_tracks]
         supported = _supported_years(scoped, previous_committed_context, known_tracks)
         result = await self._attempt(prompt, chapter, evidence, known_tracks, inference_profile)
         for _ in range(self.max_revisions):
             if not isinstance(result, RadioScript):
                 break
             problems = _problems(
-                result, spoken_window, known_tracks, slots, supported, unplayed_artists
+                result,
+                spoken_window,
+                known_tracks,
+                slots,
+                supported,
+                unplayed_artists,
+                route_titles,
+                previous_committed_context,
             )
             if not problems:
                 break
@@ -220,7 +228,14 @@ class WriterService:
             if not isinstance(revised, RadioScript):
                 break
             revised_problems = _problems(
-                revised, spoken_window, known_tracks, slots, supported, unplayed_artists
+                revised,
+                spoken_window,
+                known_tracks,
+                slots,
+                supported,
+                unplayed_artists,
+                route_titles,
+                previous_committed_context,
             )
             logger.info(
                 "writer_revision problems_before=%d problems_after=%d",
@@ -325,6 +340,8 @@ def _problems(
     slots: Sequence[NarrationSlotContext],
     supported_years: set[str] | None = None,
     unplayed_names: Sequence[str] = (),
+    route_titles: Sequence[str] = (),
+    earlier: str = "",
 ) -> dict[int, list[str]]:
     """Per-block reasons a rewrite is worth asking for (empty when the draft is fine)."""
 
@@ -340,6 +357,8 @@ def _problems(
                 is_final=is_final,
                 supported_years=supported_years,
                 unplayed_names=unplayed_names,
+                route_titles=route_titles,
+                earlier=earlier,
             )
         )
         if reasons:
