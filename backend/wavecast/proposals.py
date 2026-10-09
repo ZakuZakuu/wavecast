@@ -310,11 +310,14 @@ class InMemoryProgramProposalRepository:
         return sorted(owned, key=lambda proposal: proposal.created_at, reverse=True)[:limit]
 
 
+# Two tiers are offered to the listener, a short programme (30-40 minutes) and a long one
+# (about an hour); the length is "about", never a promise.  STANDARD is the former middle
+# option and AUTO the unspecified one: both are the short tier.
 _DURATION_SECONDS = {
-    DurationIntent.AUTO: 36 * 60,
-    DurationIntent.SHORT: 22 * 60,
-    DurationIntent.STANDARD: 42 * 60,
-    DurationIntent.DEEP: 72 * 60,
+    DurationIntent.AUTO: 35 * 60,
+    DurationIntent.SHORT: 35 * 60,
+    DurationIntent.STANDARD: 35 * 60,
+    DurationIntent.DEEP: 60 * 60,
 }
 
 _PALETTES: tuple[tuple[str, str], ...] = (

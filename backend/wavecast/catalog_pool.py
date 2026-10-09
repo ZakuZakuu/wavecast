@@ -118,6 +118,7 @@ class PoolEntry(BaseModel):
             track_ref=self.track_ref,
             canonical_artist=self.artist[:120],
             canonical_title=self.title[:160],
+            duration_seconds=self.duration_seconds,
         )
 
 

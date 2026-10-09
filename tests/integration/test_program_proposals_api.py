@@ -26,7 +26,7 @@ def test_program_proposal_can_be_created_viewed_and_started() -> None:
         assert response.status_code == 200
         proposal = response.json()["proposals"][0]
         assert proposal["id"].startswith("proposal-")
-        assert proposal["estimated_duration_seconds"] == 22 * 60
+        assert proposal["estimated_duration_seconds"] == 35 * 60
         assert proposal["editorial_route"]
         assert proposal["opening_track_ref"] == "mock:opening"
 

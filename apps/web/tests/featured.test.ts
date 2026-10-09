@@ -33,7 +33,7 @@ describe("guest featured programmes", () => {
     const intents = FEATURED_PROGRAMMES.map(featuredDurationIntent);
     expect(intents[0]).toBe("SHORT");
     expect(featuredDurationIntent({ ...FEATURED_PROGRAMMES[0], minutes: 55 })).toBe("DEEP");
-    expect(featuredDurationIntent({ ...FEATURED_PROGRAMMES[0], minutes: 28 })).toBe("STANDARD");
+    expect(featuredDurationIntent({ ...FEATURED_PROGRAMMES[0], minutes: 28 })).toBe("SHORT");
   });
 
   it("never cuts a title short on the cover", () => {

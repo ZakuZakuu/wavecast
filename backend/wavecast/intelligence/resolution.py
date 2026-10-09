@@ -23,6 +23,7 @@ def _resolved_track(metadata: TrackMetadata) -> ResolvedTrack | None:
         track_ref=metadata.track_ref,
         canonical_artist=metadata.artist,
         canonical_title=metadata.title,
+        duration_seconds=metadata.duration_seconds or None,
     )
 
 
@@ -124,6 +125,7 @@ async def resolve_track_proposal_across_providers(
                     track_ref=candidate.track_ref,
                     canonical_artist=candidate.artist,
                     canonical_title=candidate.title,
+                    duration_seconds=candidate.duration_seconds or None,
                 )
             try:
                 provider = retrieval.registry.provider_for_track_ref(candidate.track_ref)

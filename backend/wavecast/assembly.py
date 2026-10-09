@@ -127,6 +127,12 @@ from wavecast.route_consistency import (
     track_true_chapter,
     used_an_alternate,
 )
+from wavecast.route_duration import (
+    is_underfilled,
+    last_track_to_keep,
+    music_budget_seconds,
+    track_seconds,
+)
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
 from wavecast.text_identity import canonical_name, strip_latin_accents, without_feature_credit
@@ -295,18 +301,74 @@ def _required_progressive_music_seconds(
         - 1
     ) // _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR
 
-def _required_progressive_track_count(
+def _route_underfilled(
     request: LiveEpisodeAssemblyRequest,
     narration_ratio: float,
-) -> int:
-    required_music_seconds = _required_progressive_music_seconds(
-        request,
-        narration_ratio,
-    )
-    return (
-        required_music_seconds + _ESTIMATED_TRACK_DURATION_SECONDS - 1
-    ) // _ESTIMATED_TRACK_DURATION_SECONDS
+    route: Sequence[_ResolvedChapter],
+) -> bool:
+    """True when the route's music is clearly shorter than the programme's music budget.
 
+    Uses the lengths the catalog reported (a typical song's when it did not), so a route of
+    seven-minute tracks is not asked for as many songs as one of three-minute tracks.
+    """
+
+    budget = music_budget_seconds(
+        request.desired_duration_seconds,
+        narration_ratio_for_host_mode(
+            request.presentation_intent.host_mode, full_ratio=narration_ratio
+        ),
+    )
+    return is_underfilled(
+        [item.track.duration_seconds for item in route if item.track is not None], budget
+    )
+
+
+def _fit_route_to_time_budget(
+    route: list[_ResolvedChapter],
+    *,
+    request: LiveEpisodeAssemblyRequest,
+    narration_ratio: float,
+    keep_at_least: int,
+) -> list[_ResolvedChapter]:
+    """End the route on the track whose running total lands closest to the time budget.
+
+    The opening and the locked successor are never dropped.  Everything after the chosen
+    track is speculative future that was never played, so it is simply not part of the
+    programme; the last kept chapter closes it.
+    """
+
+    budget = music_budget_seconds(
+        request.desired_duration_seconds,
+        narration_ratio_for_host_mode(
+            request.presentation_intent.host_mode, full_ratio=narration_ratio
+        ),
+    )
+    music = [(index, item.track) for index, item in enumerate(route) if item.track is not None]
+    if len(music) <= keep_at_least:
+        return route
+    last = last_track_to_keep(
+        [track.duration_seconds for _index, track in music],
+        budget,
+        keep_at_least=keep_at_least,
+    )
+    if last == len(music) - 1:
+        return route
+    kept = route[: music[last][0] + 1]
+    closing = kept[-1]
+    kept[-1] = replace(
+        closing,
+        chapter=closing.chapter.model_copy(update={"narrative_role": NarrativeRole.RESOLUTION}),
+        writer_chapter=closing.writer_chapter.model_copy(
+            update={"narrative_role": NarrativeRole.RESOLUTION}
+        ),
+    )
+    logger.info(
+        "route_fitted budget_s=%d kept_tracks=%d dropped_tracks=%d",
+        budget,
+        last + 1,
+        len(music) - last - 1,
+    )
+    return kept
 
 
 _NOVELTY_RANK = {
@@ -323,10 +385,10 @@ _POOL_PROPOSAL_LIMIT = 12
 # Fixed route size used before duration scaling (kept as the default behaviour).
 _FIXED_ROUTE_LIMITS = (5, 8)
 # Typical length of a song in the catalog and the music share of a light-hosted programme.
-_SCALED_TRACK_SECONDS = 210
+_SCALED_TRACK_SECONDS = 190
 _SCALED_MUSIC_SHARE = 0.9
 _SCALED_MIN_TRACKS = 3
-_SCALED_MAX_TRACKS = 14
+_SCALED_MAX_TRACKS = 16
 _SCALED_MAX_CHAPTERS = 32
 
 
@@ -738,6 +800,7 @@ class LiveEpisodeAssemblyService:
                     track_ref=alternative.track_ref,
                     canonical_artist=alternative.artist,
                     canonical_title=alternative.title,
+                    duration_seconds=alternative.duration_seconds or None,
                 )
                 if any(_same_song_identity(candidate, used) for used in used_tracks):
                     continue
@@ -786,13 +849,9 @@ class LiveEpisodeAssemblyService:
             opening_track=opening_track,
             locked_successor=locked_successor,
         )
-        required_track_count = _required_progressive_track_count(
-            request,
-            self.narration_ratio,
-        )
         current_track_count = sum(item.track is not None for item in normalized)
         if (
-            current_track_count >= required_track_count
+            not _route_underfilled(request, self.narration_ratio, normalized)
             or current_track_count >= request.max_tracks
             or len(normalized) >= request.max_chapters
         ):
@@ -836,7 +895,6 @@ class LiveEpisodeAssemblyService:
         trace.mark(
             "curator_continuation_started",
             committed_track_count=len(committed),
-            required_track_count=required_track_count,
         )
         try:
             continuation = await self.background_pipeline.curator.curate(
@@ -881,10 +939,7 @@ class LiveEpisodeAssemblyService:
                 opening_track=opening_track,
                 locked_successor=locked_successor,
             )
-            if (
-                sum(item.track is not None for item in normalized_now)
-                >= required_track_count
-            ):
+            if not _route_underfilled(request, self.narration_ratio, normalized_now):
                 break
 
             chapter = continuation_chapter.model_copy(
@@ -1007,11 +1062,6 @@ class LiveEpisodeAssemblyService:
         unchanged.
         """
 
-        required_track_count = _required_progressive_track_count(
-            request,
-            self.narration_ratio,
-        )
-
         effective_used = list(used_tracks)
         if not any(
             _same_song_identity(locked_successor, item)
@@ -1024,10 +1074,7 @@ class LiveEpisodeAssemblyService:
             opening_track=opening_track,
             locked_successor=locked_successor,
         )
-        if (
-            sum(item.track is not None for item in normalized_initial)
-            >= required_track_count
-        ):
+        if not _route_underfilled(request, self.narration_ratio, normalized_initial):
             return resolved_chapters
 
         artist_seeds: list[TrackProposal] = []
@@ -1078,7 +1125,7 @@ class LiveEpisodeAssemblyService:
             )
             route_track_count = sum(item.track is not None for item in normalized)
             return (
-                route_track_count < required_track_count
+                _route_underfilled(request, self.narration_ratio, normalized)
                 and route_track_count < request.max_tracks
                 and len(normalized) < request.max_chapters
             )
@@ -1128,6 +1175,7 @@ class LiveEpisodeAssemblyService:
                         track_ref=alternative.track_ref,
                         canonical_artist=alternative.artist,
                         canonical_title=alternative.title,
+                        duration_seconds=alternative.duration_seconds or None,
                     )
                 else:
                     try:
@@ -1177,7 +1225,6 @@ class LiveEpisodeAssemblyService:
                         else "track_catalog_continuation_resolved"
                     ),
                     resolved_track_count=len(effective_used),
-                    required_track_count=required_track_count,
                 )
                 return True
             return False
@@ -2569,11 +2616,17 @@ def _build_progressive_session(
 ) -> ProgressiveAssemblySession:
     """Build the pre-Writer session from route identities and slot contexts."""
 
-    normalized = _normalize_progressive_route(
+    normalized = _fit_route_to_time_budget(
+        _normalize_progressive_route(
+            request=request,
+            resolved_chapters=prepared.resolved_chapters,
+            opening_track=opening_track,
+            locked_successor=locked_successor,
+        ),
         request=request,
-        resolved_chapters=prepared.resolved_chapters,
-        opening_track=opening_track,
-        locked_successor=locked_successor,
+        narration_ratio=narration_ratio,
+        # The opening and at least one more track: a programme is never cut to its opening.
+        keep_at_least=2,
     )
     try:
         all_slot_contexts = _apply_host_mode_to_slot_contexts(
@@ -2630,9 +2683,17 @@ def _build_progressive_session(
         request,
         narration_ratio,
     )
-    estimated_resolved_music_seconds = (
-        1 + future_music_count
-    ) * _ESTIMATED_TRACK_DURATION_SECONDS
+    # Real lengths where the catalog reported them: a route of a few long songs is as full as
+    # one of many short ones (the route was fitted to its time budget above).  A catalog of
+    # very short clips (previews, the mock provider) is still judged by track count, as it was
+    # before lengths were known, so the real-length view can only accept more routes.
+    resolved_lengths = [opening_track.duration_seconds] + [
+        item.track.duration_seconds for item in future if item.track is not None
+    ]
+    estimated_resolved_music_seconds = max(
+        sum(track_seconds(length) for length in resolved_lengths),
+        len(resolved_lengths) * _ESTIMATED_TRACK_DURATION_SECONDS,
+    )
     if estimated_resolved_music_seconds < required_resolved_music_seconds:
         raise EpisodeAssemblyError(
             "progressive route duration coverage is too short to be finalized",
@@ -2649,7 +2710,9 @@ def _build_progressive_session(
     timing_plan = build_program_timing_plan(
         desired_total_seconds=request.desired_duration_seconds,
         target_narration_ratio=target_narration_ratio,
-        resolved_music_seconds=future_music_count * _ESTIMATED_TRACK_DURATION_SECONDS,
+        resolved_music_seconds=sum(
+            track_seconds(item.track.duration_seconds) for item in future if item.track is not None
+        ),
         chapter_slot_counts=[len(contexts) for contexts in future_slots],
     )
     session_chapters = [

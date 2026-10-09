@@ -197,7 +197,15 @@ def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypa
     )
 
     assert session.chapters[0].chapter_id == "chapter-2"
-    assert session.chapters[0].resolved_track == locked
+    resolved = session.chapters[0].resolved_track
+    assert resolved is not None
+    # The session's track also carries the catalog's length; identity is the three fields.
+    assert (resolved.track_ref, resolved.canonical_artist, resolved.canonical_title) == (
+        locked.track_ref,
+        locked.canonical_artist,
+        locked.canonical_title,
+    )
+    assert resolved.duration_seconds == 24
     resolved_refs = [
         chapter.resolved_track.track_ref
         for chapter in session.chapters
