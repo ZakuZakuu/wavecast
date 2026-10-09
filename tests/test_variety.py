@@ -252,3 +252,55 @@ def test_curate_uses_the_seed_when_it_lists_the_pool() -> None:
 
     assert prompt_for("a") == prompt_for("a")
     assert len({prompt_for(f"programme-{n}") for n in range(8)}) > 2
+
+
+# --- the angle the model is asked to lean towards ----------------------------------------------
+
+
+def test_the_variety_angle_is_reproducible_and_absent_without_a_seed() -> None:
+    from wavecast.proposals import _variety_lens
+
+    assert _variety_lens("") == ""
+    assert _variety_lens("proposal-1") == _variety_lens("proposal-1")
+
+
+def test_the_variety_angles_all_yield_to_the_request_and_some_seeds_add_none() -> None:
+    from wavecast.proposals import _VARIETY_LENSES, _variety_lens
+
+    chosen = [_variety_lens(f"proposal-{n}") for n in range(200)]
+
+    assert set(chosen) == set(_VARIETY_LENSES)  # every angle comes up
+    assert all("where the request allows" in lens for lens in _VARIETY_LENSES if lens)
+    assert 1 <= sum(1 for lens in _VARIETY_LENSES if not lens) < len(_VARIETY_LENSES) // 2 + 1
+    assert chosen.count("") > 0  # the best-known openings still come up
+
+
+def test_the_prompt_carries_the_angle_picked_by_the_first_proposal_id() -> None:
+    from wavecast.proposals import ProgramProposalDraftBatch, _variety_lens
+
+    generator, llm = _live_generator(ProgramProposalDraftBatch(proposals=[_draft(*MOCK_OPENINGS)]))
+
+    proposal = asyncio.run(generator.generate(ProposalGenerationRequest(prompt="夜里开车")))[0]
+
+    expected = _variety_lens(proposal.id)
+    if expected:
+        assert expected in llm.prompt
+    assert all(lens not in llm.prompt for lens in _lenses_except(expected))
+
+
+def _lenses_except(chosen: str) -> list[str]:
+    from wavecast.proposals import _VARIETY_LENSES
+
+    return [lens for lens in set(_VARIETY_LENSES) if lens and lens != chosen]
+
+
+def test_different_requests_are_asked_to_lean_different_ways() -> None:
+    from wavecast.proposals import ProgramProposalDraftBatch
+
+    generator, llm = _live_generator(ProgramProposalDraftBatch(proposals=[_draft(*MOCK_OPENINGS)]))
+    seen = set()
+    for _ in range(40):
+        asyncio.run(generator.generate(ProposalGenerationRequest(prompt="夜里开车")))
+        seen.add("Variety for this programme" in llm.prompt)
+
+    assert seen == {True, False}  # some programmes are asked to lean, some are not

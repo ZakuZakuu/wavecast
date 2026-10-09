@@ -454,6 +454,36 @@ def _clean_artists(names: list[str]) -> list[str]:
     return cleaned[:4]
 
 
+# Without a nudge the model offers the same few famous names for a request every time.  One
+# angle, chosen by the programme's seed, is added to the prompt; two of the eight entries add
+# nothing, so the best-known openings still come up.  Each yields to the request: a request
+# that names an artist or a song is not argued with.
+_VARIETY_LENSES = (
+    "Variety for this programme: where the request allows, lean towards a lesser-known artist "
+    "of the same scene rather than its best-known name.\n",
+    "Variety for this programme: where the request allows, lean towards an earlier or classic "
+    "recording from the scene.\n",
+    "Variety for this programme: where the request allows, lean towards a release from the "
+    "last ten years.\n",
+    "Variety for this programme: where the request allows, choose a track that is not the "
+    "artist's best-known single.\n",
+    "Variety for this programme: where the request allows, do not open with the first artist "
+    "that comes to mind; offer artists from at least three different places or eras.\n",
+    "Variety for this programme: where the request allows, favour a track with a long, "
+    "patient opening.\n",
+    "",
+    "",
+)
+
+
+def _variety_lens(seed: str) -> str:
+    """The angle the model is asked to lean towards for this seed (empty without one)."""
+
+    if not seed:
+        return ""
+    return _VARIETY_LENSES[_pick(seed, "lens", len(_VARIETY_LENSES))]
+
+
 def _rotated[T](items: list[T], seed: str) -> list[T]:
     """``items`` starting at a position chosen by ``seed`` (unchanged without a seed).
 
@@ -540,8 +570,11 @@ class LLMProgramProposalGenerator:
         self.pool_builder = pool_builder
 
     async def generate(self, request: ProposalGenerationRequest) -> list[ProgramProposal]:
+        # Fixed before the model is called: the first id also picks the angle the model is
+        # asked to lean towards, and each id seeds the rotation of its programme's candidates.
+        proposal_ids = [f"proposal-{uuid4().hex}" for _ in range(request.count)]
         raw = await self.llm.structured(
-            self._prompt(request),
+            self._prompt(request, variety_seed=proposal_ids[0]),
             ProgramProposalDraftBatch,
             transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
             profile=InferenceProfile.FAST,
@@ -553,10 +586,9 @@ class LLMProgramProposalGenerator:
             raise ProgramProposalGenerationError("proposal_count_mismatch")
 
         proposals: list[ProgramProposal] = []
-        for draft in raw.proposals:
+        for draft, proposal_id in zip(raw.proposals, proposal_ids, strict=True):
             # The id doubles as the variety seed: it picks where among the model's equally
             # good opening candidates the search starts, and it is stored with the programme.
-            proposal_id = f"proposal-{uuid4().hex}"
             resolved, opening_duration_seconds, opening_timing_profile = (
                 await self._resolve_opening_track(draft, seed=proposal_id)
             )
@@ -766,7 +798,7 @@ class LLMProgramProposalGenerator:
         return canonical, metadata.duration_seconds, timing_profile
 
     @staticmethod
-    def _prompt(request: ProposalGenerationRequest) -> str:
+    def _prompt(request: ProposalGenerationRequest, variety_seed: str = "") -> str:
         taste_context = request.taste_context or "none"
         return (
             "Create exactly "
@@ -799,6 +831,7 @@ class LLMProgramProposalGenerator:
             "play (for example “from Mogwai to Explosions in the Sky” requires both); leave it "
             "empty when the request names no artist.\n"
             f"Duration intent: {request.duration_intent.value}\n"
+            f"{_variety_lens(variety_seed)}"
             f"Taste context: {taste_context}\n"
             f"Listener request: {request.prompt.strip()}"
         )
