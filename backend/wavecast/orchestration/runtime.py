@@ -12,6 +12,7 @@ from wavecast.models.episode import (
 )
 from wavecast.models.progressive import ProgressiveAssemblySession
 from wavecast.orchestration.generation import GeneratedChapter, ProgressiveChapterGenerator
+from wavecast.providers.usage import scoped_to_episode
 
 if TYPE_CHECKING:
     from wavecast.assembly import LiveEpisodeAssemblyService, StagedProgressiveChapterGenerator
@@ -47,6 +48,7 @@ class StagedProgressiveRuntimeAdapter:
     def __init__(self, assembly: LiveEpisodeAssemblyService) -> None:
         self.assembly = assembly
 
+    @scoped_to_episode
     async def prepare_fast_successor(
         self, episode: LiveEpisode
     ) -> GeneratedChapter | None:
@@ -94,6 +96,7 @@ class StagedProgressiveRuntimeAdapter:
             opening_track=opening_track,
         )
 
+    @scoped_to_episode
     async def author_fast_successor_narration(
         self, episode: LiveEpisode
     ) -> GeneratedChapter | None:
@@ -277,6 +280,7 @@ class StagedProgressiveRuntimeAdapter:
             ),
         )
 
+    @scoped_to_episode
     async def prepare_session(self, episode: LiveEpisode) -> ProgressiveAssemblySession:
         if not episode.topic:
             raise ValueError("progressive session requires episode topic")
@@ -370,6 +374,7 @@ class StagedProgressiveRuntimeAdapter:
     ) -> StagedProgressiveChapterGenerator:
         return self.assembly.create_progressive_chapter_generator(session)
 
+    @scoped_to_episode
     async def author_narration(
         self, episode: LiveEpisode, chapter_id: str
     ) -> GeneratedChapter | None:

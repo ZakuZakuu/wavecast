@@ -1143,7 +1143,21 @@ class EpisodeOrchestrator:
         episode.state = EpisodeState.MATERIALIZED
         episode.generation_mode = GenerationMode.FULL
         episode.last_activity_at = self.now()
-        return await asyncio.to_thread(self.repository.save, episode)
+        saved = await asyncio.to_thread(self.repository.save, episode)
+        logger.info(
+            "episode_materialized id=%s estimated_s=%d actual_s=%d music=%d narration=%d skipped=%d",
+            saved.id,
+            saved.program_estimated_duration_seconds,
+            saved.timeline_duration_seconds,
+            sum(1 for item in saved.timeline_segments if item.kind is SegmentKind.MUSIC),
+            sum(1 for item in saved.timeline_segments if item.kind is SegmentKind.NARRATION),
+            sum(
+                1
+                for item in saved.timeline_segments
+                if item.kind is SegmentKind.NARRATION and item.state is SegmentState.SKIPPED
+            ),
+        )
+        return saved
 
     def prepare_materialization(self, episode_id: str) -> LiveEpisode:
         """Prepare a full timeline while leaving narration network I/O external.

@@ -26,6 +26,19 @@ def review_payload(episode: dict) -> dict:
     }
 
 
+def fetch_usage(episode_id: str, listener_id: str) -> dict | None:
+    """Best-effort provider usage summary for this episode (counts and timings only)."""
+    request = Request('http://127.0.0.1:8000/api/episodes/' + quote(episode_id) + '/usage',
+                      headers={'X-Wavecast-Listener': listener_id})
+    try:
+        with urlopen(request, timeout=20) as response:
+            if not response.geturl().startswith('http://127.0.0.1:8000/'):
+                return None
+            return json.load(response)
+    except (HTTPError, URLError, TimeoutError, ValueError, OSError):
+        return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('episode_id')
@@ -43,9 +56,11 @@ def main() -> int:
             if not response.geturl().startswith('http://127.0.0.1:8000/'):
                 raise ValueError('Unexpected redirect')
             episode = json.load(response)
+        payload = review_payload(episode)
+        payload['usage'] = fetch_usage(args.episode_id, args.listener_id)
         output = Path('.wavecast-data/cloud/reviews') / (args.episode_id + '.json')
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(review_payload(episode), ensure_ascii=False, indent=2),
+        output.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
                           encoding='utf-8')
     except (HTTPError, URLError, TimeoutError, ValueError, OSError) as error:
         print(json.dumps({'status': 'failed', 'error_type': type(error).__name__}))

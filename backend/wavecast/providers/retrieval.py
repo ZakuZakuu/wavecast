@@ -110,6 +110,8 @@ class RetrievalFailure(BaseModel):
     provider: str
     kind: str
     message: str
+    # Exception class for provider failures (e.g. ProviderAuthenticationError), for logs.
+    error_type: str | None = None
 
 
 class RetrievalReport(BaseModel):
@@ -243,7 +245,12 @@ class MusicRetrievalService:
             return (
                 provider_name,
                 [],
-                RetrievalFailure(provider=provider_name, kind="provider_error", message=str(error)),
+                RetrievalFailure(
+                    provider=provider_name,
+                    kind="provider_error",
+                    message=str(error),
+                    error_type=type(error).__name__,
+                ),
             )
         except Exception:
             return (
