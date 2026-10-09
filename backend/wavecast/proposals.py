@@ -17,19 +17,19 @@ from wavecast.catalog_pool import (
     PoolBuildConfig,
     artist_credit_includes,
     primary_artist,
+    split_artists,
 )
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.language import OutputLanguage
 from wavecast.models.episode import CoverParams, EpisodeSeed, utc_now
-from wavecast.narration_quality import check_block, rewrite_reasons
 from wavecast.presentation import PresentationIntent
 from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.stations import StationId, pick_ident, resolve_presentation_intent
-from wavecast.text_identity import canonical_name
+from wavecast.text_identity import canonical_name, text_mentions_name
 
 
 class DurationIntent(StrEnum):
@@ -426,7 +426,21 @@ _OPENING_IDENTITIES = (
 )
 
 
-_OPENING_WINDOW_SECONDS = 12
+# The one reason the opening gives for starting here, and only when it is true: the listener's
+# own request names the artist.  The model's free-form host note was dropped for Chinese
+# programmes after five live programmes in a row produced the same kind of empty line
+# ("能立刻带你进入这个声音世界"); a reason that says nothing is worse than none.
+_REQUEST_ECHOES = (
+    "你点了这个名字，那就先放它。",
+    "这是你点的名字，先从它开始。",
+    "名字是你点的，先放它。",
+)
+
+
+def _request_names_artist(prompt: str, credit: str) -> bool:
+    """True when the listener's request writes one of the credited artists."""
+
+    return any(text_mentions_name(prompt, name) for name in split_artists(credit))
 
 
 def _clean_artists(names: list[str]) -> list[str]:
@@ -459,15 +473,14 @@ def _opening_narration_text(
         identity = _OPENING_IDENTITIES[_pick(seed, "identity", len(_OPENING_IDENTITIES))].format(
             artist=artist, title=title
         )
-        # A note with stock phrasing is dropped rather than spoken; the identity (and the
-        # station ident) carry the opening on their own.
-        if note and rewrite_reasons(check_block(note, window_seconds=_OPENING_WINDOW_SECONDS)):
-            note = None
-        if note and note[-1] not in "。！？.!?":
-            note += "。"
-        parts = [note, identity] if note else [identity]
-        if note and _pick(seed, "order", 2) == 0:
-            parts.reverse()
+        # The model's note is not spoken in Chinese; the identity, a true reason when the
+        # request names the artist, and the station ident carry the opening.
+        echo = (
+            _REQUEST_ECHOES[_pick(seed, "echo", len(_REQUEST_ECHOES))]
+            if _request_names_artist(request.prompt, artist)
+            else ""
+        )
+        parts = [identity, echo]
         ident = pick_ident(request.station, seed)
         if ident and request.station is not StationId.NIGHT:
             parts.append(ident)

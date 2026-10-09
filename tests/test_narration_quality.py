@@ -195,3 +195,47 @@ def test_the_new_findings_are_worth_a_rewrite() -> None:
 
     assert any("one by one" in reason for reason in rewrite_reasons(recap))
     assert any("already said" in reason for reason in rewrite_reasons(repeat))
+
+
+# --- invented lengths of time, and more live phrases (2026-10-09, second pass) --------------
+
+
+def test_durations_are_read_in_digits_and_in_chinese() -> None:
+    from wavecast.narration_quality import durations_in
+
+    assert durations_in("八分钟，吉他慢慢堆起来") == {"8分钟"}
+    assert durations_in("8 分钟和十二分钟") == {"8分钟", "12分钟"}
+    assert durations_in("两个小时，三十秒钟") == {"2小时", "30秒"}
+    assert durations_in("第八首，十分好听") == set()  # 十分 is "very", not ten minutes
+    assert durations_in("没有时长") == set()
+
+
+def test_a_length_of_time_missing_from_the_evidence_is_flagged_only_when_the_set_is_given() -> None:
+    text = "八分钟，吉他慢慢铺开。"
+
+    assert "unsupported_duration:8分钟" in issues(text, supported_durations=set())
+    assert "unsupported_duration:8分钟" in issues(text, supported_durations={"5分钟"})
+    assert not any(i.startswith("unsupported_duration") for i in issues(text, supported_durations={"8分钟"}))
+    assert not any(i.startswith("unsupported_duration") for i in issues(text))
+
+
+def test_an_invented_length_is_worth_a_rewrite() -> None:
+    from wavecast.narration_quality import rewrite_reasons
+
+    reasons = rewrite_reasons(check_block("八分钟的现场。", supported_durations=set()))
+
+    assert any("length of time" in reason for reason in reasons)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "用 Mogwai 来开始这段后摇旅程。",
+        "它直接而有力，能立刻带你进入这个声音世界。",
+        "吉他慢慢堆起来，中间乱一阵，再散开。",
+    ],
+)
+def test_phrases_from_the_second_live_round_are_figurative_hits(text: str) -> None:
+    from wavecast.narration_quality import rewrite_reasons
+
+    assert rewrite_reasons(check_block(text))
