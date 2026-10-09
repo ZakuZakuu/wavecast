@@ -102,6 +102,8 @@ export type ProgramRenderManifest = {
   streamUrl: string;
 };
 
+export type SourceNotice = { kind: "UNPLAYABLE_ARTISTS"; artists: string[] };
+
 export type LiveEpisode = {
   id: string;
   seed_id: string;
@@ -128,6 +130,8 @@ export type LiveEpisode = {
   buffer_ahead_seconds: number;
   committed_frontier_seconds: number;
   timeline_duration_seconds: number;
+  /** Present when the route cannot play artists the listener asked for. */
+  source_notice?: SourceNotice | null;
 };
 
 export type UserGenre =
