@@ -172,6 +172,13 @@ class PlayableEpisode(BaseModel):
         return self.duration_seconds
 
 
+class SourceNotice(BaseModel):
+    """Why the programme differs from the request, as data (never model-written text)."""
+
+    kind: Literal["UNPLAYABLE_ARTISTS"]
+    artists: list[str] = Field(default_factory=list, max_length=4)
+
+
 class LiveEpisode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     seed_id: str
@@ -215,6 +222,20 @@ class LiveEpisode(BaseModel):
     @property
     def timeline_segments(self) -> list[Segment]:
         return [segment for segment in self.ordered_segments if segment.is_timeline_active]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def source_notice(self) -> SourceNotice | None:
+        """A quiet, structured note that some requested artists have nothing playable.
+
+        Only facts the application established: the listener asked for these artists and the
+        route plays none of them.  The words shown to the listener are written by the client.
+        """
+
+        session = self.progressive_session
+        if session is None or not session.unfulfilled_artists:
+            return None
+        return SourceNotice(kind="UNPLAYABLE_ARTISTS", artists=list(session.unfulfilled_artists))
 
     @computed_field  # type: ignore[prop-decorator]
     @property
