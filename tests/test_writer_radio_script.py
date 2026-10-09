@@ -120,7 +120,7 @@ def test_writer_radio_guidance_is_scoped_to_zh_cn() -> None:
 
     zh = PromptRecorder()
     asyncio.run(WriterService(zh).write(chapter, [], output_language=OutputLanguage.ZH_CN))
-    assert "先说具体可听的声音" in zh.prompt
+    assert "说人话" in zh.prompt
     assert "证据不足时宁可简单准确" in zh.prompt
     assert "LIGHT host mode" in zh.prompt
     assert "8-18 seconds" in zh.prompt
@@ -130,7 +130,7 @@ def test_writer_radio_guidance_is_scoped_to_zh_cn() -> None:
     for language in (OutputLanguage.EN_US, OutputLanguage.JA_JP):
         recorder = PromptRecorder()
         asyncio.run(WriterService(recorder).write(chapter, [], output_language=language))
-        assert "先说具体可听的声音" not in recorder.prompt
+        assert "说人话" not in recorder.prompt
         assert "OUTRO 回扣本期 thesis" not in recorder.prompt
 
 

@@ -15,10 +15,10 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from wavecast.evals.narration_checks import CHARS_PER_SECOND, BatchSummary, check_block, summarize
 from wavecast.evals.narration_scenes import SCENES, NarrationScene
 from wavecast.intelligence.models import OutputLanguage, RadioScript
 from wavecast.intelligence.writer import WriterService
+from wavecast.narration_quality import CHARS_PER_SECOND, BatchSummary, check_block, summarize
 from wavecast.presentation import HostMode
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.deepseek import DeepSeekLLMProvider
@@ -26,10 +26,15 @@ from wavecast.providers.errors import ProviderError
 from wavecast.providers.profiles import InferenceProfile
 from wavecast.providers.usage import UsageLedger, usage_diagnostics
 from wavecast.spoken_form import KnownTrack
+from wavecast.stations import StationId
 
 
 async def run_scene(
-    writer: WriterService, scene: NarrationScene, sample: int
+    writer: WriterService,
+    scene: NarrationScene,
+    sample: int,
+    station: StationId | None = None,
+    use_station: bool = True,
 ) -> list[dict[str, object]]:
     tracks = [
         KnownTrack(artist=track.canonical_artist, title=track.canonical_title)
@@ -46,6 +51,8 @@ async def run_scene(
             output_language=OutputLanguage.ZH_CN,
             topic=scene.topic,
             slot_context=scene.slot(),
+            station=(station if station is not None else scene.station) if use_station else None,
+            voice_seed=f"{scene.scene_id}-{sample}" if use_station else "",
             inference_profile=InferenceProfile.FAST,
         )
     except ProviderError as error:
@@ -112,18 +119,22 @@ async def main() -> None:
     parser.add_argument("--label", default="baseline")
     parser.add_argument("--scenes", default="")
     parser.add_argument("--out", default=".wavecast-data/narration-eval")
+    parser.add_argument("--station", default="", help="override the scenes' stations")
+    parser.add_argument("--no-station", action="store_true", help="run without any station (old prompt)")
+    parser.add_argument("--revisions", type=int, default=1)
     args = parser.parse_args()
 
     settings = ProviderSettings.from_env()
     ledger = UsageLedger()
     llm = DeepSeekLLMProvider(settings, ledger=ledger, max_attempts=1)
-    writer = WriterService(llm)
+    writer = WriterService(llm, max_revisions=args.revisions)
+    forced = StationId(args.station) if args.station else None
     wanted = {item for item in args.scenes.split(",") if item}
     scenes = [scene for scene in SCENES if not wanted or scene.scene_id in wanted]
 
     rows: list[dict[str, object]] = []
     for scene in scenes:
-        results = await asyncio.gather(*(run_scene(writer, scene, i + 1) for i in range(args.samples)))
+        results = await asyncio.gather(*(run_scene(writer, scene, i + 1, forced, not args.no_station) for i in range(args.samples)))
         for result in results:
             rows.extend(result)
     ok = [row for row in rows if "error" not in row]

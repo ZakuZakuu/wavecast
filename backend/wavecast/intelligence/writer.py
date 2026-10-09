@@ -6,11 +6,12 @@ import json
 import logging
 from collections.abc import Sequence
 
+from wavecast.narration_quality import check_block, rewrite_reasons, years_in
 from wavecast.presentation import HostMode, host_mode_prompt_guidance
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.spoken_form import KnownTrack, to_spoken_form
-from wavecast.stations import STATION_PROFILES, StationId
+from wavecast.stations import StationId
 
 from .fast_start import FastStructuredProvider
 from .models import (
@@ -22,25 +23,30 @@ from .models import (
     RadioScript,
     resolve_output_language,
 )
+from .voice import voice_instructions
 
 logger = logging.getLogger(__name__)
 
 ZH_CN_RADIO_WRITING_GUIDANCE = (
-    "For zh-CN narration only, apply these concise radio-writing constraints: "
-    "先说具体可听的声音，再给出较大的风格或文化解释；有证据时优先给一个 listener 能实际听到的 "
-    "listen-for cue，但证据不足时宁可简单准确，不要编造听觉或事实细节。背景事实必须服务于当前听感 "
-    "或下一首的连接。一个 block 只完成一个主要 editorial action；使用短分句、自然停顿和口语中文， "
-    "减少论文腔与名词化。区分事实、听感和编辑判断，文化描述具体克制，避免宽泛的族群化概括。 "
-    "TRACK_INTRO/TRANSITION 要说明下一首为什么值得听；时长服从 presentation mode 和 application 给出的 target，先给 concrete listen-for 再给最多一个必要背景解释，编辑动作完成就停。OUTRO 回扣本期 thesis 或前面真实听到的细节；如果上下文提供了已经听过的中间 artist/track/listen-for detail，至少具体回扣其中一个再落回 thesis，不要用模板式总结。 "
-    "不要用模板式总结。不要为了高级感强造比喻、大词或结论。"
+    "For zh-CN narration only, apply these constraints: "
+    "说人话：口语、短分句、日常动词，一句话只说一件事，不用论文腔和名词化。"
+    "要具体：用人名、年份、版本、谁演奏，不要堆形容词；证据不足时宁可简单准确，"
+    "不要编造听觉或事实细节。区分事实、听感和编辑判断，文化描述具体克制，避免宽泛的族群化概括。"
+    "一个 block 只完成一个主要动作，完成就停；时长服从 presentation mode 和 application 给出的 target。"
+    "OUTRO 回扣本期 thesis 或前面真实听到的细节；如果上下文提供了已经听过的中间 "
+    "artist/track/listen-for detail，至少具体回扣其中一个再落回 thesis，不要用模板式总结。"
+    "不要为了高级感强造比喻、大词或结论。"
     "口播里不要交代依据或确定程度，例如“不是证据上的结论”“资料显示”“据说”；没有把握的内容直接不说，"
     "或只说你在听感上确实能描述的部分。"
 )
 
 
 class WriterService:
-    def __init__(self, llm: FastStructuredProvider) -> None:
+    def __init__(self, llm: FastStructuredProvider, *, max_revisions: int = 1) -> None:
         self.llm = llm
+        # Bounded cost: at most this many extra Writer calls when a draft has the problems
+        # narration_quality can detect (stock phrasing, invented memories, too long...).
+        self.max_revisions = max_revisions
 
     async def write(
         self,
@@ -54,6 +60,8 @@ class WriterService:
         target_duration_seconds: int | None = None,
         output_language: OutputLanguage = OutputLanguage.AUTO,
         station: StationId | None = None,
+        voice_seed: str = "",
+        used_openers: Sequence[str] = (),
         topic: str = "",
         slot_context: NarrationSlotContext | None = None,
         slot_contexts: Sequence[NarrationSlotContext] | None = None,
@@ -68,7 +76,8 @@ class WriterService:
         empty_scope_instruction = (
             "The evidence scope is empty. Do not make concrete factual, causal, date, "
             "statistical, or biographical claims. Keep narration to supportable transition, "
-            "track adjacency, clearly marked editorial framing, or explicit uncertainty."
+            "track adjacency, clearly marked editorial framing, or explicit uncertainty. "
+            "Leave every `evidence_ids` list and `claim_support` empty: there is nothing to cite."
             if not scoped
             else ""
         )
@@ -89,10 +98,19 @@ class WriterService:
                 }
             ]
         )
+        slots = list(slot_contexts or ())
         station_line = (
-            f"Station: {STATION_PROFILES[station].name} - {STATION_PROFILES[station].positioning}\n"
-            if station is not None
-            else ""
+            voice_instructions(
+                station=station,
+                seed=voice_seed or topic or chapter.reason,
+                index=chapter.index,
+                window_seconds=target_duration_seconds,
+                used_openers=used_openers,
+                is_opening=any(slot.is_opening for slot in slots),
+                is_final=any(slot.is_final for slot in slots),
+            )
+            if selected_language is OutputLanguage.ZH_CN and (station is not None or voice_seed)
+            else (f"Station: {station.value}\n" if station is not None else "")
         )
         language_guidance = (
             ZH_CN_RADIO_WRITING_GUIDANCE
@@ -151,6 +169,47 @@ class WriterService:
             f"Presentation mode: {host_mode.value}. {presentation_guidance}\n"
             f"Target narration duration seconds: {target_duration_seconds or 'use chapter context'}"
         )
+        known_tracks = _known_tracks(slot_contexts)
+        supported = _supported_years(scoped, previous_committed_context, known_tracks)
+        result = await self._attempt(prompt, chapter, evidence, known_tracks, inference_profile)
+        for _ in range(self.max_revisions):
+            if not isinstance(result, RadioScript):
+                break
+            problems = _problems(result, target_duration_seconds, known_tracks, slots, supported)
+            if not problems:
+                break
+            revised = await self._attempt(
+                _revision_prompt(prompt, result, problems),
+                chapter,
+                evidence,
+                known_tracks,
+                inference_profile,
+            )
+            if not isinstance(revised, RadioScript):
+                break
+            revised_problems = _problems(
+                revised, target_duration_seconds, known_tracks, slots, supported
+            )
+            logger.info(
+                "writer_revision problems_before=%d problems_after=%d",
+                sum(len(item) for item in problems.values()),
+                sum(len(item) for item in revised_problems.values()),
+            )
+            if sum(len(item) for item in revised_problems.values()) < sum(
+                len(item) for item in problems.values()
+            ):
+                result = revised
+            break
+        return result
+
+    async def _attempt(
+        self,
+        prompt: str,
+        chapter: ChapterPlan,
+        evidence: list[Evidence],
+        known_tracks: Sequence[KnownTrack],
+        inference_profile: InferenceProfile,
+    ) -> RadioScript | NarrationScript:
         result = await self.llm.structured(
             prompt,
             RadioScript,
@@ -161,7 +220,6 @@ class WriterService:
         if not isinstance(result, (RadioScript, NarrationScript)):
             raise TypeError("writer returned an unexpected output model")
         _validate_evidence_references(result, chapter, evidence)
-        known_tracks = _known_tracks(slot_contexts)
         if isinstance(result, RadioScript):
             # Numeric playback placement is application-owned.  Strip any
             # compatibility field emitted by an older/faulty structured model
@@ -183,15 +241,68 @@ class WriterService:
                         }
                     )
                 )
-            result = result.model_copy(update={"blocks": blocks})
-        else:
-            spoken = to_spoken_form(result.text, known_tracks, tts_text=result.tts_text)
-            if not spoken.ok:
-                logger.warning("writer_script_unspeakable_script")
-            result = result.model_copy(
-                update={"tts_text": spoken.tts_text if spoken.tts_text != result.text else None}
+            return result.model_copy(update={"blocks": blocks})
+        spoken = to_spoken_form(result.text, known_tracks, tts_text=result.tts_text)
+        if not spoken.ok:
+            logger.warning("writer_script_unspeakable_script")
+        return result.model_copy(
+            update={"tts_text": spoken.tts_text if spoken.tts_text != result.text else None}
+        )
+
+
+def _problems(
+    script: RadioScript,
+    window_seconds: float | None,
+    tracks: Sequence[KnownTrack],
+    slots: Sequence[NarrationSlotContext],
+    supported_years: set[str] | None = None,
+) -> dict[int, list[str]]:
+    """Per-block reasons a rewrite is worth asking for (empty when the draft is fine)."""
+
+    is_final = any(slot.is_final for slot in slots)
+    found: dict[int, list[str]] = {}
+    for index, block in enumerate(script.blocks):
+        reasons = rewrite_reasons(
+            check_block(
+                block.text,
+                tts_text=block.tts_text,
+                window_seconds=window_seconds,
+                tracks=tracks,
+                is_final=is_final,
+                supported_years=supported_years,
             )
-        return result
+        )
+        if reasons:
+            found[index] = reasons
+    return found
+
+
+def _supported_years(
+    evidence: Sequence[Evidence], previous_context: str, tracks: Sequence[KnownTrack]
+) -> set[str]:
+    """Years the Writer may state: those in its scoped evidence, earlier narration or titles."""
+
+    texts = [item.claim_or_excerpt for item in evidence]
+    texts.append(previous_context)
+    texts.extend(f"{track.artist} {track.title}" for track in tracks)
+    years: set[str] = set()
+    for text in texts:
+        years |= years_in(text)
+    return years
+
+
+def _revision_prompt(prompt: str, draft: RadioScript, problems: dict[int, list[str]]) -> str:
+    lines = [
+        prompt,
+        "",
+        "Your previous draft had these problems. Rewrite the blocks, keeping the same block "
+        "kinds and the same facts, and fix every problem below. Do not add new problems.",
+    ]
+    for index, reasons in problems.items():
+        block = draft.blocks[index]
+        lines.append(f"Block {index + 1} ({block.kind.value}): {block.text}")
+        lines.extend(f"  - {reason}" for reason in reasons)
+    return "\n".join(lines)
 
 
 def _known_tracks(slot_contexts: Sequence[NarrationSlotContext] | None) -> list[KnownTrack]:

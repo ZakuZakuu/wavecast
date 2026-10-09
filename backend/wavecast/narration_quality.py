@@ -52,6 +52,22 @@ _PARALLEL_LIST = re.compile(r"(?:[^，。、]{1,6}、){2}[^，。、]{1,6}")
 _PUNCTUATION = re.compile(r"[\s，。！？、；：,.!?;:“”\"'‘’《》「」『』（）()\-—…·]")
 
 
+_ARABIC_YEAR = re.compile(r"(?<![\d.])((?:1[89]|20)\d{2})(?!\d)")
+_CHINESE_YEAR = re.compile(r"([零〇一二三四五六七八九]{4})年")
+_DIGITS = {c: str(i) for i, c in enumerate("零一二三四五六七八九")} | {"〇": "0"}
+
+
+def years_in(text: str) -> set[str]:
+    """Four-digit years mentioned in ``text``, in digits (一九八二年 and 1982 both give 1982)."""
+
+    found = set(_ARABIC_YEAR.findall(text))
+    for word in _CHINESE_YEAR.findall(text):
+        digits = "".join(_DIGITS[char] for char in word)
+        if _ARABIC_YEAR.fullmatch(digits):
+            found.add(digits)
+    return found
+
+
 @dataclass(frozen=True)
 class BlockCheck:
     text: str
@@ -102,6 +118,7 @@ def check_block(
     chars_per_second: float = CHARS_PER_SECOND,
     tracks: Sequence[KnownTrack] = (),
     is_final: bool = False,
+    supported_years: set[str] | None = None,
 ) -> BlockCheck:
     issues: list[str] = []
     figurative = [phrase for phrase in FIGURATIVE_PHRASES if phrase in text]
@@ -125,6 +142,11 @@ def check_block(
         issues.append(f"too_long:{seconds:.0f}s>{window_seconds:.0f}s")
     if is_final and re.search(r"下一首|接下来|下期", text):
         issues.append("final_block_points_forward")
+    if opener_of(text) in _STOCK_OPENERS:
+        issues.append("stock_opener")
+    if supported_years is not None:
+        for year in sorted(years_in(text) - supported_years):
+            issues.append(f"unsupported_year:{year}")
     return BlockCheck(
         text=text,
         issues=issues,
@@ -133,6 +155,47 @@ def check_block(
         estimated_seconds=seconds,
         listen_cue=bool(_LISTEN_CUE.search(text)),
     )
+
+
+# Findings that justify asking the Writer for one rewrite.  "parallel_list" is only reported:
+# plain lists of names are normal speech.
+_REWRITE_ISSUES = (
+    "contrast_frame",
+    "moralising",
+    "podcast_talk",
+    "evidence_talk",
+    "personal_experience",
+    "too_long",
+    "final_block_points_forward",
+    "stock_opener",
+    "unsupported_year",
+)
+
+
+def rewrite_reasons(check: BlockCheck) -> list[str]:
+    """Plain-English problems in a block that are worth one rewrite, or an empty list."""
+
+    reasons: list[str] = []
+    if check.figurative_hits:
+        reasons.append("stock figurative wording: " + ", ".join(check.figurative_hits))
+    for issue in check.issues:
+        name = issue.split(":")[0]
+        if name in _REWRITE_ISSUES:
+            reasons.append(_REASON_TEXT.get(name, name) + (f" ({issue.split(':', 1)[1]})" if ":" in issue else ""))
+    return reasons
+
+
+_REASON_TEXT = {
+    "contrast_frame": "uses the frame 不是……而是……/更像……/与其……不如……",
+    "moralising": "ends or leans on a moral (这也提醒我们 and similar)",
+    "podcast_talk": "uses podcast/episode talk (下期, 本期节目, 各位听众)",
+    "evidence_talk": "talks about evidence or certainty (资料显示, 据说)",
+    "personal_experience": "claims a personal memory or experience",
+    "too_long": "is longer than its spoken window",
+    "final_block_points_forward": "points to what comes next in the closing block",
+    "stock_opener": "starts with 刚才/接下来/我们先从/下一首",
+    "unsupported_year": "gives a year that is not in the evidence",
+}
 
 
 @dataclass(frozen=True)

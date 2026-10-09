@@ -73,6 +73,7 @@ from wavecast.models.episode import (
     SegmentKind,
     SegmentState,
 )
+from wavecast.narration_quality import opener_of
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
@@ -2000,6 +2001,22 @@ def _artist_identity_words(value: str) -> frozenset[str]:
     )
 
 
+def _used_openers(episode: LiveEpisode) -> list[str]:
+    """How the narration already authored for this programme begins, in order."""
+
+    openers: list[str] = []
+    for segment in episode.ordered_segments:
+        if (
+            isinstance(segment, NarrationSegment)
+            and segment.narration_text
+            and segment.state is not SegmentState.SKIPPED
+        ):
+            opener = opener_of(segment.narration_text)
+            if opener and opener not in openers:
+                openers.append(opener)
+    return openers
+
+
 def _same_song_identity(left: ResolvedTrack | None, right: ResolvedTrack) -> bool:
     """Conservatively collapse catalog/version aliases of the same episode song.
 
@@ -3190,6 +3207,8 @@ class StagedProgressiveChapterGenerator:
                 target_duration_seconds=chapter.target_narration_seconds,
                 output_language=self.session.output_language,
                 station=self.session.station,
+                voice_seed=episode.seed_id,
+                used_openers=_used_openers(episode),
                 topic=self.session.topic,
                 slot_contexts=chapter.slot_contexts,
             )
