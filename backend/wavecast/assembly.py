@@ -370,6 +370,8 @@ def _pool_proposals(fast_plan: FastStartPlan, bundle: ResearchBundle) -> list[Tr
 _POOL_ARTIST_LIMIT = 3
 _POOL_TOPIC_ARTIST_LIMIT = 2
 _COVERAGE_POOL_CONFIG = PoolBuildConfig(max_verifications=8, timeout_seconds=15.0)
+# Same bounds the factory gives the pool when its flag is on.
+_NAMED_ARTIST_POOL_CONFIG = PoolBuildConfig(timeout_seconds=30.0)
 
 
 def _pool_artist_queries(
@@ -1632,6 +1634,12 @@ class LiveEpisodeAssemblyService:
         """
 
         builder = self.catalog_pool_builder
+        if builder is None and request.required_artists:
+            # A request that names artists is where an exact-title miss costs most: the
+            # Curator names a plausible album as a song, the catalog has no such track, and
+            # the route comes up short.  Live, 2 of 9 such programmes failed without the pool
+            # and 4 of 4 succeeded with it, so these requests use it even when the flag is off.
+            builder = CatalogPoolBuilder(self.retrieval, _NAMED_ARTIST_POOL_CONFIG)
         if builder is None:
             return None
         try:

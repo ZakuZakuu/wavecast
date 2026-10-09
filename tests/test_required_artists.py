@@ -207,6 +207,25 @@ def test_a_patched_route_is_logged_with_counts_only(tmp_path, caplog) -> None:
     assert logged == ["required_artists_checked required=2 absent=2 patched=1 unpatched=1"]
 
 
+def test_a_request_that_names_artists_uses_the_pool_even_when_the_flag_is_off(tmp_path) -> None:
+    llm = _SouthboundOnlyLLM()
+    assembly = service(tmp_path, llm)
+    assert assembly.catalog_pool_builder is None
+
+    _prepare(assembly, ["Signal Garden"])
+
+    assert "Available catalog tracks were verified playable" in llm.curator_prompts[0]
+    assert "Midnight Transfer" in llm.curator_prompts[0].split("Available:")[1]
+
+
+def test_a_request_that_names_no_artist_still_needs_the_flag_for_the_pool(tmp_path) -> None:
+    llm = _SouthboundOnlyLLM()
+
+    _prepare(service(tmp_path, llm), [])
+
+    assert "Available catalog tracks" not in llm.curator_prompts[0]
+
+
 def test_the_swapped_chapter_talks_about_the_new_artist_not_the_old_one(tmp_path) -> None:
     session = _prepare(service(tmp_path, _SouthboundOnlyLLM()), ["Signal Garden"])
 
