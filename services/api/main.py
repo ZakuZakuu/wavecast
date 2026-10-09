@@ -392,6 +392,12 @@ _auth_verifier = (
 )
 
 
+def _provider_error_summary(error: Exception) -> str:
+    """Error class and the adapter's already-sanitized message, for the operator's log."""
+
+    return f"{type(error).__name__}: {str(error)[:200]}"
+
+
 def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGenerator:
     if settings.resolved_proposal_planner == "mock":
         return DeterministicMockProgramProposalGenerator()
@@ -1084,6 +1090,7 @@ async def materialize_recommendation(
     except ProviderError as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
         await restore_available()
+        logger.warning("program_proposal_provider_failed error=%s", _provider_error_summary(error))
         raise HTTPException(status_code=502, detail="Program proposal provider failed") from error
     except ProposalPersistenceConflict as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
@@ -1403,6 +1410,7 @@ async def create_program_proposals(
         raise _proposal_failure_http_error(error) from error
     except ProviderError as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
+        logger.warning("program_proposal_provider_failed error=%s", _provider_error_summary(error))
         raise HTTPException(status_code=502, detail="Program proposal provider failed") from error
     except ProposalPersistenceConflict as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)

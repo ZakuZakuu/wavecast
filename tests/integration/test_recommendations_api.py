@@ -82,6 +82,45 @@ def test_recommendation_refresh_is_authenticated_personalized_and_rate_limited(m
     assert all("R&B" not in idea["title"] for idea in other_user.json())
 
 
+def test_a_provider_failure_while_materialising_an_idea_is_logged(monkeypatch, caplog) -> None:
+    from wavecast.providers.errors import ProviderInvalidResponseError
+
+    class FakeVerifier:
+        async def verify(self, token: str) -> str:
+            return "user-a"
+
+    class FailingGenerator:
+        async def generate(self, body):
+            del body
+            raise ProviderInvalidResponseError("deepseek request failed with HTTP 402")
+
+    monkeypatch.setattr(api_module, "_auth_verifier", FakeVerifier())
+    monkeypatch.setattr(
+        api_module, "user_preferences_repository", InMemoryUserPreferencesRepository()
+    )
+    monkeypatch.setattr(api_module, "_user_event_repository", InMemoryUserEventRepository())
+    monkeypatch.setattr(api_module, "proposal_repository", InMemoryProgramProposalRepository())
+    monkeypatch.setattr(api_module, "recommendation_repository", InMemoryProgramIdeaRepository())
+    monkeypatch.setattr(api_module, "proposal_generator", FailingGenerator())
+    monkeypatch.setattr(
+        api_module, "generation_quota_repository", InMemoryGenerationQuotaRepository()
+    )
+    monkeypatch.setattr(api_module, "user_library_repository", InMemoryUserLibraryRepository())
+    client = TestClient(api_module.app)
+    headers = {"Authorization": "Bearer token-a"}
+    idea_id = client.get("/api/recommendations/me", headers=headers).json()[0]["id"]
+
+    with caplog.at_level("WARNING", logger=api_module.logger.name):
+        response = client.post(
+            f"/api/recommendations/me/{idea_id}/program-proposal", headers=headers
+        )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Program proposal provider failed"
+    logged = " ".join(record.getMessage() for record in caplog.records)
+    assert "program_proposal_provider_failed" in logged and "HTTP 402" in logged
+
+
 def test_recommendation_materialization_is_owned_quota_bound_and_single_use(monkeypatch) -> None:
     class FakeVerifier:
         async def verify(self, token: str) -> str:

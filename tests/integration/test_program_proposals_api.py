@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from wavecast.proposals import InMemoryProgramProposalRepository, ProgramProposalGenerationError
+from wavecast.providers.errors import ProviderInvalidResponseError
 
 from services.api import main as api_module
 
@@ -151,6 +152,30 @@ def test_proposal_generation_returns_safe_gateway_error(monkeypatch) -> None:
     assert response.json()["detail"] == (
         "Program proposal generation failed (opening_track_unresolved)"
     )
+
+
+def test_a_provider_failure_is_logged_for_the_operator_but_not_shown_to_the_listener(
+    monkeypatch, caplog
+) -> None:
+    class FailingGenerator:
+        async def generate(self, body):
+            del body
+            raise ProviderInvalidResponseError("deepseek request failed with HTTP 402")
+
+    client = TestClient(api_module.app)
+    monkeypatch.setattr(api_module, "proposal_generator", FailingGenerator())
+
+    with caplog.at_level("WARNING", logger=api_module.logger.name):
+        response = client.post(
+            "/api/program-proposals",
+            json={"prompt": "Mogwai", "duration_intent": "AUTO", "count": 1},
+        )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Program proposal provider failed"
+    logged = " ".join(record.getMessage() for record in caplog.records)
+    assert "program_proposal_provider_failed" in logged
+    assert "ProviderInvalidResponseError" in logged and "HTTP 402" in logged
 
 
 @pytest.mark.parametrize(

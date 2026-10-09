@@ -319,3 +319,21 @@ def test_a_bridge_naming_both_artists_is_left_as_planned(tmp_path) -> None:
 
     assert "Southbound FM" in _text(session, 1) and "Signal Garden" in _text(session, 1)
     assert "Southbound FM is where this route is going." in _text(session, 0)
+
+
+def test_a_neutralised_chapter_is_logged_with_its_cause_and_no_names(tmp_path, caplog) -> None:
+    with caplog.at_level("INFO", logger="wavecast.assembly"):
+        _prepare(
+            tmp_path,
+            [
+                chapter(
+                    "Ghost Band",
+                    reason="Ghost Band's 1999 album is the turning point.",
+                    title="Never Released",
+                    alternates=[proposal("Signal Garden", "Midnight Transfer")],
+                )
+            ],
+        )
+
+    logged = [r.getMessage() for r in caplog.records if "chapter_text_neutralised" in r.getMessage()]
+    assert logged == ["chapter_text_neutralised chapter=0 cause=alternate_track foreign_artists=0"]
