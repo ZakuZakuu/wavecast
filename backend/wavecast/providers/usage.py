@@ -154,7 +154,6 @@ def safe_usage_event(event: UsageEvent) -> dict[str, object]:
         "search_credits": event.search_credits,
         "actual_cost_usd": event.actual_cost_usd,
         "estimated_cost_usd": event.estimated_cost_usd,
-        "scope": event.scope,
         "model": metadata_value("model"),
         "transport": metadata_value("transport"),
         "finish_reason": metadata_value("finish_reason"),
