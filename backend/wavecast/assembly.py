@@ -79,6 +79,7 @@ from wavecast.models.episode import (
     SegmentKind,
     SegmentState,
 )
+from wavecast.music_discovery import catalog_queries
 from wavecast.narration_quality import opener_of
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.staged import (
@@ -1696,7 +1697,11 @@ class LiveEpisodeAssemblyService:
                 artist_queries=_pool_artist_queries(
                     proposals, request.required_artists, request.topic
                 ),
-                keyword_queries=[request.topic],
+                keyword_queries=catalog_queries(request.topic),
+                named_artists=request.required_artists,
+                evidence_texts=[
+                    f"{item.source_title} {item.claim_or_excerpt}" for item in bundle.evidence
+                ],
             )
             pool.named_artists = list(request.required_artists)
         except Exception as error:  # noqa: BLE001 - optional optimisation, degrade quietly
