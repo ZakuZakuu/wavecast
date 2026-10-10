@@ -354,11 +354,11 @@ def test_a_curator_choice_outside_the_pool_still_goes_through_exact_resolution(t
 # --- configuration -----------------------------------------------------------------------
 
 
-def test_catalog_pool_flag_defaults_off_and_is_validated(monkeypatch) -> None:
-    monkeypatch.delenv("WAVECAST_CATALOG_POOL", raising=False)
-    assert ProviderSettings.from_env().catalog_pool is False
+def test_catalog_pool_flag_is_validated(monkeypatch) -> None:
     monkeypatch.setenv("WAVECAST_CATALOG_POOL", "on")
     assert ProviderSettings.from_env().catalog_pool is True
+    monkeypatch.setenv("WAVECAST_CATALOG_POOL", "off")
+    assert ProviderSettings.from_env().catalog_pool is False
     monkeypatch.setenv("WAVECAST_CATALOG_POOL", "maybe")
     with pytest.raises(ProviderConfigurationError):
         ProviderSettings.from_env()
@@ -368,7 +368,7 @@ def test_factory_builds_the_pool_only_when_enabled(tmp_path) -> None:
     from wavecast.storage.assets import LocalObjectStorageProvider
 
     storage = LocalObjectStorageProvider(tmp_path / "audio")
-    off = create_episode_assembly_service(ProviderSettings(), storage=storage)
+    off = create_episode_assembly_service(ProviderSettings(catalog_pool=False), storage=storage)
     on = create_episode_assembly_service(ProviderSettings(catalog_pool=True), storage=storage)
 
     assert off.catalog_pool_builder is None
