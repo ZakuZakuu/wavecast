@@ -79,6 +79,7 @@ from wavecast.models.episode import (
     SegmentKind,
     SegmentState,
 )
+from wavecast.music_discovery import catalog_queries
 from wavecast.narration_quality import opener_of
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.staged import (
@@ -135,7 +136,12 @@ from wavecast.route_duration import (
 )
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
-from wavecast.text_identity import canonical_name, song_title_key, strip_latin_accents
+from wavecast.text_identity import (
+    base_title_key,
+    canonical_name,
+    song_title_key,
+    strip_latin_accents,
+)
 from wavecast.timing import (
     ProgramTimingPlan,
     ProgramTimingSummary,
@@ -1696,7 +1702,11 @@ class LiveEpisodeAssemblyService:
                 artist_queries=_pool_artist_queries(
                     proposals, request.required_artists, request.topic
                 ),
-                keyword_queries=[request.topic],
+                keyword_queries=catalog_queries(request.topic),
+                named_artists=request.required_artists,
+                evidence_texts=[
+                    f"{item.source_title} {item.claim_or_excerpt}" for item in bundle.evidence
+                ],
             )
             pool.named_artists = list(request.required_artists)
         except Exception as error:  # noqa: BLE001 - optional optimisation, degrade quietly
@@ -1713,7 +1723,10 @@ class LiveEpisodeAssemblyService:
                         _same_song_identity(reserved, entry.resolved_track())
                         for reserved in reserved_tracks
                     )
-                ]
+                ],
+                "reserved_song_keys": [
+                    base_title_key(reserved.canonical_title) for reserved in reserved_tracks
+                ],
             }
         )
         logger.info(
@@ -1730,6 +1743,11 @@ class LiveEpisodeAssemblyService:
             dict(sorted(pool.failure_kinds.items())),
             pool.elapsed_ms,
             pool.truncated,
+        )
+        # Who the Curator can choose from (artist names are catalogue metadata, not user data).
+        logger.info(
+            "catalog_pool_artists %s",
+            dict(Counter(entry.primary_artist for entry in pool.entries).most_common(8)),
         )
         trace.mark(
             "catalog_pool_ready",
@@ -2739,6 +2757,15 @@ def _build_progressive_session(
             },
         )
 
+    logger.info(
+        "route_artists %s",
+        dict(
+            Counter(
+                [opening_track.canonical_artist]
+                + [item.track.canonical_artist for item in future if item.track is not None]
+            )
+        ),
+    )
     timing_plan = build_program_timing_plan(
         desired_total_seconds=request.desired_duration_seconds,
         target_narration_ratio=target_narration_ratio,

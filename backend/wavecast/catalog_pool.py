@@ -22,6 +22,7 @@ from time import perf_counter
 from pydantic import BaseModel, ConfigDict, Field
 
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
+from wavecast.music_discovery import artist_scores
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.retrieval import (
     MusicRetrievalService,
@@ -152,6 +153,9 @@ class CatalogPool(BaseModel):
     # including the one a generic request happened to open with, is held to the ordinary cap.
     # ``None`` keeps the earlier rule (every searched artist is an anchor).
     named_artists: list[str] | None = None
+    # Songs taken out of the pool because the programme already plays them (the opening): a
+    # keyword hit that is only another artist's version of one of these is still a cover.
+    reserved_song_keys: list[str] = Field(default_factory=list)
 
     def by_source(self, source: PoolSource) -> list[PoolEntry]:
         return [entry for entry in self.entries if entry.source is source]
@@ -209,7 +213,7 @@ class CatalogPool(BaseModel):
             base_title_key(entry.title)
             for entry in self.entries
             if entry.source is not PoolSource.KEYWORD_SEARCH
-        }
+        } | set(self.reserved_song_keys)
         counts: dict[str, int] = {}
         listed: list[PoolEntry] = []
         for _index, entry in ranked:
@@ -269,7 +273,11 @@ class PoolBuildConfig:
     max_verifications: int = 24
     concurrency: int = 3
     search_limit: int = 10
-    max_keyword_entries: int = 8
+    max_keyword_entries: int = 12
+    # Spread: no single artist may fill the keyword tier, or take most of the verification budget.
+    max_keyword_per_artist: int = 2
+    max_songs_per_artist: int = 4
+    max_songs_per_named_artist: int = 8
     max_refs_per_song: int = 3
     timeout_seconds: float = 45.0
     excluded_versions: frozenset[VersionKind] = field(default=_DEFAULT_EXCLUDED_VERSIONS)
@@ -353,6 +361,8 @@ class CatalogPoolBuilder:
         proposals: Sequence[TrackProposal] = (),
         artist_queries: Sequence[str] = (),
         keyword_queries: Sequence[str] = (),
+        named_artists: Sequence[str] = (),
+        evidence_texts: Sequence[str] = (),
     ) -> CatalogPool:
         """Examine candidates from three sources, most trusted first.
 
@@ -360,7 +370,9 @@ class CatalogPoolBuilder:
           variants folded) and be playable.
         * ``artist_queries``: artists the programme is centred on; only tracks credited
           to that artist are kept (covers and tribute artists are dropped).
-        * ``keyword_queries``: topic keywords; filler only, capped.
+        * ``keyword_queries``: topic keywords.  Artists they return are ranked (more queries,
+          named in ``evidence_texts``) and verified one artist at a time, so a handful of
+          artists share the budget instead of one filling it.
 
         On timeout the pool built so far is returned with ``truncated=True``.
         """
@@ -370,7 +382,15 @@ class CatalogPoolBuilder:
         state = _BuildState(semaphore=asyncio.Semaphore(self.config.concurrency))
         try:
             await asyncio.wait_for(
-                self._build(pool, state, proposals, artist_queries, keyword_queries),
+                self._build(
+                    pool,
+                    state,
+                    proposals,
+                    artist_queries,
+                    keyword_queries,
+                    named_artists,
+                    evidence_texts,
+                ),
                 timeout=self.config.timeout_seconds,
             )
         except TimeoutError:
@@ -386,6 +406,8 @@ class CatalogPoolBuilder:
         proposals: Sequence[TrackProposal],
         artist_queries: Sequence[str],
         keyword_queries: Sequence[str],
+        named_artists: Sequence[str] = (),
+        evidence_texts: Sequence[str] = (),
     ) -> None:
         # Stage 1: LLM-named tracks (bounded by the caller's proposal count).
         async def examine(index: int, proposal: TrackProposal) -> None:
@@ -427,12 +449,74 @@ class CatalogPoolBuilder:
             if track.version_kind in self.config.excluded_versions or key in state.examined:
                 continue
             groups.setdefault(key, []).append((track, source))
-        songs = list(groups.values())[: self.config.max_verifications]
+        named = {canonical_name(name) for name in named_artists}
+        scores = artist_scores(
+            [
+                (query, track.artist)
+                for query, tracks in zip(keyword_queries, keyword_batches, strict=True)
+                for track in tracks
+            ],
+            evidence_texts,
+        )
+        songs = self._select_songs(list(groups.values()), scores, named)
 
         async def verify_song(index: int, entries: list[tuple[RetrievedTrack, PoolSource]]) -> None:
             state.record((1, index), await self._verify_song(entries, state))
 
         await asyncio.gather(*(verify_song(i, entries) for i, entries in enumerate(songs)))
+
+    def _select_songs(
+        self,
+        songs: list[list[tuple[RetrievedTrack, PoolSource]]],
+        scores: dict[str, float],
+        named: set[str],
+    ) -> list[list[tuple[RetrievedTrack, PoolSource]]]:
+        """Songs to verify, within the budget, spread across artists.
+
+        Songs of searched artists come first (a named artist may take more of the budget),
+        then keyword hits taken one artist at a time, best-ranked artist first, so the
+        verification budget reaches several artists before it reaches a fourth song of one.
+        """
+
+        def artist_of(entries: list[tuple[RetrievedTrack, PoolSource]]) -> str:
+            return canonical_name(primary_artist(entries[0][0].artist))
+
+        def is_searched(entries: list[tuple[RetrievedTrack, PoolSource]]) -> bool:
+            return any(source is PoolSource.ARTIST_SEARCH for _track, source in entries)
+
+        taken: dict[str, int] = {}
+        selected: list[list[tuple[RetrievedTrack, PoolSource]]] = []
+        deferred: list[list[tuple[RetrievedTrack, PoolSource]]] = []
+        for entries in (group for group in songs if is_searched(group)):
+            artist = artist_of(entries)
+            limit = (
+                self.config.max_songs_per_named_artist
+                if artist in named
+                else self.config.max_songs_per_artist
+            )
+            if taken.get(artist, 0) >= limit:
+                deferred.append(entries)
+                continue
+            taken[artist] = taken.get(artist, 0) + 1
+            selected.append(entries)
+
+        queues: dict[str, list[list[tuple[RetrievedTrack, PoolSource]]]] = {}
+        for entries in (group for group in songs if not is_searched(group)):
+            queues.setdefault(artist_of(entries), []).append(entries)
+        order = sorted(queues, key=lambda artist: (-scores.get(artist, 0.0), list(queues).index(artist)))
+        depth = 0
+        while any(len(queues[artist]) > depth for artist in order):
+            for artist in order:
+                if len(queues[artist]) > depth and depth < self.config.max_keyword_per_artist:
+                    selected.append(queues[artist][depth])
+            depth += 1
+            if depth >= self.config.max_keyword_per_artist:
+                break
+        # The caps are about sharing a scarce budget.  Budget nobody else wants goes to the
+        # searched artists' remaining songs (a lone artist is searched as deep as before).
+        selected = selected[: self.config.max_verifications]
+        selected.extend(deferred[: self.config.max_verifications - len(selected)])
+        return selected
 
     async def _verify_song(
         self, entries: list[tuple[RetrievedTrack, PoolSource]], state: _BuildState
