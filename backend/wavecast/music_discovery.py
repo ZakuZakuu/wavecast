@@ -51,6 +51,16 @@ GENRE_ALIASES: dict[str, tuple[str, ...]] = {
     "波萨诺瓦": ("bossa nova",),
 }
 
+# Themes a request pairs with a genre ("游戏里的爵士"): searched together with the genre, since
+# the genre alone finds the genre's usual artists and the theme alone finds a catalogue of it.
+THEME_ALIASES: dict[str, tuple[str, ...]] = {
+    "游戏": ("game", "video game"),
+    "电影": ("film", "movie"),
+    "动漫": ("anime",),
+    "动画": ("anime",),
+    "剧集": ("tv series",),
+}
+
 # Genres whose music is made by bands: "<genre> 乐队" finds bands rather than songs titled so.
 _BAND_GENRES = frozenset({"后摇", "数学摇滚", "盯鞋", "摇滚", "朋克", "金属"})
 
@@ -59,7 +69,7 @@ _LEADING_FILLER = re.compile(
     r"|给我(?:放|来|找)?(?:点|些|一些|几首)?|推荐(?:点|些|一些|几首)?|听(?:点|些|一些)"
     r"|有没有)\s*(?:点|些|一些|几首)?\s*"
 )
-_TRAILING_FILLER = re.compile(r"(?:的)?(?:歌曲|歌|音乐|曲子|曲目)$")
+_TRAILING_FILLER = re.compile(r"(?:的)?(?:歌曲|歌|曲子|曲目)$")
 _MAX_QUERIES = 5
 
 
@@ -99,6 +109,11 @@ def catalog_queries(topic: str) -> list[str]:
     if not matched:
         add(cleaned)
         return queries[:_MAX_QUERIES]
+    themes = [zh for zh in THEME_ALIASES if zh in cleaned]
+    for theme in themes[:1]:
+        for zh in matched[:1]:
+            add(f"{theme} {zh}")
+            add(f"{THEME_ALIASES[theme][0]} {GENRE_ALIASES[zh][0]}")
     for zh in matched[:2]:
         add(zh)
         add(GENRE_ALIASES[zh][0])

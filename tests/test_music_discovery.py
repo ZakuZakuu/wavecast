@@ -166,3 +166,52 @@ def test_a_named_artist_may_take_more_of_the_budget_than_an_ordinary_one() -> No
     assert sum(e.source is PoolSource.ARTIST_SEARCH for e in ordinary.entries) == 4
     assert sum(e.source is PoolSource.ARTIST_SEARCH for e in named.entries) == 8
     assert all(o.status is AvailabilityStatus.PLAYABLE for o in named.outcomes)
+
+
+# --- a genre paired with a theme ---------------------------------------------------------------
+
+
+def test_a_genre_paired_with_a_theme_searches_the_pair() -> None:
+    queries = catalog_queries("想听点游戏里的爵士配乐")
+
+    assert queries[0] == "游戏 爵士"
+    assert "game jazz" in queries
+    assert "爵士" in queries and "jazz" in queries
+
+
+def test_a_theme_alone_is_not_a_genre_query() -> None:
+    assert catalog_queries("想听点游戏音乐") == ["游戏音乐"]
+
+
+# --- a cover of the opening is still a cover ----------------------------------------------------
+
+
+def test_a_keyword_hit_that_repeats_a_reserved_song_is_treated_as_a_cover() -> None:
+    from wavecast.catalog_pool import CatalogPool, PoolEntry
+    from wavecast.providers.retrieval import VersionKind
+
+    def entry(ref: str, artist: str, title: str, source: PoolSource) -> PoolEntry:
+        return PoolEntry(
+            track_ref=f"netease:{ref}",
+            artist=artist,
+            title=title,
+            primary_artist=artist,
+            duration_seconds=200,
+            version_kind=VersionKind.STUDIO,
+            source=source,
+        )
+
+    pool = CatalogPool(
+        entries=[
+            entry("1", "久石譲", "天空の城ラピュタ", PoolSource.ARTIST_SEARCH),
+            entry("2", "钢琴乐队", "Summer (钢琴版)", PoolSource.KEYWORD_SEARCH),
+        ],
+        reserved_song_keys=["summer"],
+    )
+
+    titles = [item.title for item in pool.listing()]
+
+    assert titles == ["天空の城ラピュタ"]
+    assert "Summer (钢琴版)" in [
+        item.title for item in CatalogPool(entries=pool.entries).listing()
+    ]  # without the reserved key the cover would be offered

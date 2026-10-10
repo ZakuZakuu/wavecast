@@ -136,7 +136,12 @@ from wavecast.route_duration import (
 )
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
-from wavecast.text_identity import canonical_name, song_title_key, strip_latin_accents
+from wavecast.text_identity import (
+    base_title_key,
+    canonical_name,
+    song_title_key,
+    strip_latin_accents,
+)
 from wavecast.timing import (
     ProgramTimingPlan,
     ProgramTimingSummary,
@@ -1718,7 +1723,10 @@ class LiveEpisodeAssemblyService:
                         _same_song_identity(reserved, entry.resolved_track())
                         for reserved in reserved_tracks
                     )
-                ]
+                ],
+                "reserved_song_keys": [
+                    base_title_key(reserved.canonical_title) for reserved in reserved_tracks
+                ],
             }
         )
         logger.info(

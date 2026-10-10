@@ -153,6 +153,9 @@ class CatalogPool(BaseModel):
     # including the one a generic request happened to open with, is held to the ordinary cap.
     # ``None`` keeps the earlier rule (every searched artist is an anchor).
     named_artists: list[str] | None = None
+    # Songs taken out of the pool because the programme already plays them (the opening): a
+    # keyword hit that is only another artist's version of one of these is still a cover.
+    reserved_song_keys: list[str] = Field(default_factory=list)
 
     def by_source(self, source: PoolSource) -> list[PoolEntry]:
         return [entry for entry in self.entries if entry.source is source]
@@ -210,7 +213,7 @@ class CatalogPool(BaseModel):
             base_title_key(entry.title)
             for entry in self.entries
             if entry.source is not PoolSource.KEYWORD_SEARCH
-        }
+        } | set(self.reserved_song_keys)
         counts: dict[str, int] = {}
         listed: list[PoolEntry] = []
         for _index, entry in ranked:
