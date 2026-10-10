@@ -3,7 +3,6 @@
 import asyncio
 
 from wavecast.catalog_pool import (
-    AvailabilityStatus,
     CatalogPoolBuilder,
     PoolBuildConfig,
     PoolSource,
@@ -150,22 +149,24 @@ def test_research_that_names_an_artist_lifts_it_into_the_budget() -> None:
     assert "Godspeed" in {entry.primary_artist for entry in with_evidence.entries}
 
 
-def test_a_named_artist_may_take_more_of_the_budget_than_an_ordinary_one() -> None:
+def test_a_named_artist_may_take_more_of_a_scarce_budget_than_an_ordinary_one() -> None:
     tracks = [track(f"s{i}", "椎名林檎", f"曲 {i}") for i in range(8)]
-    catalog = SidecarLikeCatalog(tracks, {"椎名林檎": [f"s{i}" for i in range(8)]})
-
-    ordinary = asyncio.run(
-        _pool_with(catalog, search_limit=20).build(artist_queries=["椎名林檎"])
+    tracks += [track("a0", "Other A", "A 0"), track("b0", "Other B", "B 0")]
+    catalog = SidecarLikeCatalog(
+        tracks, {"椎名林檎": [f"s{i}" for i in range(8)], "kw": ["a0", "b0"]}
     )
-    named = asyncio.run(
-        _pool_with(catalog, search_limit=20).build(
-            artist_queries=["椎名林檎"], named_artists=["椎名林檎"]
+
+    def searched(**kwargs) -> int:
+        pool = asyncio.run(
+            _pool_with(catalog, search_limit=20, max_verifications=6).build(
+                artist_queries=["椎名林檎"], keyword_queries=["kw"], **kwargs
+            )
         )
-    )
+        return sum(e.source is PoolSource.ARTIST_SEARCH for e in pool.entries)
 
-    assert sum(e.source is PoolSource.ARTIST_SEARCH for e in ordinary.entries) == 4
-    assert sum(e.source is PoolSource.ARTIST_SEARCH for e in named.entries) == 8
-    assert all(o.status is AvailabilityStatus.PLAYABLE for o in named.outcomes)
+    assert searched() == 4  # an ordinary artist leaves room for the others
+    assert searched(named_artists=["椎名林檎"]) == 6  # a named artist may take the budget
+
 
 
 # --- a genre paired with a theme ---------------------------------------------------------------
@@ -215,3 +216,14 @@ def test_a_keyword_hit_that_repeats_a_reserved_song_is_treated_as_a_cover() -> N
     assert "Summer (钢琴版)" in [
         item.title for item in CatalogPool(entries=pool.entries).listing()
     ]  # without the reserved key the cover would be offered
+
+
+def test_budget_nobody_else_wants_goes_to_the_searched_artists_remaining_songs() -> None:
+    tracks = [track(f"d{i}", "Deep Artist", f"Deep {i}") for i in range(10)]
+    catalog = SidecarLikeCatalog(tracks, {"Deep Artist": [f"d{i}" for i in range(10)]})
+
+    pool = asyncio.run(
+        _pool_with(catalog, search_limit=20).build(artist_queries=["Deep Artist"])
+    )
+
+    assert len(pool.entries) == 10  # no keyword hits compete, so no artist cap applies

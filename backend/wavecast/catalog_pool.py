@@ -486,6 +486,7 @@ class CatalogPoolBuilder:
 
         taken: dict[str, int] = {}
         selected: list[list[tuple[RetrievedTrack, PoolSource]]] = []
+        deferred: list[list[tuple[RetrievedTrack, PoolSource]]] = []
         for entries in (group for group in songs if is_searched(group)):
             artist = artist_of(entries)
             limit = (
@@ -494,6 +495,7 @@ class CatalogPoolBuilder:
                 else self.config.max_songs_per_artist
             )
             if taken.get(artist, 0) >= limit:
+                deferred.append(entries)
                 continue
             taken[artist] = taken.get(artist, 0) + 1
             selected.append(entries)
@@ -510,7 +512,11 @@ class CatalogPoolBuilder:
             depth += 1
             if depth >= self.config.max_keyword_per_artist:
                 break
-        return selected[: self.config.max_verifications]
+        # The caps are about sharing a scarce budget.  Budget nobody else wants goes to the
+        # searched artists' remaining songs (a lone artist is searched as deep as before).
+        selected = selected[: self.config.max_verifications]
+        selected.extend(deferred[: self.config.max_verifications - len(selected)])
+        return selected
 
     async def _verify_song(
         self, entries: list[tuple[RetrievedTrack, PoolSource]], state: _BuildState
