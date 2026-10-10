@@ -20,6 +20,8 @@ class ProviderSettings:
     deepseek_api_key: str | None = None
     exa_api_key: str | None = None
     tavily_api_key: str | None = None
+    # Optional discovery signal (ranking/candidates only); absent = Last.fm is simply not used.
+    lastfm_api_key: str | None = None
     minimax_api_key: str | None = None
     audius_api_key: str | None = None
     # Audius API keys identify the application and may be used in client-safe
@@ -74,6 +76,7 @@ class ProviderSettings:
             deepseek_api_key=getenv("DEEPSEEK_API_KEY"),
             exa_api_key=getenv("EXA_API_KEY"),
             tavily_api_key=getenv("TAVILY_API_KEY"),
+            lastfm_api_key=getenv("LASTFM_API_KEY") or None,
             minimax_api_key=getenv("MINIMAX_API_KEY"),
             audius_api_key=getenv("AUDIUS_API_KEY"),
             audius_bearer_token=getenv("AUDIUS_BEARER_TOKEN"),

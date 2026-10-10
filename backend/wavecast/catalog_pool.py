@@ -22,7 +22,7 @@ from time import perf_counter
 from pydantic import BaseModel, ConfigDict, Field
 
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
-from wavecast.music_discovery import artist_scores
+from wavecast.music_discovery import TAG_LABEL_PREFIX, ArtistHintProvider, artist_scores
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.retrieval import (
     MusicRetrievalService,
@@ -266,6 +266,11 @@ class CatalogPool(BaseModel):
         }
 
 
+# Community-tag artists searched in the catalog per request (each costs one catalog search).
+_HINTS_PER_TAG = 8
+_MAX_HINT_SEARCHES = 8
+
+
 @dataclass(frozen=True)
 class PoolBuildConfig:
     """Bounds on catalog work.  Initial values come from the 2026-10-08 experiment."""
@@ -350,10 +355,14 @@ class CatalogPoolBuilder:
     """Build a :class:`CatalogPool` with bounded, deterministic catalog calls."""
 
     def __init__(
-        self, retrieval: MusicRetrievalService, config: PoolBuildConfig | None = None
+        self,
+        retrieval: MusicRetrievalService,
+        config: PoolBuildConfig | None = None,
+        hints: ArtistHintProvider | None = None,
     ) -> None:
         self.retrieval = retrieval
         self.config = config or PoolBuildConfig()
+        self.hints = hints
 
     async def build(
         self,
@@ -363,6 +372,7 @@ class CatalogPoolBuilder:
         keyword_queries: Sequence[str] = (),
         named_artists: Sequence[str] = (),
         evidence_texts: Sequence[str] = (),
+        hint_tags: Sequence[str] = (),
     ) -> CatalogPool:
         """Examine candidates from three sources, most trusted first.
 
@@ -373,6 +383,8 @@ class CatalogPoolBuilder:
         * ``keyword_queries``: topic keywords.  Artists they return are ranked (more queries,
           named in ``evidence_texts``) and verified one artist at a time, so a handful of
           artists share the budget instead of one filling it.
+        * ``hint_tags``: community tags whose artists (from the optional hint provider) are
+          searched in the catalog and join the keyword tier as ranked, capped candidates.
 
         On timeout the pool built so far is returned with ``truncated=True``.
         """
@@ -390,6 +402,7 @@ class CatalogPoolBuilder:
                     keyword_queries,
                     named_artists,
                     evidence_texts,
+                    hint_tags,
                 ),
                 timeout=self.config.timeout_seconds,
             )
@@ -408,6 +421,7 @@ class CatalogPoolBuilder:
         keyword_queries: Sequence[str],
         named_artists: Sequence[str] = (),
         evidence_texts: Sequence[str] = (),
+        hint_tags: Sequence[str] = (),
     ) -> None:
         # Stage 1: LLM-named tracks (bounded by the caller's proposal count).
         async def examine(index: int, proposal: TrackProposal) -> None:
@@ -416,9 +430,10 @@ class CatalogPoolBuilder:
         await asyncio.gather(*(examine(i, proposal) for i, proposal in enumerate(proposals)))
 
         # Stage 2: searches for the other two sources, run concurrently.
-        artist_batches, keyword_batches = await asyncio.gather(
+        artist_batches, keyword_batches, hinted = await asyncio.gather(
             self._search_all(artist_queries, state),
             self._search_all(keyword_queries, state),
+            self._search_hinted(hint_tags, state),
         )
         candidates: list[tuple[RetrievedTrack, PoolSource]] = []
         for artist, tracks in zip(artist_queries, artist_batches, strict=True):
@@ -439,6 +454,12 @@ class CatalogPoolBuilder:
                 )
                 for track in tracks
             )
+        hint_hits: list[tuple[str, str]] = []
+        for label, name, tracks in hinted:
+            matching = [track for track in tracks if artist_credit_includes(track.artist, name)]
+            if matching:
+                hint_hits.append((label, name))
+            candidates.extend((track, PoolSource.KEYWORD_SEARCH) for track in matching)
         candidates.sort(key=lambda item: item[1] is not PoolSource.ARTIST_SEARCH)
 
         # Stage 3: group candidates by song (one song often has several catalog entries,
@@ -455,7 +476,8 @@ class CatalogPoolBuilder:
                 (query, track.artist)
                 for query, tracks in zip(keyword_queries, keyword_batches, strict=True)
                 for track in tracks
-            ],
+            ]
+            + hint_hits,
             evidence_texts,
         )
         songs = self._select_songs(list(groups.values()), scores, named)
@@ -545,6 +567,32 @@ class CatalogPoolBuilder:
             return list(report.candidates)
 
         return list(await asyncio.gather(*(one(query) for query in queries)))
+
+    async def _search_hinted(
+        self, tags: Sequence[str], state: _BuildState
+    ) -> list[tuple[str, str, list[RetrievedTrack]]]:
+        """Catalog tracks of the artists a community tag names: ``(label, artist, tracks)``.
+
+        Never raises and never waits long: no provider, no tags or a failed lookup is ``[]``.
+        """
+
+        if self.hints is None or not tags:
+            return []
+        hints = self.hints
+        names: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for tag in tags[:2]:
+            for name in await hints.artists_for_tag(tag, limit=_HINTS_PER_TAG):
+                key = canonical_name(name)
+                if key and key not in seen:
+                    seen.add(key)
+                    names.append((f"{TAG_LABEL_PREFIX}{tag}", name))
+        names = names[:_MAX_HINT_SEARCHES]
+        batches = await self._search_all([name for _label, name in names], state)
+        return [
+            (label, name, tracks)
+            for (label, name), tracks in zip(names, batches, strict=True)
+        ]
 
     async def _resolve_proposal(self, proposal: TrackProposal, state: _BuildState) -> _Verified:
         """Find the exact catalog track for an LLM proposal and verify it."""

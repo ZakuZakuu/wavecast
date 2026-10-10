@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
+from typing import Protocol
 
 from wavecast.text_identity import canonical_name
 
@@ -71,6 +72,8 @@ _LEADING_FILLER = re.compile(
 )
 _TRAILING_FILLER = re.compile(r"(?:的)?(?:歌曲|歌|曲子|曲目)$")
 _MAX_QUERIES = 5
+# Search-hit labels that mark an artist listed under a community tag rather than found by a query.
+TAG_LABEL_PREFIX = "tag:"
 
 
 def _clean(topic: str) -> str:
@@ -125,6 +128,38 @@ def catalog_queries(topic: str) -> list[str]:
     return queries[:_MAX_QUERIES]
 
 
+def community_tags(topic: str) -> list[str]:
+    """English community tags for a request that is *only* a genre, else empty.
+
+    A tag lookup returns the genre's usual artists worldwide.  A request that adds anything
+    (a country, a game, an era, a mood) is narrower than the tag, so the lookup would pull the
+    route away from what was asked; those requests keep the catalog queries alone.
+    """
+
+    cleaned = _clean(topic)
+    folded = cleaned.casefold()
+    tags: list[str] = []
+    rest = folded
+    for zh, english in GENRE_ALIASES.items():
+        if zh in cleaned or any(alias in folded for alias in english):
+            tags.append(english[0])
+            for word in (zh, *english):
+                rest = rest.replace(word.casefold(), " ")
+    if not tags:
+        return []
+    rest = re.sub(r"乐队|音乐|类|风格|的|\s|[-_]", "", rest)
+    return [] if rest else tags[:2]
+
+
+class ArtistHintProvider(Protocol):
+    """A secondary, optional source of artists for community tags (e.g. Last.fm).
+
+    Implementations must never raise: a failed or unconfigured lookup returns ``[]``.
+    """
+
+    async def artists_for_tag(self, tag: str, *, limit: int) -> list[str]: ...
+
+
 def _mentions(blob: str, name: str) -> bool:
     if len(name) < 2:
         return False
@@ -139,8 +174,11 @@ def artist_scores(
     """Rank artists from ``(query, credited artist)`` search hits.
 
     Keys are ``canonical_name`` of the first credited artist.  An artist scores 2 for each
-    distinct query that returned it, 1 for each hit, and 3 if the independent web research
-    names it.  Only the order matters.
+    distinct query that returned it, 1 for each hit, 3 if the independent web research names
+    it, and 5 if a community tag lists it (a ``tag:`` query label).  A tag listing is a
+    genre-specific vote from outside the catalog's own text matching, which is what lifts a
+    genre's well-known artists above artists whose names merely contain the query.  Only the
+    order matters.
     """
 
     queries: dict[str, set[str]] = defaultdict(set)
@@ -154,6 +192,9 @@ def artist_scores(
         counts[key] += 1
     blob = canonical_name("\n".join(evidence_texts)) if evidence_texts else ""
     return {
-        key: 2.0 * len(queries[key]) + counts[key] + (3.0 if blob and _mentions(blob, key) else 0.0)
+        key: 2.0 * len(queries[key])
+        + counts[key]
+        + (3.0 if blob and _mentions(blob, key) else 0.0)
+        + (5.0 if any(query.startswith(TAG_LABEL_PREFIX) for query in queries[key]) else 0.0)
         for key in counts
     }
