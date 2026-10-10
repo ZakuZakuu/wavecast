@@ -22,7 +22,7 @@ def test_every_station_has_a_profile() -> None:
     [
         (StationId.CASUAL, HostMode.LIGHT),
         (StationId.CRATE, HostMode.LIGHT),
-        (StationId.PORTRAIT, HostMode.LIGHT),
+        (StationId.PORTRAIT, HostMode.FULL),
         (StationId.LINEAGE, HostMode.FULL),
         (StationId.NIGHT, HostMode.NONE),
         (None, HostMode.LIGHT),

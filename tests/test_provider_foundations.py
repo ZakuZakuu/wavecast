@@ -51,7 +51,8 @@ def test_mock_mode_is_credential_free(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.resolved_tts_provider == "mock"
     assert settings.minimax_tts_base_url == "https://api.minimax.cn"
     assert settings.minimax_tts_model == "speech-2.8-turbo"
-    assert settings.minimax_tts_speed == 0.8
+    assert settings.minimax_tts_speed == 0.9
+    assert settings.minimax_tts_volume == 1.7
     with pytest.raises(ProviderConfigurationError):
         settings.credential_for("deepseek")
 
