@@ -38,7 +38,7 @@ STATION_PROFILES: dict[StationId, StationProfile] = {
         StationId.CRATE, "唱片行", "同好带你挖歌：从一首喜欢的歌出发，往外挖没听过的", HostMode.LIGHT
     ),
     StationId.PORTRAIT: StationProfile(
-        StationId.PORTRAIT, "人物志", "一位歌手的路：用作品讲他走过的路", HostMode.LIGHT
+        StationId.PORTRAIT, "人物志", "一位歌手的路：用作品讲他走过的路", HostMode.FULL
     ),
     StationId.LINEAGE: StationProfile(
         StationId.LINEAGE, "来龙去脉", "一种风格的来历：跨年代串起来听", HostMode.FULL

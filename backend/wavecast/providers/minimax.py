@@ -74,7 +74,8 @@ class MiniMaxTTSProvider:
             voice_id=self.settings.minimax_tts_voice_id or "",
             speed=speed,
             language_boost=language_boost,
-            audio_settings=self.audio_settings,
+            # The voice level is part of what was synthesised, so it is part of the cache key.
+            audio_settings={**self.audio_settings, "vol": self.settings.minimax_tts_volume},
             rendered_text=rendered_text,
             recognized_cues=cues,
             rendering_version=CUE_RENDERING_VERSION,
@@ -204,7 +205,7 @@ class MiniMaxTTSProvider:
             "voice_setting": {
                 "voice_id": voice_id,
                 "speed": speed,
-                "vol": 1,
+                "vol": self.settings.minimax_tts_volume,
                 "pitch": 0,
             },
             "audio_setting": dict(self.audio_settings),

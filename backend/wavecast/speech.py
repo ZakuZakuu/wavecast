@@ -26,7 +26,7 @@ class SpeechProfile(BaseModel):
 class SpeechDirector:
     """Pure policy: start from one baseline and make only small role/text adjustments."""
 
-    DEFAULT_BASE_SPEED = 0.80
+    DEFAULT_BASE_SPEED = 0.90
     MIN_SPEED = 0.50
     MAX_SPEED = 2.00
     MIXED_SCRIPT_DELTA = 0.02

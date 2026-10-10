@@ -59,7 +59,9 @@ class ProviderSettings:
     minimax_tts_base_url: str = "https://api.minimax.cn"
     minimax_tts_model: str = "speech-2.8-turbo"
     minimax_tts_voice_id: str | None = None
-    minimax_tts_speed: float = 0.8
+    minimax_tts_speed: float = 0.9
+    # MiniMax "vol": 1 gives about -25 LUFS, quieter than the music it sits on; 1.7 gives about -20.
+    minimax_tts_volume: float = 1.7
     minimax_tts_language_boost: str = "auto"
 
     @classmethod
@@ -147,7 +149,8 @@ class ProviderSettings:
             minimax_tts_base_url=getenv("MINIMAX_TTS_BASE_URL", "https://api.minimax.cn"),
             minimax_tts_model=getenv("MINIMAX_TTS_MODEL", "speech-2.8-turbo"),
             minimax_tts_voice_id=getenv("MINIMAX_TTS_VOICE_ID"),
-            minimax_tts_speed=_positive_float_from_env("MINIMAX_TTS_SPEED", default=0.8),
+            minimax_tts_speed=_positive_float_from_env("MINIMAX_TTS_SPEED", default=0.9),
+            minimax_tts_volume=_positive_float_from_env("MINIMAX_TTS_VOLUME", default=1.7),
             minimax_tts_language_boost=getenv("MINIMAX_TTS_LANGUAGE_BOOST", "auto"),
         )
 
