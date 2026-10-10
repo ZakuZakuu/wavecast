@@ -1731,6 +1731,11 @@ class LiveEpisodeAssemblyService:
             pool.elapsed_ms,
             pool.truncated,
         )
+        # Who the Curator can choose from (artist names are catalogue metadata, not user data).
+        logger.info(
+            "catalog_pool_artists %s",
+            dict(Counter(entry.primary_artist for entry in pool.entries).most_common(8)),
+        )
         trace.mark(
             "catalog_pool_ready",
             entry_count=len(pool.entries),
@@ -2739,6 +2744,15 @@ def _build_progressive_session(
             },
         )
 
+    logger.info(
+        "route_artists %s",
+        dict(
+            Counter(
+                [opening_track.canonical_artist]
+                + [item.track.canonical_artist for item in future if item.track is not None]
+            )
+        ),
+    )
     timing_plan = build_program_timing_plan(
         desired_total_seconds=request.desired_duration_seconds,
         target_narration_ratio=target_narration_ratio,
