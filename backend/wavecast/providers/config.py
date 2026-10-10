@@ -44,7 +44,7 @@ class ProviderSettings:
     writer_provider: LLMCapabilitySelector = "inherit"
     tts_provider: TTSCapabilitySelector = "inherit"
     # ADR 0022: build a verified-playable catalog pool before the Curator chooses tracks.
-    catalog_pool: bool = False
+    catalog_pool: bool = True
     # Size the route (tracks and chapters) from the requested duration instead of a fixed cap.
     duration_scaling: bool = True
 
@@ -132,7 +132,7 @@ class ProviderSettings:
                     {"inherit", "mock", "minimax"},
                 ),
             ),
-            catalog_pool=_flag_from_env("WAVECAST_CATALOG_POOL"),
+            catalog_pool=_flag_from_env("WAVECAST_CATALOG_POOL", default="on"),
             duration_scaling=_flag_from_env("WAVECAST_DURATION_SCALING", default="on"),
             deepseek_timeout_seconds=_positive_float_from_env(
                 "DEEPSEEK_TIMEOUT_SECONDS", default=20.0

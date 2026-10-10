@@ -406,3 +406,13 @@ def test_usage_ledger_aggregates_by_stage() -> None:
 
     assert ledger.totals_for_stage("fast_start").output_tokens == 7
     assert ledger.totals_for_stage("background_research").search_credits == 2
+
+
+def test_the_catalog_pool_is_on_by_default_and_can_be_switched_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WAVECAST_CATALOG_POOL", raising=False)
+    assert ProviderSettings.from_env().catalog_pool is True
+
+    monkeypatch.setenv("WAVECAST_CATALOG_POOL", "off")
+    assert ProviderSettings.from_env().catalog_pool is False
