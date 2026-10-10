@@ -79,7 +79,7 @@ from wavecast.models.episode import (
     SegmentKind,
     SegmentState,
 )
-from wavecast.music_discovery import catalog_queries
+from wavecast.music_discovery import catalog_queries, community_tags
 from wavecast.narration_quality import opener_of
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.staged import (
@@ -112,6 +112,7 @@ from wavecast.providers.fakes import (
     FakeSearchProvider,
     MockTTSProvider,
 )
+from wavecast.providers.lastfm import LastFmArtistHints
 from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
@@ -1703,6 +1704,7 @@ class LiveEpisodeAssemblyService:
                     proposals, request.required_artists, request.topic
                 ),
                 keyword_queries=catalog_queries(request.topic),
+                hint_tags=community_tags(request.topic),
                 named_artists=request.required_artists,
                 evidence_texts=[
                     f"{item.source_title} {item.claim_or_excerpt}" for item in bundle.evidence
@@ -4160,7 +4162,11 @@ def create_episode_assembly_service(
         materializer=NarrationMaterializer(tts, storage),
         ledger=ledger,
         catalog_pool_builder=(
-            CatalogPoolBuilder(retrieval, PoolBuildConfig(timeout_seconds=30.0))
+            CatalogPoolBuilder(
+                retrieval,
+                PoolBuildConfig(timeout_seconds=30.0),
+                hints=LastFmArtistHints.from_settings(settings),
+            )
             if settings.catalog_pool
             else None
         ),
