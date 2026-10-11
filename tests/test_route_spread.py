@@ -311,3 +311,19 @@ def test_the_locked_second_track_counts_toward_the_limit_even_as_a_version_of_th
 
     artists = [OPENING.canonical_artist, *_artists(session)]
     assert artists.count("Signal Garden") <= 2, artists
+
+
+def test_holiday_songs_are_not_offered_unless_the_request_asks_for_them() -> None:
+    tracks = [
+        track("1", "Frank Sinatra", "Come Dance With Me"),
+        track("2", "Frank Sinatra", "Have Yourself A Merry Little Christmas"),
+        track("3", "Frank Sinatra", "Jingle Bells"),
+        track("4", "Frank Sinatra", "Christmas Waltz"),
+    ]
+    results = {"Frank Sinatra": ["1", "2", "3", "4"], "圣诞 Frank Sinatra": ["2", "3", "4"]}
+
+    plain = asyncio.run(_pool(tracks, results, keyword_queries=["Frank Sinatra"]))
+    seasonal = asyncio.run(_pool(tracks, results, keyword_queries=["圣诞 Frank Sinatra"]))
+
+    assert {entry.title for entry in plain.entries} == {"Come Dance With Me"}
+    assert len(seasonal.entries) == 3
