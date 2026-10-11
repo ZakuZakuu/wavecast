@@ -194,7 +194,9 @@ class WriterService:
             "or track titles use; keep artist and track names exactly as the slot contexts spell them. "
             "The voice speaks only Chinese and English, so keep Japanese, Korean and every other "
             "script out of what is spoken. The application says a song or artist whose name is in "
-            "such a script as 这首歌 / 这位艺人. For a work (a film, a series, an album) use its "
+            "such a script as 这首歌 / 这位艺人, unless the slot context gives that track a "
+            "`spoken_title`: that is the catalog's own Chinese title, so use it, in 《》, wherever "
+            "you name the song. For a work (a film, a series, an album) use its "
             "established Chinese title (千与千寻, 龙猫, 天空之城) when you are sure of it. For a song "
             "title with no established Chinese title you may say once, in plain Chinese, what it "
             "means: “这首歌的名字，中文意思是……”, only when you are confident of the meaning; "
@@ -502,7 +504,10 @@ def _known_tracks(slot_contexts: Sequence[NarrationSlotContext] | None) -> list[
         for track in (context.chapter_track, context.just_played_track, context.upcoming_track):
             if track is not None:
                 key = (track.canonical_artist, track.canonical_title)
-                tracks.setdefault(key, KnownTrack(artist=key[0], title=key[1]))
+                tracks.setdefault(
+                    key,
+                    KnownTrack(artist=key[0], title=key[1], spoken_title=track.spoken_title),
+                )
     return list(tracks.values())
 
 

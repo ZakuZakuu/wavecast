@@ -141,6 +141,7 @@ from wavecast.route_spread import (
     same_song_other_artist,
     spread_cap,
 )
+from wavecast.spoken_form import chinese_title
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
 from wavecast.text_identity import (
@@ -820,6 +821,7 @@ class LiveEpisodeAssemblyService:
                     canonical_artist=alternative.artist,
                     canonical_title=alternative.title,
                     duration_seconds=alternative.duration_seconds or None,
+                    spoken_title=chinese_title(alternative.metadata),
                 )
                 if any(_same_song_identity(candidate, used) for used in used_tracks):
                     continue
@@ -1226,6 +1228,7 @@ class LiveEpisodeAssemblyService:
                         canonical_artist=alternative.artist,
                         canonical_title=alternative.title,
                         duration_seconds=alternative.duration_seconds or None,
+                        spoken_title=chinese_title(alternative.metadata),
                     )
                 else:
                     try:
