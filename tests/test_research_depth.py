@@ -114,3 +114,38 @@ def test_the_planner_is_told_the_budget_it_will_get() -> None:
 
     assert "at most 1 DISCOVERY queries through Exa and 2 RESEARCH/EXACT" in standard
     assert "at most 2 DISCOVERY queries through Exa and 5 RESEARCH/EXACT" in deep
+
+
+class _LongSearch:
+    async def search(self, query: str, *, limit: int = 5, stage: str | None = None) -> list[SearchResult]:
+        del limit, stage
+        return [
+            SearchResult(
+                title=f"page about {query}",
+                url=f"https://example.test/{query.replace(' ', '-')}",
+                snippet="x" * 2500,
+                content="y" * 2500,
+                provider="tavily",
+                query=query,
+                score=0.8,
+            )
+        ]
+
+
+def _excerpt_lengths(depth: ResearchDepth) -> set[int]:
+    request = FastResearchInput(topic="an artist career", desired_duration_seconds=900, depth=depth)
+    service = BackgroundResearchService(
+        discovery=_LongSearch(),
+        research=_LongSearch(),
+        deep_research=_LongSearch(),
+        planner=BackgroundResearchPlanner(PlannerFixture(_big_plan())),
+        deadline_seconds=1.0,
+    )
+    bundle = asyncio.run(service.run(request, _fallback_fast(request)))
+    assert bundle is not None and bundle.evidence
+    return {len(item.claim_or_excerpt) for item in bundle.evidence}
+
+
+def test_a_deep_programme_keeps_longer_excerpts_than_a_standard_one() -> None:
+    assert _excerpt_lengths(ResearchDepth.STANDARD) == {800}
+    assert _excerpt_lengths(ResearchDepth.DEEP) == {1600}
