@@ -159,11 +159,13 @@ def test_writer_block_that_cannot_be_spoken_is_dropped_not_sent_to_tts() -> None
     assert [block.text for block in result.blocks] == ["接下来是山下達郎的《Jody》。"]
 
 
-def test_writer_prompt_tells_the_model_not_to_translate_titles() -> None:
+def test_writer_prompt_limits_what_the_voice_is_given_to_chinese_and_english() -> None:
     fixture = StructuredFixture(RadioScript(blocks=[]))
     asyncio.run(WriterService(fixture).write(_chapter(), []))
 
-    assert "never translate or transliterate a title" in fixture.prompts[0]
+    prompt = fixture.prompts[0]
+    assert "speaks only Chinese and English" in prompt
+    assert "do not invent a Chinese title" in prompt
 
 
 def test_materializer_never_sends_unreadable_text_to_the_voice(tmp_path) -> None:

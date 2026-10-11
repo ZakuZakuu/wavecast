@@ -21,6 +21,8 @@ from .models import (
     NarrationSlotContext,
     OutputLanguage,
     RadioScript,
+    RadioScriptBlock,
+    RadioScriptBlockKind,
     resolve_output_language,
 )
 from .voice import voice_instructions, window_for
@@ -190,9 +192,14 @@ class WriterService:
             f"{empty_scope_instruction}\n"
             f"Write in output language {selected_language.value}, whatever language the evidence "
             "or track titles use; keep artist and track names exactly as the slot contexts spell them. "
-            "The application decides how songs and artists are spoken, so never translate or "
-            "transliterate a title yourself, and keep Japanese, Korean or other non-Chinese, "
-            "non-English text out of `tts_text`.\n"
+            "The voice speaks only Chinese and English, so keep Japanese, Korean and every other "
+            "script out of what is spoken. The application says a song or artist whose name is in "
+            "such a script as 这首歌 / 这位艺人. For a work (a film, a series, an album) use its "
+            "established Chinese title (千与千寻, 龙猫, 天空之城) when you are sure of it. For a song "
+            "title with no established Chinese title you may say once, in plain Chinese, what it "
+            "means: “这首歌的名字，中文意思是……”, only when you are confident of the meaning; "
+            "otherwise just call it 这首歌. Never write the original title or a pronunciation "
+            "(romaji, pinyin of Japanese) in the spoken text, and do not invent a Chinese title.\n"
             f"{language_guidance}\n"
             f"{station_line}"
             f"{route_line}"
@@ -210,6 +217,15 @@ class WriterService:
             f"Target narration duration seconds: {spoken_window or 'use chapter context'}"
         )
         known_tracks = _known_tracks(slot_contexts)
+        if any(slot.is_final for slot in slots):
+            # A closing may name any song of the programme, so the application must be able
+            # to say any of them (or replace the title) rather than drop the closing.
+            known = {(track.artist, track.title) for track in known_tracks}
+            for label in route_tracks:
+                artist, _sep, title = label.partition(" - ")
+                if title and (artist, title) not in known:
+                    known.add((artist, title))
+                    known_tracks.append(KnownTrack(artist=artist, title=title))
         route_titles = [label.split(" - ", 1)[-1] for label in route_tracks]
         supported = _supported_years(scoped, previous_committed_context, known_tracks)
         # The Writer is not given the played file's length, and a length found in the evidence is
@@ -265,8 +281,9 @@ class WriterService:
             break
         if isinstance(result, RadioScript):
             result = _without_identity_conflicts(result, known_tracks, unplayed_artists)
+            result = _without_unspeakable(result, known_tracks)
             if signoff:
-                result = _with_signoff(result, signoff)
+                result = _with_signoff(result, signoff, writer_window)
         return result
 
     async def _attempt(
@@ -293,13 +310,9 @@ class WriterService:
             # before assembly normalizes the parsed blocks into this slot.
             blocks = []
             for block in result.blocks:
+                # A block the voice cannot read is kept here: the rewrite step can still ask
+                # for it in Chinese, and only what is still unreadable after that is dropped.
                 spoken = to_spoken_form(block.text, known_tracks, tts_text=block.tts_text)
-                if not spoken.ok:
-                    # The voice cannot read this; music continuity wins over optional narration.
-                    logger.warning(
-                        "writer_block_dropped reason=unspeakable_script kind=%s", block.kind.value
-                    )
-                    continue
                 blocks.append(
                     block.model_copy(
                         update={
@@ -351,11 +364,40 @@ def _without_identity_conflicts(
     return script.model_copy(update={"blocks": kept})
 
 
-def _with_signoff(script: RadioScript, signoff: str) -> RadioScript:
-    """Close the programme's last block with the station's sign-off."""
+def _without_unspeakable(script: RadioScript, tracks: Sequence[KnownTrack]) -> RadioScript:
+    """Drop the blocks the voice still cannot read after the rewrite."""
+
+    kept = []
+    for block in script.blocks:
+        if to_spoken_form(block.text, tracks, tts_text=block.tts_text).ok:
+            kept.append(block)
+        else:
+            logger.warning("writer_block_dropped reason=unspeakable_script kind=%s", block.kind.value)
+    if len(kept) == len(script.blocks):
+        return script
+    return script.model_copy(update={"blocks": kept})
+
+
+def _with_signoff(
+    script: RadioScript, signoff: str, window_seconds: float | None = None
+) -> RadioScript:
+    """Close the programme's last block with the station's sign-off.
+
+    A closing that did not survive (dropped, or never written) is replaced by the sign-off
+    alone: a programme always ends with the station saying so.
+    """
 
     if not script.blocks:
-        return script
+        seconds = max(2, round(len(signoff) / CHARS_PER_SECOND) + 1)
+        return script.model_copy(
+            update={
+                "blocks": [
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.OUTRO, text=signoff, duration_seconds=seconds
+                    )
+                ]
+            }
+        )
     *rest, last = script.blocks
     text = last.text.rstrip()
     if text and text[-1] not in "。！？.!?":
@@ -408,6 +450,17 @@ def _problems(
                 earlier=earlier,
             )
         )
+        spoken = to_spoken_form(block.text, tracks, tts_text=block.tts_text)
+        if not spoken.ok:
+            reasons = [
+                *reasons,
+                "The voice cannot read "
+                + ", ".join(spoken.unspeakable[:4])
+                + " (Japanese, Korean or another script). Say it in Chinese: the established "
+                "Chinese name of the film, work or person; for a song title with none, say once "
+                "“这首歌的名字，中文意思是……” if you are sure of the meaning, otherwise just "
+                "这首歌 / 这位艺人; never write kana or hangul.",
+            ]
         if reasons:
             found[index] = reasons
     return found
