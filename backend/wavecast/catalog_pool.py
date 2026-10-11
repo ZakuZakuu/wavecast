@@ -47,6 +47,11 @@ _COVER_MARKER = re.compile(
     r"翻自|翻唱|致敬|[(\[（【][^)\]）】]*\b(?:cover|tribute)\b[^)\]）】]*[)\]）】]", re.IGNORECASE
 )
 _COVER_REQUEST = re.compile(r"翻唱|翻自|致敬|cover|tribute", re.IGNORECASE)
+# Holiday songs turn up in any big artist's catalog (a seeded draw of an artist's songs will
+# find them); they do not belong in a programme that did not ask for the season.
+_SEASONAL_MARKER = re.compile(
+    r"christmas|xmas|圣诞|聖誕|jingle bells|santa claus|silent night|白色圣诞", re.IGNORECASE
+)
 _DEFAULT_EXCLUDED_VERSIONS = frozenset({VersionKind.LIVE, VersionKind.REMIX, VersionKind.ACOUSTIC})
 
 
@@ -507,11 +512,16 @@ class CatalogPoolBuilder:
         wants_covers = any(
             _COVER_REQUEST.search(query) for query in (*artist_queries, *keyword_queries)
         )
+        wants_season = any(
+            _SEASONAL_MARKER.search(query) for query in (*artist_queries, *keyword_queries)
+        )
         for track, source in candidates:
             key = _song_key(track)
             if track.version_kind in self.config.excluded_versions or key in state.examined:
                 continue
             if not wants_covers and _COVER_MARKER.search(track.title):
+                continue
+            if not wants_season and _SEASONAL_MARKER.search(track.title):
                 continue
             groups.setdefault(key, []).append((track, source))
         named = {canonical_name(name) for name in named_artists}
