@@ -41,6 +41,12 @@ from wavecast.text_identity import (
 # Catalog credits separate artists with commas; "&", "/" and "x" appear inside real
 # names (Simon & Garfunkel, AC/DC, X Japan), so they are deliberately not separators.
 _ARTIST_SEPARATORS = re.compile(r"\s*(?:,|，|、|;|；|\bfeat\.?|\bft\.?)\s*", re.I)
+# Titles that label themselves as someone else's song: "(翻自 久石让)", "(Cover)", "致敬".  A
+# search for an artist returns them because their credit or title names that artist.
+_COVER_MARKER = re.compile(
+    r"翻自|翻唱|致敬|[(\[（【][^)\]）】]*\b(?:cover|tribute)\b[^)\]）】]*[)\]）】]", re.IGNORECASE
+)
+_COVER_REQUEST = re.compile(r"翻唱|翻自|致敬|cover|tribute", re.IGNORECASE)
 _DEFAULT_EXCLUDED_VERSIONS = frozenset({VersionKind.LIVE, VersionKind.REMIX, VersionKind.ACOUSTIC})
 
 
@@ -156,6 +162,10 @@ class CatalogPool(BaseModel):
     # Songs taken out of the pool because the programme already plays them (the opening): a
     # keyword hit that is only another artist's version of one of these is still a cover.
     reserved_song_keys: list[str] = Field(default_factory=list)
+    # A programme that is not about particular artists: list one song per artist in turn
+    # (trust tier first) instead of exhausting one tier's artist before the next, so the
+    # artist a request happened to open with does not take the front of the Curator's list.
+    spread_artists: bool = False
 
     def by_source(self, source: PoolSource) -> list[PoolEntry]:
         return [entry for entry in self.entries if entry.source is source]
@@ -207,6 +217,14 @@ class CatalogPool(BaseModel):
                 pair[0],
             ),
         )
+        if self.spread_artists:
+            seen_per_artist: dict[str, int] = {}
+            rounds: dict[int, int] = {}
+            for position, (_index, entry) in enumerate(ranked):
+                artist = canonical_name(entry.primary_artist)
+                rounds[position] = seen_per_artist.get(artist, 0)
+                seen_per_artist[artist] = rounds[position] + 1
+            ranked = [ranked[p] for p in sorted(range(len(ranked)), key=lambda p: (rounds[p], p))]
         # A keyword hit that only repeats a trusted entry's song under another artist is a
         # cover or re-release of it; do not offer it as a second song.
         trusted_songs = {
@@ -465,9 +483,14 @@ class CatalogPoolBuilder:
         # Stage 3: group candidates by song (one song often has several catalog entries,
         # not all playable), then verify within the budget in deterministic order.
         groups: dict[str, list[tuple[RetrievedTrack, PoolSource]]] = {}
+        wants_covers = any(
+            _COVER_REQUEST.search(query) for query in (*artist_queries, *keyword_queries)
+        )
         for track, source in candidates:
             key = _song_key(track)
             if track.version_kind in self.config.excluded_versions or key in state.examined:
+                continue
+            if not wants_covers and _COVER_MARKER.search(track.title):
                 continue
             groups.setdefault(key, []).append((track, source))
         named = {canonical_name(name) for name in named_artists}
