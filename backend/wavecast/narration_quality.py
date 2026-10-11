@@ -333,6 +333,11 @@ def check_block(
         issues.append("repeats_earlier")
     elif earlier and repeated_phrase(text, earlier) is not None:
         issues.append("repeats_phrase")
+    parts = [part for part in _SENTENCE_BREAK.split(text) if part.strip()]
+    if any(
+        repeated_sentence(parts[i], "。".join(parts[:i])) is not None for i in range(1, len(parts))
+    ):
+        issues.append("repeats_itself")
     if supported_years is not None:
         for year in sorted(years_in(text) - supported_years):
             issues.append(f"unsupported_year:{year}")
@@ -368,6 +373,7 @@ _REWRITE_ISSUES = (
     "recap_list",
     "repeats_earlier",
     "repeats_phrase",
+    "repeats_itself",
     "same_name_tangent",
     "names_other_track",
 )
@@ -404,6 +410,7 @@ _REASON_TEXT = {
     "repeats_earlier": "says again what an earlier block of this programme already said",
     "names_other_track": "talks about a track that is neither the one just played nor the next one; keep to those two",
     "same_name_tangent": "talks about another song that only shares the title; it is not what is playing",
+    "repeats_itself": "says the same thing twice within the block; say it once",
     "repeats_phrase": "reuses a turn of phrase an earlier block of this programme already used; word it differently",
 }
 

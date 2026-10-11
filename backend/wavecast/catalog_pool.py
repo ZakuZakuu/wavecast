@@ -36,7 +36,7 @@ from wavecast.providers.retrieval import (
     RetrievedTrack,
     VersionKind,
 )
-from wavecast.spoken_form import chinese_title
+from wavecast.spoken_form import catalog_album, chinese_title
 from wavecast.text_identity import (
     base_title_key,
     canonical_name,
@@ -135,6 +135,7 @@ class PoolEntry(BaseModel):
     version_kind: VersionKind
     source: PoolSource
     title_zh: str | None = Field(default=None, max_length=160)
+    album: str | None = Field(default=None, max_length=160)
 
     def resolved_track(self) -> ResolvedTrack:
         return ResolvedTrack(
@@ -143,6 +144,7 @@ class PoolEntry(BaseModel):
             canonical_title=self.title[:160],
             duration_seconds=self.duration_seconds,
             spoken_title=self.title_zh,
+            album=self.album,
         )
 
 
@@ -365,6 +367,7 @@ class _Verified:
     version_kind: VersionKind = VersionKind.UNKNOWN
     duration_seconds: int = 0
     title_zh: str | None = None
+    album: str | None = None
 
     @classmethod
     def of(
@@ -384,6 +387,7 @@ class _Verified:
             version_kind=track.version_kind,
             duration_seconds=duration_seconds,
             title_zh=chinese_title(track.metadata),
+            album=catalog_album(track.metadata),
         )
 
 
@@ -825,6 +829,7 @@ class CatalogPoolBuilder:
                     version_kind=item.version_kind,
                     source=item.source,
                     title_zh=item.title_zh,
+                    album=item.album,
                 )
             )
         pool.verification_count = state.verifications

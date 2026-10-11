@@ -10,7 +10,7 @@ from wavecast.narration_quality import CHARS_PER_SECOND, check_block, rewrite_re
 from wavecast.presentation import HostMode, host_mode_prompt_guidance
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
-from wavecast.spoken_form import KnownTrack, to_spoken_form
+from wavecast.spoken_form import KnownTrack, has_unspeakable_script, to_spoken_form
 from wavecast.stations import StationId, compose_signoff
 
 from .fact_support import FactChecker, FactReport, without_flagged_sentences
@@ -26,6 +26,7 @@ from .models import (
     RadioScriptBlockKind,
     resolve_output_language,
 )
+from .track_research import TalkingPoint
 from .voice import voice_instructions, window_for
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,7 @@ class WriterService:
         slot_context: NarrationSlotContext | None = None,
         slot_contexts: Sequence[NarrationSlotContext] | None = None,
         inference_profile: InferenceProfile = InferenceProfile.SYNTHESIS,
+        track_points: Sequence[TalkingPoint] | None = None,
     ) -> RadioScript | NarrationScript:
         scoped = [item for item in evidence if item.id in set(chapter.evidence_ids)]
         selected_language = resolve_output_language(output_language, topic or chapter.reason)
@@ -112,6 +114,16 @@ class WriterService:
             ]
         )
         slots = list(slot_contexts or ())
+        if (
+            track_points is not None
+            and not track_points
+            and slots
+            and not any(slot.is_final or slot.is_opening for slot in slots)
+        ):
+            # Track research ran and found nothing checkable about this track.  A block would
+            # have nothing to say but filler ("接着听", "也一样"), which is worse than the music.
+            logger.info("writer_skipped reason=no_verified_points")
+            return RadioScript(blocks=[], intended_duration_seconds=1)
         spoken_window = (
             window_for(station, target_duration_seconds)
             if selected_language is OutputLanguage.ZH_CN
@@ -161,6 +173,22 @@ class WriterService:
                 "programme covers, includes, or is heading to them, and never describe the "
                 "programme as a route that reaches them.\n"
             )
+        if track_points is not None:
+            if track_points:
+                route_line += (
+                    "Verified points about this chapter's track (each one is stated by a source and "
+                    "was checked; say them in your own words, no need to say where they come from): "
+                    + " | ".join(point.text for point in track_points)
+                    + ". Build this chapter's talk around one of them; one is enough. Add only "
+                    "listening cues and transitions of your own; every other factual statement "
+                    "needs support in the scoped evidence.\n"
+                )
+            else:
+                route_line += (
+                    "No source says anything checkable about this chapter's track. Keep the talk "
+                    "to a short transition or something to listen for in the music; state no "
+                    "facts about the song, who made it, what it comes from or its history.\n"
+                )
         language_guidance = (
             ZH_CN_RADIO_WRITING_GUIDANCE
             if selected_language is OutputLanguage.ZH_CN
@@ -316,7 +344,9 @@ class WriterService:
             result = _without_identity_conflicts(result, known_tracks, unplayed_artists)
             result = _without_unspeakable(result, known_tracks)
             if signoff:
-                result = _with_signoff(result, signoff, writer_window)
+                result = _with_signoff(
+                    result, signoff, writer_window, closing=_route_closing(known_tracks, route_tracks)
+                )
         return result
 
     async def _attempt(
@@ -411,8 +441,35 @@ def _without_unspeakable(script: RadioScript, tracks: Sequence[KnownTrack]) -> R
     return script.model_copy(update={"blocks": kept})
 
 
+def _route_closing(known_tracks: Sequence[KnownTrack], route_tracks: Sequence[str]) -> str:
+    """A closing that states only what the application knows: where the route began and ended.
+
+    Used when the Writer's closing did not survive the fact check, so a programme still ends on
+    the route rather than on the station's name alone.  Songs whose names the voice cannot read
+    are not named.
+    """
+
+    spoken_by_label = {
+        f"{track.artist} - {track.title}": track.spoken_title for track in known_tracks if track.spoken_title
+    }
+
+    def name(label: str) -> str | None:
+        title = label.split(" - ", 1)[-1]
+        said = spoken_by_label.get(label) or (None if has_unspeakable_script(title) else title)
+        return f"《{said}》" if said else None
+
+    if len(route_tracks) >= 2:
+        first, last = name(route_tracks[0]), name(route_tracks[-1])
+        if first and last and first != last:
+            return f"这一程从{first}听到{last}，就走到这里。"
+    return "这一程就走到这里。"
+
+
 def _with_signoff(
-    script: RadioScript, signoff: str, window_seconds: float | None = None
+    script: RadioScript,
+    signoff: str,
+    window_seconds: float | None = None,
+    closing: str = "",
 ) -> RadioScript:
     """Close the programme's last block with the station's sign-off.
 
@@ -421,12 +478,13 @@ def _with_signoff(
     """
 
     if not script.blocks:
-        seconds = max(2, round(len(signoff) / CHARS_PER_SECOND) + 1)
+        text = f"{closing}{signoff}" if closing else signoff
+        seconds = max(2, round(len(text) / CHARS_PER_SECOND) + 1)
         return script.model_copy(
             update={
                 "blocks": [
                     RadioScriptBlock(
-                        kind=RadioScriptBlockKind.OUTRO, text=signoff, duration_seconds=seconds
+                        kind=RadioScriptBlockKind.OUTRO, text=text, duration_seconds=seconds
                     )
                 ]
             }

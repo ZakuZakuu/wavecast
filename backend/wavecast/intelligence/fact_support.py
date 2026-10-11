@@ -61,7 +61,7 @@ _ROLES: dict[str, tuple[str, ...]] = {
     "instrumental": ("演奏", "弹奏", "独奏"),
     "director": ("导演", "执导"),
     "cast": ("主演",),
-    "release": ("发行", "首映", "上映", "公映", "出版", "原声带", "专辑", "收录", "票房"),
+    "release": ("发行", "首映", "上映", "公映", "出版", "票房"),
     "award": ("获奖", "荣获", "入围"),
     "creation": ("创作", "写成", "写了", "写出", "谱写"),
 }
@@ -136,14 +136,30 @@ def quote_in_source(quote: str, source: str) -> bool:
     return len(squashed) >= _MIN_QUOTE_CHARS and squashed in _squash(source)
 
 
-def roles_in(text: str) -> set[str]:
-    return {role for role, words in _ROLES.items() if any(word in text for word in words)}
+# Words that, in a quoted source, state a role in the ways other languages put it (Japanese
+# pages say 歌唱, 歌われる, 歌詞).  They are matched after script variants are folded.
+_QUOTE_ROLE_WORDS: dict[str, tuple[str, ...]] = {
+    "lyricist": ("歌词",),
+    "vocal": ("歌唱", "歌われ", "歌って", "歌わ", "唱:", "唱：", "歌:", "歌：", "vocal"),
+}
+
+
+def roles_in(text: str, *, quote: bool = False) -> set[str]:
+    """The roles a sentence claims, or (``quote=True``) a source line states, script-folded."""
+
+    folded = canonical_name(text) if quote else text
+    found = {role for role, words in _ROLES.items() if any(word in folded for word in words)}
+    if quote:
+        found |= {
+            role for role, words in _QUOTE_ROLE_WORDS.items() if any(word in folded for word in words)
+        }
+    return found
 
 
 def quote_backs_roles(quote: str, roles: set[str]) -> bool:
     """Every role the sentence claims is spoken of, as that role, in the quote."""
 
-    quoted = roles_in(quote)
+    quoted = roles_in(quote, quote=True)
     return all(
         role in quoted or (role == "creation" and quoted & set(_CREATIVE_ROLES)) for role in roles
     )

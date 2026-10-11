@@ -71,6 +71,7 @@ from wavecast.intelligence.research import (
 )
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.intelligence.trace import GenerationTrace
+from wavecast.intelligence.track_research import TrackResearchService
 from wavecast.intelligence.writer import WriterService
 from wavecast.materialization import NarrationMaterializer
 from wavecast.models.episode import (
@@ -142,7 +143,7 @@ from wavecast.route_spread import (
     same_song_other_artist,
     spread_cap,
 )
-from wavecast.spoken_form import chinese_title
+from wavecast.spoken_form import catalog_album, chinese_title
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
 from wavecast.text_identity import (
@@ -568,9 +569,11 @@ class LiveEpisodeAssemblyService:
         ledger: UsageLedger | None = None,
         narration_ratio: float = 0.15,
         catalog_pool_builder: CatalogPoolBuilder | None = None,
+        track_research: TrackResearchService | None = None,
         duration_scaling: bool = False,
     ) -> None:
         self.catalog_pool_builder = catalog_pool_builder
+        self.track_research = track_research
         self.duration_scaling = duration_scaling
         self.fast_path = fast_path
         self.background_pipeline = background_pipeline
@@ -750,6 +753,7 @@ class LiveEpisodeAssemblyService:
             writer=self.background_pipeline.writer,
             composer=self.composer,
             materializer=self.materializer,
+            track_research=self.track_research,
         )
 
     async def _resolve_catalog_replacement(
@@ -823,6 +827,7 @@ class LiveEpisodeAssemblyService:
                     canonical_title=alternative.title,
                     duration_seconds=alternative.duration_seconds or None,
                     spoken_title=chinese_title(alternative.metadata),
+                    album=catalog_album(alternative.metadata),
                 )
                 if any(_same_song_identity(candidate, used) for used in used_tracks):
                     continue
@@ -1230,6 +1235,7 @@ class LiveEpisodeAssemblyService:
                         canonical_title=alternative.title,
                         duration_seconds=alternative.duration_seconds or None,
                         spoken_title=chinese_title(alternative.metadata),
+                    album=catalog_album(alternative.metadata),
                     )
                 else:
                     try:
@@ -3577,11 +3583,13 @@ class StagedProgressiveChapterGenerator:
         writer: WriterService,
         composer: EpisodeComposer,
         materializer: NarrationMaterializer,
+        track_research: TrackResearchService | None = None,
     ) -> None:
         self.session = session
         self.writer = writer
         self.composer = composer
         self.materializer = materializer
+        self.track_research = track_research
 
     @scoped_to_episode
     async def generate_next(self, episode: LiveEpisode) -> GeneratedChapter | None:
@@ -3749,10 +3757,34 @@ class StagedProgressiveChapterGenerator:
             for segment in episode.ordered_segments
         )
 
+        # What can be said about this chapter's track: found (and checked) now, in the background,
+        # because the route is known only after the programme-level research is done.
+        writer_chapter = chapter.chapter
+        writer_evidence = self.session.research.evidence
+        track_points = None
+        track_evidence: list[Evidence] = []
+        track_evidence_ids: list[str] = []
+        if self.track_research is not None and chapter.resolved_track is not None:
+            researched = await self.track_research.prepare(
+                episode_id=episode.id,
+                track=chapter.resolved_track,
+                evidence=self.session.research.evidence,
+                station=self.session.station,
+                subject=self.session.topic,
+            )
+            if researched is not None:
+                track_points = researched.points
+                track_evidence = researched.evidence
+                track_evidence_ids = researched.evidence_ids
+                writer_evidence = [*self.session.research.evidence, *researched.evidence]
+                scoped_ids = list(chapter.chapter.evidence_ids)
+                scoped_ids.extend(i for i in researched.evidence_ids if i not in scoped_ids)
+                writer_chapter = chapter.chapter.model_copy(update={"evidence_ids": scoped_ids})
+
         try:
             script = await self.writer.write(
-                chapter.chapter,
-                self.session.research.evidence,
+                writer_chapter,
+                writer_evidence,
                 previous_committed_context=previous_context,
                 next_track_metadata=next_track_metadata,
                 host_mode=self.session.presentation_intent.host_mode,
@@ -3766,6 +3798,7 @@ class StagedProgressiveChapterGenerator:
                 unfulfilled_artists=self.session.unfulfilled_artists,
                 topic=self.session.topic,
                 slot_contexts=chapter.slot_contexts,
+                track_points=track_points,
             )
             radio_script, _ = _assemble_writer_scripts(
                 [script],
@@ -3791,16 +3824,23 @@ class StagedProgressiveChapterGenerator:
             # deliberately prefers a clean music-only gap over canned catalog
             # copy when Writer cannot produce a trustworthy bridge.
             logger.warning(
-                "narration_authoring_failed chapter_id=%s error_type=%s host_mode=%s",
+                "narration_authoring_failed chapter_id=%s error_type=%s host_mode=%s reason=%s",
                 chapter.chapter_id,
                 type(error).__name__,
                 self.session.presentation_intent.host_mode.value,
+                str(error)[:120],
             )
             return None
-        return _generated_runtime_chapter(
+        generated = _generated_runtime_chapter(
             chapter.chapter_id,
             list(playable.segments),
             base_order=chapter_start_order,
+        )
+        return generated.model_copy(
+            update={
+                "research_evidence": track_evidence,
+                "research_evidence_ids": track_evidence_ids,
+            }
         )
 
 
@@ -4325,4 +4365,9 @@ def create_episode_assembly_service(
             else None
         ),
         duration_scaling=settings.duration_scaling,
+        track_research=(
+            TrackResearchService(search=research, llm=writer_llm, deep_search=deep_research)
+            if settings.track_research and settings.resolved_research_provider != "mock"
+            else None
+        ),
     )

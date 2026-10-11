@@ -348,3 +348,10 @@ def test_a_length_given_as_minutes_and_seconds_is_found() -> None:
     assert durations_in("一口气十四分多，接下来三分出头") == {"14分多", "3分出头"}
     assert durations_in("十分好听，十分钟太长") == {"10分钟"}  # 十分 alone is "very"
     assert "unsupported_duration:7分16秒" in issues("七分十六秒的慢三拍", supported_durations=set())
+
+
+def test_a_block_that_says_the_same_thing_twice_is_flagged() -> None:
+    twice = "迈尔斯这首弗拉门戈素描和刚才那首一样都出自他手里。迈尔斯这首弗拉门戈素描和刚才那首是同一位乐手。"
+
+    assert "repeats_itself" in check_block(twice).issues
+    assert "repeats_itself" not in check_block("先听这段小号。再听钢琴怎么接住它。").issues

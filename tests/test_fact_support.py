@@ -464,3 +464,31 @@ def test_without_a_checker_the_writer_behaves_as_before() -> None:
     )
 
     assert isinstance(result, RadioScript) and llm.check_prompts == []
+
+
+def test_a_closing_cut_by_the_fact_check_becomes_a_route_closing_with_the_sign_off() -> None:
+    from wavecast.stations import compose_signoff
+
+    from tests.test_voice import _final_slot
+
+    llm = Dispatch(
+        [_script("最后这首的作曲是久石让。", kind=RadioScriptBlockKind.OUTRO)],
+        [FactCheck(findings=[_finding(0, "insufficient")])],
+    )
+    result = asyncio.run(
+        WriterService(llm, fact_checker=FactChecker(llm)).write(  # type: ignore[arg-type]
+            _chapter().model_copy(update={"evidence_ids": ["e1"]}),
+            _evidence(HISAISHI_PAGE),
+            slot_context=_final_slot(),
+            target_duration_seconds=16,
+            output_language=OutputLanguage.ZH_CN,
+            station=StationId.PORTRAIT,
+            voice_seed="programme-1",
+            route_tracks=["久石譲 - Summer", "木村弓 - いつも何度でも", "久石譲 - Spirited Away"],
+        )
+    )
+
+    assert isinstance(result, RadioScript)
+    signoff = compose_signoff(StationId.PORTRAIT, "programme-1")
+    # the first and last songs are named when the voice can say them; a Japanese title is not
+    assert [block.text for block in result.blocks] == [f"这一程从《Summer》听到《Spirited Away》，就走到这里。{signoff}"]
