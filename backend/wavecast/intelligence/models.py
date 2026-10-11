@@ -237,6 +237,9 @@ class ResolvedTrack(BaseModel):
     # Length of the file the catalog will play, when the lookup reported it.  Planning uses it
     # to fit a programme to its time budget; it is not part of the track's identity.
     duration_seconds: int | None = Field(default=None, ge=1, le=36000)
+    # The catalog's own Chinese title, when its title is in another script and it records one.
+    # The voice says this instead of "这首歌"; it is not part of the track's identity.
+    spoken_title: str | None = Field(default=None, max_length=160)
 
 
 # Compatibility name for callers that still use the former proposal type.  It is

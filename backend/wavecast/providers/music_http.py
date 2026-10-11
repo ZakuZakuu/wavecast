@@ -178,7 +178,7 @@ class SidecarMusicProvider(MusicProvider):
         duration = _duration(item.get("duration_seconds", item.get("duration")))
         raw_metadata = item.get("metadata")
         metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
-        for key in ("album", "playback_url", "stream_url", "version_kind", "version_label"):
+        for key in ("album", "title_zh", "playback_url", "stream_url", "version_kind", "version_label"):
             if item.get(key) is not None:
                 metadata[key] = item[key]
         return TrackMetadata(

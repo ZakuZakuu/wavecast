@@ -6,6 +6,7 @@ from wavecast.models.episode import MusicSegment, SegmentKind, SegmentState
 from wavecast.providers.contracts import MusicProvider, TrackMetadata
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.retrieval import MusicRetrievalService
+from wavecast.spoken_form import chinese_title
 from wavecast.text_identity import same_catalog_name
 
 from .models import (
@@ -24,6 +25,7 @@ def _resolved_track(metadata: TrackMetadata) -> ResolvedTrack | None:
         canonical_artist=metadata.artist,
         canonical_title=metadata.title,
         duration_seconds=metadata.duration_seconds or None,
+        spoken_title=chinese_title(metadata.metadata),
     )
 
 
@@ -126,6 +128,7 @@ async def resolve_track_proposal_across_providers(
                     canonical_artist=candidate.artist,
                     canonical_title=candidate.title,
                     duration_seconds=candidate.duration_seconds or None,
+                    spoken_title=chinese_title(candidate.metadata),
                 )
             try:
                 provider = retrieval.registry.provider_for_track_ref(candidate.track_ref)

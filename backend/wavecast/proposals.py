@@ -28,6 +28,7 @@ from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError, ProviderSchemaValidationError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
+from wavecast.spoken_form import chinese_title, spoken_artist, spoken_title
 from wavecast.stations import StationId, compose_opening, resolve_presentation_intent
 from wavecast.text_identity import canonical_name, text_mentions_name
 
@@ -494,13 +495,17 @@ def _opening_narration_text(
     ):
         # The model's note is not spoken in Chinese; the opening says what we begin with, a true
         # reason when the request names the artist, and the station.
-        return compose_opening(
+        # The voice speaks Chinese and English only: a title or an artist in another script is
+        # said by its catalog Chinese title, or as 这首歌 / 这位艺人.
+        title = resolved.spoken_title or spoken_title(resolved.canonical_title)
+        opening = compose_opening(
             request.station,
-            artist=resolved.canonical_artist,
-            title=resolved.canonical_title,
+            artist=spoken_artist(resolved.canonical_artist) or "这位艺人",
+            title=title or "这首歌",
             names_artist=_request_names_artist(request.prompt, resolved.canonical_artist),
             seed=f"{request.prompt}|{resolved.track_ref}",
         )
+        return opening.replace("《这首歌》", "这首歌")
     else:
         identity = (
             f'Let\'s start with "{resolved.canonical_title}" by '
@@ -777,6 +782,7 @@ class LLMProgramProposalGenerator:
             track_ref=metadata.track_ref,
             canonical_artist=metadata.artist,
             canonical_title=metadata.title,
+            spoken_title=chinese_title(metadata.metadata),
         )
         timing_profile = await self.retrieval.registry.get_timing_profile(canonical)
         return canonical, metadata.duration_seconds, timing_profile

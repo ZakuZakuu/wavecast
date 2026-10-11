@@ -17,8 +17,9 @@ substituted; free text is never rewritten with broad patterns.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from wavecast.text_identity import to_simplified
 
@@ -105,6 +106,18 @@ def spoken_title(title: str) -> str | None:
     return cleaned or None
 
 
+def chinese_title(metadata: Mapping[str, Any] | None) -> str | None:
+    """The Chinese title a catalog recorded for a song (``title_zh``), if it is readable."""
+
+    value = (metadata or {}).get("title_zh")
+    if not isinstance(value, str):
+        return None
+    text = to_simplified(value.strip())
+    if not text or len(text) > 80 or has_unspeakable_script(text):
+        return None
+    return text
+
+
 def spoken_artist(artist: str) -> str | None:
     """How to say an artist credit; unspeakable credits are dropped (at most two are named)."""
 
@@ -128,6 +141,8 @@ class KnownTrack:
 
     artist: str
     title: str
+    # The catalog's own Chinese title for the song, when it records one.
+    spoken_title: str | None = None
 
 
 @dataclass
@@ -180,7 +195,7 @@ def to_spoken_form(
     # An explanatory original-name aside (“（原名：…）”) is display-only.
     spoken = re.sub(r"[（(][^）)]*" + UNSPEAKABLE_SCRIPTS.pattern + r"[^）)]*[）)]", "", spoken)
     for track in tracks:
-        title_spoken = spoken_title(track.title)
+        title_spoken = track.spoken_title or spoken_title(track.title)
         spoken = _replace_entity(spoken, _variants(track.title), title_spoken or GENERIC_SONG)
         artist_spoken = spoken_artist(track.artist)
         credits = [track.artist, *(p for p in _ARTIST_SEPARATORS.split(track.artist) if p.strip())]
