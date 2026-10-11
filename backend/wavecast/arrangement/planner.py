@@ -42,6 +42,10 @@ class ArrangementDefaults:
     lyric_aware_outgoing_overlap_seconds: float = 12.0
     lyric_guard_seconds: float = 0.75
     opening_host_lead_in_seconds: float = 6.0
+    # A clean non-vocal window for the opening host is preferred, but not at any price: past
+    # this the listener has been listening to music alone for too long, and the host talks over
+    # the track at the lead-in instead (ducked, like any other talk-over).
+    opening_host_max_delay_seconds: float = 30.0
 
 
 def _active_segments(episode: PlayableEpisode) -> list[Segment]:
@@ -136,9 +140,9 @@ def _opening_host_offset_seconds(
                 - config.lyric_guard_seconds
                 - narration_duration
             )
-            if earliest <= latest_start:
+            if earliest <= latest_start and earliest <= config.opening_host_max_delay_seconds:
                 return earliest
-    # Timing exists but exposes no sufficiently long non-vocal section.
+    # Timing exists but exposes no sufficiently long non-vocal section soon enough.
     # Keep the opening beat early rather than falling through to the generic
     # outgoing-song bridge placement at the end of the track.
     return config.opening_host_lead_in_seconds

@@ -510,3 +510,30 @@ def test_missing_timing_profile_retains_existing_fixed_bridge_geometry() -> None
 
     assert voice.timeline_start_seconds == 36
     assert incoming.timeline_start_seconds == 40
+
+
+def test_opening_host_does_not_wait_for_a_late_instrumental_window() -> None:
+    # The song is sung from the start; the first break long enough for the host is at 1:30.
+    opening = _music("a", 0, 240).model_copy(
+        update={
+            "timing_profile": TrackTimingProfile(
+                source_duration_seconds=240,
+                lyric_timestamps_available=True,
+                lyric_lines=(TimingInterval(start_seconds=2, end_seconds=88),),
+                vocal_intervals=(TimingInterval(start_seconds=2, end_seconds=88),),
+                sections=(
+                    TrackSection(kind=TrackSectionKind.VOCAL, start_seconds=2, end_seconds=88),
+                    TrackSection(
+                        kind=TrackSectionKind.INSTRUMENTAL_GAP, start_seconds=88, end_seconds=140
+                    ),
+                ),
+            )
+        }
+    )
+    opening_host = _voice("segment-opening-host", 1, 12, NarrationRole.INTRO)
+    next_music = _music("b", 2, 120)
+
+    plan = plan_episode_mix(_episode(opening, opening_host, next_music))
+
+    voice = next(clip for clip in plan.clips if clip.segment_id == "segment-opening-host")
+    assert voice.timeline_start_seconds == pytest.approx(6.0)
