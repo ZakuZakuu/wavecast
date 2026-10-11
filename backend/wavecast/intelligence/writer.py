@@ -192,9 +192,14 @@ class WriterService:
             f"{empty_scope_instruction}\n"
             f"Write in output language {selected_language.value}, whatever language the evidence "
             "or track titles use; keep artist and track names exactly as the slot contexts spell them. "
-            "The application decides how songs and artists are spoken, so never translate or "
-            "transliterate a title yourself, and keep Japanese, Korean or other non-Chinese, "
-            "non-English text out of `tts_text`.\n"
+            "The voice speaks only Chinese and English, so keep Japanese, Korean and every other "
+            "script out of what is spoken. The application says a song or artist whose name is in "
+            "such a script as 这首歌 / 这位艺人. For a work (a film, a series, an album) use its "
+            "established Chinese title (千与千寻, 龙猫, 天空之城) when you are sure of it. For a song "
+            "title with no established Chinese title you may say once, in plain Chinese, what it "
+            "means: “这首歌的名字，中文意思是……”, only when you are confident of the meaning; "
+            "otherwise just call it 这首歌. Never write the original title or a pronunciation "
+            "(romaji, pinyin of Japanese) in the spoken text, and do not invent a Chinese title.\n"
             f"{language_guidance}\n"
             f"{station_line}"
             f"{route_line}"
@@ -451,8 +456,10 @@ def _problems(
                 *reasons,
                 "The voice cannot read "
                 + ", ".join(spoken.unspeakable[:4])
-                + " (Japanese, Korean or another script). Say it in Chinese: the Chinese name "
-                "of the film, work or person, or just 这首歌 / 这位艺人; never write kana or hangul.",
+                + " (Japanese, Korean or another script). Say it in Chinese: the established "
+                "Chinese name of the film, work or person; for a song title with none, say once "
+                "“这首歌的名字，中文意思是……” if you are sure of the meaning, otherwise just "
+                "这首歌 / 这位艺人; never write kana or hangul.",
             ]
         if reasons:
             found[index] = reasons

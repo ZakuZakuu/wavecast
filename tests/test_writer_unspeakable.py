@@ -80,3 +80,23 @@ def test_a_closing_may_name_any_song_of_the_programme_even_with_a_japanese_title
     assert "あの夏へ" in result.blocks[0].text  # the listener-visible copy keeps the title
     assert "あの夏へ" not in (result.blocks[0].tts_text or "")  # the voice is given a readable one
     assert result.blocks[0].text.endswith(compose_signoff(StationId.PORTRAIT, "programme-1") or "")
+
+
+def test_the_writer_is_told_to_use_chinese_titles_or_say_what_a_foreign_title_means() -> None:
+    llm = Sequenced(_script("Jody 是同一个人写的。"))
+
+    _write(llm)
+
+    prompt = llm.prompts[0]
+    assert "speaks only Chinese and English" in prompt
+    assert "established Chinese title" in prompt
+    assert "这首歌的名字，中文意思是" in prompt
+    assert "do not invent a Chinese title" in prompt
+
+
+def test_the_rewrite_for_unreadable_text_offers_the_meaning_phrase() -> None:
+    llm = Sequenced(_script(JAPANESE), _script(CHINESE))
+
+    _write(llm)
+
+    assert "这首歌的名字，中文意思是" in llm.prompts[1]
