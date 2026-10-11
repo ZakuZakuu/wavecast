@@ -175,7 +175,7 @@ def test_a_supported_background_sentence_is_kept_and_its_source_recorded() -> No
         _script("久石让的电影配乐主要是和宫崎骏、北野武两位导演合作。听听这段木管。"),
         _evidence(HISAISHI_PAGE),
         FactCheck(
-            findings=[_finding(0, "supported", "e1", "主要是与宫崎骏和北野武两位导演")]
+            findings=[_finding(0, "supported", "e1", "久石让的电影配乐主要是与宫崎骏和北野武两位导演")]
         ),
     )
 
@@ -244,23 +244,63 @@ def test_a_quote_about_another_piece_does_not_support_an_attribution_about_this_
     assert own_piece.issues == []
 
 
-def test_the_catalog_supports_who_performs_a_track_but_nothing_more() -> None:
+def test_the_catalog_names_a_credit_and_never_a_role() -> None:
     track = KnownTrack(artist="木村弓", title="いつも何度でも")
-    ok = _review(
-        _script("这首歌是木村弓演唱的。"),
-        _evidence(HISAISHI_PAGE),
-        FactCheck(findings=[_finding(0, "supported", "catalog", "is credited to the performer 木村弓")]),
-        tracks=[track],
-    )
-    assert ok.issues == []
+    credit = "is credited to the performer 木村弓"
+    for sentence in ("这首歌是木村弓演唱的。", "这首歌是木村弓作曲的。"):
+        report = _review(
+            _script(sentence),
+            _evidence(HISAISHI_PAGE),
+            FactCheck(findings=[_finding(0, "supported", "catalog", credit)]),
+            tracks=[track],
+        )
+        assert [issue.code for issue in report.issues] == ["insufficient"], sentence
 
-    composer = _review(
-        _script("这首歌是木村弓作曲的。"),
+    plain = _review(  # a bare statement of whose track it is needs no role
+        _script("接下来是木村弓的《永远同在》。"),
         _evidence(HISAISHI_PAGE),
-        FactCheck(findings=[_finding(0, "supported", "catalog", "is credited to the performer 木村弓")]),
-        tracks=[track],
+        FactCheck(findings=[_finding(0, "supported", "catalog", credit)]),
+        tracks=[KnownTrack(artist="木村弓", title="いつも何度でも", spoken_title="永远同在")],
     )
-    assert [issue.code for issue in composer.issues] == ["insufficient"]
+    assert plain.issues == []
+
+
+def test_a_quote_must_be_complete_so_a_dropped_negation_does_not_pass() -> None:
+    source = "这首曲子并不是久石让作曲的，作曲者另有其人。"
+    assert quote_in_source("这首曲子并不是久石让作曲的", source)
+    assert not quote_in_source("这首曲子是久石让作曲的", source)
+
+    report = _review(
+        _script("这首曲子是久石让作曲的。"),
+        _evidence(source),
+        FactCheck(findings=[_finding(0, "supported", "e1", "这首曲子是久石让作曲的")]),
+    )
+    assert [issue.code for issue in report.issues] == ["insufficient"]
+
+
+def test_a_quote_must_speak_of_the_same_role_not_a_neighbouring_one() -> None:
+    page = "《风之谷》的主题由久石让编曲，宫崎骏在1983年第一次听到。"
+
+    arranged = _review(
+        _script("这首的作曲是久石让。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "主题由久石让编曲")]),
+    )
+    assert [issue.code for issue in arranged.issues] == ["insufficient"]
+
+    same_role = _review(
+        _script("这首的编曲是久石让。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "主题由久石让编曲")]),
+    )
+    assert same_role.issues == []
+
+    played = _review(
+        _script("这首是久石让亲自演唱的。"),
+        _evidence("久石让亲自演奏了钢琴部分，由他完成录音。"),
+        FactCheck(findings=[_finding(0, "supported", "e1", "久石让亲自演奏了钢琴部分")]),
+    )
+    assert [issue.code for issue in played.issues] == ["insufficient"]  # played is not sang
 
 
 def test_a_closing_is_not_cut_for_summing_up_the_route_but_is_for_an_attribution() -> None:
@@ -279,12 +319,15 @@ def test_a_closing_is_not_cut_for_summing_up_the_route_but_is_for_an_attribution
     assert [issue.code for issue in attributing.issues] == ["insufficient"]
 
 
-def test_an_unavailable_checker_does_not_stop_the_programme() -> None:
+def test_when_the_checker_is_down_attributions_are_left_out_and_the_rest_goes_on() -> None:
     report = _review(
-        _script("听听这段木管。"), _evidence(HISAISHI_PAGE), RuntimeError("provider down")
+        _script("听听这段木管。这首的作曲是久石让。"),
+        _evidence(HISAISHI_PAGE),
+        RuntimeError("provider down"),
     )
 
-    assert report.issues == [] and not report.model_checked
+    assert not report.model_checked
+    assert [(issue.sentence, issue.code) for issue in report.issues] == [(1, "unchecked")]
 
 
 # --- in the Writer -----------------------------------------------------------------------------
@@ -329,10 +372,10 @@ BAD = "这首歌作曲是久石让，唱的是木村弓。"
 
 def test_an_unsupported_sentence_is_sent_back_once_and_the_rewrite_is_used() -> None:
     llm = Dispatch(
-        [_script(f"{BAD}{GOOD}"), _script(f"这首歌是木村弓演唱的。{GOOD}")],
+        [_script(f"{BAD}{GOOD}"), _script(f"久石让的电影配乐主要是与宫崎骏合作的。{GOOD}")],
         [
             FactCheck(findings=[_finding(0, "insufficient")]),
-            FactCheck(findings=[_finding(0, "supported", "catalog", "credited to the performer 木村弓")]),
+            FactCheck(findings=[_finding(0, "supported", "e1", "久石让的电影配乐主要是与宫崎骏和北野武两位导演")]),
         ],
     )
 
@@ -340,7 +383,7 @@ def test_an_unsupported_sentence_is_sent_back_once_and_the_rewrite_is_used() -> 
 
     assert len(llm.prompts) == 2 and len(llm.check_prompts) == 2
     assert "is not supported by the evidence" in llm.prompts[1]
-    assert [block.text for block in result.blocks] == [f"这首歌是木村弓演唱的。{GOOD}"]
+    assert [block.text for block in result.blocks] == [f"久石让的电影配乐主要是与宫崎骏合作的。{GOOD}"]
 
 
 def test_a_sentence_still_unsupported_after_the_rewrite_is_left_out_not_the_block() -> None:
@@ -354,6 +397,17 @@ def test_a_sentence_still_unsupported_after_the_rewrite_is_left_out_not_the_bloc
     assert len(llm.prompts) == 2
     assert [block.text for block in result.blocks] == [GOOD]
     assert "久石让" not in (result.blocks[0].tts_text or "")
+
+
+def test_a_sentence_that_leaned_on_a_removed_one_goes_with_it() -> None:
+    llm = Dispatch(
+        [_script(f"这首歌作曲是久石让。因此他的名字出现在片尾。{GOOD}")],
+        [FactCheck(findings=[_finding(0, "insufficient")])],
+    )
+
+    result = _write(llm)
+
+    assert [block.text for block in result.blocks] == [GOOD]
 
 
 def test_a_block_with_nothing_supportable_is_skipped_and_the_music_goes_on() -> None:

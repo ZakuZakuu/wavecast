@@ -47,26 +47,33 @@ _TITLE_IN_BRACKETS = re.compile(r"《([^》]{1,40})》")
 _GENERIC_TITLES = frozenset({"这首歌", "这首曲子", "这支曲子", "这首", "这支曲子"})
 _IGNORED = re.compile(r"[\s，。！？、；：,.!?;:“”\"'‘’《》「」『』（）()\-—…·]+")
 _MIN_QUOTE_CHARS = 4
-_QUOTE_CONTAINMENT = 0.8
 
-# Who did what.  Each family's words are interchangeable evidence for each other; a sentence
-# that makes a claim of one family is supported only by a quote that speaks of that family.
-_ROLE_FAMILIES: dict[str, tuple[str, ...]] = {
-    "composition": ("作曲", "谱曲", "编曲", "配乐", "创作", "写成", "写了", "音乐"),
-    "lyrics": ("作词", "填词", "词作"),
-    "performance": ("演唱", "主唱", "领唱", "唱的", "唱了", "献唱", "歌手", "演奏", "录制"),
-    "film": ("导演", "执导", "主演", "拍摄", "电影", "影片", "动画"),
-    "release": ("发行", "首映", "上映", "公映", "出版", "专辑", "原声带", "票房", "收录"),
-    "award": ("获奖", "荣获", "入围", "奖"),
+# Who did what, one word family per role.  A sentence that claims a role is supported only by a
+# quote that speaks of that same role: "arranged" does not show "composed", and being credited
+# on a recording does not show who sang on it.  ``creation`` is the loose "wrote / made" claim,
+# which any of the creative roles can back.
+_ROLES: dict[str, tuple[str, ...]] = {
+    "composer": ("作曲", "谱曲"),
+    "arranger": ("编曲",),
+    "score": ("配乐",),
+    "lyricist": ("作词", "填词", "词作"),
+    "vocal": ("演唱", "主唱", "领唱", "唱的是", "唱的", "唱了", "献唱"),
+    "instrumental": ("演奏", "弹奏", "独奏"),
+    "director": ("导演", "执导"),
+    "cast": ("主演",),
+    "release": ("发行", "首映", "上映", "公映", "出版", "原声带", "专辑", "收录", "票房"),
+    "award": ("获奖", "荣获", "入围"),
+    "creation": ("创作", "写成", "写了", "写出", "谱写"),
 }
+_CREATIVE_ROLES = ("composer", "arranger", "score", "lyricist", "creation")
 _ROLE_TRIGGER = re.compile(
-    "|".join(
-        re.escape(word)
-        for words in _ROLE_FAMILIES.values()
-        for word in words
-        if word not in ("音乐", "电影", "影片", "动画", "奖", "歌手", "录制")
-    )
-    + r"|唱的是|出自|寄给|写给|参与|制作|改编|根据|诞生|灵感"
+    "|".join(re.escape(word) for words in _ROLES.values() for word in words)
+    + r"|出自|寄给|写给|参与|制作|改编|根据|诞生|灵感"
+)
+# A sentence that starts like this leans on the one before it.
+_DANGLING_START = re.compile(
+    r"^\s*(?:因此|所以|于是|但是?|可是|不过|而且?|并且|同时|此外|另外|然后|接着|其中|同样|"
+    r"也|还|又|他们?|她们?|它们?|其|该|此|这也|这就|这样|这些|那)"
 )
 
 
@@ -117,33 +124,29 @@ def _squash(text: str) -> str:
     return _IGNORED.sub("", canonical_name(text))
 
 
-def _bigrams(text: str) -> set[str]:
-    squashed = _squash(text)
-    return {squashed[i : i + 2] for i in range(len(squashed) - 1)}
-
-
 def quote_in_source(quote: str, source: str) -> bool:
-    """True when the quote is (nearly) a verbatim stretch of the source.
+    """True when the quote is a verbatim stretch of the source.
 
-    Script variants, spacing and punctuation are ignored, so a quote that the checker copied
-    from a Traditional-Chinese page still matches; text that is not there does not.
+    Script variants, spacing and punctuation are ignored (a quote copied from a Traditional
+    Chinese page still matches), but the words themselves must be contiguous and complete, so
+    a quote with a negation removed does not match.
     """
 
     squashed = _squash(quote)
-    if len(squashed) < _MIN_QUOTE_CHARS:
-        return False
-    if squashed in _squash(source):
-        return True
-    wanted = _bigrams(quote)
-    return bool(wanted) and len(wanted & _bigrams(source)) / len(wanted) >= _QUOTE_CONTAINMENT
+    return len(squashed) >= _MIN_QUOTE_CHARS and squashed in _squash(source)
 
 
-def role_families(text: str) -> set[str]:
-    return {
-        family
-        for family, words in _ROLE_FAMILIES.items()
-        if any(word in text for word in words if word not in ("音乐", "电影", "影片", "动画", "奖", "歌手"))
-    }
+def roles_in(text: str) -> set[str]:
+    return {role for role, words in _ROLES.items() if any(word in text for word in words)}
+
+
+def quote_backs_roles(quote: str, roles: set[str]) -> bool:
+    """Every role the sentence claims is spoken of, as that role, in the quote."""
+
+    quoted = roles_in(quote)
+    return all(
+        role in quoted or (role == "creation" and quoted & set(_CREATIVE_ROLES)) for role in roles
+    )
 
 
 def must_be_supported(sentence: str) -> bool:
@@ -236,7 +239,7 @@ source's own script and without translating, from the source (at most 60 charact
 - "contradicted": a source states something different. Give its id and quote.
 - "insufficient": no source states it. A name that merely appears near another name does not show who \
 did what; the role (composer, lyricist, performer, director, release) must be stated. The catalog \
-lines say only who is credited as performer; they say nothing about composers, lyricists or films.
+lines say only who is credited on a recording; they say nothing about composers, lyricists or films.
 
 Return JSON {{"findings": [{{"sentence": n, "verdict": "...", "source": "id", "quote": "..."}}]}}."""
 
@@ -302,10 +305,10 @@ class FactChecker:
                 finding = None
             needs_source = must_be_supported(text)
             if findings is None:
-                # The checker was unavailable: only what code can establish applies, and a
-                # sentence with no source at all cannot be supported.
-                if needs_source and not sources:
-                    report.issues.append(_unsupported(block, index, text, "no_source"))
+                # The checker was unavailable.  What needs a source cannot be shown to have
+                # one, so it is left out; the rest goes on unchecked and the music continues.
+                if needs_source:
+                    report.issues.append(_unsupported(block, index, text, "unchecked"))
                 continue
             if finding is None:
                 if needs_source:
@@ -314,19 +317,15 @@ class FactChecker:
             verdict, source_id = finding.verdict, finding.source.strip()
             if verdict == "supported":
                 text_of_source = sources.get(source_id, "")
+                roles = roles_in(text)
                 if not text_of_source or not quote_in_source(finding.quote, text_of_source):
                     verdict = "insufficient"
-                elif (families := role_families(text)) and (
-                    families - {"performance"}
-                    if source_id == CATALOG_SOURCE
-                    else not any(
-                        word in finding.quote for family in families for word in _ROLE_FAMILIES[family]
-                    )
+                elif roles and (
+                    source_id == CATALOG_SOURCE  # the catalog names a credit, never a role
+                    or not quote_backs_roles(finding.quote, roles)
                 ):
-                    # The catalog names only the performer; any other source's quote must
-                    # speak of the role the sentence claims.
                     verdict = "insufficient"
-            if verdict == "supported" and _TITLE_IN_BRACKETS.search(text) and role_families(text):
+            if verdict == "supported" and _TITLE_IN_BRACKETS.search(text) and roles_in(text):
                 # An attribution about a named work must be backed by a quote that names the
                 # work: "composer of another piece" does not show who wrote this one.
                 if not any(
@@ -416,6 +415,26 @@ def _unsupported(block: int, index: int, text: str, code: str) -> SentenceIssue:
     )
 
 
+def _kept_sentences(sentences: Sequence[str], removed: set[int]) -> list[str]:
+    """What is left after the removed sentences, without sentences that lost their context.
+
+    A sentence that leans on the one before it ("因此…", "他…", "同样…") is removed too when
+    that one is gone; if nothing coherent is left, the block is skipped by the caller.
+    """
+
+    kept: list[str] = []
+    previous_removed = False
+    for index, sentence in enumerate(sentences):
+        if index in removed:
+            previous_removed = True
+            continue
+        if previous_removed and _DANGLING_START.match(sentence):
+            continue  # still "removed" for the next sentence's sake
+        previous_removed = False
+        kept.append(sentence)
+    return kept
+
+
 def without_flagged_sentences(
     script: RadioScript, report: FactReport, tracks: Sequence[KnownTrack] = ()
 ) -> RadioScript:
@@ -432,7 +451,7 @@ def without_flagged_sentences(
     for block_index, block in enumerate(script.blocks):
         removed = drop.get(block_index)
         if removed:
-            kept = [s for i, s in enumerate(split_sentences(block.text)) if i not in removed]
+            kept = _kept_sentences(split_sentences(block.text), removed)
             logger.warning(
                 "writer_sentences_dropped reason=unsupported_fact kind=%s dropped=%d kept=%d",
                 block.kind.value,
