@@ -284,6 +284,20 @@ class CatalogPool(BaseModel):
         }
 
 
+# How far (in score points) a programme's seed may move an artist in the ranking.  A hit on one
+# more query is worth 2 points, a community tag 5; 4 lets neighbours swap without letting a
+# long-tail artist leapfrog a clearly better supported one.
+_RANK_BLUR = 4.0
+
+
+def _seeded(seed: str, salt: str, key: str) -> str:
+    return hashlib.sha256(f"{salt}|{seed}|{key}".encode()).hexdigest()
+
+
+def _seeded_unit(seed: str, salt: str, key: str) -> float:
+    return int(_seeded(seed, salt, key)[:8], 16) / 0xFFFFFFFF
+
+
 # Community-tag artists searched in the catalog per request (each costs one catalog search).
 _HINTS_PER_TAG = 8
 _MAX_HINT_SEARCHES = 8
@@ -391,6 +405,7 @@ class CatalogPoolBuilder:
         named_artists: Sequence[str] = (),
         evidence_texts: Sequence[str] = (),
         hint_tags: Sequence[str] = (),
+        seed: str = "",
     ) -> CatalogPool:
         """Examine candidates from three sources, most trusted first.
 
@@ -403,6 +418,10 @@ class CatalogPoolBuilder:
           artists share the budget instead of one filling it.
         * ``hint_tags``: community tags whose artists (from the optional hint provider) are
           searched in the catalog and join the keyword tier as ranked, capped candidates.
+        * ``seed``: a programme's variety seed.  Artists whose ranks are close swap places and
+          an artist's songs are drawn in a seeded order, so two programmes on one topic verify
+          (and so can play) different songs; the same seed gives the same pool, and no seed
+          keeps the plain ranked order.
 
         On timeout the pool built so far is returned with ``truncated=True``.
         """
@@ -421,6 +440,7 @@ class CatalogPoolBuilder:
                     named_artists,
                     evidence_texts,
                     hint_tags,
+                    seed,
                 ),
                 timeout=self.config.timeout_seconds,
             )
@@ -440,6 +460,7 @@ class CatalogPoolBuilder:
         named_artists: Sequence[str] = (),
         evidence_texts: Sequence[str] = (),
         hint_tags: Sequence[str] = (),
+        seed: str = "",
     ) -> None:
         # Stage 1: LLM-named tracks (bounded by the caller's proposal count).
         async def examine(index: int, proposal: TrackProposal) -> None:
@@ -503,7 +524,7 @@ class CatalogPoolBuilder:
             + hint_hits,
             evidence_texts,
         )
-        songs = self._select_songs(list(groups.values()), scores, named)
+        songs = self._select_songs(list(groups.values()), scores, named, seed)
 
         async def verify_song(index: int, entries: list[tuple[RetrievedTrack, PoolSource]]) -> None:
             state.record((1, index), await self._verify_song(entries, state))
@@ -515,6 +536,7 @@ class CatalogPoolBuilder:
         songs: list[list[tuple[RetrievedTrack, PoolSource]]],
         scores: dict[str, float],
         named: set[str],
+        seed: str = "",
     ) -> list[list[tuple[RetrievedTrack, PoolSource]]]:
         """Songs to verify, within the budget, spread across artists.
 
@@ -548,7 +570,18 @@ class CatalogPoolBuilder:
         queues: dict[str, list[list[tuple[RetrievedTrack, PoolSource]]]] = {}
         for entries in (group for group in songs if not is_searched(group)):
             queues.setdefault(artist_of(entries), []).append(entries)
-        order = sorted(queues, key=lambda artist: (-scores.get(artist, 0.0), list(queues).index(artist)))
+        def rank(artist: str) -> float:
+            # With a seed, the artists are ordered by rank blurred by up to _RANK_BLUR points,
+            # so near-equal artists swap between programmes while a clearly better-ranked
+            # artist stays ahead.
+            blur = _RANK_BLUR * _seeded_unit(seed, "artist", artist) if seed else 0.0
+            return scores.get(artist, 0.0) - blur
+
+        if seed:
+            # Each artist's songs in a seeded order (all of them the artist's own results).
+            for queue in queues.values():
+                queue.sort(key=lambda group: _seeded(seed, "song", _song_key(group[0][0])))
+        order = sorted(queues, key=lambda artist: (-rank(artist), list(queues).index(artist)))
         depth = 0
         while any(len(queues[artist]) > depth for artist in order):
             for artist in order:

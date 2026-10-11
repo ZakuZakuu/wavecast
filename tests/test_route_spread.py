@@ -265,3 +265,49 @@ def test_a_named_artist_programme_is_not_limited(tmp_path) -> None:
     session = _session(tmp_path, required_artists=["Signal Garden"])
 
     assert _artists(session).count("Signal Garden") >= 3
+
+
+def test_every_credited_artist_counts_toward_the_limit() -> None:
+    used = [rt("Miles Davis", "So What"), rt("Kosma, Joseph, Miles Davis", "Autumn Leaves")]
+
+    assert artist_plays("Miles Davis", used) == 2
+    assert at_artist_cap("Miles Davis", used, 2)
+    assert at_artist_cap("Miles Davis, John Coltrane", used, 2)  # a collaboration of a used-up artist
+    assert artist_plays("Kosma, Joseph, Miles Davis", used) == 2
+    assert not at_artist_cap("Bill Evans", used, 2)
+
+
+def test_the_locked_second_track_counts_toward_the_limit_even_as_a_version_of_the_opening(
+    tmp_path,
+) -> None:
+    """The second track is fixed before assembly.  Here it is the opening song under another
+    artist, so its own slot is refused as a duplicate, yet it still plays and still counts."""
+
+    music = _music()
+    music._tracks["mock:cover"] = TrackMetadata(
+        track_ref="mock:cover",
+        title="Neon First Light",
+        artist="Signal Garden",
+        duration_seconds=200,
+        playable=True,
+    )
+    assembly = service(tmp_path, _OneArtistLLM(), music=music)
+    assembly.catalog_pool_builder = _StubPoolBuilder(assembly.retrieval)
+    successor = ResolvedTrack(
+        track_ref="mock:cover",
+        canonical_artist="Signal Garden",
+        canonical_title="Neon First Light",
+        duration_seconds=200,
+    )
+    request = LiveEpisodeAssemblyRequest(
+        topic="fixture", desired_duration_seconds=1200, max_tracks=6, max_chapters=10
+    )
+
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            request, opening_track=OPENING, locked_successor=successor
+        )
+    )
+
+    artists = [OPENING.canonical_artist, *_artists(session)]
+    assert artists.count("Signal Garden") <= 2, artists

@@ -1316,6 +1316,7 @@ class LiveEpisodeAssemblyService:
         # Nothing else is left to offer: a longer programme beats an artist limit.
         if artist_cap[0] is not None and needs_more_music():
             trace.mark("artist_route_limit_relaxed")
+            logger.info("route_spread_relaxed")
             artist_cap[0] = None
 
         # Pass 2: continuity is the hard requirement. Round-robin through the
@@ -1473,6 +1474,23 @@ class LiveEpisodeAssemblyService:
         artist_cap = spread_cap(
             required_artists=request.required_artists, station=request.station
         )
+
+        def spread_planned_used() -> list[ResolvedTrack]:
+            # The locked second track is fixed before this loop and always plays, so it counts
+            # toward every artist's limit from the start, even while its own slot is resolved.
+            if locked_successor is None or any(
+                _same_resolved_track(locked_successor, used) for used in used_tracks
+            ):
+                return used_tracks
+            return [*used_tracks, locked_successor]
+
+        def spread_blocked(candidate: ResolvedTrack) -> bool:
+            if locked_successor is not None and _same_resolved_track(candidate, locked_successor):
+                return False
+            return _blocked_by_spread(
+                candidate, spread_planned_used(), artist_cap, request.station
+            )
+
         for chapter in chapters:
             resolved: ResolvedTrack | None = None
             selected_proposal: TrackProposal | None = None
@@ -1502,7 +1520,7 @@ class LiveEpisodeAssemblyService:
                             candidate_rank=candidate_rank + 1,
                         )
                         continue
-                    if _blocked_by_spread(candidate, used_tracks, artist_cap, request.station):
+                    if spread_blocked(candidate):
                         last_resolution_reason = "artist already at the route limit"
                         trace.mark(
                             "artist_route_limit_skipped",
@@ -1527,7 +1545,7 @@ class LiveEpisodeAssemblyService:
                         bundle,
                         fast_result.plan,
                         attempted=attempted,
-                        used_tracks=used_tracks,
+                        used_tracks=spread_planned_used(),
                         catalog_pool=catalog_pool,
                         artist_cap=artist_cap,
                         station=request.station,
@@ -1795,6 +1813,7 @@ class LiveEpisodeAssemblyService:
                 ),
                 keyword_queries=catalog_queries(request.topic),
                 hint_tags=community_tags(request.topic),
+                seed=request.variety_seed,
                 named_artists=request.required_artists,
                 evidence_texts=[
                     f"{item.source_title} {item.claim_or_excerpt}" for item in bundle.evidence
@@ -2468,10 +2487,14 @@ def _blocked_by_spread(
     if artist_cap is None:
         return False
     if at_artist_cap(candidate.canonical_artist, used_tracks, artist_cap):
+        logger.info("route_spread_blocked reason=artist_limit artist=%s", candidate.canonical_artist)
         return True
-    return station is not StationId.LINEAGE and any(
+    if station is not StationId.LINEAGE and any(
         same_song_other_artist(candidate, used) for used in used_tracks
-    )
+    ):
+        logger.info("route_spread_blocked reason=same_song artist=%s", candidate.canonical_artist)
+        return True
+    return False
 
 
 def _same_resolved_track(left: ResolvedTrack | None, right: ResolvedTrack) -> bool:

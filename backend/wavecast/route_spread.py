@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from wavecast.catalog_pool import primary_artist
+from wavecast.catalog_pool import primary_artist, split_artists
 from wavecast.intelligence.models import ResolvedTrack
 from wavecast.stations import StationId
 from wavecast.text_identity import base_title_key, canonical_name
@@ -36,14 +36,12 @@ def spread_cap(*, required_artists: Iterable[str], station: StationId | None) ->
     return ARTIST_ROUTE_CAP
 
 
-def _words(credit: str) -> frozenset[str]:
-    return frozenset(canonical_name(primary_artist(credit)).split())
+def _words(name: str) -> frozenset[str]:
+    return frozenset(canonical_name(name).split())
 
 
-def same_artist(left: str, right: str) -> bool:
-    """Same lead artist; "Bill Evans" and "Bill Evans Trio" count as one."""
-
-    a, b = canonical_name(primary_artist(left)), canonical_name(primary_artist(right))
+def _same_name(left: str, right: str) -> bool:
+    a, b = canonical_name(left), canonical_name(right)
     if not a or not b:
         return False
     if a == b:
@@ -52,8 +50,26 @@ def same_artist(left: str, right: str) -> bool:
     return len(words_a) > 0 and len(words_b) > 0 and (words_a <= words_b or words_b <= words_a)
 
 
+def same_artist(left: str, right: str) -> bool:
+    """Same lead artist; "Bill Evans" and "Bill Evans Trio" count as one."""
+
+    return _same_name(primary_artist(left), primary_artist(right))
+
+
 def artist_plays(artist: str, tracks: Iterable[ResolvedTrack]) -> int:
-    return sum(1 for track in tracks if same_artist(track.canonical_artist, artist))
+    """Plays of the most-played artist in this credit, counting every credited artist.
+
+    "Kosma, Joseph, Miles Davis" is a Miles Davis play as well as a Kosma one: the catalog
+    credits a standard under its composers first, and counting only the first name would let
+    one performer take as many slots as the credits happen to hide.
+    """
+
+    wanted = split_artists(artist)
+    played = [split_artists(track.canonical_artist) for track in tracks]
+    return max(
+        (sum(1 for names in played if any(_same_name(name, other) for other in names)) for name in wanted),
+        default=0,
+    )
 
 
 def at_artist_cap(artist: str, tracks: Iterable[ResolvedTrack], cap: int | None) -> bool:
