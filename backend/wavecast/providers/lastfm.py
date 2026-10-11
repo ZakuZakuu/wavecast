@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from time import monotonic
+from typing import Any
 
 import httpx
 
@@ -20,6 +21,7 @@ from .config import ProviderSettings
 logger = logging.getLogger(__name__)
 
 ENDPOINT = "https://ws.audioscrobbler.com/2.0/"
+_TRACK_TAGS = 10
 _TTL_SECONDS = 24 * 60 * 60
 _TIMEOUT_SECONDS = 4.0
 _MAX_CACHE_ENTRIES = 64
@@ -64,14 +66,48 @@ class LastFmArtistHints:
         self._cache[cache_key] = (monotonic(), names)
         return list(names)
 
+    async def track_tags(self, artist: str, title: str) -> list[str] | None:
+        """Top tags of one song (cached a day); None when unknown or on any failure."""
+
+        artist, title = artist.strip(), title.strip()
+        if not self._api_key or not artist or not title:
+            return None
+        cache_key = (f"track|{artist.casefold()}|{title.casefold()}", 0)
+        cached = self._cache.get(cache_key)
+        if cached is not None and monotonic() - cached[0] < _TTL_SECONDS:
+            return list(cached[1]) or None
+        try:
+            payload = await self._get(
+                {"method": "track.gettoptags", "artist": artist, "track": title, "autocorrect": "1"}
+            )
+            tags = payload.get("toptags", {}).get("tag", [])
+            names = [
+                item["name"].strip()
+                for item in tags
+                if isinstance(item, dict) and isinstance(item.get("name"), str)
+            ][:_TRACK_TAGS]
+        except Exception as error:  # noqa: BLE001 - an optional signal must never break discovery
+            logger.warning("lastfm_track_tags_failed error_type=%s", type(error).__name__)
+            return None
+        if len(self._cache) >= _MAX_CACHE_ENTRIES * 8:
+            self._cache.pop(next(iter(self._cache)))
+        self._cache[cache_key] = (monotonic(), names)
+        return names or None
+
     async def _fetch(self, tag: str, limit: int) -> list[str]:
-        params = {
-            "method": "tag.gettopartists",
-            "tag": tag,
-            "limit": str(limit),
-            "api_key": self._api_key or "",
-            "format": "json",
-        }
+        payload = await self._get({"method": "tag.gettopartists", "tag": tag, "limit": str(limit)})
+        artists = payload.get("topartists", {}).get("artist", [])
+        if not isinstance(artists, list):
+            return []
+        names: list[str] = []
+        for item in artists:
+            name = item.get("name") if isinstance(item, dict) else None
+            if isinstance(name, str) and name.strip():
+                names.append(name.strip())
+        return names[:limit]
+
+    async def _get(self, query: dict[str, str]) -> dict[str, Any]:
+        params = {**query, "api_key": self._api_key or "", "format": "json"}
         if self._client is not None:
             response = await self._client.get(ENDPOINT, params=params, timeout=self._timeout)
         else:
@@ -82,12 +118,4 @@ class LastFmArtistHints:
         # Last.fm reports errors (bad key, rate limit) as HTTP 200 with an "error" field.
         if not isinstance(payload, dict) or "error" in payload:
             raise ValueError("lastfm_error_payload")
-        artists = payload.get("topartists", {}).get("artist", [])
-        if not isinstance(artists, list):
-            return []
-        names: list[str] = []
-        for item in artists:
-            name = item.get("name") if isinstance(item, dict) else None
-            if isinstance(name, str) and name.strip():
-                names.append(name.strip())
-        return names[:limit]
+        return payload
