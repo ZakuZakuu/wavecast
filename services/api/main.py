@@ -2332,9 +2332,11 @@ async def program_stream_playlist(episode_id: str) -> Response:
 async def episode_mixdown(episode_id: str, request: Request) -> MixdownArtifact:
     """Render the current canonical plan from already-owned local audio assets."""
     actor = principal(request)
-    owned(episode_id, actor)
+    # The repository facade is synchronous (asyncio.run() under Postgres), so it must not run
+    # on the request loop.
+    await to_thread.run_sync(owned, episode_id, actor)
     try:
-        plan = canonical_mix_plan_for_episode(episode_id, actor)
+        plan = await to_thread.run_sync(canonical_mix_plan_for_episode, episode_id, actor)
         with TemporaryDirectory(prefix="wavecast-mixdown-") as temporary:
             sources = await resolve_mix_sources(plan, audio_storage, Path(temporary) / "inputs")
             output_path = Path(temporary) / "mixdown.mp3"

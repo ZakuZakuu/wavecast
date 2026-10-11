@@ -128,3 +128,35 @@ def test_mixdown_endpoint_renders_owned_sources_without_mutating_episode(
     assert stored.content_type == "audio/mpeg"
     assert stored.content
     assert repository.get(episode.id).model_dump(mode="json") == before
+
+
+def test_mixdown_reads_the_repository_off_the_request_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Postgres-backed repository calls asyncio.run(), which fails on a running loop."""
+
+    on_loop: dict[str, bool] = {}
+
+    def has_running_loop() -> bool:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return True
+
+    def owned_probe(episode_id: str, actor: object) -> None:
+        on_loop["owned"] = has_running_loop()
+
+    def plan_probe(episode_id: str, actor: object) -> object:
+        on_loop["plan"] = has_running_loop()
+        raise ValueError("stop after the probes")
+
+    monkeypatch.setattr(api_module, "owned", owned_probe)
+    monkeypatch.setattr(api_module, "canonical_mix_plan_for_episode", plan_probe)
+
+    response = TestClient(api_module.app).post(
+        "/api/episodes/any/mixdown", headers={"X-Wavecast-Listener": "listener-a"}
+    )
+
+    assert response.status_code == 409
+    assert on_loop == {"owned": False, "plan": False}
