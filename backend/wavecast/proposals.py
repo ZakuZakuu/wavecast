@@ -28,7 +28,7 @@ from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError, ProviderSchemaValidationError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
-from wavecast.stations import StationId, pick_ident, resolve_presentation_intent
+from wavecast.stations import StationId, compose_opening, resolve_presentation_intent
 from wavecast.text_identity import canonical_name, text_mentions_name
 
 
@@ -419,27 +419,6 @@ def _proposal_language_instruction(language: OutputLanguage) -> str:
     )
 
 
-# How the opening names its first track.  Short and plain on purpose; the order of this and the
-# host note, and the form, vary with the programme.
-_OPENING_IDENTITIES = (
-    "先放{artist}的《{title}》。",
-    "{artist}，《{title}》。",
-    "第一首，{artist}的《{title}》。",
-    "开场是{artist}的《{title}》。",
-)
-
-
-# The one reason the opening gives for starting here, and only when it is true: the listener's
-# own request names the artist.  The model's free-form host note was dropped for Chinese
-# programmes after five live programmes in a row produced the same kind of empty line
-# ("能立刻带你进入这个声音世界"); a reason that says nothing is worse than none.
-_REQUEST_ECHOES = (
-    "你点了这个名字，那就先放它。",
-    "这是你点的名字，先从它开始。",
-    "名字是你点的，先放它。",
-)
-
-
 def _request_names_artist(prompt: str, credit: str) -> bool:
     """True when the listener's request writes one of the credited artists."""
 
@@ -513,23 +492,15 @@ def _opening_narration_text(
     if request.output_language is OutputLanguage.ZH_CN or (
         request.output_language is not OutputLanguage.EN_US and _uses_cjk(request.prompt)
     ):
-        seed = f"{request.prompt}|{resolved.track_ref}"
-        artist, title = resolved.canonical_artist, resolved.canonical_title
-        identity = _OPENING_IDENTITIES[_pick(seed, "identity", len(_OPENING_IDENTITIES))].format(
-            artist=artist, title=title
+        # The model's note is not spoken in Chinese; the opening says what we begin with, a true
+        # reason when the request names the artist, and the station.
+        return compose_opening(
+            request.station,
+            artist=resolved.canonical_artist,
+            title=resolved.canonical_title,
+            names_artist=_request_names_artist(request.prompt, resolved.canonical_artist),
+            seed=f"{request.prompt}|{resolved.track_ref}",
         )
-        # The model's note is not spoken in Chinese; the identity, a true reason when the
-        # request names the artist, and the station ident carry the opening.
-        echo = (
-            _REQUEST_ECHOES[_pick(seed, "echo", len(_REQUEST_ECHOES))]
-            if _request_names_artist(request.prompt, artist)
-            else ""
-        )
-        parts = [identity, echo]
-        ident = pick_ident(request.station, seed)
-        if ident and request.station is not StationId.NIGHT:
-            parts.append(ident)
-        return "".join(parts).strip()
     else:
         identity = (
             f'Let\'s start with "{resolved.canonical_title}" by '
