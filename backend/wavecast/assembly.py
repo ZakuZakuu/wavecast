@@ -1474,6 +1474,23 @@ class LiveEpisodeAssemblyService:
         artist_cap = spread_cap(
             required_artists=request.required_artists, station=request.station
         )
+
+        def spread_planned_used() -> list[ResolvedTrack]:
+            # The locked second track is fixed before this loop and always plays, so it counts
+            # toward every artist's limit from the start, even while its own slot is resolved.
+            if locked_successor is None or any(
+                _same_resolved_track(locked_successor, used) for used in used_tracks
+            ):
+                return used_tracks
+            return [*used_tracks, locked_successor]
+
+        def spread_blocked(candidate: ResolvedTrack) -> bool:
+            if locked_successor is not None and _same_resolved_track(candidate, locked_successor):
+                return False
+            return _blocked_by_spread(
+                candidate, spread_planned_used(), artist_cap, request.station
+            )
+
         for chapter in chapters:
             resolved: ResolvedTrack | None = None
             selected_proposal: TrackProposal | None = None
@@ -1503,7 +1520,7 @@ class LiveEpisodeAssemblyService:
                             candidate_rank=candidate_rank + 1,
                         )
                         continue
-                    if _blocked_by_spread(candidate, used_tracks, artist_cap, request.station):
+                    if spread_blocked(candidate):
                         last_resolution_reason = "artist already at the route limit"
                         trace.mark(
                             "artist_route_limit_skipped",
@@ -1528,7 +1545,7 @@ class LiveEpisodeAssemblyService:
                         bundle,
                         fast_result.plan,
                         attempted=attempted,
-                        used_tracks=used_tracks,
+                        used_tracks=spread_planned_used(),
                         catalog_pool=catalog_pool,
                         artist_cap=artist_cap,
                         station=request.station,
