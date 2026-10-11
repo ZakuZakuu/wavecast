@@ -244,6 +244,27 @@ def test_a_quote_about_another_piece_does_not_support_an_attribution_about_this_
     assert own_piece.issues == []
 
 
+def test_the_composer_of_the_film_is_not_the_composer_of_its_song() -> None:
+    page = "《千与千寻》的音乐由久石让作曲。主题歌《永远同在》由木村弓作曲并演唱。"
+    track = KnownTrack(artist="木村弓", title="いつも何度でも", spoken_title="永远同在")
+
+    film_credit = _review(
+        _script("《永远同在》是《千与千寻》的主题曲，作曲久石让。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "《千与千寻》的音乐由久石让作曲")]),
+        tracks=[track],
+    )
+    own_credit = _review(
+        _script("《永远同在》是《千与千寻》的主题曲，作曲木村弓。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "主题歌《永远同在》由木村弓作曲并演唱")]),
+        tracks=[track],
+    )
+
+    assert [issue.code for issue in film_credit.issues] == ["insufficient"]
+    assert own_credit.issues == []
+
+
 def test_the_catalog_names_a_credit_and_never_a_role() -> None:
     track = KnownTrack(artist="木村弓", title="いつも何度でも")
     credit = "is credited to the performer 木村弓"

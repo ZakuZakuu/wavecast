@@ -34,7 +34,7 @@ from wavecast.narration_quality import years_in
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.spoken_form import KnownTrack, to_spoken_form
-from wavecast.text_identity import canonical_name
+from wavecast.text_identity import base_title_key, canonical_name
 
 from .fast_start import FastStructuredProvider
 from .models import ClaimSupport, ClaimType, Evidence, RadioScript, RadioScriptBlockKind
@@ -201,6 +201,16 @@ def unknown_titles(
     return found
 
 
+def _names_track(text: str, track: KnownTrack) -> bool:
+    """``text`` names the track: its catalog title, its Chinese title, or the title without a version tag."""
+
+    squashed = _squash(text)
+    return any(
+        len(key) >= 2 and key in squashed
+        for key in (_squash(track.title), _squash(base_title_key(track.title)), _squash(track.spoken_title or ""))
+    )
+
+
 def _quote_names_title_variant(quote: str, sentence: str, tracks: Sequence[KnownTrack]) -> bool:
     """The quote names the original title of a track whose Chinese title the sentence uses."""
 
@@ -347,6 +357,12 @@ class FactChecker:
                 if not any(
                     _squash(name) in _squash(finding.quote) for name in _TITLE_IN_BRACKETS.findall(text)
                 ) and not _quote_names_title_variant(finding.quote, text, tracks):
+                    verdict = "insufficient"
+            if verdict == "supported" and roles_in(text):
+                # A credit about a track of this programme must be read off a line naming that
+                # track: the composer of the film it belongs to is not the composer of the song.
+                named = [track for track in tracks if _names_track(text, track)]
+                if named and not any(_names_track(finding.quote, track) for track in named):
                     verdict = "insufficient"
             if verdict == "supported":
                 logger.info(
