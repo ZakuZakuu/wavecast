@@ -1,0 +1,412 @@
+"""A factual sentence needs a source: attributions, creation stories and made-up titles are caught.
+
+The regression cases come from a real portrait programme (久石让): a song by 木村弓 credited to
+the subject as composer, a Kitano-film song described as part of a Miyazaki film, poems and a
+musical scale that no source mentions, and a Chinese title the Writer made up.  Ordinary
+background and listening talk must pass untouched.
+"""
+
+import asyncio
+
+from wavecast.intelligence.fact_support import (
+    FactCheck,
+    FactChecker,
+    FactFinding,
+    quote_in_source,
+    split_sentences,
+)
+from wavecast.intelligence.models import (
+    Evidence,
+    NarrationSlotContext,
+    NarrationSlotPlacement,
+    OutputLanguage,
+    RadioScript,
+    RadioScriptBlock,
+    RadioScriptBlockKind,
+    ResolvedTrack,
+)
+from wavecast.intelligence.writer import WriterService
+from wavecast.spoken_form import KnownTrack
+from wavecast.stations import StationId
+
+from tests.test_voice import _chapter
+
+HISAISHI_PAGE = (
+    "久石让的电影配乐主要是与宫崎骏和北野武两位导演，电影例如《天空之城》、《龙猫》、《千与千寻》、"
+    "《菊次郎的夏天》等。《菊次郎的夏天》中的音乐《Summer》就是如此，这首歌已成为许多人的夏季限定曲。"
+)
+SUMMER_PAGE_TRADITIONAL = "同樣的《菊次郎之夏》的主題音樂〈Summer〉，也都契合電影主題。"
+
+SUBJECT_COMPOSER_SENTENCE = "二〇〇一年，《千与千寻》的主题曲，作曲是久石让，唱的是木村弓。"
+
+
+def _evidence(*texts: str) -> list[Evidence]:
+    return [
+        Evidence(
+            id=f"e{i}",
+            claim_or_excerpt=text,
+            source_url="https://example.test",
+            source_provider="fixture",
+            confidence=0.8,
+            query="q",
+        )
+        for i, text in enumerate(texts, start=1)
+    ]
+
+
+def _script(*texts: str, kind: RadioScriptBlockKind = RadioScriptBlockKind.TRACK_INTRO) -> RadioScript:
+    return RadioScript(
+        blocks=[RadioScriptBlock(kind=kind, text=text, duration_seconds=8) for text in texts]
+    )
+
+
+class Dispatch:
+    """Scripts: Writer drafts in order, and one fact check answer per check call."""
+
+    def __init__(self, drafts: list[RadioScript], checks: list[FactCheck | Exception]) -> None:
+        self.drafts, self.checks = list(drafts), list(checks)
+        self.prompts: list[str] = []
+        self.check_prompts: list[str] = []
+
+    async def structured(self, prompt: str, output_type: type[object], **_kwargs: object) -> object:
+        if output_type is FactCheck:
+            self.check_prompts.append(prompt)
+            answer = self.checks[min(len(self.check_prompts) - 1, len(self.checks) - 1)]
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        self.prompts.append(prompt)
+        return self.drafts[min(len(self.prompts) - 1, len(self.drafts) - 1)]
+
+
+def _finding(sentence: int, verdict: str, source: str = "", quote: str = "") -> FactFinding:
+    return FactFinding(sentence=sentence, verdict=verdict, source=source, quote=quote)  # type: ignore[arg-type]
+
+
+def _review(script: RadioScript, evidence: list[Evidence], check: FactCheck | Exception, **kwargs):  # type: ignore[no-untyped-def]
+    checker = FactChecker(Dispatch([], [check]))  # type: ignore[arg-type]
+    return asyncio.run(checker.review(script, evidence, **kwargs))
+
+
+# --- what counts as a source -------------------------------------------------------------------
+
+
+def test_a_quote_must_be_found_in_its_source() -> None:
+    assert quote_in_source("菊次郎之夏的主題音樂〈Summer〉", SUMMER_PAGE_TRADITIONAL)
+    assert not quote_in_source("菊次郎之夏", HISAISHI_PAGE)  # a different title is not the same text
+    assert not quote_in_source("宫崎骏给久石让寄了九首短诗", HISAISHI_PAGE)
+    assert not quote_in_source("短", HISAISHI_PAGE)  # too short to show anything
+
+
+def test_sentences_keep_their_punctuation() -> None:
+    assert split_sentences("先说这个。再说那个！") == ["先说这个。", "再说那个！"]
+
+
+# --- the regression cases ----------------------------------------------------------------------
+
+
+def test_a_composer_credit_with_no_source_is_unsupported() -> None:
+    evidence = _evidence(HISAISHI_PAGE)
+    report = _review(
+        _script(SUBJECT_COMPOSER_SENTENCE),
+        evidence,
+        FactCheck(findings=[_finding(0, "insufficient")]),
+        tracks=[KnownTrack(artist="木村弓", title="いつも何度でも", spoken_title="永远同在")],
+    )
+
+    assert [issue.code for issue in report.issues] == ["insufficient"]
+    assert "not supported" in report.issues[0].message
+
+
+def test_a_song_placed_in_the_wrong_film_is_contradicted_by_the_source() -> None:
+    evidence = _evidence(SUMMER_PAGE_TRADITIONAL)
+    report = _review(
+        _script("上一首是《Summer》，同一支曲子在宫崎骏的电影里后来长成了另一段旋律。"),
+        evidence,
+        FactCheck(findings=[_finding(0, "contradicted", "e1", "《菊次郎之夏》的主題音樂〈Summer〉")]),
+        tracks=[KnownTrack(artist="久石譲", title="Summer")],
+    )
+
+    assert [issue.code for issue in report.issues] == ["contradicted"]
+    assert "菊次郎" in report.issues[0].message  # the Writer is told what the source says
+
+
+def test_invented_creation_details_are_unsupported() -> None:
+    report = _review(
+        _script("宫崎骏给久石让寄了九首短诗，其中一首就叫《魔法公主》。他用日本音阶写成。"),
+        _evidence(HISAISHI_PAGE),
+        FactCheck(findings=[_finding(0, "insufficient"), _finding(1, "insufficient")]),
+    )
+
+    # 《魔法公主》 is in no source either, so the first sentence is flagged on both counts.
+    assert [(issue.sentence, issue.code) for issue in report.issues] == [
+        (0, "unknown_title"),
+        (1, "insufficient"),
+    ]
+
+
+def test_a_title_the_writer_made_up_is_caught_without_asking_a_model() -> None:
+    report = _review(
+        _script("接下来是《永远常在》。"),
+        _evidence(HISAISHI_PAGE),
+        RuntimeError("no model needed"),
+        tracks=[KnownTrack(artist="木村弓", title="いつも何度でも", spoken_title="永远同在")],
+    )
+
+    assert [issue.code for issue in report.issues] == ["unknown_title"]
+
+
+def test_the_catalogs_own_title_and_a_work_named_in_the_evidence_are_fine() -> None:
+    report = _review(
+        _script("接下来是《永远同在》，选自《千与千寻》。"),
+        _evidence(HISAISHI_PAGE),
+        FactCheck(findings=[]),
+        tracks=[KnownTrack(artist="木村弓", title="いつも何度でも", spoken_title="永远同在")],
+    )
+
+    assert report.issues == []
+
+
+# --- what must not be caught -------------------------------------------------------------------
+
+
+def test_a_supported_background_sentence_is_kept_and_its_source_recorded() -> None:
+    report = _review(
+        _script("久石让的电影配乐主要是和宫崎骏、北野武两位导演合作。听听这段木管。"),
+        _evidence(HISAISHI_PAGE),
+        FactCheck(
+            findings=[_finding(0, "supported", "e1", "主要是与宫崎骏和北野武两位导演")]
+        ),
+    )
+
+    assert report.issues == []
+    assert report.supported[0][0].evidence_ids == ["e1"]
+
+
+def test_listening_talk_needs_no_source() -> None:
+    report = _review(
+        _script("木管和钢琴一起，把这个主题慢慢铺开。下一首听它。"),
+        _evidence(HISAISHI_PAGE),
+        FactCheck(findings=[]),
+    )
+
+    assert report.issues == []
+
+
+def test_an_attribution_the_checker_calls_not_factual_is_still_checked() -> None:
+    report = _review(
+        _script("这首歌的作曲是久石让。"),
+        _evidence(HISAISHI_PAGE),
+        FactCheck(findings=[]),  # the checker skipped it, but it names a composer
+    )
+
+    assert [issue.code for issue in report.issues] == ["unchecked"]
+
+
+def test_a_quote_that_is_not_in_the_source_does_not_support_anything() -> None:
+    report = _review(
+        _script("这首歌的作曲是久石让。"),
+        _evidence(HISAISHI_PAGE),
+        FactCheck(findings=[_finding(0, "supported", "e1", "久石让亲自作曲并担任钢琴演奏")]),
+    )
+
+    assert [issue.code for issue in report.issues] == ["insufficient"]
+
+
+def test_a_quote_that_never_speaks_of_the_claimed_role_does_not_support_it() -> None:
+    # The name is there, but the quote is about directors, not about who composed the song.
+    report = _review(
+        _script("这首歌的作曲是久石让。"),
+        _evidence(HISAISHI_PAGE),
+        FactCheck(findings=[_finding(0, "supported", "e1", "宫崎骏和北野武两位导演")]),
+    )
+
+    assert [issue.code for issue in report.issues] == ["insufficient"]
+
+
+def test_a_quote_about_another_piece_does_not_support_an_attribution_about_this_one() -> None:
+    page = "由久石让作曲的主题曲《伴随着你》（通称：天空之城）。"
+    report = _review(
+        _script("《永远同在》是久石让作曲的。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "由久石让作曲的主题曲《伴随着你》")]),
+        tracks=[KnownTrack(artist="木村弓", title="いつも何度でも", spoken_title="永远同在")],
+    )
+
+    assert [issue.code for issue in report.issues] == ["insufficient"]
+
+    own_piece = _review(
+        _script("《伴随着你》是久石让作曲的。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "由久石让作曲的主题曲《伴随着你》")]),
+        tracks=[KnownTrack(artist="久石譲", title="伴随着你")],
+    )
+    assert own_piece.issues == []
+
+
+def test_the_catalog_supports_who_performs_a_track_but_nothing_more() -> None:
+    track = KnownTrack(artist="木村弓", title="いつも何度でも")
+    ok = _review(
+        _script("这首歌是木村弓演唱的。"),
+        _evidence(HISAISHI_PAGE),
+        FactCheck(findings=[_finding(0, "supported", "catalog", "is credited to the performer 木村弓")]),
+        tracks=[track],
+    )
+    assert ok.issues == []
+
+    composer = _review(
+        _script("这首歌是木村弓作曲的。"),
+        _evidence(HISAISHI_PAGE),
+        FactCheck(findings=[_finding(0, "supported", "catalog", "is credited to the performer 木村弓")]),
+        tracks=[track],
+    )
+    assert [issue.code for issue in composer.issues] == ["insufficient"]
+
+
+def test_a_closing_is_not_cut_for_summing_up_the_route_but_is_for_an_attribution() -> None:
+    summing_up = _review(
+        _script("这条线从《天空之城》走到最后，一直是在给故事铺底。", kind=RadioScriptBlockKind.OUTRO),
+        _evidence(HISAISHI_PAGE),
+        FactCheck(findings=[_finding(0, "insufficient")]),
+    )
+    assert summing_up.issues == []
+
+    attributing = _review(
+        _script("最后这首的作曲是久石让。", kind=RadioScriptBlockKind.OUTRO),
+        _evidence(HISAISHI_PAGE),
+        FactCheck(findings=[_finding(0, "insufficient")]),
+    )
+    assert [issue.code for issue in attributing.issues] == ["insufficient"]
+
+
+def test_an_unavailable_checker_does_not_stop_the_programme() -> None:
+    report = _review(
+        _script("听听这段木管。"), _evidence(HISAISHI_PAGE), RuntimeError("provider down")
+    )
+
+    assert report.issues == [] and not report.model_checked
+
+
+# --- in the Writer -----------------------------------------------------------------------------
+
+
+def _slot() -> NarrationSlotContext:
+    return NarrationSlotContext(
+        chapter_index=2,
+        placement=NarrationSlotPlacement.BEFORE_TRACK,
+        allowed_block_kinds=[RadioScriptBlockKind.TRACK_INTRO],
+        chapter_track=ResolvedTrack(
+            track_ref="n:2", canonical_artist="木村弓", canonical_title="いつも何度でも", spoken_title="永远同在"
+        ),
+        upcoming_track=ResolvedTrack(
+            track_ref="n:2", canonical_artist="木村弓", canonical_title="いつも何度でも", spoken_title="永远同在"
+        ),
+    )
+
+
+def _write(llm: Dispatch, **kwargs):  # type: ignore[no-untyped-def]
+    evidence = _evidence(HISAISHI_PAGE)
+    chapter = _chapter().model_copy(update={"evidence_ids": ["e1"]})
+    result = asyncio.run(
+        WriterService(llm, fact_checker=FactChecker(llm)).write(  # type: ignore[arg-type]
+            chapter,
+            evidence,
+            slot_context=_slot(),
+            target_duration_seconds=30,
+            output_language=OutputLanguage.ZH_CN,
+            station=StationId.PORTRAIT,
+            voice_seed="programme-1",
+            **kwargs,
+        )
+    )
+    assert isinstance(result, RadioScript)
+    return result
+
+
+GOOD = "听听这段钢琴和人声。"
+BAD = "这首歌作曲是久石让，唱的是木村弓。"
+
+
+def test_an_unsupported_sentence_is_sent_back_once_and_the_rewrite_is_used() -> None:
+    llm = Dispatch(
+        [_script(f"{BAD}{GOOD}"), _script(f"这首歌是木村弓演唱的。{GOOD}")],
+        [
+            FactCheck(findings=[_finding(0, "insufficient")]),
+            FactCheck(findings=[_finding(0, "supported", "catalog", "credited to the performer 木村弓")]),
+        ],
+    )
+
+    result = _write(llm)
+
+    assert len(llm.prompts) == 2 and len(llm.check_prompts) == 2
+    assert "is not supported by the evidence" in llm.prompts[1]
+    assert [block.text for block in result.blocks] == [f"这首歌是木村弓演唱的。{GOOD}"]
+
+
+def test_a_sentence_still_unsupported_after_the_rewrite_is_left_out_not_the_block() -> None:
+    llm = Dispatch(
+        [_script(f"{BAD}{GOOD}")],
+        [FactCheck(findings=[_finding(0, "insufficient")])],
+    )
+
+    result = _write(llm)
+
+    assert len(llm.prompts) == 2
+    assert [block.text for block in result.blocks] == [GOOD]
+    assert "久石让" not in (result.blocks[0].tts_text or "")
+
+
+def test_a_block_with_nothing_supportable_is_skipped_and_the_music_goes_on() -> None:
+    llm = Dispatch([_script(BAD)], [FactCheck(findings=[_finding(0, "insufficient")])])
+
+    result = _write(llm)
+
+    assert result.blocks == []
+
+
+def test_a_clean_draft_costs_one_check_and_no_rewrite() -> None:
+    llm = Dispatch([_script(GOOD)], [FactCheck(findings=[])])
+
+    result = _write(llm)
+
+    assert len(llm.prompts) == 1 and len(llm.check_prompts) == 1
+    assert [block.text for block in result.blocks] == [GOOD]
+
+
+def test_the_checker_sees_only_the_chapters_scoped_evidence_and_the_catalog_lines() -> None:
+    llm = Dispatch([_script(GOOD)], [FactCheck(findings=[])])
+
+    _write(llm)
+
+    prompt = llm.check_prompts[0]
+    assert "[e1]:" in prompt and "[catalog]:" in prompt
+    assert "is credited to the performer 木村弓" in prompt
+
+
+def test_the_writer_is_told_the_catalog_artist_is_a_performer_credit() -> None:
+    llm = Dispatch([_script(GOOD)], [FactCheck(findings=[])])
+
+    _write(llm)
+
+    prompt = llm.prompts[0]
+    assert "performer the catalog credits" in prompt
+    assert "never credit that track's composition" in prompt
+
+
+def test_without_a_checker_the_writer_behaves_as_before() -> None:
+    llm = Dispatch([_script(BAD)], [])
+    chapter = _chapter().model_copy(update={"evidence_ids": ["e1"]})
+
+    result = asyncio.run(
+        WriterService(llm).write(  # type: ignore[arg-type]
+            chapter,
+            _evidence(HISAISHI_PAGE),
+            slot_context=_slot(),
+            target_duration_seconds=30,
+            output_language=OutputLanguage.ZH_CN,
+            station=StationId.PORTRAIT,
+            voice_seed="programme-1",
+        )
+    )
+
+    assert isinstance(result, RadioScript) and llm.check_prompts == []

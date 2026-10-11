@@ -35,6 +35,7 @@ from wavecast.coverage import (
 )
 from wavecast.intelligence.background import BackgroundIntelligencePipeline
 from wavecast.intelligence.curation import CuratorContractError, CuratorService
+from wavecast.intelligence.fact_support import FactChecker
 from wavecast.intelligence.fast_start import FastPathCoordinator, FastPathResult, FastStartPlanner
 from wavecast.intelligence.models import (
     ChapterPlan,
@@ -4304,7 +4305,7 @@ def create_episode_assembly_service(
     background_pipeline = BackgroundIntelligencePipeline(
         research=background_research,
         curator=CuratorService(curator_llm),
-        writer=WriterService(writer_llm),
+        writer=WriterService(writer_llm, fact_checker=FactChecker(writer_llm)),
     )
     retrieval = MusicRetrievalService(music_registry)
     return LiveEpisodeAssemblyService(

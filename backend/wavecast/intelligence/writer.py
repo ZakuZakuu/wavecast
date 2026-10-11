@@ -13,6 +13,7 @@ from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.spoken_form import KnownTrack, to_spoken_form
 from wavecast.stations import StationId, compose_signoff
 
+from .fact_support import FactChecker, FactReport, without_flagged_sentences
 from .fast_start import FastStructuredProvider
 from .models import (
     ChapterPlan,
@@ -44,8 +45,15 @@ ZH_CN_RADIO_WRITING_GUIDANCE = (
 
 
 class WriterService:
-    def __init__(self, llm: FastStructuredProvider, *, max_revisions: int = 1) -> None:
+    def __init__(
+        self,
+        llm: FastStructuredProvider,
+        *,
+        max_revisions: int = 1,
+        fact_checker: FactChecker | None = None,
+    ) -> None:
         self.llm = llm
+        self.fact_checker = fact_checker
         # Bounded cost: at most this many extra Writer calls when a draft has the problems
         # narration_quality can detect (stock phrasing, invented memories, too long...).
         self.max_revisions = max_revisions
@@ -202,6 +210,16 @@ class WriterService:
             "means: “这首歌的名字，中文意思是……”, only when you are confident of the meaning; "
             "otherwise just call it 这首歌. Never write the original title or a pronunciation "
             "(romaji, pinyin of Japanese) in the spoken text, and do not invent a Chinese title.\n"
+            "Facts: state only what the scoped evidence states. `canonical_artist` in a slot context is the "
+            "performer the catalog credits for that recording; it is not necessarily the composer, "
+            "lyricist or author, and not necessarily the subject of this programme. Who composed, wrote, "
+            "sang, directed or released something, which film or album a piece belongs to, dates, and how a "
+            "piece was made are facts: say them only when the evidence says so, and otherwise leave them "
+            "out. When a track by another artist plays in a programme about one artist, never credit that "
+            "track's composition, authorship or performance to the programme's subject unless the "
+            "evidence says so. Put a song's name in 《》 only as the slot context gives it "
+            "(`canonical_title` or `spoken_title`); a work the evidence names (a film, an album) may be "
+            "named as the evidence names it.\n"
             f"{language_guidance}\n"
             f"{station_line}"
             f"{route_line}"
@@ -235,11 +253,11 @@ class WriterService:
         # bar.  So no length may be stated.
         supported_durations: set[str] = set()
         result = await self._attempt(prompt, chapter, evidence, known_tracks, inference_profile)
-        for _ in range(self.max_revisions):
-            if not isinstance(result, RadioScript):
-                break
-            problems = _problems(
-                result,
+        report: FactReport | None = None
+
+        async def review(draft: RadioScript) -> tuple[dict[int, list[str]], FactReport | None]:
+            found = _problems(
+                draft,
                 writer_window,
                 known_tracks,
                 slots,
@@ -249,6 +267,24 @@ class WriterService:
                 route_titles=route_titles,
                 earlier=previous_committed_context,
             )
+            fact_report = None
+            if self.fact_checker is not None:
+                fact_report = await self.fact_checker.review(
+                    draft,
+                    scoped,
+                    tracks=known_tracks,
+                    route_labels=route_tracks,
+                    context=previous_committed_context,
+                    known_text=evidence,
+                )
+                for issue in fact_report.issues:
+                    found.setdefault(issue.block, []).append(issue.message)
+            return found, fact_report
+
+        for _ in range(self.max_revisions):
+            if not isinstance(result, RadioScript):
+                break
+            problems, report = await review(result)
             if not problems:
                 break
             revised = await self._attempt(
@@ -260,17 +296,7 @@ class WriterService:
             )
             if not isinstance(revised, RadioScript):
                 break
-            revised_problems = _problems(
-                revised,
-                writer_window,
-                known_tracks,
-                slots,
-                supported_years=supported,
-                supported_durations=supported_durations,
-                unplayed_names=unplayed_artists,
-                route_titles=route_titles,
-                earlier=previous_committed_context,
-            )
+            revised_problems, revised_report = await review(revised)
             logger.info(
                 "writer_revision problems_before=%d problems_after=%d",
                 sum(len(item) for item in problems.values()),
@@ -279,8 +305,13 @@ class WriterService:
             if sum(len(item) for item in revised_problems.values()) < sum(
                 len(item) for item in problems.values()
             ):
-                result = revised
+                result, report = revised, revised_report
             break
+        if report is None and isinstance(result, RadioScript) and self.fact_checker is not None:
+            # No rewrite round ran (none allowed), so the draft has not been checked yet.
+            _problems_unused, report = await review(result)
+        if isinstance(result, RadioScript) and report is not None:
+            result = without_flagged_sentences(result, report, known_tracks)
         if isinstance(result, RadioScript):
             result = _without_identity_conflicts(result, known_tracks, unplayed_artists)
             result = _without_unspeakable(result, known_tracks)
