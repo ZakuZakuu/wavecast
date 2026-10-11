@@ -135,6 +135,11 @@ from wavecast.route_duration import (
     music_budget_seconds,
     track_seconds,
 )
+from wavecast.route_spread import (
+    at_artist_cap,
+    same_song_other_artist,
+    spread_cap,
+)
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
 from wavecast.text_identity import (
@@ -751,6 +756,9 @@ class LiveEpisodeAssemblyService:
         *,
         attempted: set[tuple[str, str]],
         used_tracks: list[ResolvedTrack],
+        catalog_pool: CatalogPool | None = None,
+        artist_cap: int | None = None,
+        station: StationId | None = None,
     ) -> tuple[ResolvedTrack, TrackProposal, str] | None:
         """Recover one unresolved speculative slot without weakening identity safety."""
 
@@ -770,6 +778,8 @@ class LiveEpisodeAssemblyService:
             if candidate is None or any(
                 _same_song_identity(candidate, used) for used in used_tracks
             ):
+                continue
+            if _blocked_by_spread(candidate, used_tracks, artist_cap, station):
                 continue
             return candidate, proposal, "researched_candidate"
 
@@ -811,6 +821,8 @@ class LiveEpisodeAssemblyService:
                 )
                 if any(_same_song_identity(candidate, used) for used in used_tracks):
                     continue
+                if _blocked_by_spread(candidate, used_tracks, artist_cap, station):
+                    continue
                 proposal = TrackProposal(
                     artist=alternative.artist,
                     title=alternative.title,
@@ -833,6 +845,23 @@ class LiveEpisodeAssemblyService:
                     ),
                 )
                 return candidate, proposal, "same_artist_catalog"
+        # A slot whose artist is at the route limit, or has nothing left to play, is filled
+        # from the verified pool by an artist the route has not used up.
+        if artist_cap is not None and catalog_pool is not None:
+            for entry in catalog_pool.listing():
+                candidate = entry.resolved_track()
+                if any(_same_song_identity(candidate, used) for used in used_tracks):
+                    continue
+                if _blocked_by_spread(candidate, used_tracks, artist_cap, station):
+                    continue
+                proposal = TrackProposal(
+                    artist=entry.artist,
+                    title=entry.title,
+                    reasons=["Verified-playable pool track from an artist the route has not used up."],
+                    confidence=0.5,
+                    novelty_distance=chapter.novelty_distance or NoveltyDistance.CLOSE,
+                )
+                return candidate, proposal, "pool_other_artist"
         return None
 
     async def _extend_underfilled_route_with_curator(
@@ -939,6 +968,9 @@ class LiveEpisodeAssemblyService:
 
         continuation_unresolved: list[UnresolvedAssemblyProposal] = []
         added_count = 0
+        artist_cap = spread_cap(
+            required_artists=request.required_artists, station=request.station
+        )
         for continuation_chapter in additions:
             normalized_now = _normalize_progressive_route(
                 request=request,
@@ -975,6 +1007,9 @@ class LiveEpisodeAssemblyService:
                     ):
                         last_resolution_reason = "duplicate episode song identity"
                         continue
+                    if _blocked_by_spread(candidate, used_tracks, artist_cap, request.station):
+                        last_resolution_reason = "artist already at the route limit"
+                        continue
                     resolved = candidate
                     selected_proposal = proposal
                     used_tracks.append(candidate)
@@ -992,6 +1027,9 @@ class LiveEpisodeAssemblyService:
                         fast_plan,
                         attempted=attempted,
                         used_tracks=used_tracks,
+                        catalog_pool=catalog_pool,
+                        artist_cap=artist_cap,
+                        station=request.station,
                     )
                     if replacement is not None:
                         resolved, selected_proposal, replacement_kind = replacement
@@ -1059,6 +1097,7 @@ class LiveEpisodeAssemblyService:
         resolved_chapters: list[_ResolvedChapter],
         used_tracks: list[ResolvedTrack],
         trace: GenerationTrace,
+        catalog_pool: CatalogPool | None = None,
     ) -> list[_ResolvedChapter]:
         """Boundedly fill an undercovered live route from the real catalog.
 
@@ -1122,6 +1161,8 @@ class LiveEpisodeAssemblyService:
                 continue
             seen_artists.add(artist_key)
             unique_seeds.append(seed)
+
+        artist_cap = [spread_cap(required_artists=request.required_artists, station=request.station)]
 
         def needs_more_music() -> bool:
             normalized = _normalize_progressive_route(
@@ -1200,41 +1241,70 @@ class LiveEpisodeAssemblyService:
                     for used in effective_used
                 ):
                     continue
-                chapter = ChapterPlan(
-                    index=len(resolved_chapters),
-                    track=proposal,
-                    narrative_role=NarrativeRole.BRIDGE,
-                    reason=(
-                        "Keep the live programme moving with a real playable "
-                        "catalog track from an editorially relevant artist."
-                    ),
-                    novelty_distance=proposal.novelty_distance,
-                    evidence_ids=list(proposal.evidence_ids),
-                    claim_support=[],
-                    narration_goal=(
-                        "Connect this catalog-backed continuation to the programme "
-                        "direction without unsupported song-specific claims."
-                    ),
-                )
-                resolved_chapters.append(
-                    _ResolvedChapter(
-                        chapter=chapter,
-                        writer_chapter=chapter,
-                        track=candidate,
-                        music_index=None,
-                    )
-                )
-                effective_used.append(candidate)
-                trace.mark(
-                    (
-                        "track_catalog_emergency_continuation_resolved"
-                        if emergency
-                        else "track_catalog_continuation_resolved"
-                    ),
-                    resolved_track_count=len(effective_used),
-                )
+                if _blocked_by_spread(candidate, effective_used, artist_cap[0], request.station):
+                    continue
+                append_candidate(candidate, proposal, emergency=emergency)
                 return True
             return False
+
+        def append_candidate(
+            candidate: ResolvedTrack, proposal: TrackProposal, *, emergency: bool
+        ) -> None:
+            chapter = ChapterPlan(
+                index=len(resolved_chapters),
+                track=proposal,
+                narrative_role=NarrativeRole.BRIDGE,
+                reason=(
+                    "Keep the live programme moving with a real playable "
+                    "catalog track from an editorially relevant artist."
+                ),
+                novelty_distance=proposal.novelty_distance,
+                evidence_ids=list(proposal.evidence_ids),
+                claim_support=[],
+                narration_goal=(
+                    "Connect this catalog-backed continuation to the programme "
+                    "direction without unsupported song-specific claims."
+                ),
+            )
+            resolved_chapters.append(
+                _ResolvedChapter(
+                    chapter=chapter,
+                    writer_chapter=chapter,
+                    track=candidate,
+                    music_index=None,
+                )
+            )
+            effective_used.append(candidate)
+            trace.mark(
+                (
+                    "track_catalog_emergency_continuation_resolved"
+                    if emergency
+                    else "track_catalog_continuation_resolved"
+                ),
+                resolved_track_count=len(effective_used),
+            )
+
+        # Pass 0: songs the pool already verified, by artists the route has not used up.
+        if artist_cap[0] is not None and catalog_pool is not None:
+            for entry in catalog_pool.listing():
+                if not needs_more_music():
+                    break
+                candidate = entry.resolved_track()
+                if any(_same_song_identity(candidate, used) for used in effective_used):
+                    continue
+                if _blocked_by_spread(candidate, effective_used, artist_cap[0], request.station):
+                    continue
+                append_candidate(
+                    candidate,
+                    TrackProposal(
+                        artist=entry.artist,
+                        title=entry.title,
+                        reasons=["Verified-playable pool track from an artist the route has not used up."],
+                        confidence=0.5,
+                        novelty_distance=NoveltyDistance.CLOSE,
+                    ),
+                    emergency=False,
+                )
 
         # Pass 1: preserve route diversity by taking at most one continuation
         # from each Curator/confirmed artist.
@@ -1242,6 +1312,11 @@ class LiveEpisodeAssemblyService:
             if not needs_more_music():
                 break
             await append_one_from_artist(seed, emergency=False)
+
+        # Nothing else is left to offer: a longer programme beats an artist limit.
+        if artist_cap[0] is not None and needs_more_music():
+            trace.mark("artist_route_limit_relaxed")
+            artist_cap[0] = None
 
         # Pass 2: continuity is the hard requirement. Round-robin through the
         # same exact artists and take additional distinct songs until the
@@ -1395,6 +1470,9 @@ class LiveEpisodeAssemblyService:
         resolved_chapters: list[_ResolvedChapter] = []
         unresolved: list[UnresolvedAssemblyProposal] = []
         used_tracks = list(reserved_tracks)
+        artist_cap = spread_cap(
+            required_artists=request.required_artists, station=request.station
+        )
         for chapter in chapters:
             resolved: ResolvedTrack | None = None
             selected_proposal: TrackProposal | None = None
@@ -1424,6 +1502,14 @@ class LiveEpisodeAssemblyService:
                             candidate_rank=candidate_rank + 1,
                         )
                         continue
+                    if _blocked_by_spread(candidate, used_tracks, artist_cap, request.station):
+                        last_resolution_reason = "artist already at the route limit"
+                        trace.mark(
+                            "artist_route_limit_skipped",
+                            chapter_index=chapter.index,
+                            candidate_rank=candidate_rank + 1,
+                        )
+                        continue
                     resolved = candidate
                     selected_proposal = proposal
                     used_tracks.append(candidate)
@@ -1442,6 +1528,9 @@ class LiveEpisodeAssemblyService:
                         fast_result.plan,
                         attempted=attempted,
                         used_tracks=used_tracks,
+                        catalog_pool=catalog_pool,
+                        artist_cap=artist_cap,
+                        station=request.station,
                     )
                     if replacement is not None:
                         resolved, selected_proposal, replacement_kind = replacement
@@ -1507,6 +1596,7 @@ class LiveEpisodeAssemblyService:
                 resolved_chapters=resolved_chapters,
                 used_tracks=used_tracks,
                 trace=trace,
+                catalog_pool=catalog_pool,
             )
         resolved_chapters = _reindex_resolved_chapters(resolved_chapters)
         resolved_chapters = _reconcile_route_text(
@@ -1711,6 +1801,10 @@ class LiveEpisodeAssemblyService:
                 ],
             )
             pool.named_artists = list(request.required_artists)
+            pool.spread_artists = (
+                spread_cap(required_artists=request.required_artists, station=request.station)
+                is not None
+            )
         except Exception as error:  # noqa: BLE001 - optional optimisation, degrade quietly
             logger.warning("catalog_pool_failed error_type=%s", type(error).__name__)
             trace.mark("catalog_pool_failed", error_type=type(error).__name__)
@@ -2360,6 +2454,24 @@ def _same_song_identity(left: ResolvedTrack | None, right: ResolvedTrack) -> boo
             == canonical_name(right.canonical_artist)
         )
     return left_artist <= right_artist or right_artist <= left_artist
+
+
+def _blocked_by_spread(
+    candidate: ResolvedTrack,
+    used_tracks: Sequence[ResolvedTrack],
+    artist_cap: int | None,
+    station: StationId | None,
+) -> bool:
+    """A programme not about particular artists plays none of them more than the limit, and
+    does not play one song twice under two artists (a cover) unless the station is about that."""
+
+    if artist_cap is None:
+        return False
+    if at_artist_cap(candidate.canonical_artist, used_tracks, artist_cap):
+        return True
+    return station is not StationId.LINEAGE and any(
+        same_song_other_artist(candidate, used) for used in used_tracks
+    )
 
 
 def _same_resolved_track(left: ResolvedTrack | None, right: ResolvedTrack) -> bool:
