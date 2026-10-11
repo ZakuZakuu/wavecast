@@ -265,3 +265,13 @@ def test_a_named_artist_programme_is_not_limited(tmp_path) -> None:
     session = _session(tmp_path, required_artists=["Signal Garden"])
 
     assert _artists(session).count("Signal Garden") >= 3
+
+
+def test_every_credited_artist_counts_toward_the_limit() -> None:
+    used = [rt("Miles Davis", "So What"), rt("Kosma, Joseph, Miles Davis", "Autumn Leaves")]
+
+    assert artist_plays("Miles Davis", used) == 2
+    assert at_artist_cap("Miles Davis", used, 2)
+    assert at_artist_cap("Miles Davis, John Coltrane", used, 2)  # a collaboration of a used-up artist
+    assert artist_plays("Kosma, Joseph, Miles Davis", used) == 2
+    assert not at_artist_cap("Bill Evans", used, 2)
