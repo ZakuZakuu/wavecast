@@ -52,13 +52,14 @@ STATION_PROFILES: dict[StationId, StationProfile] = {
 # How a programme opens, written by us rather than the Writer so it stays short, true and never
 # turns into a stock phrase the model repeats.  One flowing sentence or two: what we begin with
 # (and, only when the listener's request names the artist, that it is theirs), then the station
-# by name and frequency.  The frequency is read digit by digit, like a year ("九七点四"), which is
-# how radio says it; digits themselves are avoided because the voice reads them unpredictably.
+# by name and frequency.  The frequency is read digit by digit, like a year, without the decimal
+# point ("FM九七四"), which is how radio announces it; digits themselves are avoided because the
+# voice reads them unpredictably.
 STATION_TAGS: dict[StationId, str] = {
-    StationId.CASUAL: "欢迎收听FM八八点七，随便听",
-    StationId.CRATE: "欢迎来到唱片行，FM九三点一",
-    StationId.PORTRAIT: "欢迎收听FM九七点四，人物志",
-    StationId.LINEAGE: "欢迎收听FM一零一点五，来龙去脉",
+    StationId.CASUAL: "欢迎收听FM八八七，随便听",
+    StationId.CRATE: "欢迎来到唱片行，FM九三一",
+    StationId.PORTRAIT: "欢迎收听FM九七四，人物志",
+    StationId.LINEAGE: "欢迎收听FM一零一五，来龙去脉",
 }
 
 _OPENING_PLAIN = (
@@ -74,6 +75,42 @@ _OPENING_NAMED = (
 # No station name to give (夜里, or a request with no station): just what begins.
 _OPENING_BARE_PLAIN = ("先来听{artist}的《{title}》。", "第一首，{artist}的《{title}》。")
 _OPENING_BARE_NAMED = ("先来听《{title}》，是你点的{artist}。", "你点了{artist}，先来听《{title}》。")
+
+
+# How a programme ends.  The Writer says what the route was about; this closes it, in code, with
+# the station's name and frequency and a plain goodbye, so every ending lands the same way.
+_SIGNOFFS: dict[StationId, tuple[str, ...]] = {
+    StationId.CASUAL: (
+        "这里是FM八八七，随便听，我们下次再见。",
+        "FM八八七，随便听，回头接着放。",
+        "随便听，FM八八七，下次再见。",
+    ),
+    StationId.CRATE: (
+        "这里是FM九三一，唱片行，下次再挖。",
+        "FM九三一，唱片行，我们下次再见。",
+        "唱片行，FM九三一，回头接着挖。",
+    ),
+    StationId.PORTRAIT: (
+        "这里是FM九七四，人物志，我们下次再见。",
+        "FM九七四，人物志，下次再会。",
+        "人物志，FM九七四，下次再见。",
+    ),
+    StationId.LINEAGE: (
+        "这里是FM一零一五，来龙去脉，我们下次再见。",
+        "FM一零一五，来龙去脉，下次接着往下讲。",
+        "来龙去脉，FM一零一五，下次再见。",
+    ),
+}
+
+
+def compose_signoff(station: StationId | None, seed: str) -> str | None:
+    """The station's closing line, or None (夜里 and a programme with no station say none)."""
+
+    forms = _SIGNOFFS.get(station) if station is not None else None
+    if not forms:
+        return None
+    digest = hashlib.sha256(f"signoff|{station}|{seed}".encode()).digest()
+    return forms[int.from_bytes(digest[:4], "big") % len(forms)]
 
 
 def compose_opening(

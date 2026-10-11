@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -22,7 +23,12 @@ from time import perf_counter
 from pydantic import BaseModel, ConfigDict, Field
 
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
-from wavecast.music_discovery import TAG_LABEL_PREFIX, ArtistHintProvider, artist_scores
+from wavecast.music_discovery import (
+    TAG_LABEL_PREFIX,
+    ArtistHintProvider,
+    artist_scores,
+    tag_matches,
+)
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.retrieval import (
     MusicRetrievalService,
@@ -53,6 +59,9 @@ _SEASONAL_MARKER = re.compile(
     r"christmas|xmas|圣诞|聖誕|jingle bells|santa claus|silent night|白色圣诞", re.IGNORECASE
 )
 _DEFAULT_EXCLUDED_VERSIONS = frozenset({VersionKind.LIVE, VersionKind.REMIX, VersionKind.ACOUSTIC})
+
+
+logger = logging.getLogger(__name__)
 
 
 class PoolSource(StrEnum):
@@ -293,6 +302,7 @@ class CatalogPool(BaseModel):
 # more query is worth 2 points, a community tag 5; 4 lets neighbours swap without letting a
 # long-tail artist leapfrog a clearly better supported one.
 _RANK_BLUR = 4.0
+_TAG_LOOKUPS = 4
 
 
 def _seeded(seed: str, salt: str, key: str) -> str:
@@ -499,10 +509,12 @@ class CatalogPoolBuilder:
                 for track in tracks
             )
         hint_hits: list[tuple[str, str]] = []
+        hinted_song_keys: set[str] = set()
         for label, name, tracks in hinted:
             matching = [track for track in tracks if artist_credit_includes(track.artist, name)]
             if matching:
                 hint_hits.append((label, name))
+            hinted_song_keys.update(_song_key(track) for track in matching)
             candidates.extend((track, PoolSource.KEYWORD_SEARCH) for track in matching)
         candidates.sort(key=lambda item: item[1] is not PoolSource.ARTIST_SEARCH)
 
@@ -535,11 +547,56 @@ class CatalogPoolBuilder:
             evidence_texts,
         )
         songs = self._select_songs(list(groups.values()), scores, named, seed)
+        # A name is not an artist: the catalog's "Steve Lacy" can be the guitarist of The
+        # Internet while the tag meant the saxophonist.  A song a community tag brought in is
+        # checked against that song's own tags, and dropped only when the community has tagged
+        # it and none of its tags is the genre asked for (no tags at all means unknown, so kept).
+        keys_in_groups = {id(entries): key for key, entries in groups.items()}
+        songs = await self._drop_off_genre(
+            songs, {key for key in keys_in_groups.values() if key in hinted_song_keys},
+            keys_in_groups, hint_tags,
+        )
 
         async def verify_song(index: int, entries: list[tuple[RetrievedTrack, PoolSource]]) -> None:
             state.record((1, index), await self._verify_song(entries, state))
 
         await asyncio.gather(*(verify_song(i, entries) for i, entries in enumerate(songs)))
+
+    async def _drop_off_genre(
+        self,
+        songs: list[list[tuple[RetrievedTrack, PoolSource]]],
+        hinted_keys: set[str],
+        keys_by_group: dict[int, str],
+        hint_tags: Sequence[str],
+    ) -> list[list[tuple[RetrievedTrack, PoolSource]]]:
+        if self.hints is None or not hint_tags or not hinted_keys:
+            return songs
+        hints = self.hints
+        checked = [group for group in songs if keys_by_group.get(id(group)) in hinted_keys]
+        if not checked:
+            return songs
+
+        gate = asyncio.Semaphore(_TAG_LOOKUPS)
+
+        async def tags_of(group: list[tuple[RetrievedTrack, PoolSource]]) -> list[str] | None:
+            track = group[0][0]
+            async with gate:
+                try:
+                    return await hints.track_tags(
+                        primary_artist(track.artist), track.base_title or track.title
+                    )
+                except Exception:  # noqa: BLE001 - an optional signal never blocks the pool
+                    return None
+
+        results = await asyncio.gather(*(tags_of(group) for group in checked))
+        off_genre = {
+            id(group)
+            for group, tags in zip(checked, results, strict=True)
+            if tags and not any(tag_matches(tag, wanted) for tag in tags for wanted in hint_tags)
+        }
+        if off_genre:
+            logger.info("catalog_pool_off_genre_dropped count=%d", len(off_genre))
+        return [group for group in songs if id(group) not in off_genre]
 
     def _select_songs(
         self,

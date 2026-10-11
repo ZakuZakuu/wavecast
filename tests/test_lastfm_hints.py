@@ -102,13 +102,17 @@ def test_without_a_key_nothing_is_requested() -> None:
 
 
 class _Hints:
-    def __init__(self, names: list[str]) -> None:
+    def __init__(self, names: list[str], song_tags: dict[str, list[str]] | None = None) -> None:
         self.names = names
+        self.song_tags = song_tags or {}
         self.asked: list[str] = []
 
     async def artists_for_tag(self, tag: str, *, limit: int) -> list[str]:
         self.asked.append(tag)
         return self.names[:limit]
+
+    async def track_tags(self, artist: str, title: str) -> list[str] | None:
+        return self.song_tags.get(f"{artist} - {title}")
 
 
 def _builder(catalog: SidecarLikeCatalog, hints: object | None, **kwargs: int) -> CatalogPoolBuilder:
@@ -194,3 +198,90 @@ def test_a_community_tag_outranks_a_lone_catalog_hit() -> None:
     )
 
     assert scores["mogwai"] > scores["obscure"]
+
+
+# --- a name is not an artist ---------------------------------------------------------------
+
+
+def _jazz_catalog() -> SidecarLikeCatalog:
+    tracks = [
+        track("s0", "Steve Lacy", "show you me"),
+        track("s1", "Steve Lacy", "Bad Habit"),
+        track("m0", "Miles Davis", "So What"),
+        track("n0", "Nobody", "Untagged Song"),
+        track("a0", "Band A", "A song"),
+    ]
+    return SidecarLikeCatalog(
+        tracks,
+        {
+            "爵士": ["a0"],
+            "Steve Lacy": ["s0", "s1"],
+            "Miles Davis": ["m0"],
+            "Nobody": ["n0"],
+        },
+    )
+
+
+def test_a_song_the_community_tags_as_another_genre_is_dropped_but_an_untagged_one_is_kept() -> None:
+    hints = _Hints(
+        ["Steve Lacy", "Miles Davis", "Nobody"],
+        {
+            "Steve Lacy - show you me": ["indie folk", "singer-songwriter"],
+            "Steve Lacy - Bad Habit": ["rnb", "soul"],
+            "Miles Davis - So What": ["jazz", "modal jazz"],
+        },
+    )
+
+    pool = asyncio.run(
+        _builder(_jazz_catalog(), hints, max_verifications=12).build(
+            keyword_queries=["爵士"], hint_tags=["jazz"]
+        )
+    )
+
+    titles = {entry.title for entry in pool.entries}
+    assert "So What" in titles and "Untagged Song" in titles and "A song" in titles
+    assert "show you me" not in titles and "Bad Habit" not in titles
+
+
+def test_a_failing_tag_lookup_never_stops_the_pool() -> None:
+    class Broken(_Hints):
+        async def track_tags(self, artist: str, title: str) -> list[str] | None:
+            raise RuntimeError("down")
+
+    pool = asyncio.run(
+        _builder(_jazz_catalog(), Broken(["Miles Davis"]), max_verifications=12).build(
+            keyword_queries=["爵士"], hint_tags=["jazz"]
+        )
+    )
+
+    assert "So What" in {entry.title for entry in pool.entries}
+
+
+def test_a_genre_tag_matches_its_compound_forms() -> None:
+    from wavecast.music_discovery import tag_matches
+
+    assert tag_matches("jazz pop", "jazz") and tag_matches("Post-Rock", "post rock")
+    assert not tag_matches("indie folk", "jazz")
+
+
+def test_song_tags_are_read_and_cached_and_failures_are_unknown() -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(
+            200, json={"toptags": {"tag": [{"name": "jazz", "count": 100}, {"name": "swing"}]}}
+        )
+
+    hints = LastFmArtistHints(KEY, client=_client(httpx.MockTransport(handler)))
+
+    assert asyncio.run(hints.track_tags("Frank Sinatra", "My Way")) == ["jazz", "swing"]
+    assert asyncio.run(hints.track_tags("Frank Sinatra", "My Way")) == ["jazz", "swing"]
+    assert len(calls) == 1
+    assert calls[0].url.params["method"] == "track.gettoptags"
+
+    broken = LastFmArtistHints(
+        KEY, client=_client(httpx.MockTransport(lambda request: httpx.Response(503)))
+    )
+    assert asyncio.run(broken.track_tags("A", "B")) is None
+    assert asyncio.run(LastFmArtistHints(None).track_tags("A", "B")) is None

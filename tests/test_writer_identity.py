@@ -186,7 +186,7 @@ def test_an_outro_that_lists_the_route_is_rewritten() -> None:
 
     assert len(llm.prompts) == 2
     assert "one by one" in llm.prompts[1]
-    assert [block.text for block in result.blocks] == [plain]
+    assert len(result.blocks) == 1 and result.blocks[0].text.startswith(plain)
 
 
 def test_a_block_that_repeats_an_earlier_one_is_rewritten() -> None:
@@ -199,7 +199,7 @@ def test_a_block_that_repeats_an_earlier_one_is_rewritten() -> None:
 
     assert len(llm.prompts) == 2
     assert "already said" in llm.prompts[1]
-    assert [block.text for block in result.blocks] == [fresh]
+    assert len(result.blocks) == 1 and result.blocks[0].text.startswith(fresh)
 
 
 def test_the_closing_guidance_forbids_listing_the_route_and_repeating_earlier_blocks() -> None:
@@ -208,8 +208,9 @@ def test_the_closing_guidance_forbids_listing_the_route_and_repeating_earlier_bl
     _write_final(llm)
 
     prompt = llm.prompts[0]
-    assert "Never list the tracks played" in prompt
-    assert "do not repeat anything an earlier block already said" in prompt
+    assert "never list them" in prompt
+    assert "repeat nothing an earlier block already said" in prompt
+    assert "give no year" in prompt
 
 
 def test_a_length_of_time_the_evidence_does_not_give_is_rewritten() -> None:
@@ -255,7 +256,8 @@ def test_a_length_of_time_is_rewritten_even_when_the_evidence_gives_it() -> None
 
     assert len(llm.prompts) == 2
     assert isinstance(result, RadioScript)
-    assert [block.text for block in result.blocks] == [plain]
+    assert [block.text for block in result.blocks][0].startswith(plain)
+    assert len(result.blocks) == 1
 
 
 def test_the_voice_instructions_forbid_questions_and_sound_similes() -> None:
@@ -276,7 +278,7 @@ def test_a_closing_with_a_year_is_rewritten() -> None:
 
     assert len(llm.prompts) == 2
     assert "closing" in llm.prompts[1]
-    assert [block.text for block in result.blocks] == [plain]
+    assert [block.text for block in result.blocks][0].startswith(plain)
 
 
 # --- a block talks about the two tracks around it -------------------------------------------

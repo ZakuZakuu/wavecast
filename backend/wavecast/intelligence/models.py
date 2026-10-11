@@ -422,6 +422,14 @@ class FastStartPlan(BaseModel):
         return copied
 
 
+class ResearchDepth(StrEnum):
+    """How much background research a programme gets.  Stations whose host talks a lot
+    (portraits, lineages) are written from evidence, so they get a larger budget."""
+
+    STANDARD = "standard"
+    DEEP = "deep"
+
+
 class FastResearchInput(BaseModel):
     topic: str
     anchor_tracks: list[str] = Field(default_factory=list)
@@ -429,6 +437,7 @@ class FastResearchInput(BaseModel):
     desired_duration_seconds: int = Field(gt=0)
     listener_taste_context: str | None = None
     output_language: OutputLanguage = OutputLanguage.AUTO
+    depth: ResearchDepth = ResearchDepth.STANDARD
 
 
 class FastResearchResult(BaseModel):

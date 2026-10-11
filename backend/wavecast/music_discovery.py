@@ -159,6 +159,19 @@ class ArtistHintProvider(Protocol):
 
     async def artists_for_tag(self, tag: str, *, limit: int) -> list[str]: ...
 
+    async def track_tags(self, artist: str, title: str) -> list[str] | None:
+        """The community's tags for one song, most applied first; None when unknown."""
+        ...
+
+
+def tag_matches(song_tag: str, wanted: str) -> bool:
+    """Whether a song's community tag names the wanted genre ("jazz pop" names "jazz")."""
+
+    def norm(text: str) -> str:
+        return re.sub(r"[\s\-_]+", " ", text.casefold()).strip()
+
+    return bool(norm(wanted)) and norm(wanted) in norm(song_tag)
+
 
 def _mentions(blob: str, name: str) -> bool:
     if len(name) < 2:

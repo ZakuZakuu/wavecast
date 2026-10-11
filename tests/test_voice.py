@@ -382,3 +382,77 @@ def test_the_route_summary_separates_played_from_planned_artists() -> None:
     assert any(label.startswith("Opening Artist") for label in played)
     assert "Ghost Band" in unplayed
     assert all("Opening Artist" != artist for artist in unplayed)
+
+
+def _final_slot() -> NarrationSlotContext:
+    return _slot().model_copy(
+        update={
+            "placement": NarrationSlotPlacement.AFTER_TRACK,
+            "allowed_block_kinds": [RadioScriptBlockKind.OUTRO],
+            "upcoming_track": None,
+            "is_final": True,
+        }
+    )
+
+
+def _closing(llm: Sequenced, station: StationId | None) -> RadioScript:
+    result = asyncio.run(
+        WriterService(llm).write(
+            _chapter(),
+            [],
+            slot_context=_final_slot(),
+            target_duration_seconds=16,
+            output_language=OutputLanguage.ZH_CN,
+            station=station,
+            voice_seed="programme-1",
+        )
+    )
+    assert isinstance(result, RadioScript)
+    return result
+
+
+def test_the_closing_ends_with_the_stations_sign_off() -> None:
+    from wavecast.stations import compose_signoff
+
+    llm = Sequenced(
+        RadioScript(
+            blocks=[
+                RadioScriptBlock(
+                    kind=RadioScriptBlockKind.OUTRO,
+                    text="这一程从翻弹听到原作，线索一直是那把钢琴",
+                    duration_seconds=8,
+                )
+            ]
+        )
+    )
+
+    result = _closing(llm, StationId.PORTRAIT)
+
+    signoff = compose_signoff(StationId.PORTRAIT, "programme-1")
+    assert signoff is not None
+    assert result.blocks[0].text == "这一程从翻弹听到原作，线索一直是那把钢琴。" + signoff
+    assert "不要说再见" not in llm.prompts[0]
+    assert "Do not say goodbye" in llm.prompts[0]
+
+
+def test_a_night_programme_or_one_without_a_station_gets_no_sign_off() -> None:
+    for station in (StationId.NIGHT, None):
+        llm = Sequenced(
+            RadioScript(
+                blocks=[
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.OUTRO, text="停在这里。", duration_seconds=4
+                    )
+                ]
+            )
+        )
+
+        assert _closing(llm, station).blocks[0].text == "停在这里。"
+
+
+def test_the_sign_off_is_not_added_to_an_ordinary_block() -> None:
+    llm = Sequenced(_script("Jody 是同一个人写的。"))
+
+    result = _write(llm)
+
+    assert result.blocks[0].text == "Jody 是同一个人写的。"

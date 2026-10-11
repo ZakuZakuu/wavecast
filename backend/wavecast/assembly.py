@@ -54,6 +54,7 @@ from wavecast.intelligence.models import (
     RadioScriptBlock,
     RadioScriptBlockKind,
     ResearchBundle,
+    ResearchDepth,
     ResearchFacet,
     ResearchPlan,
     ResolvedTrack,
@@ -599,6 +600,7 @@ class LiveEpisodeAssemblyService:
             desired_duration_seconds=request.desired_duration_seconds,
             listener_taste_context=request.listener_taste_context,
             output_language=request.output_language,
+            depth=_research_depth(request),
         )
         try:
             fast_result = await self.fast_path.run(
@@ -1351,6 +1353,7 @@ class LiveEpisodeAssemblyService:
             desired_duration_seconds=request.desired_duration_seconds,
             listener_taste_context=request.listener_taste_context,
             output_language=request.output_language,
+            depth=_research_depth(request),
         )
 
         if locked_successor is not None:
@@ -2473,6 +2476,13 @@ def _same_song_identity(left: ResolvedTrack | None, right: ResolvedTrack) -> boo
             == canonical_name(right.canonical_artist)
         )
     return left_artist <= right_artist or right_artist <= left_artist
+
+
+def _research_depth(request: LiveEpisodeAssemblyRequest) -> ResearchDepth:
+    """Stations whose host talks a lot are written from evidence, so they research more."""
+
+    deep = request.station in (StationId.PORTRAIT, StationId.LINEAGE)
+    return ResearchDepth.DEEP if deep else ResearchDepth.STANDARD
 
 
 def _blocked_by_spread(
@@ -4260,9 +4270,13 @@ def create_episode_assembly_service(
     if settings.resolved_research_provider == "mock":
         discovery: SearchProvider = FakeSearchProvider()
         research: SearchProvider = FakeSearchProvider()
+        deep_research: SearchProvider | None = None
     else:
         discovery = ExaSearchProvider(live_settings, ledger=ledger)
         research = TavilySearchProvider(live_settings, ledger=ledger)
+        deep_research = TavilySearchProvider(
+            live_settings, ledger=ledger, search_depth="advanced"
+        )
 
     if settings.resolved_tts_provider == "mock":
         tts: TTSProvider = MockTTSProvider(storage)
@@ -4278,6 +4292,7 @@ def create_episode_assembly_service(
         research=research,
         ledger=ledger,
         planner=BackgroundResearchPlanner(research_llm),
+        deep_research=deep_research,
     )
     fast_path = FastPathCoordinator(
         research=fast_research,
