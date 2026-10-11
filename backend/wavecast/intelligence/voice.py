@@ -220,10 +220,12 @@ def voice_instructions(
     )
     if is_final:
         lines.append(
-            "This block closes the programme in one or two short sentences: say where the "
-            "route ended, naming at most the last track. Never list the tracks played, do not "
-            "repeat anything an earlier block already said, say nothing about what comes next, "
-            "and stop plainly."
+            "This block closes the programme in one or two plain sentences: say what the route "
+            "was about, the idea or the thread the listener has been following, and let it end "
+            "on that or on the last track. Name at most two of the songs actually played, never "
+            "list them, give no year, repeat nothing an earlier block already said, and say "
+            "nothing about what comes next. Do not say goodbye, thank the listener or name the "
+            "station: the application adds the sign-off after your text."
         )
     elif is_opening:
         lines.append(

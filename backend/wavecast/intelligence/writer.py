@@ -6,12 +6,12 @@ import json
 import logging
 from collections.abc import Sequence
 
-from wavecast.narration_quality import check_block, rewrite_reasons, years_in
+from wavecast.narration_quality import CHARS_PER_SECOND, check_block, rewrite_reasons, years_in
 from wavecast.presentation import HostMode, host_mode_prompt_guidance
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.spoken_form import KnownTrack, to_spoken_form
-from wavecast.stations import StationId
+from wavecast.stations import StationId, compose_signoff
 
 from .fast_start import FastStructuredProvider
 from .models import (
@@ -107,12 +107,22 @@ class WriterService:
             if selected_language is OutputLanguage.ZH_CN
             else target_duration_seconds
         )
+        # The closing's sign-off is added by the application after the Writer's text, so the
+        # Writer's share of the window is what remains.
+        signoff = (
+            compose_signoff(station, voice_seed or topic or chapter.reason)
+            if selected_language is OutputLanguage.ZH_CN and any(slot.is_final for slot in slots)
+            else None
+        )
+        writer_window = spoken_window
+        if signoff and spoken_window is not None:
+            writer_window = max(4.0, spoken_window - len(signoff) / CHARS_PER_SECOND)
         station_line = (
             voice_instructions(
                 station=station,
                 seed=voice_seed or topic or chapter.reason,
                 index=chapter.index,
-                window_seconds=spoken_window,
+                window_seconds=writer_window,
                 used_openers=used_openers,
                 is_opening=any(slot.is_opening for slot in slots),
                 is_final=any(slot.is_final for slot in slots),
@@ -212,7 +222,7 @@ class WriterService:
                 break
             problems = _problems(
                 result,
-                spoken_window,
+                writer_window,
                 known_tracks,
                 slots,
                 supported_years=supported,
@@ -234,7 +244,7 @@ class WriterService:
                 break
             revised_problems = _problems(
                 revised,
-                spoken_window,
+                writer_window,
                 known_tracks,
                 slots,
                 supported_years=supported,
@@ -255,6 +265,8 @@ class WriterService:
             break
         if isinstance(result, RadioScript):
             result = _without_identity_conflicts(result, known_tracks, unplayed_artists)
+            if signoff:
+                result = _with_signoff(result, signoff)
         return result
 
     async def _attempt(
@@ -337,6 +349,25 @@ def _without_identity_conflicts(
     if len(kept) == len(script.blocks):
         return script
     return script.model_copy(update={"blocks": kept})
+
+
+def _with_signoff(script: RadioScript, signoff: str) -> RadioScript:
+    """Close the programme's last block with the station's sign-off."""
+
+    if not script.blocks:
+        return script
+    *rest, last = script.blocks
+    text = last.text.rstrip()
+    if text and text[-1] not in "。！？.!?":
+        text += "。"
+    tts = None
+    if last.tts_text:
+        tts = last.tts_text.rstrip()
+        if tts and tts[-1] not in "。！？.!?":
+            tts += "。"
+        tts += signoff
+    closed = last.model_copy(update={"text": text + signoff, "tts_text": tts})
+    return script.model_copy(update={"blocks": [*rest, closed]})
 
 
 def _problems(

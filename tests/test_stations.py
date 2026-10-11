@@ -147,3 +147,18 @@ def test_the_writer_is_told_not_to_assume_what_the_listener_is_doing() -> None:
         assert "Do not assume where the listener is" in text
     for profile in STATION_PROFILES.values():
         assert "开车" not in profile.positioning
+
+
+def test_signoffs_name_the_station_and_spell_the_frequency_without_digits() -> None:
+    from wavecast.stations import STATION_PROFILES, compose_signoff
+
+    for station in (StationId.CASUAL, StationId.CRATE, StationId.PORTRAIT, StationId.LINEAGE):
+        for n in range(12):
+            text = compose_signoff(station, f"seed-{n}")
+            assert text is not None
+            assert STATION_PROFILES[station].name in text and "FM" in text
+            assert not any(char.isdigit() for char in text)
+            assert "点" not in text  # announced as FM九七四, not 九七点四
+    assert compose_signoff(StationId.NIGHT, "x") is None
+    assert compose_signoff(None, "x") is None
+    assert len({compose_signoff(StationId.CASUAL, f"seed-{n}") for n in range(40)}) == 3
