@@ -262,6 +262,7 @@ class BackgroundResearchService:
                 return None
             raise
         deep = request.depth is ResearchDepth.DEEP
+        excerpt_chars = DEEP_EXCERPT_CHARS if deep else STANDARD_EXCERPT_CHARS
         max_exa, max_tavily, per_query = DEEP_BACKGROUND_BUDGET if deep else STANDARD_BACKGROUND_BUDGET
         selected = select_background_queries(
             plan, fast_result.queries, max_exa=max_exa, max_tavily=max_tavily
@@ -358,10 +359,11 @@ class BackgroundResearchService:
             fast_result.bundle,
             bundle_from_results(
                 request,
-                normalize_results(extra),
+                normalize_results(extra, excerpt_chars=excerpt_chars),
                 failures,
                 query_context=query_context,
                 research_plan=plan,
+                excerpt_chars=excerpt_chars,
             ),
         )
         if trace:
@@ -697,7 +699,13 @@ def select_background_queries(
     return selected
 
 
-def normalize_results(results: list[SearchResult]) -> list[SearchResult]:
+STANDARD_EXCERPT_CHARS = 800
+DEEP_EXCERPT_CHARS = 1600
+
+
+def normalize_results(
+    results: list[SearchResult], *, excerpt_chars: int = STANDARD_EXCERPT_CHARS
+) -> list[SearchResult]:
     seen: set[str] = set()
     normalized: list[SearchResult] = []
     for result in results:
@@ -711,7 +719,7 @@ def normalize_results(results: list[SearchResult]) -> list[SearchResult]:
                 update={
                     "url": canonical_url,
                     "snippet": result.snippet[:600],
-                    "content": (result.content or result.snippet)[:800],
+                    "content": (result.content or result.snippet)[:excerpt_chars],
                 }
             )
         )
@@ -725,6 +733,7 @@ def bundle_from_results(
     *,
     query_context: Mapping[str, PlannedResearchQuery] | None = None,
     research_plan: ResearchPlan | None = None,
+    excerpt_chars: int = STANDARD_EXCERPT_CHARS,
 ) -> ResearchBundle:
     evidence: list[Evidence] = []
     facets = {facet.id: facet for facet in (research_plan.facets if research_plan else [])}
@@ -754,7 +763,7 @@ def bundle_from_results(
         evidence.append(
             Evidence(
                 id=evidence_id,
-                claim_or_excerpt=excerpt[:800],
+                claim_or_excerpt=excerpt[:excerpt_chars],
                 source_url=canonical_url,
                 canonical_url=canonical_url,
                 source_domain=domain,
