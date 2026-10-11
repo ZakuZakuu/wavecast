@@ -624,34 +624,51 @@ def _opening(prompt: str, station) -> str:
     return proposal.opening_narration_text
 
 
-def test_the_opening_ends_with_the_station_ident_after_the_content() -> None:
-    from wavecast.stations import STATION_IDENTS, StationId
+def test_the_opening_names_the_station_and_reads_its_frequency_like_a_year() -> None:
+    from wavecast.stations import STATION_TAGS, StationId
 
-    text = _opening("late night synth drive", StationId.CASUAL)
+    expected = {
+        StationId.CASUAL: "FM八八点七，随便听",
+        StationId.CRATE: "唱片行，FM九三点一",
+        StationId.PORTRAIT: "FM九七点四，人物志",
+        StationId.LINEAGE: "FM一零一点五，来龙去脉",
+    }
+    for station, spoken in expected.items():
+        assert spoken in STATION_TAGS[station]
+        text = _opening("late night synth drive", station)
+        assert spoken in text
+        assert "Midnight Transfer" in text
+        assert not any(char.isdigit() for char in text)  # the voice reads digits unpredictably
 
-    assert any(text.endswith(form) for form in STATION_IDENTS[StationId.CASUAL])
-    assert text.index("Midnight Transfer") < len(text) - 20  # content first, ident last
+
+def test_the_opening_is_a_flowing_line_not_a_run_of_fragments() -> None:
+    from wavecast.stations import StationId
+
+    for station in StationId:
+        for n in range(20):
+            text = _opening(f"topic {n}", station)
+            sentences = [part for part in text.split("。") if part]
+            assert len(sentences) <= 2, text
+            assert all(len(part) >= 8 for part in sentences), text
+            assert "先放" not in text  # the older curt phrasing
 
 
-def test_the_night_station_has_no_ident_and_a_programme_without_a_station_none() -> None:
-    from wavecast.stations import STATION_IDENTS, StationId
+def test_the_night_station_and_a_programme_without_a_station_say_no_station_name() -> None:
+    from wavecast.stations import STATION_TAGS, StationId
 
     for station in (StationId.NIGHT, None):
         text = _opening("late night synth drive", station)
-        assert not any(
-            form in text for forms in STATION_IDENTS.values() for form in forms
-        )
+        assert "Midnight Transfer" in text
+        assert not any(tag in text for tag in STATION_TAGS.values())
+        assert "FM" not in text
 
 
 def test_the_opening_wording_varies_between_programmes() -> None:
     from wavecast.stations import StationId
 
     openings = {_opening(f"topic {n}", StationId.CRATE) for n in range(30)}
-    markers = ("先放Signal Garden", "第一首，", "开场是", "Signal Garden，《")
-    used = {marker for marker in markers if any(marker in text for text in openings)}
 
-    assert len(openings) > 3
-    assert len(used) >= 3
+    assert len(openings) >= 3
     assert not any("Let the night open up first." in text for text in openings)
     assert not any("我们先从" in text for text in openings)
 
@@ -709,29 +726,22 @@ def test_the_english_opening_still_uses_the_models_note() -> None:
     assert "Let the night open up first." in proposal.opening_narration_text
 
 
-_ECHOES = (
-    "你点了这个名字，那就先放它。",
-    "这是你点的名字，先从它开始。",
-    "名字是你点的，先放它。",
-)
-
-
 def test_the_opening_says_so_when_the_request_names_the_opening_artist() -> None:
     from wavecast.stations import StationId
 
-    text = _opening("想听 Signal Garden 的歌", StationId.CASUAL)
-
-    assert sum(echo in text for echo in _ECHOES) == 1
-    identity_end = text.index("Midnight Transfer")
-    assert identity_end < min(text.index(echo) for echo in _ECHOES if echo in text)
-    assert text.count("Signal Garden") == 1  # the name is not said twice
+    for station in (StationId.CASUAL, StationId.PORTRAIT, None):
+        for n in range(10):
+            text = _opening(f"想听 Signal Garden 的歌 {n}", station)
+            assert "你点" in text, text
+            assert text.count("Signal Garden") == 1  # the name is not said twice
+            assert "名字是你点的" not in text  # the older curt phrasing
 
 
 def test_the_opening_gives_no_reason_when_the_request_does_not_name_the_artist() -> None:
     from wavecast.stations import StationId
 
     for prompt in ("late night synth drive", "夜里开车听点电子乐", "想听 Mogwai"):
-        assert not any(echo in _opening(prompt, StationId.CASUAL) for echo in _ECHOES)
+        assert "你点" not in _opening(prompt, StationId.CASUAL)
 
 
 def test_a_credit_with_several_artists_counts_when_any_of_them_is_named() -> None:
@@ -741,19 +751,6 @@ def test_a_credit_with_several_artists_counts_when_any_of_them_is_named() -> Non
     assert _request_names_artist("久石让的钢琴曲", "久石譲")
     assert not _request_names_artist("想听 Evans", "Bill Evans, Jim Hall")  # whole names only
     assert not _request_names_artist("下雨天的爵士", "Bill Evans")
-
-
-def test_the_reason_wording_varies_between_programmes() -> None:
-    from wavecast.stations import StationId
-
-    used = {
-        echo
-        for n in range(30)
-        for echo in _ECHOES
-        if echo in _opening(f"想听 Signal Garden {n}", StationId.CASUAL)
-    }
-
-    assert len(used) >= 2
 
 
 def test_the_prompt_asks_for_a_plain_host_note() -> None:

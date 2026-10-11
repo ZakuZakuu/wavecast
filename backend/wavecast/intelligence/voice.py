@@ -67,8 +67,9 @@ class StationVoice:
 STATION_VOICES: dict[StationId, StationVoice] = {
     StationId.CASUAL: StationVoice(
         StationId.CASUAL,
-        "A friend in the passenger seat: relaxed, brief, says one thing and stops. Short "
-        "sentences; no lecture; allowed to be a little wry.",
+        "A friend putting music on for you: warm, easygoing and a little playful. Plain spoken "
+        "sentences, one thing at a time, no lecture; may tease lightly or react to a song the "
+        "way a friend would. Never assumes what you are doing.",
         {Move.FACT: 3, Move.LISTEN: 3, Move.LINK: 3, Move.PLAIN: 3, Move.REASON: 1},
         (
             "这首前奏就一把吉他，二十秒左右鼓才进来。",
@@ -212,6 +213,11 @@ def voice_instructions(
     voice = _voice(station)
     profile = STATION_PROFILES[voice.station]
     lines = [f"Station: {profile.name} - {profile.positioning}", f"Voice: {voice.tone}"]
+    lines.append(
+        "Do not assume where the listener is or what they are doing (driving, commuting, "
+        "arriving, parking, walking, working, cooking): mention a situation only if their "
+        "request does. A closing is about the music, never about a journey ending."
+    )
     if is_final:
         lines.append(
             "This block closes the programme in one or two short sentences: say where the "

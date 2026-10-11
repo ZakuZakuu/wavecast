@@ -32,7 +32,7 @@ class StationProfile:
 
 STATION_PROFILES: dict[StationId, StationProfile] = {
     StationId.CASUAL: StationProfile(
-        StationId.CASUAL, "随便听", "开车时开着的电台：音乐为主，主持人偶尔说两句", HostMode.LIGHT
+        StationId.CASUAL, "随便听", "随时开着的电台：音乐为主，主持人偶尔说两句，做什么事时听都行", HostMode.LIGHT
     ),
     StationId.CRATE: StationProfile(
         StationId.CRATE, "唱片行", "同好带你挖歌：从一首喜欢的歌出发，往外挖没听过的", HostMode.LIGHT
@@ -49,42 +49,52 @@ STATION_PROFILES: dict[StationId, StationProfile] = {
 }
 
 
-# Station identifications, spoken once near the start of a programme, after the first piece of
-# content.  They are written by us, not by the Writer, so they stay short and never turn into
-# a new stock phrase: a few forms per station, one picked from the programme's seed.  Numbers
-# are spelled out because the voice reads digits unpredictably.
-STATION_IDENTS: dict[StationId, tuple[str, ...]] = {
-    StationId.CASUAL: (
-        "这里是随便听，八十八点七。",
-        "随便听，调频八十八点七。",
-        "你听的是随便听。",
-    ),
-    StationId.CRATE: (
-        "这里是唱片行，九十三点一。",
-        "唱片行，调频九十三点一。",
-        "你听的是唱片行。",
-    ),
-    StationId.PORTRAIT: (
-        "这里是人物志，九十七点四。",
-        "人物志，调频九十七点四。",
-        "你听的是人物志。",
-    ),
-    StationId.LINEAGE: (
-        "这里是来龙去脉，一百零一点五。",
-        "来龙去脉，调频一百零一点五。",
-        "你听的是来龙去脉。",
-    ),
+# How a programme opens, written by us rather than the Writer so it stays short, true and never
+# turns into a stock phrase the model repeats.  One flowing sentence or two: what we begin with
+# (and, only when the listener's request names the artist, that it is theirs), then the station
+# by name and frequency.  The frequency is read digit by digit, like a year ("九七点四"), which is
+# how radio says it; digits themselves are avoided because the voice reads them unpredictably.
+STATION_TAGS: dict[StationId, str] = {
+    StationId.CASUAL: "欢迎收听FM八八点七，随便听",
+    StationId.CRATE: "欢迎来到唱片行，FM九三点一",
+    StationId.PORTRAIT: "欢迎收听FM九七点四，人物志",
+    StationId.LINEAGE: "欢迎收听FM一零一点五，来龙去脉",
 }
 
+_OPENING_PLAIN = (
+    "现在先来听{artist}的《{title}》。{tag}。",
+    "{tag}。先来听{artist}的《{title}》。",
+    "{tag}，先来一首{artist}的《{title}》。",
+)
+_OPENING_NAMED = (
+    "现在先来听《{title}》，来自你点的{artist}。{tag}。",
+    "{tag}。你点了{artist}，那就先来听《{title}》。",
+    "先来听《{title}》，是你点的{artist}。{tag}。",
+)
+# No station name to give (夜里, or a request with no station): just what begins.
+_OPENING_BARE_PLAIN = ("先来听{artist}的《{title}》。", "第一首，{artist}的《{title}》。")
+_OPENING_BARE_NAMED = ("先来听《{title}》，是你点的{artist}。", "你点了{artist}，先来听《{title}》。")
 
-def pick_ident(station: StationId | None, seed: str) -> str | None:
-    """The station identification for a programme, or ``None`` (夜里 and unknown stations)."""
 
-    if station is None or station not in STATION_IDENTS:
-        return None
-    forms = STATION_IDENTS[station]
-    digest = hashlib.sha256(f"ident|{station.value}|{seed}".encode()).digest()
-    return forms[int.from_bytes(digest[:4], "big") % len(forms)]
+def compose_opening(
+    station: StationId | None,
+    *,
+    artist: str,
+    title: str,
+    names_artist: bool,
+    seed: str,
+) -> str:
+    """The spoken opening for a Chinese programme; the station's name is said when it has one."""
+
+    tag = STATION_TAGS.get(station) if station is not None else None
+    forms: tuple[str, ...]
+    if tag is None:
+        forms = _OPENING_BARE_NAMED if names_artist else _OPENING_BARE_PLAIN
+    else:
+        forms = _OPENING_NAMED if names_artist else _OPENING_PLAIN
+    digest = hashlib.sha256(f"opening|{station}|{seed}".encode()).digest()
+    form = forms[int.from_bytes(digest[:4], "big") % len(forms)]
+    return form.format(artist=artist, title=title, tag=tag or "")
 
 
 def resolve_presentation_intent(prompt: str, station: StationId | None) -> PresentationIntent:

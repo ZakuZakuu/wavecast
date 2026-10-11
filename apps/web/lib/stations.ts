@@ -29,7 +29,7 @@ export const STATIONS: Station[] = [
     light: "#E8834A",
     deep: "#B5562A",
     line: "音乐为主，偶尔说两句",
-    description: "以音乐为主，主持偶尔说两句。像开车时听的电台。",
+    description: "以音乐为主，主持偶尔说两句。随时开着的电台，做什么事都行。",
     defaultTopic: "随便放点好听的",
     templates: ["freq", "split", "horizon"],
     cover: { hue: 22, dark: 0.25 },

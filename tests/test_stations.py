@@ -117,21 +117,33 @@ def test_the_station_is_carried_into_the_progressive_session() -> None:
     assert buffered.progressive_session.station is StationId.CRATE
 
 
-def test_idents_are_short_spoken_chinese_with_no_digits() -> None:
-    from wavecast.stations import STATION_IDENTS
+def test_station_tags_name_the_station_and_spell_the_frequency_without_digits() -> None:
+    from wavecast.stations import STATION_TAGS
 
-    assert set(STATION_IDENTS) == set(StationId) - {StationId.NIGHT}
-    for forms in STATION_IDENTS.values():
-        assert len(forms) >= 3
-        for form in forms:
-            assert len(form) <= 20
-            assert not any(char.isdigit() for char in form)
+    assert set(STATION_TAGS) == set(StationId) - {StationId.NIGHT}
+    for station, tag in STATION_TAGS.items():
+        assert STATION_PROFILES[station].name in tag
+        assert "FM" in tag
+        assert not any(char.isdigit() for char in tag)
 
 
-def test_ident_choice_is_deterministic_and_varies_with_the_seed() -> None:
-    from wavecast.stations import pick_ident
+def test_opening_choice_is_deterministic_and_varies_with_the_seed() -> None:
+    from wavecast.stations import compose_opening
 
-    assert pick_ident(StationId.CASUAL, "a") == pick_ident(StationId.CASUAL, "a")
-    assert len({pick_ident(StationId.CASUAL, f"seed-{n}") for n in range(40)}) == 3
-    assert pick_ident(StationId.NIGHT, "a") is None
-    assert pick_ident(None, "a") is None
+    def opening(seed: str) -> str:
+        return compose_opening(
+            StationId.CASUAL, artist="A", title="T", names_artist=False, seed=seed
+        )
+
+    assert opening("a") == opening("a")
+    assert len({opening(f"seed-{n}") for n in range(40)}) == 3
+
+
+def test_the_writer_is_told_not_to_assume_what_the_listener_is_doing() -> None:
+    from wavecast.intelligence.voice import voice_instructions
+
+    for station in StationId:
+        text = voice_instructions(station=station, seed="s", index=1, window_seconds=12)
+        assert "Do not assume where the listener is" in text
+    for profile in STATION_PROFILES.values():
+        assert "开车" not in profile.positioning
