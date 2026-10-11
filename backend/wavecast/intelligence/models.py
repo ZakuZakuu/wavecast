@@ -189,7 +189,7 @@ def empty_research_plan() -> ResearchPlan:
 
 class Evidence(BaseModel):
     id: str
-    claim_or_excerpt: str = Field(min_length=1, max_length=800)
+    claim_or_excerpt: str = Field(min_length=1, max_length=2000)
     source_url: str
     canonical_url: str = ""
     source_domain: str = ""
