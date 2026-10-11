@@ -628,10 +628,10 @@ def test_the_opening_names_the_station_and_reads_its_frequency_like_a_year() -> 
     from wavecast.stations import STATION_TAGS, StationId
 
     expected = {
-        StationId.CASUAL: "FM八八点七，随便听",
-        StationId.CRATE: "唱片行，FM九三点一",
-        StationId.PORTRAIT: "FM九七点四，人物志",
-        StationId.LINEAGE: "FM一零一点五，来龙去脉",
+        StationId.CASUAL: "FM八八七，随便听",
+        StationId.CRATE: "唱片行，FM九三一",
+        StationId.PORTRAIT: "FM九七四，人物志",
+        StationId.LINEAGE: "FM一零一五，来龙去脉",
     }
     for station, spoken in expected.items():
         assert spoken in STATION_TAGS[station]

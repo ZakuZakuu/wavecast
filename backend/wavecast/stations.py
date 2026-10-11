@@ -52,13 +52,14 @@ STATION_PROFILES: dict[StationId, StationProfile] = {
 # How a programme opens, written by us rather than the Writer so it stays short, true and never
 # turns into a stock phrase the model repeats.  One flowing sentence or two: what we begin with
 # (and, only when the listener's request names the artist, that it is theirs), then the station
-# by name and frequency.  The frequency is read digit by digit, like a year ("九七点四"), which is
-# how radio says it; digits themselves are avoided because the voice reads them unpredictably.
+# by name and frequency.  The frequency is read digit by digit, like a year, without the decimal
+# point ("FM九七四"), which is how radio announces it; digits themselves are avoided because the
+# voice reads them unpredictably.
 STATION_TAGS: dict[StationId, str] = {
-    StationId.CASUAL: "欢迎收听FM八八点七，随便听",
-    StationId.CRATE: "欢迎来到唱片行，FM九三点一",
-    StationId.PORTRAIT: "欢迎收听FM九七点四，人物志",
-    StationId.LINEAGE: "欢迎收听FM一零一点五，来龙去脉",
+    StationId.CASUAL: "欢迎收听FM八八七，随便听",
+    StationId.CRATE: "欢迎来到唱片行，FM九三一",
+    StationId.PORTRAIT: "欢迎收听FM九七四，人物志",
+    StationId.LINEAGE: "欢迎收听FM一零一五，来龙去脉",
 }
 
 _OPENING_PLAIN = (
