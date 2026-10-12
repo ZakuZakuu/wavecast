@@ -82,6 +82,16 @@
   overflow: hidden;
 }
 .pick-meta { font-size: 13px; color: var(--ink-2); }
+.programme-sheet { display: flex; flex-direction: column; }
+.ps-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 24px 12px; display: flex; flex-direction: column; gap: 10px; }
+.ps-cover { display: block; width: min(60%, 240px); aspect-ratio: 1; align-self: center; margin-bottom: 6px; border-radius: var(--radius-cover); overflow: hidden; box-shadow: 0 6px 18px rgba(29, 29, 31, .08); }
+.ps-title { margin: 0; font-size: 22px; line-height: 1.3; font-weight: 700; }
+.ps-meta { margin: 0; font-size: 14px; color: var(--ink-2); }
+.ps-description { margin: 4px 0 0; font-size: 16px; line-height: 1.6; }
+.ps-reason { margin: 0; font-size: 14px; line-height: 1.6; color: var(--ink-2); }
+.ps-reason-label { display: block; font-size: 12px; font-weight: 600; letter-spacing: .04em; margin-bottom: 2px; }
+.ps-note { margin: 6px 0 0; font-size: 13px; color: var(--ink-2); }
+.ps-play { margin: 8px 24px calc(16px + env(safe-area-inset-bottom)); width: calc(100% - 48px); min-height: 54px; flex: 0 0 auto; }
 .pick-refresh {
   align-self: center; margin-top: 4px; padding: 10px 22px; border-radius: 999px;
   background: var(--fill); color: var(--ink); font-size: 15px; font-weight: 600;

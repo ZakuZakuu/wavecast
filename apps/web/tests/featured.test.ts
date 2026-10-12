@@ -53,3 +53,16 @@ describe("guest featured programmes", () => {
     }
   });
 });
+
+describe("featured blurbs", () => {
+  it("every featured programme says in one sentence what it will take the listener through", async () => {
+    const { FEATURED_PROGRAMMES } = await import("../lib/featured");
+    for (const item of FEATURED_PROGRAMMES) {
+      expect(item.blurb.trim().length).toBeGreaterThan(8);
+      expect(item.blurb.length).toBeLessThanOrEqual(48);
+      // no colon-subtitle style, and no catalogue or research promise
+      expect(item.blurb).not.toMatch(/[:：]/);
+      expect(item.blurb).not.toMatch(/曲库|收录|全部|最全|独家|研究/);
+    }
+  });
+});
