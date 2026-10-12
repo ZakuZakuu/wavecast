@@ -2103,6 +2103,9 @@ def _record_program_publication(episode_id: str, frontier: float, latency: float
             continue
 
 
+_CONTINUITY_SKIP_RUNWAY_SECONDS = 50.0
+
+
 def _skip_blocking_optional_narration_for_continuity(
     episode_id: str,
     manifest: ProgramRenderManifest,
@@ -2120,17 +2123,15 @@ def _skip_blocking_optional_narration_for_continuity(
         ):
             return []
 
-        target_seconds = buffer_decision(
-            episode,
-            baseline_seconds=generation_worker.policy.target_ahead_seconds,
-            max_chapters=generation_worker.policy.target_chapters,
-        ).target_seconds
+        # Give the host time to arrive: skip only once the published audio the
+        # listener can still reach is about to run out, not whenever the
+        # refill buffer is below its ideal target.
         rendered_ahead = max(
             0.0,
             manifest.rendered_frontier_seconds
             - episode.program_playback_position_seconds,
         )
-        if rendered_ahead >= target_seconds:
+        if rendered_ahead >= _CONTINUITY_SKIP_RUNWAY_SECONDS:
             return []
 
         timeline = episode.timeline_segments
@@ -2421,9 +2422,12 @@ async def render_program_stream(
                 raise
             logger.warning(
                 "program_render_narration_degraded episode_id=%s "
-                "reason=frozen_prefix_conflict skipped_count=%s",
+                "reason=frozen_prefix_conflict skipped=%s frozen_frontier_s=%.1f "
+                "playhead_s=%.1f",
                 episode_id,
-                len(skipped_late),
+                ",".join(skipped_late),
+                manifest.rendered_frontier_seconds,
+                current.program_playback_position_seconds,
             )
             current = await to_thread.run_sync(orchestrator.get, episode_id)
             plan = await to_thread.run_sync(

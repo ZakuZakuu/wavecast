@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Protocol
 
@@ -92,8 +92,12 @@ async def author_pending_narration(
             session_chapter.resolved_track is None
             and session_chapter.chapter.track is not None
         )
+        # A SKIPPED host seam is a final editorial decision (continuity
+        # deadline, exposure, earlier failure). Do not spend Writer/TTS on it.
+        seam_skipped = _has_skipped_narration(chapter_segments)
         should_degrade = (
             exposed
+            or seam_skipped
             or not session_chapter.slot_contexts
             or unresolved_music_slot
         )
@@ -102,6 +106,8 @@ async def author_pending_narration(
         if should_degrade:
             if exposed:
                 reason = "exposed"
+            elif seam_skipped:
+                reason = "seam_skipped"
             elif not session_chapter.slot_contexts:
                 reason = "no_slots"
             else:
@@ -199,6 +205,19 @@ def _with_chapter_research(
     return {"research": research, "chapters": chapters}
 
 
+def _has_skipped_narration(segments: Sequence[object]) -> bool:
+    """Whether a chapter's host seam beside its music was already given up.
+
+    Trackless chapters are excluded: their SKIPPED placeholder is only the
+    initial "no song to anchor the talk" state and is restored when authored.
+    """
+
+    return any(isinstance(segment, MusicSegment) for segment in segments) and any(
+        isinstance(segment, NarrationSegment) and segment.state is SegmentState.SKIPPED
+        for segment in segments
+    )
+
+
 def _next_authoring_chapter_id(episode: LiveEpisode) -> str | None:
     session = episode.progressive_session
     if session is None:
@@ -250,7 +269,7 @@ def _finish_authoring(
         )
 
         replacement: list[MusicSegment | NarrationSegment] | None = None
-        if generated is None or exposed:
+        if generated is None or exposed or _has_skipped_narration(existing):
             # A placeholder reserves the immutable render seam while Writer/TTS
             # are pending. Once authoring degrades, or playback wins the race,
             # persist that editorial decision as SKIPPED so music can continue
