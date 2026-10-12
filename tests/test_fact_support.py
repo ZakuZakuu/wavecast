@@ -244,6 +244,27 @@ def test_a_quote_about_another_piece_does_not_support_an_attribution_about_this_
     assert own_piece.issues == []
 
 
+def test_the_composer_of_the_film_is_not_the_composer_of_its_song() -> None:
+    page = "《千与千寻》的音乐由久石让作曲。主题歌《永远同在》由木村弓作曲并演唱。"
+    track = KnownTrack(artist="木村弓", title="いつも何度でも", spoken_title="永远同在")
+
+    film_credit = _review(
+        _script("《永远同在》是《千与千寻》的主题曲，作曲久石让。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "《千与千寻》的音乐由久石让作曲")]),
+        tracks=[track],
+    )
+    own_credit = _review(
+        _script("《永远同在》是《千与千寻》的主题曲，作曲木村弓。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "主题歌《永远同在》由木村弓作曲并演唱")]),
+        tracks=[track],
+    )
+
+    assert [issue.code for issue in film_credit.issues] == ["insufficient"]
+    assert own_credit.issues == []
+
+
 def test_the_catalog_names_a_credit_and_never_a_role() -> None:
     track = KnownTrack(artist="木村弓", title="いつも何度でも")
     credit = "is credited to the performer 木村弓"
@@ -464,3 +485,78 @@ def test_without_a_checker_the_writer_behaves_as_before() -> None:
     )
 
     assert isinstance(result, RadioScript) and llm.check_prompts == []
+
+
+def test_a_closing_cut_by_the_fact_check_becomes_a_route_closing_with_the_sign_off() -> None:
+    from wavecast.stations import compose_signoff
+
+    from tests.test_voice import _final_slot
+
+    llm = Dispatch(
+        [_script("最后这首的作曲是久石让。", kind=RadioScriptBlockKind.OUTRO)],
+        [FactCheck(findings=[_finding(0, "insufficient")])],
+    )
+    result = asyncio.run(
+        WriterService(llm, fact_checker=FactChecker(llm)).write(  # type: ignore[arg-type]
+            _chapter().model_copy(update={"evidence_ids": ["e1"]}),
+            _evidence(HISAISHI_PAGE),
+            slot_context=_final_slot(),
+            target_duration_seconds=16,
+            output_language=OutputLanguage.ZH_CN,
+            station=StationId.PORTRAIT,
+            voice_seed="programme-1",
+            route_tracks=["久石譲 - Summer", "木村弓 - いつも何度でも", "久石譲 - Spirited Away"],
+        )
+    )
+
+    assert isinstance(result, RadioScript)
+    signoff = compose_signoff(StationId.PORTRAIT, "programme-1")
+    # the first and last songs are named when the voice can say them; a Japanese title is not
+    assert [block.text for block in result.blocks] == [f"这一程从《Summer》听到《Spirited Away》，就走到这里。{signoff}"]
+
+
+def test_a_statement_resting_on_another_song_of_the_programme_is_not_about_this_slot() -> None:
+    page = "さんぽ 宫崎骏请中川李枝子写词，后来进了小学音乐课本。"
+    opening = KnownTrack(artist="久石譲", title="さんぽ")
+    following = KnownTrack(artist="久石譲", title="君をのせて", spoken_title="伴随着你")
+
+    report = _review(
+        _script("这首歌本来是动画歌，后来进了小学音乐课本。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "后来进了小学音乐课本")]),
+        focus_tracks=[following],
+        other_tracks=[opening],
+    )
+    background = _review(
+        _script("这首歌本来是动画歌，后来进了小学音乐课本。"),
+        _evidence("宫崎骏的动画歌曲后来进了小学音乐课本。"),
+        FactCheck(findings=[_finding(0, "supported", "e1", "后来进了小学音乐课本")]),
+        focus_tracks=[following],
+        other_tracks=[opening],
+    )
+
+    assert [issue.code for issue in report.issues] == ["wrong_subject"]
+    assert background.issues == []  # general background that names no other song is fine
+
+
+def test_a_block_that_still_talks_about_another_song_after_the_rewrite_is_dropped() -> None:
+    from tests.test_voice import Sequenced, _slot
+
+    text = "刚才的One之后，是Other Song的故事。"
+    llm = Sequenced(_script(text), _script(text))
+
+    result = asyncio.run(
+        WriterService(llm).write(
+            _chapter(),
+            [],
+            slot_context=_slot(),
+            target_duration_seconds=14,
+            output_language=OutputLanguage.ZH_CN,
+            station=StationId.PORTRAIT,
+            voice_seed="programme-1",
+            route_tracks=["A - One", "A - Jody", "B - Other Song"],
+        )
+    )
+
+    assert isinstance(result, RadioScript)
+    assert result.blocks == []

@@ -230,6 +230,11 @@ def repeated_sentence(text: str, earlier: str) -> str | None:
 
 # Wording the Writer reaches for again and again; once a programme has used it, it is stock.
 _STOCK_PHRASES = (re.compile(r"挂在.{1,4}名下"),)
+# Sentences that say nothing about the music: only that songs sit together or follow each other.
+FILLER = re.compile(
+    r"并排放在一起|放在一起|节目用它们|接着往下走|都归在他名下|归在他名下|走的路不一样|走的路不同|也一样"
+    r"|同一双手|两首都是他|两首歌都是他|继续听他"
+)
 _CLAUSE_BREAK = re.compile(r"[，。！？、；：,.!?;:\s“”\"'‘’《》「」『』（）()\-—…·]+")
 _CJK_ONLY = re.compile(r"[\u4e00-\u9fff]+")
 _PHRASE_CHARS = 8
@@ -333,6 +338,11 @@ def check_block(
         issues.append("repeats_earlier")
     elif earlier and repeated_phrase(text, earlier) is not None:
         issues.append("repeats_phrase")
+    parts = [part for part in _SENTENCE_BREAK.split(text) if part.strip()]
+    if any(
+        repeated_sentence(parts[i], "。".join(parts[:i])) is not None for i in range(1, len(parts))
+    ):
+        issues.append("repeats_itself")
     if supported_years is not None:
         for year in sorted(years_in(text) - supported_years):
             issues.append(f"unsupported_year:{year}")
@@ -368,6 +378,7 @@ _REWRITE_ISSUES = (
     "recap_list",
     "repeats_earlier",
     "repeats_phrase",
+    "repeats_itself",
     "same_name_tangent",
     "names_other_track",
 )
@@ -404,6 +415,7 @@ _REASON_TEXT = {
     "repeats_earlier": "says again what an earlier block of this programme already said",
     "names_other_track": "talks about a track that is neither the one just played nor the next one; keep to those two",
     "same_name_tangent": "talks about another song that only shares the title; it is not what is playing",
+    "repeats_itself": "says the same thing twice within the block; say it once",
     "repeats_phrase": "reuses a turn of phrase an earlier block of this programme already used; word it differently",
 }
 

@@ -59,14 +59,14 @@ def _outro(text: str) -> RadioScript:
     )
 
 
-def test_a_closing_that_cannot_be_read_is_replaced_by_the_sign_off_alone() -> None:
+def test_a_closing_that_cannot_be_read_is_replaced_by_a_plain_one_and_the_sign_off() -> None:
     bad = "这一程到「となりのトトロ」的《風のとおり道》为止。"
     llm = Sequenced(_outro(bad), _outro(bad))
 
     result = _final_write(llm, StationId.PORTRAIT)
 
     signoff = compose_signoff(StationId.PORTRAIT, "programme-1")
-    assert [block.text for block in result.blocks] == [signoff]
+    assert [block.text for block in result.blocks] == [f"这一程就走到这里。{signoff}"]
     assert result.blocks[0].kind is RadioScriptBlockKind.OUTRO
 
 

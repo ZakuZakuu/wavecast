@@ -49,6 +49,7 @@ class ProviderSettings:
     catalog_pool: bool = True
     # Size the route (tracks and chapters) from the requested duration instead of a fixed cap.
     duration_scaling: bool = True
+    track_research: bool = True
 
     # Search remains deliberately short. Structured synthesis can be materially larger.
     timeout_seconds: float = 20.0
@@ -137,6 +138,7 @@ class ProviderSettings:
             ),
             catalog_pool=_flag_from_env("WAVECAST_CATALOG_POOL", default="on"),
             duration_scaling=_flag_from_env("WAVECAST_DURATION_SCALING", default="on"),
+            track_research=_flag_from_env("WAVECAST_TRACK_RESEARCH", default="on"),
             deepseek_timeout_seconds=_positive_float_from_env(
                 "DEEPSEEK_TIMEOUT_SECONDS", default=20.0
             ),

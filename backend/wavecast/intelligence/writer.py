@@ -6,14 +6,20 @@ import json
 import logging
 from collections.abc import Sequence
 
-from wavecast.narration_quality import CHARS_PER_SECOND, check_block, rewrite_reasons, years_in
+from wavecast.narration_quality import (
+    CHARS_PER_SECOND,
+    FILLER,
+    check_block,
+    rewrite_reasons,
+    years_in,
+)
 from wavecast.presentation import HostMode, host_mode_prompt_guidance
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
-from wavecast.spoken_form import KnownTrack, to_spoken_form
+from wavecast.spoken_form import KnownTrack, has_unspeakable_script, to_spoken_form
 from wavecast.stations import StationId, compose_signoff
 
-from .fact_support import FactChecker, FactReport, without_flagged_sentences
+from .fact_support import FactChecker, FactReport, split_sentences, without_flagged_sentences
 from .fast_start import FastStructuredProvider
 from .models import (
     ChapterPlan,
@@ -26,6 +32,7 @@ from .models import (
     RadioScriptBlockKind,
     resolve_output_language,
 )
+from .track_research import TalkingPoint
 from .voice import voice_instructions, window_for
 
 logger = logging.getLogger(__name__)
@@ -79,6 +86,7 @@ class WriterService:
         slot_context: NarrationSlotContext | None = None,
         slot_contexts: Sequence[NarrationSlotContext] | None = None,
         inference_profile: InferenceProfile = InferenceProfile.SYNTHESIS,
+        track_points: Sequence[TalkingPoint] | None = None,
     ) -> RadioScript | NarrationScript:
         scoped = [item for item in evidence if item.id in set(chapter.evidence_ids)]
         selected_language = resolve_output_language(output_language, topic or chapter.reason)
@@ -112,6 +120,16 @@ class WriterService:
             ]
         )
         slots = list(slot_contexts or ())
+        if (
+            track_points is not None
+            and not track_points
+            and slots
+            and not any(slot.is_final or slot.is_opening for slot in slots)
+        ):
+            # Track research ran and found nothing checkable about this track.  A block would
+            # have nothing to say but filler ("接着听", "也一样"), which is worse than the music.
+            logger.info("writer_skipped reason=no_verified_points")
+            return RadioScript(blocks=[], intended_duration_seconds=1)
         spoken_window = (
             window_for(station, target_duration_seconds)
             if selected_language is OutputLanguage.ZH_CN
@@ -161,6 +179,34 @@ class WriterService:
                 "programme covers, includes, or is heading to them, and never describe the "
                 "programme as a route that reaches them.\n"
             )
+        if track_points is not None:
+            if track_points:
+                route_line += (
+                    "Verified points about this chapter's track (each one is stated by a source and "
+                    "was checked; say them in your own words, no need to say where they come from): "
+                    + " | ".join(
+                        point.text
+                        if point.scope == "track"
+                        else (
+                            f"(programme background about the person or the period, not about the song "
+                            f"that plays: tell it as a story and never call it 这首歌) {point.text}"
+                            if point.scope == "background"
+                            else f"(about the album or film, not the song) {point.text}"
+                        )
+                        for point in track_points
+                    )
+                    + ". Build this chapter's talk around one of them; one is enough, told in two or "
+                    "three short sentences: what happened, one concrete detail, and why it is worth "
+                    "hearing here. Do not infer what a song means from it. Add only listening cues "
+                    "and transitions of your own; every other factual statement needs support in "
+                    "the scoped evidence.\n"
+                )
+            else:
+                route_line += (
+                    "No source says anything checkable about this chapter's track. Keep the talk "
+                    "to a short transition or something to listen for in the music; state no "
+                    "facts about the song, who made it, what it comes from or its history.\n"
+                )
         language_guidance = (
             ZH_CN_RADIO_WRITING_GUIDANCE
             if selected_language is OutputLanguage.ZH_CN
@@ -247,6 +293,22 @@ class WriterService:
                     known.add((artist, title))
                     known_tracks.append(KnownTrack(artist=artist, title=title))
         route_titles = [label.split(" - ", 1)[-1] for label in route_tracks]
+        # The tracks this slot is about, and the other songs of the programme: a statement may
+        # not rest on material about one of the latter (the final slot may refer to any).
+        focus_known: list[KnownTrack] = []
+        other_known: list[KnownTrack] = []
+        if slots and not any(slot.is_final for slot in slots):
+            focus_known = [
+                KnownTrack(artist=track.canonical_artist, title=track.canonical_title, spoken_title=track.spoken_title)
+                for slot in slots
+                for track in (slot.chapter_track, slot.just_played_track, slot.upcoming_track)
+                if track is not None
+            ]
+            focus_titles_now = {track.title for track in focus_known}
+            for label in route_tracks:
+                artist, _sep, title = label.partition(" - ")
+                if title and title not in focus_titles_now:
+                    other_known.append(KnownTrack(artist=artist, title=title))
         supported = _supported_years(scoped, previous_committed_context, known_tracks)
         # The Writer is not given the played file's length, and a length found in the evidence is
         # usually the album version's; a wrong length is plain to the listener on the progress
@@ -276,6 +338,8 @@ class WriterService:
                     route_labels=route_tracks,
                     context=previous_committed_context,
                     known_text=evidence,
+                    focus_tracks=focus_known,
+                    other_tracks=other_known,
                 )
                 for issue in fact_report.issues:
                     found.setdefault(issue.block, []).append(issue.message)
@@ -313,10 +377,14 @@ class WriterService:
         if isinstance(result, RadioScript) and report is not None:
             result = without_flagged_sentences(result, report, known_tracks)
         if isinstance(result, RadioScript):
+            result = _without_misplaced(result, known_tracks, slots, route_titles)
+            result = _without_filler(result)
             result = _without_identity_conflicts(result, known_tracks, unplayed_artists)
             result = _without_unspeakable(result, known_tracks)
             if signoff:
-                result = _with_signoff(result, signoff, writer_window)
+                result = _with_signoff(
+                    result, signoff, writer_window, closing=_route_closing(known_tracks, route_tracks)
+                )
         return result
 
     async def _attempt(
@@ -397,6 +465,54 @@ def _without_identity_conflicts(
     return script.model_copy(update={"blocks": kept})
 
 
+def _without_filler(script: RadioScript) -> RadioScript:
+    """Remove sentences that only say songs sit together or follow each other."""
+
+    blocks = []
+    for block in script.blocks:
+        sentences = split_sentences(block.text)
+        kept = [item for item in sentences if not FILLER.search(item)]
+        if len(kept) == len(sentences):
+            blocks.append(block)
+            continue
+        logger.info("writer_filler_removed kind=%s removed=%d", block.kind.value, len(sentences) - len(kept))
+        text = "".join(kept).strip()
+        if not text:
+            continue
+        blocks.append(block.model_copy(update={"text": text, "tts_text": None}))
+    return script.model_copy(update={"blocks": blocks})
+
+
+def _without_misplaced(
+    script: RadioScript,
+    tracks: Sequence[KnownTrack],
+    slots: Sequence[NarrationSlotContext],
+    route_titles: Sequence[str],
+) -> RadioScript:
+    """Drop the blocks that still talk about another song of the route after the rewrite."""
+
+    if any(slot.is_final for slot in slots):
+        return script
+    focus = [
+        track.canonical_title
+        for slot in slots
+        for track in (slot.just_played_track, slot.upcoming_track)
+        if track is not None
+    ]
+    kept = []
+    for block in script.blocks:
+        check = check_block(
+            block.text, tracks=tracks, route_titles=route_titles, focus_titles=focus
+        )
+        if any(issue.startswith("names_other_track") for issue in check.issues):
+            logger.warning("writer_block_dropped reason=names_other_track kind=%s", block.kind.value)
+            continue
+        kept.append(block)
+    if len(kept) == len(script.blocks):
+        return script
+    return script.model_copy(update={"blocks": kept})
+
+
 def _without_unspeakable(script: RadioScript, tracks: Sequence[KnownTrack]) -> RadioScript:
     """Drop the blocks the voice still cannot read after the rewrite."""
 
@@ -411,8 +527,57 @@ def _without_unspeakable(script: RadioScript, tracks: Sequence[KnownTrack]) -> R
     return script.model_copy(update={"blocks": kept})
 
 
+def fallback_closing(
+    station: StationId | None,
+    voice_seed: str,
+    slot_contexts: Sequence[NarrationSlotContext],
+    route_tracks: Sequence[str],
+) -> RadioScript | None:
+    """The programme's closing when the Writer could not produce one: route plus sign-off.
+
+    Built only from what the application knows, so it cannot be wrong; None for a station
+    that says no sign-off (夜里) or a programme with no station.
+    """
+
+    signoff = compose_signoff(station, voice_seed)
+    if not signoff:
+        return None
+    return _with_signoff(
+        RadioScript(blocks=[], intended_duration_seconds=1),
+        signoff,
+        closing=_route_closing(_known_tracks(slot_contexts), route_tracks),
+    )
+
+
+def _route_closing(known_tracks: Sequence[KnownTrack], route_tracks: Sequence[str]) -> str:
+    """A closing that states only what the application knows: where the route began and ended.
+
+    Used when the Writer's closing did not survive the fact check, so a programme still ends on
+    the route rather than on the station's name alone.  Songs whose names the voice cannot read
+    are not named.
+    """
+
+    spoken_by_label = {
+        f"{track.artist} - {track.title}": track.spoken_title for track in known_tracks if track.spoken_title
+    }
+
+    def name(label: str) -> str | None:
+        title = label.split(" - ", 1)[-1]
+        said = spoken_by_label.get(label) or (None if has_unspeakable_script(title) else title)
+        return f"《{said}》" if said else None
+
+    if len(route_tracks) >= 2:
+        first, last = name(route_tracks[0]), name(route_tracks[-1])
+        if first and last and first != last:
+            return f"这一程从{first}听到{last}，就走到这里。"
+    return "这一程就走到这里。"
+
+
 def _with_signoff(
-    script: RadioScript, signoff: str, window_seconds: float | None = None
+    script: RadioScript,
+    signoff: str,
+    window_seconds: float | None = None,
+    closing: str = "",
 ) -> RadioScript:
     """Close the programme's last block with the station's sign-off.
 
@@ -421,12 +586,13 @@ def _with_signoff(
     """
 
     if not script.blocks:
-        seconds = max(2, round(len(signoff) / CHARS_PER_SECOND) + 1)
+        text = f"{closing}{signoff}" if closing else signoff
+        seconds = max(2, round(len(text) / CHARS_PER_SECOND) + 1)
         return script.model_copy(
             update={
                 "blocks": [
                     RadioScriptBlock(
-                        kind=RadioScriptBlockKind.OUTRO, text=signoff, duration_seconds=seconds
+                        kind=RadioScriptBlockKind.OUTRO, text=text, duration_seconds=seconds
                     )
                 ]
             }

@@ -34,7 +34,7 @@ from wavecast.narration_quality import years_in
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.spoken_form import KnownTrack, to_spoken_form
-from wavecast.text_identity import canonical_name
+from wavecast.text_identity import base_title_key, canonical_name
 
 from .fast_start import FastStructuredProvider
 from .models import ClaimSupport, ClaimType, Evidence, RadioScript, RadioScriptBlockKind
@@ -61,7 +61,7 @@ _ROLES: dict[str, tuple[str, ...]] = {
     "instrumental": ("演奏", "弹奏", "独奏"),
     "director": ("导演", "执导"),
     "cast": ("主演",),
-    "release": ("发行", "首映", "上映", "公映", "出版", "原声带", "专辑", "收录", "票房"),
+    "release": ("发行", "首映", "上映", "公映", "出版", "票房"),
     "award": ("获奖", "荣获", "入围"),
     "creation": ("创作", "写成", "写了", "写出", "谱写"),
 }
@@ -136,14 +136,30 @@ def quote_in_source(quote: str, source: str) -> bool:
     return len(squashed) >= _MIN_QUOTE_CHARS and squashed in _squash(source)
 
 
-def roles_in(text: str) -> set[str]:
-    return {role for role, words in _ROLES.items() if any(word in text for word in words)}
+# Words that, in a quoted source, state a role in the ways other languages put it (Japanese
+# pages say 歌唱, 歌われる, 歌詞).  They are matched after script variants are folded.
+_QUOTE_ROLE_WORDS: dict[str, tuple[str, ...]] = {
+    "lyricist": ("歌词",),
+    "vocal": ("歌唱", "歌われ", "歌って", "歌わ", "唱:", "唱：", "歌:", "歌：", "vocal"),
+}
+
+
+def roles_in(text: str, *, quote: bool = False) -> set[str]:
+    """The roles a sentence claims, or (``quote=True``) a source line states, script-folded."""
+
+    folded = canonical_name(text) if quote else text
+    found = {role for role, words in _ROLES.items() if any(word in folded for word in words)}
+    if quote:
+        found |= {
+            role for role, words in _QUOTE_ROLE_WORDS.items() if any(word in folded for word in words)
+        }
+    return found
 
 
 def quote_backs_roles(quote: str, roles: set[str]) -> bool:
     """Every role the sentence claims is spoken of, as that role, in the quote."""
 
-    quoted = roles_in(quote)
+    quoted = roles_in(quote, quote=True)
     return all(
         role in quoted or (role == "creation" and quoted & set(_CREATIVE_ROLES)) for role in roles
     )
@@ -183,6 +199,16 @@ def unknown_titles(
             continue
         found.append(name)
     return found
+
+
+def _names_track(text: str, track: KnownTrack) -> bool:
+    """``text`` names the track: its catalog title, its Chinese title, or the title without a version tag."""
+
+    squashed = _squash(text)
+    return any(
+        len(key) >= 2 and key in squashed
+        for key in (_squash(track.title), _squash(base_title_key(track.title)), _squash(track.spoken_title or ""))
+    )
 
 
 def _quote_names_title_variant(quote: str, sentence: str, tracks: Sequence[KnownTrack]) -> bool:
@@ -260,6 +286,8 @@ class FactChecker:
         route_labels: Sequence[str] = (),
         context: str = "",
         known_text: Sequence[Evidence] = (),
+        focus_tracks: Sequence[KnownTrack] = (),
+        other_tracks: Sequence[KnownTrack] = (),
     ) -> FactReport:
         report = FactReport()
         sentences: list[tuple[int, int, str]] = []  # (block, index in block, text)
@@ -332,6 +360,31 @@ class FactChecker:
                     _squash(name) in _squash(finding.quote) for name in _TITLE_IN_BRACKETS.findall(text)
                 ) and not _quote_names_title_variant(finding.quote, text, tracks):
                     verdict = "insufficient"
+            if verdict == "supported" and roles_in(text):
+                # A credit about a track of this programme must be read off a line naming that
+                # track: the composer of the film it belongs to is not the composer of the song.
+                named = [track for track in tracks if _names_track(text, track)]
+                if named and not any(_names_track(finding.quote, track) for track in named):
+                    verdict = "insufficient"
+            if verdict == "supported" and focus_tracks and other_tracks:
+                # A statement that rests on a source about another song of the programme is not
+                # about the song this slot is for, whatever the sentence calls it.
+                lead = f"{finding.quote}\n{sources.get(source_id, '')[:150]}"
+                other = next((track for track in other_tracks if _names_track(lead, track)), None)
+                if other is not None and not any(_names_track(lead, track) for track in focus_tracks):
+                    focus_names = "、".join(track.spoken_title or track.title for track in focus_tracks)
+                    report.issues.append(
+                        SentenceIssue(
+                            block,
+                            index,
+                            text,
+                            "wrong_subject",
+                            f"“{text.strip()}” rests on a source about “{other.title}”, but this slot "
+                            f"is between {focus_names}. Talk about the tracks named in the slot "
+                            "context, or leave the sentence out.",
+                        )
+                    )
+                    continue
             if verdict == "supported":
                 logger.info(
                     "fact_supported source=%s quote=%s", source_id[-8:], finding.quote.strip()[:80]

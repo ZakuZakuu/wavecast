@@ -118,6 +118,16 @@ def chinese_title(metadata: Mapping[str, Any] | None) -> str | None:
     return text
 
 
+def catalog_album(metadata: Mapping[str, Any] | None) -> str | None:
+    """The album the catalog lists a recording on, when it says so."""
+
+    value = (metadata or {}).get("album")
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text[:160] if text else None
+
+
 def spoken_artist(artist: str) -> str | None:
     """How to say an artist credit; unspeakable credits are dropped (at most two are named)."""
 

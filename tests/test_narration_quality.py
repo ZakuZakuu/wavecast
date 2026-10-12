@@ -348,3 +348,31 @@ def test_a_length_given_as_minutes_and_seconds_is_found() -> None:
     assert durations_in("一口气十四分多，接下来三分出头") == {"14分多", "3分出头"}
     assert durations_in("十分好听，十分钟太长") == {"10分钟"}  # 十分 alone is "very"
     assert "unsupported_duration:7分16秒" in issues("七分十六秒的慢三拍", supported_durations=set())
+
+
+def test_a_block_that_says_the_same_thing_twice_is_flagged() -> None:
+    twice = "迈尔斯这首弗拉门戈素描和刚才那首一样都出自他手里。迈尔斯这首弗拉门戈素描和刚才那首是同一位乐手。"
+
+    assert "repeats_itself" in check_block(twice).issues
+    assert "repeats_itself" not in check_block("先听这段小号。再听钢琴怎么接住它。").issues
+
+
+def test_filler_that_only_says_songs_sit_together_is_removed_from_a_block() -> None:
+    import asyncio
+
+    from wavecast.intelligence.models import OutputLanguage, RadioScript
+    from wavecast.intelligence.writer import WriterService
+    from wavecast.stations import StationId
+
+    from tests.test_voice import Sequenced, _chapter, _script, _slot
+
+    llm = Sequenced(_script("这首Summer来自久石让。两个作品并排放在一起。留意开头的钢琴。"))
+    result = asyncio.run(
+        WriterService(llm).write(
+            _chapter(), [], slot_context=_slot(), target_duration_seconds=14,
+            output_language=OutputLanguage.ZH_CN, station=StationId.PORTRAIT, voice_seed="p",
+        )
+    )
+
+    assert isinstance(result, RadioScript)
+    assert [block.text for block in result.blocks] == ["这首Summer来自久石让。留意开头的钢琴。"]

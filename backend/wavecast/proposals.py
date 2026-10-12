@@ -28,7 +28,7 @@ from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError, ProviderSchemaValidationError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
-from wavecast.spoken_form import chinese_title, spoken_artist, spoken_title
+from wavecast.spoken_form import catalog_album, chinese_title, spoken_artist, spoken_title
 from wavecast.stations import StationId, compose_opening, resolve_presentation_intent
 from wavecast.text_identity import canonical_name, text_mentions_name
 
@@ -783,6 +783,7 @@ class LLMProgramProposalGenerator:
             canonical_artist=metadata.artist,
             canonical_title=metadata.title,
             spoken_title=chinese_title(metadata.metadata),
+            album=catalog_album(metadata.metadata),
         )
         timing_profile = await self.retrieval.registry.get_timing_profile(canonical)
         return canonical, metadata.duration_seconds, timing_profile

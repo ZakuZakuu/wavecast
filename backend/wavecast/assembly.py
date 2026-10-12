@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from time import perf_counter
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from wavecast.catalog_pool import (
     AvailabilityStatus,
@@ -71,7 +71,8 @@ from wavecast.intelligence.research import (
 )
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.intelligence.trace import GenerationTrace
-from wavecast.intelligence.writer import WriterService
+from wavecast.intelligence.track_research import TrackResearchService
+from wavecast.intelligence.writer import WriterService, fallback_closing
 from wavecast.materialization import NarrationMaterializer
 from wavecast.models.episode import (
     LiveEpisode,
@@ -142,7 +143,8 @@ from wavecast.route_spread import (
     same_song_other_artist,
     spread_cap,
 )
-from wavecast.spoken_form import chinese_title
+from wavecast.route_work import is_version_of, requested_work
+from wavecast.spoken_form import catalog_album, chinese_title
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
 from wavecast.text_identity import (
@@ -197,6 +199,18 @@ class LiveEpisodeAssemblyRequest(BaseModel):
     required_artists: list[str] = Field(default_factory=list, max_length=4)
     # Seeds the variety of choices (which tracks the Curator sees first); the programme's id.
     variety_seed: str = Field(default="", max_length=120)
+
+    # The work whose versions were asked for ("Autumn Leaves 的不同版本"), read from the request
+    # unless ``work_checked``.  Once the opening track is known the claim is confirmed or dropped
+    # (see ``_confirm_work``), so a request mistaken for one about a work cannot empty the route.
+    required_work: str | None = Field(default=None, max_length=120)
+    work_checked: bool = False
+
+    @model_validator(mode="after")
+    def _read_required_work(self) -> LiveEpisodeAssemblyRequest:
+        if not self.work_checked and self.required_work is None:
+            self.required_work = requested_work(self.topic)
+        return self
 
 
 class UnresolvedAssemblyProposal(BaseModel):
@@ -568,9 +582,11 @@ class LiveEpisodeAssemblyService:
         ledger: UsageLedger | None = None,
         narration_ratio: float = 0.15,
         catalog_pool_builder: CatalogPoolBuilder | None = None,
+        track_research: TrackResearchService | None = None,
         duration_scaling: bool = False,
     ) -> None:
         self.catalog_pool_builder = catalog_pool_builder
+        self.track_research = track_research
         self.duration_scaling = duration_scaling
         self.fast_path = fast_path
         self.background_pipeline = background_pipeline
@@ -596,6 +612,7 @@ class LiveEpisodeAssemblyService:
         ready successor while the fuller route is still being planned.
         """
 
+        request = _confirm_work(request, opening_track)
         intelligence_input = FastResearchInput(
             topic=request.topic,
             anchor_tracks=list(request.anchor_tracks),
@@ -635,6 +652,10 @@ class LiveEpisodeAssemblyService:
                 return None
             if resolved is None or _same_song_identity(resolved, opening_track):
                 return None
+            if request.required_work and not is_version_of(
+                resolved.canonical_title, request.required_work
+            ):
+                return None  # a request for versions of a work does not continue with another song
 
             # FastStart owns continuity, not final host copy. Persist music
             # immediately and let the evidence-scoped Writer author the first
@@ -726,6 +747,7 @@ class LiveEpisodeAssemblyService:
         before Writer, composition, TTS, and playback-asset preparation.
         """
 
+        request = _confirm_work(request, opening_track)
         prepared = await self._prepare_intelligence(
             request,
             request_id=request_id,
@@ -750,6 +772,7 @@ class LiveEpisodeAssemblyService:
             writer=self.background_pipeline.writer,
             composer=self.composer,
             materializer=self.materializer,
+            track_research=self.track_research,
         )
 
     async def _resolve_catalog_replacement(
@@ -763,6 +786,7 @@ class LiveEpisodeAssemblyService:
         catalog_pool: CatalogPool | None = None,
         artist_cap: int | None = None,
         station: StationId | None = None,
+        required_work: str | None = None,
     ) -> tuple[ResolvedTrack, TrackProposal, str] | None:
         """Recover one unresolved speculative slot without weakening identity safety."""
 
@@ -783,7 +807,7 @@ class LiveEpisodeAssemblyService:
                 _same_song_identity(candidate, used) for used in used_tracks
             ):
                 continue
-            if _blocked_by_spread(candidate, used_tracks, artist_cap, station):
+            if _blocked_by_spread(candidate, used_tracks, artist_cap, station, required_work):
                 continue
             return candidate, proposal, "researched_candidate"
 
@@ -823,10 +847,11 @@ class LiveEpisodeAssemblyService:
                     canonical_title=alternative.title,
                     duration_seconds=alternative.duration_seconds or None,
                     spoken_title=chinese_title(alternative.metadata),
+                    album=catalog_album(alternative.metadata),
                 )
                 if any(_same_song_identity(candidate, used) for used in used_tracks):
                     continue
-                if _blocked_by_spread(candidate, used_tracks, artist_cap, station):
+                if _blocked_by_spread(candidate, used_tracks, artist_cap, station, required_work):
                     continue
                 proposal = TrackProposal(
                     artist=alternative.artist,
@@ -857,7 +882,7 @@ class LiveEpisodeAssemblyService:
                 candidate = entry.resolved_track()
                 if any(_same_song_identity(candidate, used) for used in used_tracks):
                     continue
-                if _blocked_by_spread(candidate, used_tracks, artist_cap, station):
+                if _blocked_by_spread(candidate, used_tracks, artist_cap, station, required_work):
                     continue
                 proposal = TrackProposal(
                     artist=entry.artist,
@@ -1012,7 +1037,9 @@ class LiveEpisodeAssemblyService:
                     ):
                         last_resolution_reason = "duplicate episode song identity"
                         continue
-                    if _blocked_by_spread(candidate, used_tracks, artist_cap, request.station):
+                    if _blocked_by_spread(
+                        candidate, used_tracks, artist_cap, request.station, request.required_work
+                    ):
                         last_resolution_reason = "artist already at the route limit"
                         continue
                     resolved = candidate
@@ -1035,6 +1062,7 @@ class LiveEpisodeAssemblyService:
                         catalog_pool=catalog_pool,
                         artist_cap=artist_cap,
                         station=request.station,
+                        required_work=request.required_work,
                     )
                     if replacement is not None:
                         resolved, selected_proposal, replacement_kind = replacement
@@ -1230,6 +1258,7 @@ class LiveEpisodeAssemblyService:
                         canonical_title=alternative.title,
                         duration_seconds=alternative.duration_seconds or None,
                         spoken_title=chinese_title(alternative.metadata),
+                    album=catalog_album(alternative.metadata),
                     )
                 else:
                     try:
@@ -1247,7 +1276,9 @@ class LiveEpisodeAssemblyService:
                     for used in effective_used
                 ):
                     continue
-                if _blocked_by_spread(candidate, effective_used, artist_cap[0], request.station):
+                if _blocked_by_spread(
+                    candidate, effective_used, artist_cap[0], request.station, request.required_work
+                ):
                     continue
                 append_candidate(candidate, proposal, emergency=emergency)
                 return True
@@ -1298,7 +1329,9 @@ class LiveEpisodeAssemblyService:
                 candidate = entry.resolved_track()
                 if any(_same_song_identity(candidate, used) for used in effective_used):
                     continue
-                if _blocked_by_spread(candidate, effective_used, artist_cap[0], request.station):
+                if _blocked_by_spread(
+                    candidate, effective_used, artist_cap[0], request.station, request.required_work
+                ):
                     continue
                 append_candidate(
                     candidate,
@@ -1495,7 +1528,7 @@ class LiveEpisodeAssemblyService:
             if locked_successor is not None and _same_resolved_track(candidate, locked_successor):
                 return False
             return _blocked_by_spread(
-                candidate, spread_planned_used(), artist_cap, request.station
+                candidate, spread_planned_used(), artist_cap, request.station, request.required_work
             )
 
         for chapter in chapters:
@@ -1556,6 +1589,7 @@ class LiveEpisodeAssemblyService:
                         catalog_pool=catalog_pool,
                         artist_cap=artist_cap,
                         station=request.station,
+                        required_work=request.required_work,
                     )
                     if replacement is not None:
                         resolved, selected_proposal, replacement_kind = replacement
@@ -1813,12 +1847,19 @@ class LiveEpisodeAssemblyService:
             return None
         try:
             proposals = _pool_proposals(fast_plan, bundle)
+            work = request.required_work
+            if work:
+                proposals = [item for item in proposals if is_version_of(item.title, work)]
             pool = await builder.build(
                 proposals=proposals,
-                artist_queries=_pool_artist_queries(
-                    proposals, request.required_artists, request.topic
+                artist_queries=(
+                    []
+                    if work
+                    else _pool_artist_queries(proposals, request.required_artists, request.topic)
                 ),
-                keyword_queries=catalog_queries(request.topic),
+                # Versions of a work are found by its title; the artists who recorded it are
+                # whoever the catalog returns.
+                keyword_queries=[work, f"{work} jazz", f"{work} cover"] if work else catalog_queries(request.topic),
                 hint_tags=community_tags(request.topic),
                 seed=request.variety_seed,
                 named_artists=request.required_artists,
@@ -1841,7 +1882,8 @@ class LiveEpisodeAssemblyService:
                 "entries": [
                     entry
                     for entry in pool.entries
-                    if not any(
+                    if (not request.required_work or is_version_of(entry.title, request.required_work))
+                    and not any(
                         _same_song_identity(reserved, entry.resolved_track())
                         for reserved in reserved_tracks
                     )
@@ -2489,15 +2531,35 @@ def _research_depth(request: LiveEpisodeAssemblyRequest) -> ResearchDepth:
     return ResearchDepth.DEEP if deep else ResearchDepth.STANDARD
 
 
+def _confirm_work(
+    request: LiveEpisodeAssemblyRequest, opening_track: ResolvedTrack
+) -> LiveEpisodeAssemblyRequest:
+    """Keep a "versions of a work" request only if the opening track really is that work."""
+
+    if request.work_checked:
+        return request
+    work = request.required_work
+    if work and not is_version_of(opening_track.canonical_title, work):
+        logger.info("route_work_unconfirmed")
+        return request.model_copy(update={"required_work": None, "work_checked": True})
+    return request.model_copy(update={"work_checked": True})
+
+
 def _blocked_by_spread(
     candidate: ResolvedTrack,
     used_tracks: Sequence[ResolvedTrack],
     artist_cap: int | None,
     station: StationId | None,
+    required_work: str | None = None,
 ) -> bool:
     """A programme not about particular artists plays none of them more than the limit, and
-    does not play one song twice under two artists (a cover) unless the station is about that."""
+    does not play one song twice under two artists (a cover) unless the station is about that.
 
+    A request for the versions of one work plays only recordings of that work."""
+
+    if required_work and not is_version_of(candidate.canonical_title, required_work):
+        logger.info("route_work_blocked reason=not_a_version")
+        return True
     if artist_cap is None:
         return False
     if at_artist_cap(candidate.canonical_artist, used_tracks, artist_cap):
@@ -2895,7 +2957,8 @@ def _build_progressive_session(
         sum(track_seconds(length) for length in resolved_lengths),
         len(resolved_lengths) * _ESTIMATED_TRACK_DURATION_SECONDS,
     )
-    if estimated_resolved_music_seconds < required_resolved_music_seconds:
+    if estimated_resolved_music_seconds < required_resolved_music_seconds and not request.required_work:
+        # (A request for the versions of one work ends where the confirmed versions end.)
         raise EpisodeAssemblyError(
             "progressive route duration coverage is too short to be finalized",
             stage="resolution",
@@ -3577,11 +3640,13 @@ class StagedProgressiveChapterGenerator:
         writer: WriterService,
         composer: EpisodeComposer,
         materializer: NarrationMaterializer,
+        track_research: TrackResearchService | None = None,
     ) -> None:
         self.session = session
         self.writer = writer
         self.composer = composer
         self.materializer = materializer
+        self.track_research = track_research
 
     @scoped_to_episode
     async def generate_next(self, episode: LiveEpisode) -> GeneratedChapter | None:
@@ -3749,10 +3814,72 @@ class StagedProgressiveChapterGenerator:
             for segment in episode.ordered_segments
         )
 
+        # What can be said about this chapter's track: found (and checked) now, in the background,
+        # because the route is known only after the programme-level research is done.
+        writer_chapter = chapter.chapter
+        writer_evidence = self.session.research.evidence
+        track_points = None
+        track_evidence: list[Evidence] = []
+        track_evidence_ids: list[str] = []
+        research_track = _research_focus(chapter)
+        if self.track_research is not None and research_track is not None:
+            researched = await self.track_research.prepare(
+                episode_id=episode.id,
+                track=research_track,
+                evidence=self.session.research.evidence,
+                station=self.session.station,
+                subject=self.session.topic,
+                subject_names=self.session.required_artists,
+            )
+            if researched is not None:
+                track_points = researched.points
+                track_evidence = researched.evidence
+                track_evidence_ids = researched.evidence_ids
+                writer_evidence = [*self.session.research.evidence, *researched.evidence]
+                if chapter.resolved_track is not None:
+                    scoped_ids = list(chapter.chapter.evidence_ids)
+                    scoped_ids.extend(i for i in researched.evidence_ids if i not in scoped_ids)
+                    writer_chapter = chapter.chapter.model_copy(update={"evidence_ids": scoped_ids})
+                else:
+                    # A narrative beat with no song of its own sits between two songs.  What the
+                    # plan once said about it (a song that did not make the route, its evidence)
+                    # must not compete with the song that actually follows.
+                    writer_chapter = chapter.chapter.model_copy(
+                        update={
+                            "track": None,
+                            "track_alternates": [],
+                            "connection_from_previous_track": None,
+                            "reason": "A bridge between the songs on either side of this slot.",
+                            "narration_goal": "Say one checked thing about the song that follows, or nothing.",
+                            "evidence_ids": list(researched.evidence_ids),
+                            "claim_support": [],
+                        }
+                    )
+
+        is_final_chapter = bool(self.session.chapters) and (
+            chapter.chapter_id == self.session.chapters[-1].chapter_id
+        )
+
+        def assemble(script: RadioScript | NarrationScript) -> PlayableEpisode:
+            radio_script, _ = _assemble_writer_scripts(
+                [script],
+                len(prepared_tracks),
+                chapter_music_indices=[chapter_music_index],
+                slot_contexts=[chapter.slot_contexts],
+                chapter_connections=[chapter.chapter.connection_from_previous_track],
+                previous_music_indices=[0 if has_previous_music else None],
+                require_final_slot=is_final_chapter,
+            )
+            composed = self.composer.compose_prepared(prepared_tracks, radio_script)
+            _assert_narration_blocks_materialized(radio_script, composed)
+            return composed
+
+        playable: PlayableEpisode | None = None
+        authoring_errors = (ProviderError, NarrationPlacementError, EpisodeAssemblyError, ValueError)
         try:
             script = await self.writer.write(
-                chapter.chapter,
-                self.session.research.evidence,
+                writer_chapter,
+                writer_evidence,
                 previous_committed_context=previous_context,
                 next_track_metadata=next_track_metadata,
                 host_mode=self.session.presentation_intent.host_mode,
@@ -3766,42 +3893,99 @@ class StagedProgressiveChapterGenerator:
                 unfulfilled_artists=self.session.unfulfilled_artists,
                 topic=self.session.topic,
                 slot_contexts=chapter.slot_contexts,
+                track_points=track_points,
             )
-            radio_script, _ = _assemble_writer_scripts(
-                [script],
-                len(prepared_tracks),
-                chapter_music_indices=[chapter_music_index],
-                slot_contexts=[chapter.slot_contexts],
-                chapter_connections=[chapter.chapter.connection_from_previous_track],
-                previous_music_indices=[0 if has_previous_music else None],
-                require_final_slot=(
-                    bool(self.session.chapters)
-                    and chapter.chapter_id == self.session.chapters[-1].chapter_id
-                ),
-            )
-            playable = self.composer.compose_prepared(prepared_tracks, radio_script)
-            _assert_narration_blocks_materialized(radio_script, playable)
-        except (
-            ProviderError,
-            NarrationPlacementError,
-            EpisodeAssemblyError,
-            ValueError,
-        ) as error:
+            if (
+                isinstance(script, RadioScript)
+                and not script.blocks
+                and not is_final_chapter
+                and self.track_research is not None
+                and (story := await self.track_research.background_story(
+                    episode_id=episode.id,
+                    station=self.session.station,
+                    subject=self.session.topic,
+                    subject_names=self.session.required_artists,
+                    evidence=self.session.research.evidence,
+                ))
+                is not None
+            ):
+                # What was written about this song did not survive the checks; tell one of the
+                # programme's background stories instead of leaving the slot silent.
+                logger.info("narration_background_retry chapter_id=%s", chapter.chapter_id)
+                scoped = list(writer_chapter.evidence_ids)
+                if story.evidence_id not in scoped:
+                    scoped.append(story.evidence_id)
+                    track_evidence_ids = [*track_evidence_ids, story.evidence_id]
+                script = await self.writer.write(
+                    writer_chapter.model_copy(update={"evidence_ids": scoped}),
+                    writer_evidence,
+                    previous_committed_context=previous_context,
+                    next_track_metadata=next_track_metadata,
+                    host_mode=self.session.presentation_intent.host_mode,
+                    target_duration_seconds=chapter.target_narration_seconds,
+                    output_language=self.session.output_language,
+                    station=self.session.station,
+                    voice_seed=episode.seed_id,
+                    used_openers=_used_openers(episode),
+                    route_tracks=route_tracks,
+                    unplayed_artists=unplayed_artists,
+                    unfulfilled_artists=self.session.unfulfilled_artists,
+                    topic=self.session.topic,
+                    slot_contexts=chapter.slot_contexts,
+                    track_points=[story],
+                )
+            playable = assemble(script)
+        except authoring_errors as error:
             # Writer is the quality layer, not the existence guarantee. P0
             # deliberately prefers a clean music-only gap over canned catalog
             # copy when Writer cannot produce a trustworthy bridge.
             logger.warning(
-                "narration_authoring_failed chapter_id=%s error_type=%s host_mode=%s",
+                "narration_authoring_failed chapter_id=%s error_type=%s host_mode=%s reason=%s",
                 chapter.chapter_id,
                 type(error).__name__,
                 self.session.presentation_intent.host_mode.value,
+                str(error)[:120],
             )
+        if playable is None and is_final_chapter and self.session.output_language is OutputLanguage.ZH_CN:
+            # A programme always ends: without the Writer's closing the application says where
+            # the route ended and signs off.
+            closing = fallback_closing(
+                self.session.station, episode.seed_id, chapter.slot_contexts, route_tracks
+            )
+            if closing is not None:
+                try:
+                    playable = assemble(closing)
+                    logger.info("narration_closing_fallback chapter_id=%s", chapter.chapter_id)
+                except authoring_errors as error:
+                    logger.warning(
+                        "narration_closing_fallback_failed chapter_id=%s error_type=%s",
+                        chapter.chapter_id,
+                        type(error).__name__,
+                    )
+        if playable is None:
             return None
-        return _generated_runtime_chapter(
+        generated = _generated_runtime_chapter(
             chapter.chapter_id,
             list(playable.segments),
             base_order=chapter_start_order,
         )
+        return generated.model_copy(
+            update={
+                "research_evidence": track_evidence,
+                "research_evidence_ids": track_evidence_ids,
+            }
+        )
+
+
+def _research_focus(chapter: ProgressiveAssemblyChapter) -> ResolvedTrack | None:
+    """The song a chapter's talk is about: its own, or for a beat without one, the song that follows."""
+
+    if chapter.resolved_track is not None:
+        return chapter.resolved_track
+    for slot in chapter.slot_contexts:
+        if not slot.is_final and slot.upcoming_track is not None:
+            return slot.upcoming_track
+    return None
 
 
 def _pending_narration_placeholder(
@@ -4325,4 +4509,9 @@ def create_episode_assembly_service(
             else None
         ),
         duration_scaling=settings.duration_scaling,
+        track_research=(
+            TrackResearchService(search=research, llm=writer_llm, deep_search=deep_research)
+            if settings.track_research and settings.resolved_research_provider != "mock"
+            else None
+        ),
     )
