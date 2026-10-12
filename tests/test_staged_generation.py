@@ -498,6 +498,47 @@ def test_writer_enrichment_adds_script_ready_narration_without_repreparing_music
     assert all(segment.state is SegmentState.SCRIPT_READY for segment in narration)
     assert all(segment.audio_source_url is None for segment in narration)
 
+def test_a_skipped_host_seam_is_final_even_if_the_writer_returns_late(tmp_path) -> None:
+    track = ResolvedTrack(
+        track_ref="mock:bridge",
+        canonical_artist="Bridge Artist",
+        canonical_title="Bridge Track",
+    )
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    generator = StagedProgressiveChapterGenerator(
+        session=_session(track),
+        writer=_Writer(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+    )
+    repository = InMemoryEpisodeRepository()
+    episode = _episode()
+    episode.progressive_session = _session(track)
+    generated = asyncio.run(generator.generate_next(episode))
+    assert generated is not None
+    episode.segments.extend(generated.segments)
+    # The continuity deadline already gave the seam up.
+    episode.segment("chapter-2:narration:0").state = SegmentState.SKIPPED
+    repository.save(episode)
+    late = asyncio.run(generator.author_narration(episode.model_copy(deep=True), "chapter-2"))
+    assert late is not None
+
+    updated = _finish_authoring(
+        SimpleNamespace(repository=repository, now=utc_now),
+        episode.id,
+        "chapter-2",
+        late,
+    )
+
+    narration = [
+        segment for segment in updated.ordered_segments
+        if isinstance(segment, NarrationSegment) and segment.chapter_id == "chapter-2"
+    ]
+    assert [segment.id for segment in narration] == ["chapter-2:narration:0"]
+    assert narration[0].state is SegmentState.SKIPPED
+    assert "chapter-2" in updated.progressive_session.narration_authored_chapter_ids  # type: ignore[union-attr]
+
+
 def test_tts_is_not_called_before_ready_music_is_published(tmp_path) -> None:
     track = ResolvedTrack(
         track_ref="mock:bridge",
