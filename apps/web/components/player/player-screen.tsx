@@ -10,10 +10,10 @@ import { recordLessLikeThis } from "../../lib/listener-feedback";
 import { friendlyError } from "../../lib/friendly-error";
 import { chapterNumberOf, currentMusicSegment, estimatedTotalSeconds, nextMusicSegment, trackLabel, voiceClipTiming } from "../../lib/now-playing";
 import { currentSentenceIndex, nowLineMode, splitSentences, type NowLineMode } from "../../lib/now-line";
-import { nextProgramMusicStart } from "../../lib/playback";
+import { nextProgramMusicStart, previousProgramMusicStart } from "../../lib/playback";
 import { formatFreq, stationForProgramme } from "../../lib/stations";
 import { TypeCover } from "../cover/type-cover";
-import { Back15Icon, ChevronDownIcon, MoreIcon, PauseIcon, PlayIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
+import { Back15Icon, ChevronDownIcon, Forward15Icon, MoreIcon, PauseIcon, PlayIcon, PrevIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
 import { ShareSheet } from "../programme/share-sheet";
 import { MoreSheet } from "./more-sheet";
 import { NarrationSheet, type NarrationPassage } from "./narration-sheet";
@@ -175,6 +175,20 @@ export function PlayerScreen({
     np.nextPlayback();
   };
 
+  const previous = () => {
+    if (!np.mixPlan) return;
+    np.commitSeek(previousProgramMusicStart(np.mixPlan, np.browserPosition));
+  };
+
+  const forward = () => {
+    // Only what has been prepared can be played: stop at the prepared edge.
+    if (np.browserPosition + 1 >= frontier) {
+      toast.show("后面的内容还在准备");
+      return;
+    }
+    np.nudgeSeek(15);
+  };
+
   const lessLikeThis = () => {
     if (music) {
       recordLessLikeThis({ trackRef: music.track_ref, title: music.title, artist: music.artist, episodeId: episode.id });
@@ -280,8 +294,11 @@ export function PlayerScreen({
             />
 
           <div className="transport" aria-label="播放控制">
+            <button type="button" className="transport-edge" aria-label="上一首" onClick={previous} disabled={!audioReady || !np.mixPlan}>
+              <PrevIcon size={26} />
+            </button>
             <button type="button" className="transport-side" aria-label="后退 15 秒" onClick={() => np.nudgeSeek(-15)} disabled={!audioReady}>
-              <Back15Icon size={34} />
+              <Back15Icon size={32} />
             </button>
             <button
               type="button"
@@ -294,8 +311,11 @@ export function PlayerScreen({
                 <PauseIcon size={46} className="morph-pause" />
               </span>
             </button>
-            <button type="button" className="transport-side" aria-label="跳过这首" onClick={skip} disabled={!audioReady}>
-              <SkipIcon size={34} />
+            <button type="button" className="transport-side" aria-label="前进 15 秒" onClick={forward} disabled={!audioReady}>
+              <Forward15Icon size={32} />
+            </button>
+            <button type="button" className="transport-edge" aria-label="下一首" onClick={skip} disabled={!audioReady}>
+              <SkipIcon size={26} />
             </button>
           </div>
 

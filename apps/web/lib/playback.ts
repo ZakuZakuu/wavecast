@@ -35,6 +35,27 @@ export function nextProgramMusicStart(plan: MixPlan, positionSeconds: number): n
     .sort((left, right) => left - right)[0];
 }
 
+/**
+ * Where "previous" goes, as in any music player: back to the start of the track
+ * that is playing if it has played for a few seconds, otherwise to the start of
+ * the track before it (the first track simply restarts). Narration never counts
+ * as a track.
+ */
+export function previousProgramMusicStart(
+  plan: MixPlan,
+  positionSeconds: number,
+  restartAfterSeconds = 3,
+): number {
+  const starts = plan.clips
+    .filter((clip) => clip.lane === "MUSIC")
+    .map((clip) => clip.timelineStartSeconds)
+    .sort((left, right) => left - right);
+  const playing = starts.filter((start) => start <= positionSeconds + 0.05);
+  if (!playing.length) return 0;
+  const current = playing[playing.length - 1];
+  if (positionSeconds - current > restartAfterSeconds) return current;
+  return playing.length > 1 ? playing[playing.length - 2] : current;
+}
 
 const PLAYBACK_READY_STATES = new Set(["AUDIO_READY", "COMMITTED", "PLAYED"]);
 

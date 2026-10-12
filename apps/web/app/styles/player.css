@@ -254,7 +254,7 @@
 
 .transport {
   margin-top: 8px;
-  padding: 0 22px;
+  padding: 0 2px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -270,7 +270,8 @@
 }
 .transport button:not(:disabled):active { transform: scale(.96); transition-duration: var(--dur-instant); }
 .transport button:disabled { opacity: .35; }
-.transport-side { width: 56px; height: 56px; }
+.transport-side { width: 52px; height: 56px; }
+.transport-edge { width: 48px; height: 56px; }
 .transport-main { width: 72px; height: 72px; }
 .morph { position: relative; width: 46px; height: 46px; display: block; }
 .morph-sm { width: 24px; height: 24px; }
