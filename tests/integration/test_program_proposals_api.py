@@ -230,3 +230,30 @@ def test_programme_language_travels_from_request_to_started_episode() -> None:
         assert started.json()["output_language"] == "zh-CN"
     finally:
         api_module.proposal_repository = previous_repository
+
+
+def test_the_avoid_list_survives_saving_the_onboarding_form(monkeypatch) -> None:
+    from wavecast.user_context import InMemoryUserPreferencesRepository
+
+    class FakeVerifier:
+        async def verify(self, token: str) -> str:
+            return "avoid-user"
+
+    monkeypatch.setattr(api_module, "_auth_verifier", FakeVerifier())
+    monkeypatch.setattr(api_module, "user_preferences_repository", InMemoryUserPreferencesRepository())
+    client = TestClient(api_module.app)
+    headers = {"Authorization": "Bearer t", "X-Wavecast-Listener": "avoid-listener"}
+
+    first = client.post("/api/user-preferences/me/avoid-artists", json={"artist": "Mogwai"}, headers=headers)
+    assert first.status_code == 200
+    assert first.json()["avoid_artists"] == ["Mogwai"]
+
+    saved = client.put(
+        "/api/user-preferences/me",
+        json={"genres": ["Jazz"], "artists": [], "moods": [], "contexts": [], "discovery_level": "BALANCED"},
+        headers=headers,
+    )
+    assert saved.json()["avoid_artists"] == ["Mogwai"]
+    assert client.get("/api/user-preferences/me", headers=headers).json()["avoid_artists"] == ["Mogwai"]
+    assert client.post("/api/user-preferences/me/avoid-artists", json={"artist": ""}, headers=headers).status_code == 422
+    assert client.post("/api/user-preferences/me/avoid-artists", json={"artist": "x"}).status_code in {401, 403}

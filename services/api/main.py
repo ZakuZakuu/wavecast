@@ -140,6 +140,7 @@ from wavecast.storage.user_context import (
     PostgresUserPreferencesRepository,
 )
 from wavecast.user_context import (
+    AvoidArtistInput,
     InMemoryUserEventRepository,
     InMemoryUserPreferencesRepository,
     UserEvent,
@@ -149,6 +150,7 @@ from wavecast.user_context import (
     UserPreferences,
     UserPreferencesRepository,
     UserPreferencesUpdate,
+    with_avoided_artist,
 )
 
 logger = logging.getLogger(__name__)
@@ -940,11 +942,22 @@ def get_user_preferences(request: Request) -> UserPreferences:
 def put_user_preferences(
     request: Request, body: UserPreferencesUpdate
 ) -> UserPreferences:
+    user_id = authenticated_user(request)
+    existing = user_preferences_repository.get(user_id)
     preferences = UserPreferences(
-        user_id=authenticated_user(request),
+        user_id=user_id,
+        # The onboarding form does not carry the 少放这类 list; saving it must not erase it.
+        avoid_artists=existing.avoid_artists if existing else [],
         **body.model_dump(),
     )
     return user_preferences_repository.save(preferences)
+
+
+@app.post("/api/user-preferences/me/avoid-artists", response_model=UserPreferences)
+def avoid_artist(request: Request, body: AvoidArtistInput) -> UserPreferences:
+    user_id = authenticated_user(request)
+    current = user_preferences_repository.get(user_id) or UserPreferences(user_id=user_id)
+    return user_preferences_repository.save(with_avoided_artist(current, body.artist))
 
 
 @app.delete("/api/user-preferences/me", response_model=UserPreferences)

@@ -10,6 +10,7 @@ import { DUR } from "../../lib/motion/easing";
 import { isPlaybackReadySegment } from "../../lib/playback";
 import { openPlayer } from "../../lib/player-nav";
 import { rememberProgrammeStation, type Station } from "../../lib/stations";
+import { lessLikeThisArtists } from "../../lib/listener-feedback";
 import { readLocalTaste, tasteContext } from "../../lib/taste";
 import type { DurationIntent, ProgramProposal } from "../../lib/types";
 import { recordCreatedProgram } from "../../lib/user-library";
@@ -72,7 +73,7 @@ export function useTuneStart() {
         prompt: prompt.trim().length >= 2 ? prompt.trim() : target.defaultTopic,
         duration_intent: duration,
         count: 1,
-        taste_context: tasteContext(readLocalTaste()),
+        taste_context: tasteContext(readLocalTaste(), lessLikeThisArtists()),
         // The interface is Chinese: the programme follows it, not the language of the keyword.
         output_language: PROGRAMME_LANGUAGE,
         station: target.id,

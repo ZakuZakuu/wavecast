@@ -2,7 +2,9 @@
 
 import { createElement, useEffect, useRef, useState, type ReactNode } from "react";
 
+import { api } from "../lib/api";
 import { authClient, clearApiAuthToken } from "../lib/auth-client";
+import { syncLessLikeThis } from "../lib/listener-feedback";
 import {
   activateGuestLibraryIdentity,
   beginLibraryIdentityTransition,
@@ -37,6 +39,8 @@ export function LibraryIdentityBridge({ children }: { children: ReactNode }) {
     setReadyIdentity(null);
     setFailedIdentity(null);
     clearApiAuthToken();
+    // Fire and forget: what a guest marked 少放这类 follows them into the account.
+    if (userId) void syncLessLikeThis(userId, (artist, id) => api.avoidArtist(artist, id));
     const initialization = userId
       ? syncAuthenticatedLibrary(userId, generation)
       : Promise.resolve(activateGuestLibraryIdentity(generation));
