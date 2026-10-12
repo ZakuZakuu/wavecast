@@ -55,6 +55,11 @@ export const SkipIcon = (p: IconProps) => (
   <svg {...solid(p)}><path d="M4 5.8v12.4a.8.8 0 0 0 1.2.7l9.4-6.2a.8.8 0 0 0 0-1.4L5.2 5.1a.8.8 0 0 0-1.2.7z" /><rect x="16.8" y="5" width="2.6" height="14" rx="1" /></svg>
 );
 
+/** Previous track: the skip icon mirrored. */
+export const PrevIcon = (p: IconProps) => (
+  <svg {...solid(p)} style={{ transform: "scaleX(-1)" }}><path d="M4 5.8v12.4a.8.8 0 0 0 1.2.7l9.4-6.2a.8.8 0 0 0 0-1.4L5.2 5.1a.8.8 0 0 0-1.2.7z" /><rect x="16.8" y="5" width="2.6" height="14" rx="1" /></svg>
+);
+
 /** Back 15 seconds. The numeral is drawn as text so it reads as "15", not "12". */
 export const Back15Icon = ({ size = 32, ...rest }: IconProps) => (
   <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden focusable={false} {...rest}>
@@ -84,8 +89,18 @@ export const ThumbDownIcon = (p: IconProps) => (
   <svg {...stroke(p)}><path d="M16.5 4.5h2.2a1.3 1.3 0 0 1 1.3 1.3v6.4a1.3 1.3 0 0 1-1.3 1.3h-2.2z" /><path d="M16.5 13.5 12.8 20a2 2 0 0 1-2.9-2.2l.8-3.3H5.6a1.8 1.8 0 0 1-1.8-2.1l1.2-6.3a1.8 1.8 0 0 1 1.8-1.5h9.7" /></svg>
 );
 
-export const CaptionsIcon = (p: IconProps) => (
-  <svg {...stroke(p)}><rect x="3" y="5" width="18" height="14" rx="3" /><path d="M7 11h4M13 11h4M7 15h7" /></svg>
+/** A speech bubble with lines: the host's words. */
+export const ScriptIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-6.5L8 20.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" /><path d="M7.5 10h9M7.5 13h5.5" /></svg>
+);
+
+/** Forward 15 seconds: Back15Icon mirrored, with the numeral still reading "15". */
+export const Forward15Icon = ({ size = 32, ...rest }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden focusable={false} {...rest}>
+    <path d="M22.8 8.6A10.6 10.6 0 1 0 26.4 17" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+    <path d="M22.4 3.8v5.2h-5.2" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+    <text x="15.6" y="21.3" textAnchor="middle" fontSize="10.5" fontWeight="700" fill="currentColor" fontFamily="-apple-system, 'Helvetica Neue', Arial, sans-serif" style={{ fontVariantNumeric: "tabular-nums" }}>15</text>
+  </svg>
 );
 
 export const RouteIcon = (p: IconProps) => (

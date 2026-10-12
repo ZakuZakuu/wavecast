@@ -7,6 +7,7 @@ import { GlobalChrome } from "../components/global-chrome";
 import { KeyboardShortcuts } from "../components/keyboard-shortcuts";
 import { PlaybackProvider } from "../components/player/playback-provider";
 import { PlayerOverlay } from "../components/player/player-overlay";
+import { WebAnalytics } from "../components/web-analytics";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/player.css";
@@ -66,6 +67,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             </div>
           </PlaybackProvider>
         </LibraryIdentityBridge>
+        <WebAnalytics />
       </body>
     </html>
   );

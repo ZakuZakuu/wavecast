@@ -6,17 +6,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
 import { isDarkColour } from "../../lib/cover/build-cover";
-import { readCaptionsEnabled, recordLessLikeThis, writeCaptionsEnabled } from "../../lib/listener-feedback";
+import { recordLessLikeThis } from "../../lib/listener-feedback";
 import { friendlyError } from "../../lib/friendly-error";
 import { chapterNumberOf, currentMusicSegment, estimatedTotalSeconds, nextMusicSegment, trackLabel, voiceClipTiming } from "../../lib/now-playing";
 import { currentSentenceIndex, nowLineMode, splitSentences, type NowLineMode } from "../../lib/now-line";
-import { nextProgramMusicStart } from "../../lib/playback";
+import { nextProgramMusicStart, previousProgramMusicStart } from "../../lib/playback";
 import { formatFreq, stationForProgramme } from "../../lib/stations";
 import { TypeCover } from "../cover/type-cover";
-import { Back15Icon, CaptionsIcon, ChevronDownIcon, MoreIcon, PauseIcon, PlayIcon, RouteIcon, SkipIcon, ThumbDownIcon } from "../icons";
+import { Back15Icon, ChevronDownIcon, Forward15Icon, MoreIcon, PauseIcon, PlayIcon, PrevIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
 import { ShareSheet } from "../programme/share-sheet";
 import { MoreSheet } from "./more-sheet";
-import { NarrationSheet } from "./narration-sheet";
+import { NarrationSheet, type NarrationPassage } from "./narration-sheet";
 import { NowLine } from "./now-line";
 import { authClient } from "../../lib/auth-client";
 import { useNowPlaying, usePlaybackControl, usePlaybackTarget } from "./playback-provider";
@@ -84,12 +84,10 @@ export function PlayerScreen({
   const [moreOpen, setMoreOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const router = useRouter();
-  const [captions, setCaptions] = useState(true);
   const [narrationOpen, setNarrationOpen] = useState(false);
   const [forcedMode, setForcedMode] = useState<NowLineMode | null>(null);
 
   useEffect(() => {
-    setCaptions(readCaptionsEnabled());
     setForcedMode(forcedNowLineMode());
   }, []);
 
@@ -101,16 +99,28 @@ export function PlayerScreen({
 
   const collapse = onCollapse;
 
-  // Narration shown in the NowLine and the full-script sheet. The sheet keeps
-  // the last narration so it does not empty out when the host stops talking.
+  // Narration shown in the NowLine; the script sheet keeps every passage the
+  // host has spoken in this programme, so it can be opened whether or not the
+  // host is talking right now.
   const narration = np?.current?.kind === "NARRATION" ? np.current : null;
   const narrationText = narration?.narration_text?.trim() || (forcedMode === "narration" ? LAYOUT_SAMPLE : "");
   const sentences = useMemo(() => splitSentences(narrationText), [narrationText]);
-  const [sheetNarration, setSheetNarration] = useState<{ id: string; sentences: string[] } | null>(null);
+  const [passages, setPassages] = useState<{ episodeId: string | null; list: NarrationPassage[] }>({ episodeId: null, list: [] });
   const narrationId = narration?.id ?? (forcedMode === "narration" ? "layout-sample" : null);
+  const passageEpisodeId = episode?.id ?? null;
   useEffect(() => {
-    if (narrationId && sentences.length) setSheetNarration({ id: narrationId, sentences });
-  }, [narrationId, sentences]);
+    if (!narrationId || !sentences.length) return;
+    setPassages((state) => {
+      const list = state.episodeId === passageEpisodeId ? state.list : [];
+      const known = list.findIndex((passage) => passage.id === narrationId);
+      if (known >= 0) {
+        if (list[known].sentences.join("") === sentences.join("")) return state.episodeId === passageEpisodeId ? state : { episodeId: passageEpisodeId, list };
+        return { episodeId: passageEpisodeId, list: list.map((passage, i) => i === known ? { id: narrationId, sentences } : passage) };
+      }
+      return { episodeId: passageEpisodeId, list: [...list, { id: narrationId, sentences }] };
+    });
+  }, [narrationId, sentences, passageEpisodeId]);
+  const passageList = passages.episodeId === passageEpisodeId ? passages.list : [];
 
   const music = useMemo(
     () => episode && np ? currentMusicSegment(episode, np.mixPlan, np.browserPosition, np.current) : undefined,
@@ -165,6 +175,20 @@ export function PlayerScreen({
     np.nextPlayback();
   };
 
+  const previous = () => {
+    if (!np.mixPlan) return;
+    np.commitSeek(previousProgramMusicStart(np.mixPlan, np.browserPosition));
+  };
+
+  const forward = () => {
+    // Only what has been prepared can be played: stop at the prepared edge.
+    if (np.browserPosition + 1 >= frontier) {
+      toast.show("后面的内容还在准备");
+      return;
+    }
+    np.nudgeSeek(15);
+  };
+
   const lessLikeThis = () => {
     if (music) {
       recordLessLikeThis({ trackRef: music.track_ref, title: music.title, artist: music.artist, episodeId: episode.id });
@@ -180,13 +204,6 @@ export function PlayerScreen({
     toast.show(artist ? `已记下，之后的推荐会少放 ${artist}` : "已记下", 3200);
   };
 
-  const toggleCaptions = () => {
-    setCaptions((value) => {
-      writeCaptionsEnabled(!value);
-      return !value;
-    });
-  };
-
   // Sentence timing follows the audio position, so seeks re-derive it.
   const sentenceIndexFor = (segmentId: string | null, list: string[]) => {
     if (!list.length) return -1;
@@ -197,10 +214,6 @@ export function PlayerScreen({
     return currentSentenceIndex(list, np.browserPosition - start, timing?.durationSeconds ?? null);
   };
   const sentenceIndex = sentenceIndexFor(narrationId, sentences);
-  const sheetId = sheetNarration?.id ?? null;
-  const sheetIndex = sheetId === narrationId
-    ? sentenceIndex
-    : sentenceIndexFor(sheetId, sheetNarration?.sentences ?? []);
 
   const mode = forcedMode ?? nowLineMode({ narrating: Boolean(narration), preparing: preparingHint });
   const nextMusic = nextMusicSegment(episode, np.mixPlan, np.browserPosition, music?.id ?? null);
@@ -208,7 +221,6 @@ export function PlayerScreen({
   const next = nextMusic
     ? { primary: trackLabel(nextMusic), secondary: nextChapter ? `第 ${nextChapter} 段` : "" }
     : { primary: `继续收听：${episode.title ?? "WaveCast"}`, secondary: "" };
-  const narrationChapter = chapterNumberOf(episode, sheetId);
 
   return (
     <main className="player" data-cover-tone={darkCover ? "dark" : "light"}>
@@ -266,7 +278,6 @@ export function PlayerScreen({
             mode={mode}
             sentences={sentences}
             sentenceIndex={Math.max(0, sentenceIndex)}
-            captions={captions}
             next={next}
             preparedSeconds={frontier}
             onOpenNarration={() => setNarrationOpen(true)}
@@ -283,8 +294,11 @@ export function PlayerScreen({
             />
 
           <div className="transport" aria-label="播放控制">
+            <button type="button" className="transport-edge" aria-label="上一首" onClick={previous} disabled={!audioReady || !np.mixPlan}>
+              <PrevIcon size={26} />
+            </button>
             <button type="button" className="transport-side" aria-label="后退 15 秒" onClick={() => np.nudgeSeek(-15)} disabled={!audioReady}>
-              <Back15Icon size={34} />
+              <Back15Icon size={32} />
             </button>
             <button
               type="button"
@@ -297,20 +311,17 @@ export function PlayerScreen({
                 <PauseIcon size={46} className="morph-pause" />
               </span>
             </button>
-            <button type="button" className="transport-side" aria-label="跳过这首" onClick={skip} disabled={!audioReady}>
-              <SkipIcon size={34} />
+            <button type="button" className="transport-side" aria-label="前进 15 秒" onClick={forward} disabled={!audioReady}>
+              <Forward15Icon size={32} />
+            </button>
+            <button type="button" className="transport-edge" aria-label="下一首" onClick={skip} disabled={!audioReady}>
+              <SkipIcon size={26} />
             </button>
           </div>
 
           <div className="player-bottom">
-            <button
-              type="button"
-              className={captions ? "bottom-tool is-on" : "bottom-tool"}
-              aria-label="字幕"
-              aria-pressed={captions}
-              onClick={toggleCaptions}
-            >
-              <CaptionsIcon size={22} strokeWidth={1.8} />
+            <button type="button" className="bottom-tool" aria-label="主持词" onClick={() => setNarrationOpen(true)}>
+              <ScriptIcon size={22} strokeWidth={1.8} />
             </button>
             <button type="button" className="bottom-tool" aria-label="节目路线" onClick={() => setRouteOpen(true)}>
               <RouteIcon size={22} strokeWidth={1.8} />
@@ -350,9 +361,10 @@ export function PlayerScreen({
       <NarrationSheet
         open={narrationOpen}
         onClose={() => setNarrationOpen(false)}
-        subtitle={narrationChapter ? `第 ${narrationChapter} 段` : episode.title ?? "WaveCast"}
-        sentences={sheetNarration?.sentences ?? []}
-        index={Math.max(0, sheetIndex)}
+        subtitle={episode.title ?? "WaveCast"}
+        passages={passageList}
+        activeId={narration ? narrationId : null}
+        activeIndex={Math.max(0, sentenceIndex)}
       />
     </main>
   );
