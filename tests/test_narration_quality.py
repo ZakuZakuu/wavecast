@@ -355,3 +355,24 @@ def test_a_block_that_says_the_same_thing_twice_is_flagged() -> None:
 
     assert "repeats_itself" in check_block(twice).issues
     assert "repeats_itself" not in check_block("先听这段小号。再听钢琴怎么接住它。").issues
+
+
+def test_filler_that_only_says_songs_sit_together_is_removed_from_a_block() -> None:
+    import asyncio
+
+    from wavecast.intelligence.models import OutputLanguage, RadioScript
+    from wavecast.intelligence.writer import WriterService
+    from wavecast.stations import StationId
+
+    from tests.test_voice import Sequenced, _chapter, _script, _slot
+
+    llm = Sequenced(_script("这首Summer来自久石让。两个作品并排放在一起。留意开头的钢琴。"))
+    result = asyncio.run(
+        WriterService(llm).write(
+            _chapter(), [], slot_context=_slot(), target_duration_seconds=14,
+            output_language=OutputLanguage.ZH_CN, station=StationId.PORTRAIT, voice_seed="p",
+        )
+    )
+
+    assert isinstance(result, RadioScript)
+    assert [block.text for block in result.blocks] == ["这首Summer来自久石让。留意开头的钢琴。"]

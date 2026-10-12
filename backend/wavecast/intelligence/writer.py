@@ -6,14 +6,20 @@ import json
 import logging
 from collections.abc import Sequence
 
-from wavecast.narration_quality import CHARS_PER_SECOND, check_block, rewrite_reasons, years_in
+from wavecast.narration_quality import (
+    CHARS_PER_SECOND,
+    FILLER,
+    check_block,
+    rewrite_reasons,
+    years_in,
+)
 from wavecast.presentation import HostMode, host_mode_prompt_guidance
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.spoken_form import KnownTrack, has_unspeakable_script, to_spoken_form
 from wavecast.stations import StationId, compose_signoff
 
-from .fact_support import FactChecker, FactReport, without_flagged_sentences
+from .fact_support import FactChecker, FactReport, split_sentences, without_flagged_sentences
 from .fast_start import FastStructuredProvider
 from .models import (
     ChapterPlan,
@@ -179,12 +185,21 @@ class WriterService:
                     "Verified points about this chapter's track (each one is stated by a source and "
                     "was checked; say them in your own words, no need to say where they come from): "
                     + " | ".join(
-                        point.text if point.scope == "track" else f"(about the album or film, not the song) {point.text}"
+                        point.text
+                        if point.scope == "track"
+                        else (
+                            f"(programme background about the person or the period, not about the song "
+                            f"that plays: tell it as a story and never call it 这首歌) {point.text}"
+                            if point.scope == "background"
+                            else f"(about the album or film, not the song) {point.text}"
+                        )
                         for point in track_points
                     )
-                    + ". Build this chapter's talk around one of them; one is enough. Add only "
-                    "listening cues and transitions of your own; every other factual statement "
-                    "needs support in the scoped evidence.\n"
+                    + ". Build this chapter's talk around one of them; one is enough, told in two or "
+                    "three short sentences: what happened, one concrete detail, and why it is worth "
+                    "hearing here. Do not infer what a song means from it. Add only listening cues "
+                    "and transitions of your own; every other factual statement needs support in "
+                    "the scoped evidence.\n"
                 )
             else:
                 route_line += (
@@ -363,6 +378,7 @@ class WriterService:
             result = without_flagged_sentences(result, report, known_tracks)
         if isinstance(result, RadioScript):
             result = _without_misplaced(result, known_tracks, slots, route_titles)
+            result = _without_filler(result)
             result = _without_identity_conflicts(result, known_tracks, unplayed_artists)
             result = _without_unspeakable(result, known_tracks)
             if signoff:
@@ -447,6 +463,24 @@ def _without_identity_conflicts(
     if len(kept) == len(script.blocks):
         return script
     return script.model_copy(update={"blocks": kept})
+
+
+def _without_filler(script: RadioScript) -> RadioScript:
+    """Remove sentences that only say songs sit together or follow each other."""
+
+    blocks = []
+    for block in script.blocks:
+        sentences = split_sentences(block.text)
+        kept = [item for item in sentences if not FILLER.search(item)]
+        if len(kept) == len(sentences):
+            blocks.append(block)
+            continue
+        logger.info("writer_filler_removed kind=%s removed=%d", block.kind.value, len(sentences) - len(kept))
+        text = "".join(kept).strip()
+        if not text:
+            continue
+        blocks.append(block.model_copy(update={"text": text, "tts_text": None}))
+    return script.model_copy(update={"blocks": blocks})
 
 
 def _without_misplaced(

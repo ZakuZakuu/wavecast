@@ -230,6 +230,11 @@ def repeated_sentence(text: str, earlier: str) -> str | None:
 
 # Wording the Writer reaches for again and again; once a programme has used it, it is stock.
 _STOCK_PHRASES = (re.compile(r"挂在.{1,4}名下"),)
+# Sentences that say nothing about the music: only that songs sit together or follow each other.
+FILLER = re.compile(
+    r"并排放在一起|放在一起|节目用它们|接着往下走|都归在他名下|归在他名下|走的路不一样|走的路不同|也一样"
+    r"|同一双手|两首都是他|两首歌都是他|继续听他"
+)
 _CLAUSE_BREAK = re.compile(r"[，。！？、；：,.!?;:\s“”\"'‘’《》「」『』（）()\-—…·]+")
 _CJK_ONLY = re.compile(r"[\u4e00-\u9fff]+")
 _PHRASE_CHARS = 8

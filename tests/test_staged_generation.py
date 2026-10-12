@@ -376,6 +376,58 @@ def test_a_beat_without_a_song_is_written_about_the_song_that_follows_not_the_ol
     assert [point.text for point in seen["points"]] == ["它是下一首的故事"]  # type: ignore[union-attr]
 
 
+def test_a_chapter_whose_talk_did_not_survive_tells_a_background_story_instead(tmp_path) -> None:
+    from wavecast.intelligence.models import OutputLanguage as Lang
+    from wavecast.intelligence.track_research import TalkingPoint, TrackResearch
+    from wavecast.stations import StationId
+
+    track = ResolvedTrack(track_ref="mock:bridge", canonical_artist="Bridge Artist", canonical_title="Bridge Track")
+    base = _session(track)
+    first = base.chapters[0].model_copy(update={"slot_contexts": base.chapters[0].slot_contexts[:1]})
+    last = first.model_copy(update={"chapter_id": "chapter-3"})
+    session = base.model_copy(
+        update={"output_language": Lang.ZH_CN, "station": StationId.PORTRAIT, "chapters": [first, last]}
+    )
+    story = TalkingPoint(text="1983年两人第一次见面", evidence_id="bio", quote="quote text", scope="background")
+    writes: list[object] = []
+
+    class _Researcher:
+        async def prepare(self, **kwargs: object) -> TrackResearch:
+            return TrackResearch(evidence_ids=[], points=[TalkingPoint(text="歌的事", evidence_id="x", quote="q q q q")])
+
+        async def background_story(self, **kwargs: object) -> TalkingPoint:
+            return story
+
+    class _Writer:
+        async def write(self, chapter: object, evidence: object, **kwargs: object) -> RadioScript:
+            writes.append(kwargs["track_points"])
+            if len(writes) == 1:  # everything written about the song was removed by the checks
+                return RadioScript(blocks=[], intended_duration_seconds=1)
+            return RadioScript(
+                blocks=[RadioScriptBlock(kind=RadioScriptBlockKind.TRACK_INTRO, text="1983年他们第一次见面。", duration_seconds=3)],
+                intended_duration_seconds=3,
+            )
+
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    generator = StagedProgressiveChapterGenerator(
+        session=session, writer=_Writer(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+        track_research=_Researcher(),  # type: ignore[arg-type]
+    )
+    episode = _episode()
+    generated = asyncio.run(generator.generate_next(episode))
+    assert generated is not None
+    episode.segments.extend(generated.segments)
+
+    authored = asyncio.run(generator.author_narration(episode, "chapter-2"))
+
+    assert authored is not None and len(writes) == 2
+    assert [point.scope for point in writes[1]] == ["background"]  # type: ignore[union-attr]
+    assert "bio" in authored.research_evidence_ids
+    assert any(isinstance(s, NarrationSegment) and s.narration_text for s in authored.segments)
+
+
 def test_degraded_writer_marks_pending_host_seam_skipped(tmp_path) -> None:
     track = ResolvedTrack(
         track_ref="mock:bridge",

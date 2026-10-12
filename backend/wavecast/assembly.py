@@ -3829,6 +3829,7 @@ class StagedProgressiveChapterGenerator:
                 evidence=self.session.research.evidence,
                 station=self.session.station,
                 subject=self.session.topic,
+                subject_names=self.session.required_artists,
             )
             if researched is not None:
                 track_points = researched.points
@@ -3894,6 +3895,45 @@ class StagedProgressiveChapterGenerator:
                 slot_contexts=chapter.slot_contexts,
                 track_points=track_points,
             )
+            if (
+                isinstance(script, RadioScript)
+                and not script.blocks
+                and not is_final_chapter
+                and self.track_research is not None
+                and (story := await self.track_research.background_story(
+                    episode_id=episode.id,
+                    station=self.session.station,
+                    subject=self.session.topic,
+                    subject_names=self.session.required_artists,
+                    evidence=self.session.research.evidence,
+                ))
+                is not None
+            ):
+                # What was written about this song did not survive the checks; tell one of the
+                # programme's background stories instead of leaving the slot silent.
+                logger.info("narration_background_retry chapter_id=%s", chapter.chapter_id)
+                scoped = list(writer_chapter.evidence_ids)
+                if story.evidence_id not in scoped:
+                    scoped.append(story.evidence_id)
+                    track_evidence_ids = [*track_evidence_ids, story.evidence_id]
+                script = await self.writer.write(
+                    writer_chapter.model_copy(update={"evidence_ids": scoped}),
+                    writer_evidence,
+                    previous_committed_context=previous_context,
+                    next_track_metadata=next_track_metadata,
+                    host_mode=self.session.presentation_intent.host_mode,
+                    target_duration_seconds=chapter.target_narration_seconds,
+                    output_language=self.session.output_language,
+                    station=self.session.station,
+                    voice_seed=episode.seed_id,
+                    used_openers=_used_openers(episode),
+                    route_tracks=route_tracks,
+                    unplayed_artists=unplayed_artists,
+                    unfulfilled_artists=self.session.unfulfilled_artists,
+                    topic=self.session.topic,
+                    slot_contexts=chapter.slot_contexts,
+                    track_points=[story],
+                )
             playable = assemble(script)
         except authoring_errors as error:
             # Writer is the quality layer, not the existence guarantee. P0

@@ -423,3 +423,101 @@ def test_catalogue_data_and_traditional_characters_are_handled() -> None:
 
     assert trivia == []
     assert [point.text for point in story] == ["它是千与千寻的片尾曲"]  # said in Simplified Chinese
+
+
+# --- programme background -----------------------------------------------------------------------
+
+from wavecast.intelligence.track_research import _Stories, verified_stories  # noqa: E402
+
+BIO = (
+    "1983年，宫崎骏正在制作《风之谷》，经人介绍在一间破烂酒吧改造的工作室里见到了久石让。"
+    "宫崎骏说，他的作品都患了久石让依赖症。两人合作了40年，完成11部电影。"
+)
+BIO_SOURCES = {"evidence-b": BIO}
+
+
+def _story(text: str, quote: str, source: str = "evidence-b") -> _RawPoint:
+    return _RawPoint(text=text, source=source, quote=quote)
+
+
+def test_a_background_story_needs_its_quote_a_subject_and_a_standalone_telling() -> None:
+    kept = verified_stories(
+        [_story("1983年宫崎骏在一间酒吧改的工作室见到了久石让", "在一间破烂酒吧改造的工作室里见到了久石让")],
+        BIO_SOURCES, ["久石让"],
+    )
+    assert [point.scope for point in kept] == ["background"]
+
+    rejected = {
+        "pointing at a song": _story("这首歌是他们合作的开始", "在一间破烂酒吧改造的工作室里见到了久石让"),
+        "invented quote": _story("久石让在1983年写了第一首曲子", "久石让写下了第一首曲子"),
+        "year not in the source": _story("1985年宫崎骏见到了久石让", "在一间破烂酒吧改造的工作室里见到了久石让"),
+        "another subject": _story("宫崎骏说他的作品都患了依赖症", "他的作品都患了久石让依赖症"),
+    }
+    for name, raw in rejected.items():
+        names = ["坂本龙一"] if name == "another subject" else ["久石让"]
+        assert verified_stories([raw], BIO_SOURCES, names) == [], name
+
+
+def test_the_same_story_is_not_told_twice_in_other_words() -> None:
+    stories = verified_stories(
+        [
+            _story("1983年宫崎骏在酒吧改的工作室见到久石让", "在一间破烂酒吧改造的工作室里见到了久石让"),
+            _story("宫崎骏1983年在酒吧改的工作室里见到了久石让", "在一间破烂酒吧改造的工作室里见到了久石让"),
+            _story("久石让和宫崎骏合作了40年", "两人合作了40年，完成11部电影"),
+        ],
+        BIO_SOURCES, ["久石让"],
+    )
+
+    assert len(stories) == 2
+
+
+class StoryBriefer:
+    """No song facts; three background stories, one call for the whole programme."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def structured(self, prompt: str, output_type: type[object], **_kwargs: object) -> object:
+        self.calls += 1
+        if output_type is _Stories:
+            return _Stories(
+                stories=[
+                    _story("1983年宫崎骏在酒吧改的工作室见到了久石让", "在一间破烂酒吧改造的工作室里见到了久石让"),
+                    _story("宫崎骏说他的作品都患了久石让依赖症", "他的作品都患了久石让依赖症"),
+                ]
+            )
+        return _Briefing(points=[])
+
+
+def test_a_chapter_with_nothing_about_its_song_tells_the_next_unused_story() -> None:
+    briefer = StoryBriefer()
+    service = TrackResearchService(search=Searcher(), llm=briefer)  # type: ignore[arg-type]
+    programme = [_evidence("b", BIO)]
+
+    def prepare(track: ResolvedTrack, station=StationId.PORTRAIT):  # type: ignore[no-untyped-def]
+        return asyncio.run(
+            service.prepare(
+                episode_id="ep", track=track, evidence=programme, station=station,
+                subject="久石让", subject_names=["久石让"],
+            )
+        )
+
+    first, second, third = prepare(SUMMER), prepare(SECOND_ON_ALBUM), prepare(KIMURA)
+
+    assert first is not None and [point.scope for point in first.points] == ["background"]
+    assert "evidence-b" in first.evidence_ids  # the writer and the fact check can see the source
+    assert second is not None and second.points and second.points[0].text != first.points[0].text
+    assert third is not None and third.points == []  # both stories are used; nothing is repeated
+    assert sum("background_brief" in p for p in []) == 0 and briefer.calls >= 1
+    # other stations do not tell programme background
+    crate = prepare(SUMMER, station=StationId.CRATE)
+    assert crate is not None and all(point.scope != "background" for point in crate.points)
+
+
+def test_the_writer_is_told_a_background_story_is_not_about_the_song() -> None:
+    llm = Sequenced(_script("1983年，宫崎骏见到了久石让。"))
+
+    _write(llm, [TalkingPoint(text="1983年宫崎骏见到了久石让", evidence_id="e", quote="x" * 4, scope="background")])
+
+    assert "programme background about the person or the period" in llm.prompts[0]
+    assert "never call it 这首歌" in llm.prompts[0]

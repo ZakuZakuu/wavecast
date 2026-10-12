@@ -64,6 +64,12 @@ SEARCH_BUDGET: dict[StationId, int] = {
     StationId.CRATE: 1,
 }
 DEEP_STATIONS = frozenset({StationId.PORTRAIT, StationId.LINEAGE})
+# Stations whose programme is about a person: a chapter with nothing checkable about its song may
+# tell one of the programme's background stories instead.
+BACKGROUND_STATIONS = frozenset({StationId.PORTRAIT})
+_MAX_STORIES = 3
+_STORY_SOURCES = 12
+_STORY_SOURCE_CHARS = 900
 _MAX_POINTS = 2
 _RESULTS_PER_QUERY = 5
 _MIN_IDENTIFIER_CHARS = 3
@@ -77,15 +83,16 @@ _VERSION_MARKER = re.compile(r"\((?:live|remix|piano|instrumental|[^)]*版)[^)]*
 class TalkingPoint(BaseModel):
     """One statement that a source states, with the proof.
 
-    ``scope`` says what it is about: the recording itself (``track``), or the album / film it
-    belongs to (``album``).  What a source says about the album is shared by its tracks; what
-    it says about one song is that song's alone.
+    ``scope`` says what it is about: the recording itself (``track``), the album / film it
+    belongs to (``album``), or the person and period the programme is about (``background``).
+    What a source says about the album is shared by its tracks; what it says about one song is
+    that song's alone; background is told once, as a story, and is never about a song.
     """
 
     text: str = Field(min_length=1, max_length=200)
     evidence_id: str = Field(min_length=1, max_length=120)
     quote: str = Field(min_length=1, max_length=300)
-    scope: str = Field(default="track", pattern="^(track|album)$")
+    scope: str = Field(default="track", pattern="^(track|album|background)$")
 
 
 class _RawPoint(BaseModel):
@@ -245,6 +252,7 @@ class TrackResearchService:
         self._profile = profile
         self._found: OrderedDict[str, dict[str, list[Evidence]]] = OrderedDict()
         self._asked: dict[str, set[str]] = {}
+        self._background: dict[str, list[TalkingPoint]] = {}
 
     def enabled_for(self, station: StationId | None) -> bool:
         return station in SEARCH_BUDGET
@@ -257,6 +265,7 @@ class TrackResearchService:
         evidence: Sequence[Evidence],
         station: StationId | None,
         subject: str,
+        subject_names: Sequence[str] = (),
     ) -> TrackResearch | None:
         """None when this station does not research tracks; otherwise what the chapter may use."""
 
@@ -304,7 +313,16 @@ class TrackResearchService:
                     item for item in fresh if item.id not in {e.id for e in per_episode.get(key, [])}
                 )
         used = about_track()
+        if not outcome.points and station in BACKGROUND_STATIONS:
+            # Nothing checkable about this song, but the programme's own research may hold a
+            # story about the person or the period that has not been told yet.
+            story = await self._next_background(episode_id, subject, subject_names, evidence)
+            if story is not None:
+                outcome.points = [story]
         outcome.evidence_ids = [item.id for item in used]
+        outcome.evidence_ids.extend(
+            point.evidence_id for point in outcome.points if point.evidence_id not in outcome.evidence_ids
+        )
         outcome.evidence = [item for item in used if item.id not in known_ids]
         logger.info(
             "track_research searches=%d bound=%d new=%d points=%d",
@@ -314,6 +332,53 @@ class TrackResearchService:
             len(outcome.points),
         )
         return outcome
+
+    async def background_story(
+        self, *, episode_id: str, station: StationId | None, subject: str, subject_names: Sequence[str], evidence: Sequence[Evidence]
+    ) -> TalkingPoint | None:
+        """An untold background story for a chapter whose own material came to nothing."""
+
+        if station not in BACKGROUND_STATIONS:
+            return None
+        return await self._next_background(episode_id, subject, subject_names, evidence)
+
+    async def _next_background(
+        self, episode_id: str, subject: str, names: Sequence[str], evidence: Sequence[Evidence]
+    ) -> TalkingPoint | None:
+        """The next story about the person or period that this programme has not told yet."""
+
+        if episode_id not in self._background:
+            self._background[episode_id] = await self._stories(subject, names, evidence)
+            logger.info("background_stories found=%d", len(self._background[episode_id]))
+        remaining = self._background[episode_id]
+        return remaining.pop(0) if remaining else None
+
+    async def _stories(
+        self, subject: str, names: Sequence[str], evidence: Sequence[Evidence]
+    ) -> list[TalkingPoint]:
+        general = [item for item in evidence if not item.track_refs][:_STORY_SOURCES]
+        if not general:
+            return []
+        sources = {item.id: item.claim_or_excerpt[:_STORY_SOURCE_CHARS] for item in general}
+        prompt = _STORY_PROMPT.format(
+            subject=subject or "(none)",
+            sources="\n".join(f"[{source_id}]: {text}" for source_id, text in sources.items()),
+            limit=_MAX_STORIES,
+        )
+        try:
+            result = await self._llm.structured(
+                prompt,
+                _Stories,
+                transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
+                profile=InferenceProfile.SYNTHESIS,
+                stage="background_brief",
+            )
+        except Exception as error:  # noqa: BLE001 - background is optional
+            logger.warning("background_brief_unavailable error_type=%s", type(error).__name__)
+            return []
+        if not isinstance(result, _Stories):
+            return []
+        return verified_stories(result.stories, sources, names)
 
     async def _find(self, query: str, track: ResolvedTrack, station: StationId) -> list[Evidence]:
         deep = station in DEEP_STATIONS and self._deep is not None
@@ -378,6 +443,82 @@ class TrackResearchService:
         if not isinstance(result, _Briefing):
             return []
         return verified_points(result.points, sources, track, leads)
+
+
+class _Stories(BaseModel):
+    stories: list[_RawPoint] = Field(default_factory=list, max_length=6)
+
+
+_STORY_PROMPT = """You prepare background stories for a radio programme about: {subject}. Use ONLY the \
+sources below; never use your own knowledge.
+
+Sources (id: text):
+{sources}
+
+Give up to {limit} DIFFERENT stories a host could tell in two or three short sentences about the \
+person or the period: something that happened to them, a working relationship, a turning point, how a \
+famous collaboration or work came about. Each story is about a different event (not the same event in \
+other words, and not three facts about one moment) and, where possible, comes from a different source. \
+Each is one self-contained statement in Simplified Chinese (at most 120 characters) with the source id \
+and a quote copied word for word, in the source's own script and without translating (at most 80 \
+characters), that states its main fact. Do not write about a particular song and do not call anything \
+"this song"; no track numbers, running times or catalogue data. Return an empty list if the sources \
+hold none.
+
+Return JSON {{"stories": [{{"text": "...", "source": "id", "quote": "..."}}]}}."""
+
+_ABOUT_A_SONG = re.compile(r"这首|这支曲|这段旋律|这张专辑|该曲|本曲")
+
+
+def verified_stories(
+    raw: Sequence[_RawPoint], sources: dict[str, str], subject_names: Sequence[str] = ()
+) -> list[TalkingPoint]:
+    """Background stories whose quote is in the named source and that can stand on their own.
+
+    The same code checks as for song facts (verbatim quote, the claimed role stated, years and
+    works found in the sources), plus: a story may not point at "this song", it must be about
+    the programme's subject when one is known, and two stories may not tell the same thing.
+    """
+
+    everything = _squash("\n".join(sources.values()))
+    wanted = [_squash(name) for name in subject_names if _squash(name)]
+    stories: list[TalkingPoint] = []
+    for item in raw:
+        text, source_id, quote = item.text.strip(), item.source.strip(), item.quote.strip()
+        source = sources.get(source_id, "")
+        if not text or not source or not quote_in_source(quote, source):
+            continue
+        if _ABOUT_A_SONG.search(text) or _CATALOGUE_TRIVIA.search(text) or durations_in(text):
+            continue
+        roles = roles_in(text)
+        if roles and not quote_backs_roles(quote, roles):
+            continue
+        if years_in(text) - years_in(source):
+            continue
+        if wanted and not any(name in _squash(f"{text}{quote}") for name in wanted):
+            continue
+        if any(_squash(name) not in everything for name in _TITLE_IN_BRACKETS.findall(text)):
+            continue
+        simplified = to_simplified(text)[:200]
+        if any(_similar(simplified, other.text) for other in stories):
+            continue
+        stories.append(
+            TalkingPoint(text=simplified, evidence_id=source_id, quote=quote[:300], scope="background")
+        )
+        if len(stories) == _MAX_STORIES:
+            break
+    return stories
+
+
+def _similar(left: str, right: str) -> bool:
+    """Two statements that overlap by half or more of the shorter one tell the same thing."""
+
+    def grams(value: str) -> set[str]:
+        squashed = _squash(value)
+        return {squashed[i : i + 2] for i in range(len(squashed) - 1)}
+
+    a, b = grams(left), grams(right)
+    return bool(a and b) and len(a & b) / min(len(a), len(b)) >= 0.5
 
 
 def verified_points(
