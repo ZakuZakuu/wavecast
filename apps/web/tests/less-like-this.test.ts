@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { lessLikeThisArtists, recordLessLikeThis, syncLessLikeThis } from "../lib/listener-feedback";
+import { lessLikeThisArtists, recordLessLikeThis, removeLessLikeThisArtist, syncLessLikeThis } from "../lib/listener-feedback";
 import { tasteContext } from "../lib/taste";
 
 function installStorage() {
@@ -47,6 +47,13 @@ describe("少放这类", () => {
     failing = false;
     await syncLessLikeThis("user-1", async (artist) => void sent.push(artist));
     expect(sent.at(-1)).toBe("Explosions in the Sky");
+  });
+
+  it("forgets an artist on this device, whatever its capitalisation", () => {
+    mark("Mogwai", "a");
+    mark("Perfume", "b");
+    removeLessLikeThisArtist(" mogwai ");
+    expect(lessLikeThisArtists()).toEqual(["Perfume"]);
   });
 
   it("adds the avoided artists to the taste text, even when there is nothing else", () => {

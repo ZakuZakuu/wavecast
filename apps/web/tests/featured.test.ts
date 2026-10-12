@@ -19,7 +19,15 @@ describe("guest featured programmes", () => {
     for (const item of FEATURED_PROGRAMMES) {
       expect(item.prompt.trim().length).toBeGreaterThanOrEqual(2);
       expect(item.title.trim()).not.toBe("");
+      expect(item.displayTitle.trim()).not.toBe("");
       expect(item.minutes).toBeGreaterThan(0);
+    }
+  });
+
+  it("shows titles in the generator's style: no colon subtitle, and the subject stays in it", () => {
+    for (const item of FEATURED_PROGRAMMES) {
+      expect(item.displayTitle).not.toMatch(/[:：]/);
+      expect(item.displayTitle.replace(/\s+/g, "")).toContain(item.title.replace(/\s+/g, "").slice(0, 3));
     }
   });
 

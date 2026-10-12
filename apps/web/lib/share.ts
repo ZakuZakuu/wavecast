@@ -2,12 +2,24 @@
 // audio; whoever opens it gets their own copy made when they press play.
 import { coverIdFor } from "./cover/programme-cover";
 
-/** The address people paste. `c` keeps a card's cover identical for the person who opens it. */
+const PROPOSAL_ID = /^proposal-([0-9a-f]{16,32})$/;
+
+/** The first ten hex digits of a generated programme's id: what a short link carries. */
+export function shortCodeFor(programmeId: string): string | null {
+  const match = PROPOSAL_ID.exec(programmeId);
+  return match ? match[1].slice(0, 10) : null;
+}
+
+/**
+ * The address people paste: /p/<code> for generated programmes, /program/<id> for the built-in
+ * ones. `c` keeps a card's cover identical for the person who opens it.
+ */
 export function programmeShareUrl(programmeId: string, origin?: string): string {
   const base = origin ?? (typeof window === "undefined" ? "" : window.location.origin);
   const cover = coverIdFor(programmeId);
   const query = cover !== programmeId ? `?c=${encodeURIComponent(cover)}` : "";
-  return `${base}/program/${encodeURIComponent(programmeId)}${query}`;
+  const code = shortCodeFor(programmeId);
+  return code ? `${base}/p/${code}${query}` : `${base}/program/${encodeURIComponent(programmeId)}${query}`;
 }
 
 /** wavecast.space/program/… without the scheme, for the preview card. */
