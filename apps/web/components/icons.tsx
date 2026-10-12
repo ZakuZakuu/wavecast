@@ -84,10 +84,6 @@ export const ThumbDownIcon = (p: IconProps) => (
   <svg {...stroke(p)}><path d="M16.5 4.5h2.2a1.3 1.3 0 0 1 1.3 1.3v6.4a1.3 1.3 0 0 1-1.3 1.3h-2.2z" /><path d="M16.5 13.5 12.8 20a2 2 0 0 1-2.9-2.2l.8-3.3H5.6a1.8 1.8 0 0 1-1.8-2.1l1.2-6.3a1.8 1.8 0 0 1 1.8-1.5h9.7" /></svg>
 );
 
-export const CaptionsIcon = (p: IconProps) => (
-  <svg {...stroke(p)}><rect x="3" y="5" width="18" height="14" rx="3" /><path d="M7 11h4M13 11h4M7 15h7" /></svg>
-);
-
 /** A speech bubble with lines: the host's words. */
 export const ScriptIcon = (p: IconProps) => (
   <svg {...stroke(p)}><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-6.5L8 20.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" /><path d="M7.5 10h9M7.5 13h5.5" /></svg>

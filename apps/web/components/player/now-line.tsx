@@ -16,7 +16,6 @@ export function NowLine({
   mode,
   sentences,
   sentenceIndex,
-  captions,
   next,
   preparedSeconds,
   onOpenNarration,
@@ -25,7 +24,6 @@ export function NowLine({
   mode: NowLineMode;
   sentences: string[];
   sentenceIndex: number;
-  captions: boolean;
   next: NowLineNext;
   preparedSeconds: number;
   onOpenNarration: () => void;
@@ -41,7 +39,7 @@ export function NowLine({
           主持在说
           {narrationHasText ? <span className="nl-more" aria-hidden="true">全文 &gt;</span> : null}
         </span>
-        {captions && narrationHasText ? (
+        {narrationHasText ? (
           <CaptionScroller sentences={sentences} index={sentenceIndex} />
         ) : (
           <NextLines next={next} />

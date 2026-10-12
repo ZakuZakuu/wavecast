@@ -6,14 +6,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
 import { isDarkColour } from "../../lib/cover/build-cover";
-import { readCaptionsEnabled, recordLessLikeThis, writeCaptionsEnabled } from "../../lib/listener-feedback";
+import { recordLessLikeThis } from "../../lib/listener-feedback";
 import { friendlyError } from "../../lib/friendly-error";
 import { chapterNumberOf, currentMusicSegment, estimatedTotalSeconds, nextMusicSegment, trackLabel, voiceClipTiming } from "../../lib/now-playing";
 import { currentSentenceIndex, nowLineMode, splitSentences, type NowLineMode } from "../../lib/now-line";
 import { nextProgramMusicStart } from "../../lib/playback";
 import { formatFreq, stationForProgramme } from "../../lib/stations";
 import { TypeCover } from "../cover/type-cover";
-import { Back15Icon, CaptionsIcon, ChevronDownIcon, MoreIcon, PauseIcon, PlayIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
+import { Back15Icon, ChevronDownIcon, MoreIcon, PauseIcon, PlayIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
 import { ShareSheet } from "../programme/share-sheet";
 import { MoreSheet } from "./more-sheet";
 import { NarrationSheet, type NarrationPassage } from "./narration-sheet";
@@ -84,12 +84,10 @@ export function PlayerScreen({
   const [moreOpen, setMoreOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const router = useRouter();
-  const [captions, setCaptions] = useState(true);
   const [narrationOpen, setNarrationOpen] = useState(false);
   const [forcedMode, setForcedMode] = useState<NowLineMode | null>(null);
 
   useEffect(() => {
-    setCaptions(readCaptionsEnabled());
     setForcedMode(forcedNowLineMode());
   }, []);
 
@@ -192,13 +190,6 @@ export function PlayerScreen({
     toast.show(artist ? `已记下，之后的推荐会少放 ${artist}` : "已记下", 3200);
   };
 
-  const toggleCaptions = () => {
-    setCaptions((value) => {
-      writeCaptionsEnabled(!value);
-      return !value;
-    });
-  };
-
   // Sentence timing follows the audio position, so seeks re-derive it.
   const sentenceIndexFor = (segmentId: string | null, list: string[]) => {
     if (!list.length) return -1;
@@ -273,7 +264,6 @@ export function PlayerScreen({
             mode={mode}
             sentences={sentences}
             sentenceIndex={Math.max(0, sentenceIndex)}
-            captions={captions}
             next={next}
             preparedSeconds={frontier}
             onOpenNarration={() => setNarrationOpen(true)}
@@ -310,23 +300,11 @@ export function PlayerScreen({
           </div>
 
           <div className="player-bottom">
-            <button
-              type="button"
-              className={captions ? "bottom-tool is-on" : "bottom-tool"}
-              aria-label="字幕"
-              aria-pressed={captions}
-              onClick={toggleCaptions}
-            >
-              <CaptionsIcon size={22} strokeWidth={1.8} />
-              <span className="bottom-tool-label">字幕</span>
-            </button>
             <button type="button" className="bottom-tool" aria-label="主持词" onClick={() => setNarrationOpen(true)}>
               <ScriptIcon size={22} strokeWidth={1.8} />
-              <span className="bottom-tool-label">主持词</span>
             </button>
             <button type="button" className="bottom-tool" aria-label="节目路线" onClick={() => setRouteOpen(true)}>
               <RouteIcon size={22} strokeWidth={1.8} />
-              <span className="bottom-tool-label">路线</span>
             </button>
           </div>
         </div>

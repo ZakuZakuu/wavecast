@@ -7,7 +7,6 @@ import {
   FREQ_MAX,
   FREQ_MIN,
   formatFreq,
-  matchStationRule,
   stationById,
   STATIONS,
   type Station,
@@ -49,8 +48,6 @@ export function TunePage() {
   const freqRef = useRef(freq);
   const [dragging, setDragging] = useState(false);
   const [text, setText] = useState("");
-  const [matched, setMatched] = useState(false);
-  const manualRef = useRef(false);
   const [duration, setDuration] = useState<DurationIntent>("SHORT");
   const animRef = useRef<Cancel | null>(null);
   const lastLockedRef = useRef<string | null>(null);
@@ -134,7 +131,6 @@ export function TunePage() {
     try {
       const id = new URLSearchParams(window.location.search).get("station");
       fromQuery = id ? stationById(id) : null;
-      if (fromQuery) manualRef.current = true;
       const lastId = window.localStorage.getItem(LAST_STATION_KEY);
       last = lastId ? stationById(lastId) : null;
     } catch {
@@ -164,36 +160,8 @@ export function TunePage() {
     }
   }, [reading.locked, station.id]);
 
-  // Free text -> station matching, until the listener tunes by hand.
-  useEffect(() => {
-    if (!text.trim()) {
-      manualRef.current = false;
-      setMatched(false);
-      return;
-    }
-    if (manualRef.current) return;
-    const timer = window.setTimeout(() => {
-      // Only a real keyword match moves the dial. Anything else leaves the
-      // station the listener is on (a default of 随便听 would yank it away).
-      const matchedId = matchStationRule(text);
-      if (!matchedId) {
-        setMatched(false);
-        return;
-      }
-      const target = stationById(matchedId);
-      setMatched(true);
-      if (Math.abs(target.freq - freqRef.current) > 0.01) animateTo(target.freq);
-    }, 350);
-    return () => window.clearTimeout(timer);
-  }, [animateTo, text]);
-
   // --- Drag with inertia, then snap to the nearest station.
   const dragState = useRef<{ x: number; freq: number; tracker: VelocityTracker; label: string | null; moved: boolean } | null>(null);
-
-  const markManual = () => {
-    manualRef.current = true;
-    setMatched(false);
-  };
 
   const onPointerDown = (event: React.PointerEvent<HTMLElement>) => {
     if (event.button !== 0 && event.pointerType === "mouse") return;
@@ -212,7 +180,6 @@ export function TunePage() {
     const dx = event.clientX - drag.x;
     if (Math.abs(dx) > 4) {
       drag.moved = true;
-      markManual();
     }
     const next = freqAfterDrag(drag.freq, dx);
     setFreq(next);
@@ -240,8 +207,6 @@ export function TunePage() {
   };
 
   // Mouse wheel / trackpad: scroll moves the scale, snapping 150ms after it stops.
-  const markManualRef = useRef(markManual);
-  markManualRef.current = markManual;
   useEffect(() => {
     const element = windowRef.current;
     if (!element) return;
@@ -251,7 +216,6 @@ export function TunePage() {
       if (!delta) return;
       event.preventDefault();
       stopAnimation();
-      markManualRef.current();
       setFreq(freqRef.current + delta / PX_PER_MHZ);
       window.clearTimeout(timer);
       timer = window.setTimeout(() => snapWithSpring(0), WHEEL_SNAP_DELAY_MS);
@@ -266,12 +230,10 @@ export function TunePage() {
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
-    markManual();
     animateTo(stepStation(freqRef.current, event.key === "ArrowRight" ? 1 : -1).freq);
   };
 
   const tapStation = (target: Station) => {
-    markManual();
     animateTo(target.freq);
   };
 
@@ -314,7 +276,6 @@ export function TunePage() {
               <span key={between ? "between" : station.id} className={between ? "tuner-name is-between" : "tuner-name"}>
                 {between ? "两个台之间" : station.name}
               </span>
-              {matched && !between ? <span className="match-badge" style={{ background: station.light + "2E", color: station.deep }}>按描述对准</span> : null}
             </div>
             <p>{between ? "松手会自动对准最近的台" : station.description}</p>
           </div>

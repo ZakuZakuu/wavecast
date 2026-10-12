@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { matchStation, matchStationRule, rememberProgrammeStation, stationForProgramme } from "../lib/stations";
+import { matchStation, rememberProgrammeStation, stationForProgramme } from "../lib/stations";
 
 describe("matchStation", () => {
   it("maps free text to stations by keyword", () => {
@@ -10,12 +10,6 @@ describe("matchStation", () => {
     expect(matchStation("推荐几首像 Frank Ocean 的歌")).toBe("crate");
     expect(matchStation("雨天开车")).toBe("casual");
     expect(matchStation("")).toBe("casual");
-  });
-
-  it("reports no match instead of defaulting, so the dial can stay where the listener put it", () => {
-    expect(matchStationRule("雨天开车")).toBeNull();
-    expect(matchStationRule("   ")).toBeNull();
-    expect(matchStationRule("睡前听点安静的")).toBe("night");
   });
 });
 
