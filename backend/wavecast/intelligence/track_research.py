@@ -29,11 +29,11 @@ from hashlib import sha1
 
 from pydantic import BaseModel, Field, field_validator
 
-from wavecast.narration_quality import years_in
+from wavecast.narration_quality import durations_in, years_in
 from wavecast.providers.contracts import SearchProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.stations import StationId
-from wavecast.text_identity import base_title_key
+from wavecast.text_identity import base_title_key, to_simplified
 
 from .fact_support import (
     _IGNORED,
@@ -69,6 +69,8 @@ _RESULTS_PER_QUERY = 5
 _MIN_IDENTIFIER_CHARS = 3
 _SHORT_ASCII_TITLE = 8
 _CACHE_EPISODES = 32
+_CATALOGUE_TRIVIA = re.compile(r"曲目编号|第\s*\d+\s*(?:首|轨)|编号\s*\d+|track\s*(?:no|number)|\bNo\.?\s*\d+", re.IGNORECASE)
+_CREDIT_ROLES = frozenset({"composer", "arranger", "score", "lyricist", "vocal", "instrumental", "creation", "cast", "director"})
 _VERSION_MARKER = re.compile(r"\((?:live|remix|piano|instrumental|[^)]*版)[^)]*\)|（[^）]*版[^）]*）", re.IGNORECASE)
 
 
@@ -211,15 +213,17 @@ first: where the piece comes from (film, album, event), who composed / arranged 
 source states, how it was made, how this version relates to the original. Say in "scope" what a point \
 is about: "track" when it is about this very recording or work, "album" when it is about the \
 album, film or event it belongs to (never about the song itself). Each point is one short \
-Chinese statement (at most 80 characters) that one source states, with that source's id and a quote \
+statement in Simplified Chinese (at most 80 characters) that one source states, with that source's id and a quote \
 copied word for word, in the source's own script and without translating (at most 60 characters). The \
 quote must itself say what the point says, including who did what, and must include the work's name \
 whenever the source gives it next to that statement. In the point itself call the recording 这首歌 or \
 它: never write or translate its title. Other works (a film, an album) may be named in 《》 as the \
 sources name them. When a source says a credit belongs to a particular version (a single, a \
 soundtrack cut, a cover), the point must say which version or be left out. If a source is about a different \
-song, a different version, or only about the artist in general, it supports no point. Return an empty \
-list when nothing qualifies.
+song, a different version, or only about the artist in general, it supports no point. Prefer a story a listener would \
+remember (why it was made, what it was for, who it was made with, where it sits in the film) over \
+catalogue data: give no track numbers, running times, catalogue numbers or release formats. Return an \
+empty list when nothing qualifies.
 
 Return JSON {{"points": [{{"text": "...", "source": "id", "quote": "...", "scope": "track|album"}}]}}."""
 
@@ -400,9 +404,13 @@ def verified_points(
         source = sources.get(source_id, "")
         if not text or not source or not quote_in_source(quote, source):
             continue
+        if _CATALOGUE_TRIVIA.search(text) or durations_in(text):
+            continue  # track numbers and running times are catalogue data, not a story
         roles = roles_in(text)
         if roles and not quote_backs_roles(quote, roles):
             continue
+        if item.scope == "album" and roles & _CREDIT_ROLES:
+            continue  # who composed, arranged or sang is a statement about one song
         if track is not None:
             line = f"{quote}\n{(leads or {}).get(source_id, '')}"
             if item.scope == "album":
@@ -429,7 +437,11 @@ def verified_points(
             continue
         if _IGNORED.sub("", text) in {_IGNORED.sub("", p.text) for p in points}:
             continue
-        points.append(TalkingPoint(text=text[:200], evidence_id=source_id, quote=quote[:300], scope=item.scope))
+        points.append(
+            TalkingPoint(
+                text=to_simplified(text)[:200], evidence_id=source_id, quote=quote[:300], scope=item.scope
+            )
+        )
         if len(points) == _MAX_POINTS:
             break
     return points

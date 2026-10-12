@@ -261,12 +261,16 @@ def test_a_second_track_on_the_same_album_shares_the_search_but_not_the_song_fac
 
 
 def test_album_background_is_shared_and_labelled_but_song_facts_are_not() -> None:
-    page = "《千と千尋の神隠し サウンドトラック》收录久石让的配乐，2001年发行。いつも何度でも 作曲：木村弓"
+    page = "《千と千尋の神隠し サウンドトラック》于2001年发行，是宫崎骏动画的原声带。いつも何度でも 作曲：木村弓"
     sources = {"evidence-a": page}
     leads = {"evidence-a": "千と千尋の神隠し サウンドトラック"}
 
     album = verified_points(
-        [_RawPoint(text="这张原声带收录了久石让的配乐", source="evidence-a", quote="收录久石让的配乐", scope="album")],
+        [_RawPoint(text="这张原声带于2001年发行", source="evidence-a", quote="于2001年发行，是宫崎骏动画的原声带", scope="album")],
+        sources, SECOND_ON_ALBUM, leads,
+    )
+    credit_as_background = verified_points(
+        [_RawPoint(text="木村弓作曲了其中一首", source="evidence-a", quote="いつも何度でも 作曲：木村弓", scope="album")],
         sources, SECOND_ON_ALBUM, leads,
     )
     song = verified_points(
@@ -274,11 +278,12 @@ def test_album_background_is_shared_and_labelled_but_song_facts_are_not() -> Non
         sources, SECOND_ON_ALBUM, leads,
     )
     unrelated_album = verified_points(
-        [_RawPoint(text="这张原声带收录了久石让的配乐", source="evidence-a", quote="收录久石让的配乐", scope="album")],
+        [_RawPoint(text="这张原声带于2001年发行", source="evidence-a", quote="于2001年发行，是宫崎骏动画的原声带", scope="album")],
         sources, SUMMER, {"evidence-a": "无关页面"},
     )
 
     assert [point.scope for point in album] == ["album"]
+    assert credit_as_background == []  # who composed what is about one song, not the album
     assert song == []  # that row is another song's
     assert unrelated_album == []  # the page is not about this track's album
 
@@ -405,3 +410,16 @@ class ProgressiveSessionStub:
             chapters=[ProgressiveAssemblyChapter.model_construct(chapter_id="chapter-2", chapter=chapter)],
             narration_authored_chapter_ids=[],
         )
+
+
+def test_catalogue_data_and_traditional_characters_are_handled() -> None:
+    sources = {"evidence-k": "《いつも何度でも》是千與千尋的片尾曲，曲目編號12，時長1分48秒。"}
+    trivia = verified_points(
+        [_point("它的曲目编号12，时长1分48秒", "evidence-k", "曲目編號12，時長1分48秒")], sources, KIMURA, sources
+    )
+    story = verified_points(
+        [_point("它是千與千尋的片尾曲", "evidence-k", "是千與千尋的片尾曲")], sources, KIMURA, sources
+    )
+
+    assert trivia == []
+    assert [point.text for point in story] == ["它是千与千寻的片尾曲"]  # said in Simplified Chinese
