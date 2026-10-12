@@ -88,6 +88,13 @@ export const api = {
   },
   recommendations: (expectedUserId: string) =>
     request<ProgramIdea[]>("/recommendations/me", undefined, expectedUserId),
+  /** 换一批: ideas not shown yet; `has_more` is false once nothing new can be offered today. */
+  nextRecommendations: (shownIds: string[], expectedUserId: string) =>
+    request<{ ideas: ProgramIdea[]; has_more: boolean }>(
+      "/recommendations/me/next",
+      { method: "POST", body: JSON.stringify({ shown_ids: shownIds }) },
+      expectedUserId,
+    ),
   refreshRecommendations: (expectedUserId: string) =>
     request<ProgramIdea[]>(
       "/recommendations/me/refresh",

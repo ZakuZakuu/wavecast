@@ -73,6 +73,8 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
   const [ideas, setIdeas] = useState<ProgramIdea[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [rotating, setRotating] = useState(false);
+  const [rotationNote, setRotationNote] = useState<string | null>(null);
   const tune = useTuneStart();
 
   useEffect(() => {
@@ -99,6 +101,24 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
       active = false;
     };
   }, [sessionPending, user]);
+
+  /** 换一批: shown ideas are not offered again; when nothing new can be offered the shelf stays. */
+  const rotateIdeas = async () => {
+    if (rotating || !user || !ideas?.length) return;
+    setRotating(true);
+    setRotationNote(null);
+    try {
+      const shownIds = ideas.map((idea) => idea.id);
+      const next = await api.nextRecommendations(shownIds, user.id);
+      const unchanged = next.ideas.every((idea) => shownIds.includes(idea.id));
+      if (!unchanged) setIdeas(next.ideas);
+      if (unchanged || !next.has_more) setRotationNote("今天能换的都换过了，先挑一档听听吧");
+    } catch {
+      setRotationNote("暂时换不了，稍后再试");
+    } finally {
+      setRotating(false);
+    }
+  };
 
   const openIdea = async (idea: ProgramIdea) => {
     if (busyId || !user) return;
@@ -206,6 +226,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
             ) : null}
           </div>
           {error ? <p className="inline-note" role="alert">{error}</p> : null}
+          {rotationNote ? <p className="inline-note" role="status">{rotationNote}</p> : null}
           <div className="pick-grid">
             {picks.map((pick) => <PickCard key={pick.key} pick={pick} />)}
             {loading && !picks.length
@@ -214,6 +235,11 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
           </div>
           {!loading && !picks.length ? (
             <p className="inline-note">还没有可以推荐的节目。<Link href="/tune">去调一档</Link></p>
+          ) : null}
+          {!guest && ideas?.length ? (
+            <button type="button" className="pick-refresh" onClick={() => void rotateIdeas()} disabled={rotating}>
+              {rotating ? "正在换…" : "换一批"}
+            </button>
           ) : null}
         </section>
       </div>

@@ -252,3 +252,39 @@ def test_postgres_recommendation_materialization_does_not_nest_event_loop(monkey
         assert proposals.get_for_user(user_id, proposal_id) is not None
     finally:
         ideas.close()
+
+
+def test_next_recommendations_is_authenticated_and_never_returns_a_shown_idea(monkeypatch) -> None:
+    class FakeVerifier:
+        async def verify(self, token: str) -> str:
+            return "user-a"
+
+    monkeypatch.setattr(api_module, "_auth_verifier", FakeVerifier())
+    monkeypatch.setattr(
+        api_module, "user_preferences_repository", InMemoryUserPreferencesRepository()
+    )
+    monkeypatch.setattr(api_module, "_user_event_repository", InMemoryUserEventRepository())
+    monkeypatch.setattr(api_module, "proposal_repository", InMemoryProgramProposalRepository())
+    monkeypatch.setattr(api_module, "recommendation_repository", InMemoryProgramIdeaRepository())
+    client = TestClient(api_module.app)
+    headers = {"Authorization": "Bearer token-a"}
+
+    assert client.post("/api/recommendations/me/next", json={"shown_ids": []}).status_code == 401
+    shown = client.get("/api/recommendations/me", headers=headers).json()
+    assert 1 <= len(shown) <= 4
+
+    response = client.post(
+        "/api/recommendations/me/next",
+        json={"shown_ids": [idea["id"] for idea in shown]},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["has_more"], bool)
+    assert not {idea["id"] for idea in body["ideas"]} & {idea["id"] for idea in shown}
+    assert all("user_id" not in idea for idea in body["ideas"])
+    too_many = client.post(
+        "/api/recommendations/me/next", json={"shown_ids": ["x"] * 13}, headers=headers
+    )
+    assert too_many.status_code == 422
