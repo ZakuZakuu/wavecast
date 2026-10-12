@@ -201,6 +201,31 @@ def unknown_titles(
     return found
 
 
+_ARTIST_SPLIT = re.compile(r"\s*(?:,|，|、|/|&|;|；|\bfeat\.?|\bft\.?)\s*", re.IGNORECASE)
+
+
+def credited_people(artists: Sequence[str]) -> list[str]:
+    """The individual names in artist credits ("久石譲, 奥户巴寿" -> both), squashed for comparison."""
+
+    names: list[str] = []
+    for credit in artists:
+        for part in _ARTIST_SPLIT.split(credit):
+            key = _squash(part)
+            if len(key) >= 2 and key not in names:
+                names.append(key)
+    return names
+
+
+def people_missing_from_quote(text: str, quote: str, people: Sequence[str]) -> list[str]:
+    """People the sentence names (among those the programme knows) that the quote does not.
+
+    "作曲是久石让" backed by a line that says "作曲：木村弓" has the right role and the wrong person.
+    """
+
+    squashed_text, squashed_quote = _squash(text), _squash(quote)
+    return [name for name in people if name in squashed_text and name not in squashed_quote]
+
+
 def _names_track(text: str, track: KnownTrack) -> bool:
     """``text`` names the track: its catalog title, its Chinese title, or the title without a version tag."""
 
@@ -305,6 +330,9 @@ class FactChecker:
         # it is true is the checker's question, over the scoped sources only.
         corpus = "\n".join([*sources.values(), context, *(item.claim_or_excerpt for item in known_text)])
         known = _known_titles(tracks, route_labels)
+        people = credited_people(
+            [track.artist for track in tracks] + [label.split(" - ", 1)[0] for label in route_labels]
+        )
 
         flagged: dict[int, SentenceIssue] = {}
         for number, (block, index, text) in enumerate(sentences):
@@ -360,6 +388,9 @@ class FactChecker:
                     _squash(name) in _squash(finding.quote) for name in _TITLE_IN_BRACKETS.findall(text)
                 ) and not _quote_names_title_variant(finding.quote, text, tracks):
                     verdict = "insufficient"
+            if verdict == "supported" and roles_in(text) and people_missing_from_quote(text, finding.quote, people):
+                # The right role, but a different person: the line does not say this person did it.
+                verdict = "insufficient"
             if verdict == "supported" and roles_in(text):
                 # A credit about a track of this programme must be read off a line naming that
                 # track: the composer of the film it belongs to is not the composer of the song.

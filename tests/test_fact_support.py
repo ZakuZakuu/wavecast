@@ -560,3 +560,25 @@ def test_a_block_that_still_talks_about_another_song_after_the_rewrite_is_droppe
 
     assert isinstance(result, RadioScript)
     assert result.blocks == []
+
+
+def test_the_right_role_for_the_wrong_person_is_not_support() -> None:
+    page = "《永远同在》 作词：觉和歌子 作曲：木村弓 编曲：木村弓"
+    track = KnownTrack(artist="木村弓", title="いつも何度でも", spoken_title="永远同在")
+    other = KnownTrack(artist="久石譲", title="Summer")
+
+    wrong_person = _review(
+        _script("《永远同在》的作曲是久石让。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "《永远同在》 作词：觉和歌子 作曲：木村弓")]),
+        tracks=[track, other],
+    )
+    right_person = _review(
+        _script("《永远同在》的作曲是木村弓。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "《永远同在》 作词：觉和歌子 作曲：木村弓")]),
+        tracks=[track, other],
+    )
+
+    assert [issue.code for issue in wrong_person.issues] == ["insufficient"]
+    assert right_person.issues == []
