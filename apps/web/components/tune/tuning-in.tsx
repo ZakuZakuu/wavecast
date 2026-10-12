@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { approach, cleanTarget, swingOffset, waveformPathAt } from "../../lib/motion/ambient";
 import { prefersReducedMotion } from "../../lib/motion/easing";
 import { useOverlay } from "../../lib/overlay-stack";
+import { Portal } from "../portal";
 import { formatFreq, type Station } from "../../lib/stations";
 import { PX_PER_MHZ } from "../../lib/tuner";
 import { TuningWindow, useElementWidth } from "./tuning-window";
@@ -40,10 +41,10 @@ export function TuningInScreen({
   useEffect(() => {
     const wave = waveRef.current;
     const pointer = ref.current?.querySelector<HTMLElement>(".tw-pointer") ?? null;
-    if (prefersReducedMotion()) {
-      wave?.setAttribute("d", waveformPathAt(0, 1));
-      return;
-    }
+    // Reduced motion keeps the waveform flowing (it is the only sign that the
+    // station is being tuned) but slower, and drops the pointer's swing.
+    const reduced = prefersReducedMotion();
+    const flow = reduced ? 0.35 : 1;
     const amplitude = 1.2 * PX_PER_MHZ;
     const start = performance.now();
     let last = start;
@@ -52,11 +53,11 @@ export function TuningInScreen({
       const elapsed = now - start;
       clean = approach(clean, targetRef.current, now - last);
       last = now;
-      if (pointer) {
+      if (pointer && !reduced) {
         const offset = swingOffset(elapsed, amplitude);
         pointer.style.transform = offset ? `translate3d(${offset}px, 0, 0)` : "";
       }
-      wave?.setAttribute("d", waveformPathAt(elapsed / 1000, clean));
+      wave?.setAttribute("d", waveformPathAt((elapsed / 1000) * flow, clean));
       frame = requestAnimationFrame(tick);
     });
     return () => cancelAnimationFrame(frame);
@@ -66,7 +67,10 @@ export function TuningInScreen({
 
   const activeIndex = steps.findIndex((step) => !step.done);
 
+  // Portalled to <body> like the sheets: rendered inside a scrolling page it
+  // scrolled away with it and exposed the page underneath.
   return (
+    <Portal>
     <div className="tuning-in" role="dialog" aria-modal="true" aria-label="开播中">
       <span className="glow" aria-hidden="true" style={{ left: -60, top: 80, width: 520, height: 520, background: station.light, opacity: 0.38, filter: "blur(90px)" }} />
       <div className="tuning-in-body">
@@ -116,5 +120,6 @@ export function TuningInScreen({
         <p className="tuning-in-foot">音乐几秒内就会响起来，<br />后面的内容边播边准备。</p>
       </div>
     </div>
+    </Portal>
   );
 }
