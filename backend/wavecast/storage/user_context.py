@@ -24,6 +24,7 @@ user_preferences_table = Table(
     Column("contexts", JSONB, nullable=False),
     Column("discovery_level", String(32), nullable=False),
     Column("onboarding_completed", Boolean, nullable=False),
+    Column("avoid_artists", JSONB, nullable=False, server_default="[]"),
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
@@ -88,6 +89,7 @@ class PostgresUserPreferencesRepository:
             "contexts": payload["contexts"],
             "discovery_level": payload["discovery_level"],
             "onboarding_completed": preferences.onboarding_completed,
+            "avoid_artists": payload["avoid_artists"],
             "updated_at": preferences.updated_at,
         }
         statement = insert(user_preferences_table).values(**values)

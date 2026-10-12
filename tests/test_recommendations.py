@@ -444,3 +444,58 @@ def test_recommendation_claim_is_single_use_and_can_be_restored() -> None:
     assert second_claim is None
     assert service.restore_available("user-a", idea.id) is not None
     assert service.claim_for_materialization("user-a", idea.id) is not None
+
+
+def _idea(title: str, tags: list[str]) -> ProgramIdeaDraft:
+    return ProgramIdeaDraft(title=title, description="一段路线", reason="结合偏好", tags=tags)
+
+
+def test_ideas_built_on_an_avoided_artist_are_dropped_while_enough_remain() -> None:
+    llm = _RecommendationLLM(
+        ProgramIdeaDraftBatch(
+            ideas=[
+                _idea("方大同的慢歌", ["R&B"]),
+                _idea("夜里的 Soul", ["Soul"]),
+                _idea("Broken Beat 入口", ["Broken Beat"]),
+                _idea("和声的另一边", ["R&B"]),
+                _idea("下班路上的爵士", ["Jazz"]),
+            ]
+        )
+    )
+
+    ideas = ProviderBackedRecommendationPlanner(lambda: llm).generate_program_ideas(
+        UserContext(user_id="u", genres=["R&B"], avoid_artists=["方大同"], discovery_level=0.5)
+    )
+
+    assert [idea.title for idea in ideas] == ["夜里的 Soul", "Broken Beat 入口", "和声的另一边", "下班路上的爵士"]
+    assert '"avoid_artists": ["方大同"]' in llm.prompt
+
+
+def test_a_shelf_is_never_emptied_by_the_avoid_list() -> None:
+    drafts = [_idea(f"方大同的第{i}种慢歌", ["R&B"]) for i in range(1, 5)]
+    llm = _RecommendationLLM(ProgramIdeaDraftBatch(ideas=drafts))
+
+    ideas = ProviderBackedRecommendationPlanner(lambda: llm).generate_program_ideas(
+        UserContext(user_id="u", avoid_artists=["方大同"], discovery_level=0.5)
+    )
+
+    assert len(ideas) == 4
+
+
+def test_the_context_carries_avoided_artists_and_stops_preferring_them() -> None:
+    preferences = InMemoryUserPreferencesRepository()
+    preferences.save(
+        UserPreferences(
+            user_id="user-a",
+            artists=["方大同", "Mogwai"],
+            avoid_artists=["方大同"],
+            onboarding_completed=True,
+        )
+    )
+
+    context = UserContextAggregator(
+        preferences, InMemoryUserEventRepository(), InMemoryProgramProposalRepository()
+    ).build("user-a")
+
+    assert context.avoid_artists == ["方大同"]
+    assert context.preferred_artists == ["Mogwai"]

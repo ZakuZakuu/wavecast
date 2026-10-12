@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { api } from "../../lib/api";
 import { isDarkColour } from "../../lib/cover/build-cover";
 import { readCaptionsEnabled, recordLessLikeThis, writeCaptionsEnabled } from "../../lib/listener-feedback";
 import { friendlyError } from "../../lib/friendly-error";
@@ -77,7 +78,8 @@ export function PlayerScreen({
   const playback = useNowPlaying();
   const { reload } = usePlaybackControl();
   const toast = useToast();
-  const signedIn = Boolean(authClient.useSession().data?.user);
+  const userId = authClient.useSession().data?.user?.id ?? null;
+  const signedIn = userId !== null;
   const [routeOpen, setRouteOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -167,9 +169,15 @@ export function PlayerScreen({
     if (music) {
       recordLessLikeThis({ trackRef: music.track_ref, title: music.title, artist: music.artist, episodeId: episode.id });
     }
+    const artist = music?.artist?.trim();
     // Guests: the preference lives on this device only until they sign in.
-    if (signedIn) toast.show("会少放这类歌");
-    else toast.show("已记下。登录后，这些偏好会一直保存", 3200);
+    if (!signedIn) {
+      toast.show("已记下。登录后，这些偏好会一直保存", 3200);
+      return;
+    }
+    if (userId && artist) void api.avoidArtist(artist, userId).catch(() => undefined);
+    // It steers what is recommended or tuned next; the programme already playing is not redone.
+    toast.show(artist ? `已记下，之后的推荐会少放 ${artist}` : "已记下", 3200);
   };
 
   const toggleCaptions = () => {

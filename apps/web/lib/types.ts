@@ -172,10 +172,12 @@ export type UserPreferences = {
   contexts: string[];
   discovery_level: DiscoveryLevel;
   onboarding_completed: boolean;
+  /** Artists the listener pressed 少放这类 on, newest first; not part of the onboarding form. */
+  avoid_artists?: string[];
   updated_at: string;
 };
 
-export type UserPreferencesUpdate = Omit<UserPreferences, "user_id" | "updated_at">;
+export type UserPreferencesUpdate = Omit<UserPreferences, "user_id" | "updated_at" | "avoid_artists">;
 export type UserEventType = "PLAY_START" | "PLAY_COMPLETE" | "LIKE" | "FAVORITE" | "SAVE" | "SKIP";
 export type UserEventInput = { event_type: UserEventType; program_id?: string; episode_id?: string };
 export type ProgramIdea = {

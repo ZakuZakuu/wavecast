@@ -30,12 +30,14 @@ export function writeLocalTaste(taste: Omit<LocalTaste, "updatedAt">): void {
 }
 
 /** Compact, bounded text for ProposalGenerationRequest.taste_context (≤1000). */
-export function tasteContext(taste: LocalTaste | null): string | undefined {
-  if (!taste) return undefined;
+export function tasteContext(taste: LocalTaste | null, avoidArtists: readonly string[] = []): string | undefined {
   const parts: string[] = [];
-  if (taste.genres.length) parts.push("爱听：" + taste.genres.join("、"));
-  if (taste.artists.trim()) parts.push("喜欢的歌手：" + taste.artists.trim());
-  if (taste.moments.length) parts.push("常在这些时候听：" + taste.moments.join("、"));
-  const text = parts.join("；");
-  return text ? text.slice(0, 1000) : undefined;
+  if (taste?.genres.length) parts.push("爱听：" + taste.genres.join("、"));
+  if (taste?.artists.trim()) parts.push("喜欢的歌手：" + taste.artists.trim());
+  if (taste?.moments.length) parts.push("常在这些时候听：" + taste.moments.join("、"));
+  const avoid = avoidArtists.length ? "少放：" + avoidArtists.slice(0, 8).join("、") : "";
+  // The 少放 part is kept whole; it is the taste text that gives way to the length limit.
+  const taken = parts.join("；").slice(0, 1000 - (avoid ? avoid.length + 1 : 0));
+  const text = [taken, avoid].filter(Boolean).join("；");
+  return text || undefined;
 }

@@ -50,6 +50,8 @@ class UserContext(BaseModel):
     discovery_level: float = Field(ge=0, le=1)
     # Titles this listener has already been offered; a new batch should not repeat them.
     avoid_titles: list[str] = Field(default_factory=list, max_length=30)
+    # Artists the listener asked to hear less of (少放这类); ideas should not be built on them.
+    avoid_artists: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ProgramIdeaStatus(StrEnum):
@@ -378,10 +380,15 @@ class UserContextAggregator:
             ],
             limit=12,
         )
+        avoided = {name.casefold() for name in preferences.avoid_artists}
         preferred_artists = _unique(
             [
-                *preferences.artists,
-                *(artist for program in favorites for artist in program.anchor_artists),
+                artist
+                for artist in [
+                    *preferences.artists,
+                    *(artist for program in favorites for artist in program.anchor_artists),
+                ]
+                if artist.casefold() not in avoided
             ],
             limit=20,
         )
@@ -393,6 +400,7 @@ class UserContextAggregator:
             recent_interests=recent_interests,
             favorite_interests=favorite_interests,
             preferred_artists=preferred_artists,
+            avoid_artists=list(preferences.avoid_artists),
             discovery_level={
                 DiscoveryLevel.SAFE: 0.2,
                 DiscoveryLevel.BALANCED: 0.5,
@@ -462,7 +470,7 @@ class ProviderBackedRecommendationPlanner:
             close = getattr(llm, "aclose", None)
             if callable(close):
                 await close()
-        return raw.ideas
+        return _without_avoided_artists(raw.ideas, context.avoid_artists)
 
     @staticmethod
     async def _ask(llm: ProgressiveLLMProvider, prompt: str) -> ProgramIdeaDraftBatch:
@@ -491,11 +499,35 @@ class ProviderBackedRecommendationPlanner:
             "supports them. Titles should sound like real radio-program premises and be meaningfully "
             f"different from one another. {TITLE_GUIDANCE} Descriptions should state the listening journey; reasons "
             "should briefly connect that journey to concrete supplied taste signals. Keep tags compact. Never repeat or closely paraphrase a "
-            "title listed in avoid_titles. "
+            "title listed in avoid_titles. Do not build any idea around an artist in avoid_artists: the "
+            "listener asked to hear less of them. "
             "Prefer natural Simplified Chinese copy unless the supplied context is predominantly in "
             "another language.\n"
             f"Listener context JSON: {json.dumps(payload, ensure_ascii=False, sort_keys=True)}"
         )
+
+
+def _without_avoided_artists(
+    ideas: list[ProgramIdeaDraft], avoided: list[str]
+) -> list[ProgramIdeaDraft]:
+    """Drop ideas that still name an artist the listener asked to hear less of.
+
+    The prompt already says so; this catches the model ignoring it. When too few ideas would be
+    left to fill a shelf, the original list is kept rather than showing an empty home.
+    """
+
+    names = [name.casefold() for name in avoided if name.strip()]
+    if not names:
+        return ideas
+    kept = [
+        idea
+        for idea in ideas
+        if not any(
+            name in f"{idea.title} {idea.description} {' '.join(idea.tags)}".casefold()
+            for name in names
+        )
+    ]
+    return kept if len(kept) >= 3 else ideas
 
 
 class DeterministicRecommendationPlanner:
