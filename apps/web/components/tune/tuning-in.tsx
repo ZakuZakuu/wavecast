@@ -12,15 +12,21 @@ import { TuningWindow, useElementWidth } from "./tuning-window";
 
 export type TuningStep = { label: string; done: boolean };
 
-/** Full-screen "开播中": the steps map to real events, never decorative copy. */
-export function TuningInScreen({
-  station,
-  steps,
-  error,
-  retryable = true,
-  onCancel,
-  onRetry,
-}: {
+/**
+ * Full-screen "开播中": the steps map to real events, never decorative copy.
+ * Portalled to <body> like the sheets: rendered inside a scrolling page it
+ * scrolled away with it and exposed the page underneath. The portal renders
+ * nothing on its first pass, so the body (and its effects) is a child.
+ */
+export function TuningInScreen(props: TuningInProps) {
+  return (
+    <Portal>
+      <TuningInBody {...props} />
+    </Portal>
+  );
+}
+
+type TuningInProps = {
   station: Station;
   steps: TuningStep[];
   error: string | null;
@@ -28,7 +34,16 @@ export function TuningInScreen({
   retryable?: boolean;
   onCancel: () => void;
   onRetry: () => void;
-}) {
+};
+
+function TuningInBody({
+  station,
+  steps,
+  error,
+  retryable = true,
+  onCancel,
+  onRetry,
+}: TuningInProps) {
   const { ref, width } = useElementWidth<HTMLDivElement>();
   const doneCount = steps.filter((step) => step.done).length;
   const waveRef = useRef<SVGPathElement | null>(null);
@@ -67,10 +82,7 @@ export function TuningInScreen({
 
   const activeIndex = steps.findIndex((step) => !step.done);
 
-  // Portalled to <body> like the sheets: rendered inside a scrolling page it
-  // scrolled away with it and exposed the page underneath.
   return (
-    <Portal>
     <div className="tuning-in" role="dialog" aria-modal="true" aria-label="开播中">
       <span className="glow" aria-hidden="true" style={{ left: -60, top: 80, width: 520, height: 520, background: station.light, opacity: 0.38, filter: "blur(90px)" }} />
       <div className="tuning-in-body">
@@ -120,6 +132,5 @@ export function TuningInScreen({
         <p className="tuning-in-foot">音乐几秒内就会响起来，<br />后面的内容边播边准备。</p>
       </div>
     </div>
-    </Portal>
   );
 }
