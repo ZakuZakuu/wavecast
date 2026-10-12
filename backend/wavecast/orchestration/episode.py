@@ -182,6 +182,7 @@ class EpisodeOrchestrator:
             owner_user_id=owner_user_id,
             state=EpisodeState.STREAMING,
             title=seed.title,
+            cover_title=seed.cover_title,
             topic=seed.topic,
             program_estimated_duration_seconds=seed.estimated_duration_seconds,
             presentation_intent=seed.presentation_intent,

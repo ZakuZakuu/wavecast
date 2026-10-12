@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -21,6 +22,7 @@ from wavecast.proposals import (
 from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError, ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
+from wavecast.title_style import TITLE_GUIDANCE, count_colon_titles, cover_title
 from wavecast.user_context import (
     DiscoveryLevel,
     UserEvent,
@@ -29,6 +31,8 @@ from wavecast.user_context import (
     UserPreferences,
     UserPreferencesRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class UserContext(BaseModel):
@@ -56,6 +60,8 @@ class ProgramIdeaDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(min_length=1, max_length=200)
+    # Short cover label; optional so older drafts and the heuristic planner still validate.
+    cover_title: str | None = Field(default=None, max_length=60)
     description: str = Field(min_length=1, max_length=500)
     reason: str = Field(min_length=1, max_length=500)
     tags: list[str] = Field(default_factory=list, max_length=12)
@@ -94,6 +100,7 @@ class ProgramIdea(BaseModel):
     id: str = Field(min_length=1, max_length=32)
     user_id: str = Field(min_length=1, max_length=128)
     title: str = Field(min_length=1, max_length=200)
+    cover_title: str | None = Field(default=None, max_length=40)
     description: str = Field(min_length=1, max_length=500)
     reason: str = Field(min_length=1, max_length=500)
     tags: list[str] = Field(default_factory=list, max_length=12)
@@ -104,7 +111,7 @@ class ProgramIdea(BaseModel):
     def to_proposal_seed(
         self, duration_intent: DurationIntent = DurationIntent.STANDARD
     ) -> ProgramIdeaProposalSeed:
-        prompt = f"{self.title}: {self.description}"[:500]
+        prompt = f"{self.title}\n{self.description}"[:500]
         context = f"{self.reason} Tags: {', '.join(self.tags)}"[:1000]
         return ProgramIdeaProposalSeed(
             recommendation_id=self.id,
@@ -130,6 +137,7 @@ class ProgramIdea(BaseModel):
         return proposal.model_copy(
             update={
                 "title": self.title,
+                "cover_title": self.cover_title or proposal.cover_title,
                 "short_description": self.description,
                 "genre_tags": list(self.tags[:8]),
                 "mood_tags": [] if is_mock_opening else list(proposal.mood_tags),
@@ -145,6 +153,7 @@ class ProgramIdeaResponse(BaseModel):
 
     id: str
     title: str
+    cover_title: str | None = None
     description: str
     reason: str
     tags: list[str]
@@ -420,20 +429,42 @@ class ProviderBackedRecommendationPlanner:
     async def _generate(self, context: UserContext) -> list[ProgramIdeaDraft]:
         llm = self._llm_factory()
         try:
-            raw = await llm.structured(
-                self._prompt(context),
-                ProgramIdeaDraftBatch,
-                transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
-                profile=InferenceProfile.FAST,
-                stage="recommendation_planner",
-            )
+            prompt = self._prompt(context)
+            raw = await self._ask(llm, prompt)
+            titles = [idea.title for idea in raw.ideas]
+            if count_colon_titles(titles):
+                # Ideas are made ahead of the listener, so one more call is affordable: a shelf
+                # of "A：B" titles reads as boring at a glance.  Ask once more, naming the problem.
+                logger.warning("recommendation_titles_colon_retry count=%d", count_colon_titles(titles))
+                retry_prompt = (
+                    f"{prompt}\nA previous attempt used the forbidden 'A：B' title pattern for: "
+                    + " / ".join(title for title in titles if count_colon_titles([title]))
+                    + ". Rewrite every title without a colon subtitle."
+                )
+                try:
+                    again = await self._ask(llm, retry_prompt)
+                except ProviderError:
+                    again = raw
+                if count_colon_titles([idea.title for idea in again.ideas]) <= count_colon_titles(titles):
+                    raw = again
         finally:
             close = getattr(llm, "aclose", None)
             if callable(close):
                 await close()
+        return raw.ideas
+
+    @staticmethod
+    async def _ask(llm: ProgressiveLLMProvider, prompt: str) -> ProgramIdeaDraftBatch:
+        raw = await llm.structured(
+            prompt,
+            ProgramIdeaDraftBatch,
+            transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
+            profile=InferenceProfile.FAST,
+            stage="recommendation_planner",
+        )
         if not isinstance(raw, ProgramIdeaDraftBatch):
             raise ProviderInvalidResponseError("recommendation planner returned invalid output")
-        return raw.ideas
+        return raw
 
     @staticmethod
     def _prompt(context: UserContext) -> str:
@@ -447,7 +478,7 @@ class ProviderBackedRecommendationPlanner:
             "artists, or recent behavior. Do not claim web research or factual discoveries. "
             "Ideas should span familiar, adjacent, and exploratory directions where the context "
             "supports them. Titles should sound like real radio-program premises and be meaningfully "
-            "different from one another. Descriptions should state the listening journey; reasons "
+            f"different from one another. {TITLE_GUIDANCE} Descriptions should state the listening journey; reasons "
             "should briefly connect that journey to concrete supplied taste signals. Keep tags compact. "
             "Prefer natural Simplified Chinese copy unless the supplied context is predominantly in "
             "another language.\n"
@@ -471,7 +502,7 @@ class DeterministicRecommendationPlanner:
 
         ideas = [
             ProgramIdeaDraft(
-                title=f"{mood}里的{genre}：再往外听一点",
+                title=f"{mood}里的{genre}，再往外听一点",
                 description=(
                     f"从你偏好的{genre}出发，沿着相邻声音展开一段适合"
                     f"{preferred_context or mood}的收听路线。"
@@ -498,7 +529,7 @@ class DeterministicRecommendationPlanner:
         elif artist:
             ideas.append(
                 ProgramIdeaDraft(
-                    title=f"{artist}之后：沿着{genre}的线索",
+                    title=f"听完{artist}，接着听什么",
                     description=f"从你喜欢的{artist}出发，听听{genre}里相近又不同的表达。",
                     reason=f"结合你填写的艺人偏好「{artist}」与风格「{genre}」。",
                     tags=[genre, artist],
@@ -580,6 +611,7 @@ class RecommendationService:
                     id=uuid4().hex,
                     user_id=user_id,
                     title=draft.title,
+                    cover_title=cover_title(draft.cover_title, draft.title),
                     description=draft.description,
                     reason=draft.reason,
                     tags=draft.tags,

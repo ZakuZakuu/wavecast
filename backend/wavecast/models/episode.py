@@ -72,6 +72,8 @@ class EpisodeSeed(BaseModel):
     title: str
     topic: str
     short_description: str
+    # A short label for the cover (see title_style); None for programmes made before it existed.
+    cover_title: str | None = Field(default=None, max_length=40)
     estimated_duration_seconds: int = Field(gt=0)
     opening_track_ref: str
     opening_track_title: str
@@ -183,6 +185,8 @@ class LiveEpisode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     seed_id: str
     title: str | None = None
+    # Short cover label of the seed, so the player draws the same cover as the home page.
+    cover_title: str | None = Field(default=None, max_length=40)
     topic: str | None = None
     listener_id: str = "test-listener"
     # Account ownership is separate from immutable runtime listener identity.
