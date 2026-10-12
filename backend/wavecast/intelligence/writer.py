@@ -19,7 +19,13 @@ from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.spoken_form import KnownTrack, has_unspeakable_script, to_spoken_form
 from wavecast.stations import StationId, compose_signoff
 
-from .fact_support import FactChecker, FactReport, split_sentences, without_flagged_sentences
+from .fact_support import (
+    FactChecker,
+    FactReport,
+    split_sentences,
+    with_carried_risks,
+    without_flagged_sentences,
+)
 from .fast_start import FastStructuredProvider
 from .models import (
     ChapterPlan,
@@ -371,6 +377,10 @@ class WriterService:
                 len(item) for item in problems.values()
             ):
                 result, report = revised, revised_report
+            elif report is not None and revised_report is not None:
+                # The earlier draft stays, but what the rewrite's check found wrong in the same
+                # claims must not be forgotten (the two checks may disagree about one sentence).
+                report = with_carried_risks(result, report, revised_report)
             break
         if report is None and isinstance(result, RadioScript) and self.fact_checker is not None:
             # No rewrite round ran (none allowed), so the draft has not been checked yet.
