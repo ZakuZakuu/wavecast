@@ -81,6 +81,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ artist }),
     }, expectedUserId),
+  stopAvoidingArtist: (artist: string, expectedUserId: string) =>
+    request<UserPreferences>("/user-preferences/me/avoid-artists/remove", {
+      method: "POST",
+      body: JSON.stringify({ artist }),
+    }, expectedUserId),
   deleteUserPreferences: (expectedUserId: string) =>
     request<UserPreferences>("/user-preferences/me", { method: "DELETE" }, expectedUserId),
   createUserEvent: (input: UserEventInput, expectedUserId: string) =>

@@ -42,6 +42,18 @@ export function writeCaptionsEnabled(enabled: boolean): void {
   }
 }
 
+/** Forgets an artist on this device (the account's list is changed through the API). */
+export function removeLessLikeThisArtist(artist: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const name = artist.trim().toLowerCase();
+    const kept = readLessLikeThis().filter((item) => item.artist?.trim().toLowerCase() !== name);
+    window.localStorage.setItem(LESS_KEY, JSON.stringify(kept));
+  } catch {
+    // Best effort only.
+  }
+}
+
 /** Artists the listener asked to hear less of, newest first, without repeats. */
 export function lessLikeThisArtists(): string[] {
   const seen = new Set<string>();

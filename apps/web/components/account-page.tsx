@@ -21,6 +21,8 @@ import { GitHubMark, GoogleMark } from "./account/brand-icons";
 import { EmailLogin } from "./account/email-login";
 import { IosInstallGuide } from "./install/install-prompt";
 import { LogoMark } from "./logo-mark";
+import { api } from "../lib/api";
+import { AvoidArtistsSheet } from "./account/avoid-artists-sheet";
 import { OnboardingSheet } from "./onboarding/onboarding-sheet";
 
 function BackButton() {
@@ -153,6 +155,22 @@ function AccountView({ name, email }: { name: string; email: string | null | und
   const [installRow, setInstallRow] = useState<InstallRow>(null);
   const [guide, setGuide] = useState<"open" | "leaving" | null>(null);
   const count = useLibraryCount();
+  const userId = authClient.useSession().data?.user?.id ?? null;
+  const [avoided, setAvoided] = useState<string[]>([]);
+  const [avoidOpen, setAvoidOpen] = useState(false);
+
+  useEffect(() => {
+    if (!userId) return;
+    let active = true;
+    api.userPreferences(userId)
+      .then((preferences) => {
+        if (active) setAvoided(preferences.avoid_artists ?? []);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [userId]);
 
   useEffect(() => {
     setTaste(tasteSummary(readLocalTaste()));
@@ -209,6 +227,15 @@ function AccountView({ name, email }: { name: string; email: string | null | und
             </button>
           </li>
           <li>
+            <button type="button" className="acct-row is-tall" onClick={() => setAvoidOpen(true)}>
+              <span className="acct-row-copy">
+                <span className="acct-row-title">少放的歌手</span>
+                <span className="acct-row-sub">{avoided.length ? avoided.slice(0, 4).join("、") : "还没有"}</span>
+              </span>
+              <Chevron />
+            </button>
+          </li>
+          <li>
             <Link href="/library" className="acct-row is-tall">
               <span className="acct-row-copy">
                 <span className="acct-row-title">节目库</span>
@@ -240,6 +267,9 @@ function AccountView({ name, email }: { name: string; email: string | null | und
         <button type="button" className="acct-signout" onClick={() => void signOut()}>退出登录</button>
       </div>
       {editingTaste ? <OnboardingSheet force onFinished={() => setEditingTaste(false)} /> : null}
+      {userId ? (
+        <AvoidArtistsSheet open={avoidOpen} onClose={() => setAvoidOpen(false)} userId={userId} artists={avoided} onChange={setAvoided} />
+      ) : null}
       {guide ? (
         <IosInstallGuide
           leaving={guide === "leaving"}

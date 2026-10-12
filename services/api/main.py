@@ -151,6 +151,7 @@ from wavecast.user_context import (
     UserPreferencesRepository,
     UserPreferencesUpdate,
     with_avoided_artist,
+    without_avoided_artist,
 )
 
 logger = logging.getLogger(__name__)
@@ -953,6 +954,13 @@ def put_user_preferences(
     return user_preferences_repository.save(preferences)
 
 
+@app.post("/api/user-preferences/me/avoid-artists/remove", response_model=UserPreferences)
+def stop_avoiding_artist(request: Request, body: AvoidArtistInput) -> UserPreferences:
+    user_id = authenticated_user(request)
+    current = user_preferences_repository.get(user_id) or UserPreferences(user_id=user_id)
+    return user_preferences_repository.save(without_avoided_artist(current, body.artist))
+
+
 @app.post("/api/user-preferences/me/avoid-artists", response_model=UserPreferences)
 def avoid_artist(request: Request, body: AvoidArtistInput) -> UserPreferences:
     user_id = authenticated_user(request)
@@ -1438,6 +1446,27 @@ def _public_programme(program_id: str, actor: AuthPrincipal) -> PublicProgramme 
         cover=proposal.cover,
         is_owner=is_owner,
     )
+
+
+_SHORT_CODE = re.compile(r"^[0-9a-f]{10}$")
+
+
+class ResolvedProgramme(BaseModel):
+    id: str
+
+
+@app.get("/api/programs/by-code/{code}", response_model=ResolvedProgramme)
+def program_by_short_code(code: str) -> ResolvedProgramme:
+    """The programme behind a short link: the first characters of a `proposal-` id."""
+
+    program_id = (
+        proposal_repository.find_id_by_prefix(f"proposal-{code}")
+        if _SHORT_CODE.fullmatch(code)
+        else None
+    )
+    if program_id is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return ResolvedProgramme(id=program_id)
 
 
 @app.get("/api/programs/{program_id}/public", response_model=PublicProgramme)
