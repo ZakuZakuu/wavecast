@@ -82,6 +82,11 @@
   overflow: hidden;
 }
 .pick-meta { font-size: 13px; color: var(--ink-2); }
+.pick-refresh {
+  align-self: center; margin-top: 4px; padding: 10px 22px; border-radius: 999px;
+  background: var(--fill); color: var(--ink); font-size: 15px; font-weight: 600;
+}
+.pick-refresh:disabled { opacity: .6; }
 .pick-skeleton { aspect-ratio: 1; border-radius: var(--radius-cover); background: var(--fill); }
 .inline-note { margin: 0; font-size: 15px; color: var(--ink-2); }
 .inline-note a { color: var(--ink); font-weight: 600; margin-left: 6px; }

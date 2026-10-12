@@ -977,10 +977,32 @@ def _recommendation_service() -> RecommendationService:
     )
 
 
+class RecommendationShelfResponse(BaseModel):
+    """One shelf of ideas, and whether "换一批" can still offer something else."""
+
+    ideas: list[ProgramIdeaResponse]
+    has_more: bool
+
+
+class NextShelfRequest(BaseModel):
+    shown_ids: list[str] = Field(default_factory=list, max_length=12)
+
+
 @app.get("/api/recommendations/me", response_model=list[ProgramIdeaResponse])
 def list_recommendations(request: Request) -> list[ProgramIdeaResponse]:
-    ideas = _recommendation_service().inventory_for_user(authenticated_user(request))
-    return [ProgramIdeaResponse.from_idea(idea) for idea in ideas]
+    shelf = _recommendation_service().shelf_for_user(authenticated_user(request))
+    return [ProgramIdeaResponse.from_idea(idea) for idea in shelf.ideas]
+
+
+@app.post("/api/recommendations/me/next", response_model=RecommendationShelfResponse)
+def next_recommendations(body: NextShelfRequest, request: Request) -> RecommendationShelfResponse:
+    """换一批: ideas not shown yet; the daily generation cap bounds what this can cost."""
+
+    shelf = _recommendation_service().next_shelf(authenticated_user(request), body.shown_ids)
+    return RecommendationShelfResponse(
+        ideas=[ProgramIdeaResponse.from_idea(idea) for idea in shelf.ideas],
+        has_more=shelf.has_more,
+    )
 
 
 @app.post("/api/recommendations/me/refresh", response_model=list[ProgramIdeaResponse])
