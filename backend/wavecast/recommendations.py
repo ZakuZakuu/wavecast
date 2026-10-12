@@ -172,7 +172,7 @@ class ProgramIdeaResponse(BaseModel):
 
     @classmethod
     def from_idea(cls, idea: ProgramIdea) -> ProgramIdeaResponse:
-        return cls(**idea.model_dump(exclude={"user_id"}))
+        return cls(**idea.model_dump(exclude={"user_id", "batch_id"}))
 
 
 class ProgramIdeaProposalSeed(BaseModel):
