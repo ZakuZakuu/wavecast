@@ -113,6 +113,9 @@ class ProgramIdea(BaseModel):
     source: str = Field(default="heuristic", min_length=1, max_length=32)
     status: ProgramIdeaStatus = ProgramIdeaStatus.AVAILABLE
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    # One value per generation call, so the daily cap counts generations rather than guessing
+    # from timestamps. Ideas stored before this field existed have none.
+    batch_id: str | None = Field(default=None, max_length=32)
 
     def to_proposal_seed(
         self, duration_intent: DurationIntent = DurationIntent.STANDARD
@@ -169,7 +172,7 @@ class ProgramIdeaResponse(BaseModel):
 
     @classmethod
     def from_idea(cls, idea: ProgramIdea) -> ProgramIdeaResponse:
-        return cls(**idea.model_dump(exclude={"user_id"}))
+        return cls(**idea.model_dump(exclude={"user_id", "batch_id"}))
 
 
 class ProgramIdeaProposalSeed(BaseModel):
@@ -226,6 +229,11 @@ SHELF_SIZE = 4
 # what refreshing can cost.
 DAILY_GENERATION_CAP = 4
 _BATCH_GAP = timedelta(seconds=1)
+
+# One lock per listener for everything that can generate or rotate their ideas (see
+# RecommendationService); process-wide because services are created per request.
+_USER_LOCKS: dict[str, RLock] = {}
+_USER_LOCKS_GUARD = RLock()
 
 
 class InMemoryProgramIdeaRepository:
@@ -626,8 +634,6 @@ class RecommendationService:
         self._refresh_interval = refresh_interval
         self._daily_generation_cap = daily_generation_cap
         self._clock = clock
-        self._rotation_locks: dict[str, RLock] = {}
-        self._rotation_locks_guard = RLock()
 
     def list_for_user(self, user_id: str) -> list[ProgramIdea]:
         return self._repository.list_for_user(user_id, limit=MAX_LISTED_IDEAS_PER_USER)
@@ -660,13 +666,12 @@ class RecommendationService:
 
     @staticmethod
     def _generations_in_last_day(history: list[ProgramIdea], now: datetime) -> int:
-        """Batches created in the last 24 hours (ideas created within seconds are one batch)."""
+        """Generations in the last 24 hours: distinct batch ids, plus older batches by timestamp."""
 
-        stamps = sorted(
-            (idea.created_at for idea in history if now - idea.created_at < timedelta(hours=24)),
-            reverse=True,
-        )
-        batches = 0
+        recent = [idea for idea in history if now - idea.created_at < timedelta(hours=24)]
+        batches = len({idea.batch_id for idea in recent if idea.batch_id is not None})
+        # Ideas from before batch ids existed: ideas created within seconds are one batch.
+        stamps = sorted((idea.created_at for idea in recent if idea.batch_id is None), reverse=True)
         previous: datetime | None = None
         for stamp in stamps:
             if previous is None or previous - stamp > _BATCH_GAP:
@@ -724,11 +729,20 @@ class RecommendationService:
                 has_more=len(after) > SHELF_SIZE or self._can_generate(user_id),
             )
 
-    def _rotation_lock(self, user_id: str) -> RLock:
-        with self._rotation_locks_guard:
-            return self._rotation_locks.setdefault(user_id, RLock())
+    @staticmethod
+    def _rotation_lock(user_id: str) -> RLock:
+        # Shared by every service object: the API builds one per request, and two requests of the
+        # same listener (a double tap on 换一批) must queue behind each other, not run side by side.
+        with _USER_LOCKS_GUARD:
+            return _USER_LOCKS.setdefault(user_id, RLock())
 
     def refresh_for_user(self, user_id: str) -> list[ProgramIdea]:
+        # Under the listener's lock, with the history read inside it: two requests that both
+        # find the stock low cannot both pass the daily cap on the same stale count.
+        with self._rotation_lock(user_id):
+            return self._refresh_locked(user_id)
+
+    def _refresh_locked(self, user_id: str) -> list[ProgramIdea]:
         now = self._clock()
 
         # Read before the repository's own lock is taken (the generator runs inside it).
@@ -741,6 +755,7 @@ class RecommendationService:
             context = self._aggregator.build(user_id).model_copy(
                 update={"avoid_titles": [idea.title for idea in history][:30]}
             )
+            batch_id = uuid4().hex
             return [
                 ProgramIdea(
                     id=uuid4().hex,
@@ -752,6 +767,7 @@ class RecommendationService:
                     tags=draft.tags,
                     source=self._planner.source,
                     created_at=now - timedelta(microseconds=index),
+                    batch_id=batch_id,
                 )
                 for index, draft in enumerate(self._planner.generate_program_ideas(context))
             ]

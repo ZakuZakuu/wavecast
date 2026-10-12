@@ -151,3 +151,55 @@ def test_unknown_or_foreign_ids_are_ignored_and_other_users_are_untouched() -> N
 
 def test_the_default_cap_is_bounded() -> None:
     assert 1 <= DAILY_GENERATION_CAP <= 6
+
+
+def test_the_cap_counts_generations_even_when_they_follow_each_other_instantly() -> None:
+    planner, clock = Planner(per_batch=4), Clock()
+    service, _ = _service(planner, clock)
+    shelf = service.shelf_for_user("u")
+
+    # 20 presses of 换一批 at one frozen instant: each empties the stock, so each wants a new batch.
+    for _ in range(20):
+        shelf = service.next_shelf("u", _ids(shelf))
+
+    assert planner.calls == DAILY_GENERATION_CAP
+    assert not shelf.has_more
+
+
+def test_batches_without_an_id_are_still_counted_by_when_they_were_made() -> None:
+    clock = Clock()
+    service, repository = _service(Planner(), clock)
+    service.shelf_for_user("u")
+    legacy = [
+        idea.model_copy(update={"batch_id": None})
+        for idea in repository.list_for_user("u", limit=30)
+    ]
+    assert RecommendationService._generations_in_last_day(legacy, clock()) == 1
+    assert RecommendationService._generations_in_last_day([], clock()) == 0
+
+
+def test_two_requests_of_one_listener_share_one_lock_and_one_count() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from time import sleep
+
+    class SlowPlanner(Planner):
+        def generate_program_ideas(self, context):  # type: ignore[no-untyped-def]
+            sleep(0.05)
+            return super().generate_program_ideas(context)
+
+    planner, clock = SlowPlanner(per_batch=4), Clock()
+    first, repository = _service(planner, clock)
+    # The API builds a service object per request: same repository and planner, new object.
+    others = [
+        RecommendationService(first._aggregator, planner, repository, clock=clock)
+        for _ in range(7)
+    ]
+    services = [first, *others]
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda service: service.next_shelf("u", []), services))
+
+    batches = {idea.batch_id for idea in repository.list_for_user("u", limit=60)}
+    assert planner.calls <= DAILY_GENERATION_CAP
+    assert len(batches) == planner.calls
+    assert RecommendationService._rotation_lock("u") is RecommendationService._rotation_lock("u")

@@ -36,9 +36,31 @@
 
 ## 发布顺序和回退
 
-1. **先发后端（Railway），再发 Web（Vercel）。** 新后端只加字段和接口，旧 Web 兼容；反过来 Web 先上会打到没有 `/public`、`/adopt`、`/by-code`、`/recommendations/me/next` 的旧后端。
-2. 发布前确认 Railway 的来源分支和 SHA（不要假设它还跟踪某个分支）；确认 `0008` 会在启动时执行。
-3. 回退：Railway 重新部署上一个部署即可，数据库那一列保留不影响旧代码；Web 回退用 Vercel 的上一个生产部署。
+### 现状
+- Railway 的 API Service 来源是 `main`，上一次部署是 `b59ef1b2`（`c9770e4`，10 月 2 日）；它没有因 10 月 8 日只改 Web 的提交重新部署，具体触发规则没有核实，发布时要在 Railway 上观察新部署是否真的开始。
+- Vercel 生产也跟随 `main`。合并后两边**同时**开始构建，Web 通常先好。
+
+### 兼容性（查过）
+- **新后端 + 旧 Web：兼容。** 新后端只加字段和接口；旧 Web 用的 `GET /api/recommendations/me` 仍然返回列表。
+- **新 Web + 旧后端：不崩，但缺功能。** “换一批”提示暂时换不了，详情页和分享页显示“找不到了”，“少放”不会保存。因为现在没有人手里有分享链接，这个窗口期影响很小。
+- 所以顺序错了不致命；仍然建议按下面的受控顺序，让新 Web 在新后端就绪后才上线。
+
+### 受控顺序（每个外部动作都要用户逐个批准）
+1. 记下现状：Vercel 当前生产部署、Railway 部署 `b59ef1b2`。
+2. （推荐）在 Vercel 项目里关掉“自动分配生产域名”，让合并后新构建的 Web 先不上线。
+3. 合并 release PR（integration → main，普通 merge commit）。
+4. 等 Railway 新部署成功且 `/api/health` 正常，运行 `python scripts/release_check.py <Railway 地址> --api-only`：新后端会全部通过；旧后端会失败（没有这些路由）。
+5. 在 Vercel 提升新的生产部署，Web 上线。
+6. 运行 `python scripts/release_check.py https://wavecast.space`，再走下面的验收清单。
+7. 恢复“自动分配生产域名”，并把 integration 快进到 main 的合并提交。
+
+### 回退
+- **Web：随时安全。** 在 Vercel 提升上一个生产部署即可；旧 Web 与新后端兼容。
+- **API：不能“重新部署旧 API 就回退”。** 新版保存的节目状态（`max_tracks` 到 10、超过 800 字的资料、新增字段）和想法（`cover_title`、`batch_id`）旧后端读不了，校验会失败。数据库新增的那一列旧代码不读，但节目和想法的 JSON 不兼容。因此发布后出问题的预案是**向前修复**：
+  - 先用开关降级：`WAVECAST_TRACK_RESEARCH`、`WAVECAST_CATALOG_POOL`、`WAVECAST_DURATION_SCALING` 都可以关（事实核对没有开关）。
+  - 再快速发修复补丁。
+  - 如果确实要回到旧 API（Railway 重新部署 `b59ef1b2`）：发布之后新建的节目和想法会读不出来，发布前的不受影响。demo 规模下这个代价可以接受，但要有人明确决定这样做。
+- 没有准备“能读新格式的旧行为回退版本”：成本高，在当前规模下，Web 回退加向前修复加开关已经够用。如果要这个回退版本，需要在发布前单独做。
 
 ## 发布后在生产验收（用户在 wavecast.space 上做）
 

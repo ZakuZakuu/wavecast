@@ -512,6 +512,58 @@ def _pick(seed: str, salt: str, count: int) -> int:
     return int(digest[:8], 16) % count
 
 
+def shared_copy(original: ProgramProposal, *, new_id: str) -> ProgramProposal:
+    """A listener's own copy of someone else's shared programme.
+
+    Built field by field, so nothing the sharer wrote reaches the copy by accident: `topic`
+    (what they typed) becomes the title and promise the link showed, and the spoken opening is
+    made again without the "来自你点的…" line, which is about the sharer's request.
+    """
+
+    return ProgramProposal(
+        id=new_id,
+        title=original.title,
+        topic=f"{original.title}。{original.short_description}"[:500],
+        short_description=original.short_description,
+        cover_title=original.cover_title,
+        estimated_duration_seconds=original.estimated_duration_seconds,
+        opening_track_ref=original.opening_track_ref,
+        opening_track_title=original.opening_track_title,
+        opening_track_artist=original.opening_track_artist,
+        opening_track_duration_seconds=original.opening_track_duration_seconds,
+        opening_track_timing_profile=original.opening_track_timing_profile,
+        opening_narration_text=_shared_opening(original, seed=new_id),
+        cover=original.cover,
+        editorial_route=list(original.editorial_route),
+        genre_tags=list(original.genre_tags),
+        mood_tags=list(original.mood_tags),
+        anchor_artists=list(original.anchor_artists),
+        presentation_intent=original.presentation_intent,
+        output_language=original.output_language,
+        station=original.station,
+        required_artists=list(original.required_artists),
+        generation_profile=original.generation_profile,
+    )
+
+
+def _shared_opening(original: ProgramProposal, *, seed: str) -> str | None:
+    if original.output_language is OutputLanguage.EN_US or not (
+        original.output_language is OutputLanguage.ZH_CN or _uses_cjk(original.title)
+    ):
+        return (
+            f'Let\'s start with "{original.opening_track_title}" by {original.opening_track_artist}. '
+            "Give it a moment and listen for how it sets the direction for this programme."
+        )
+    opening = compose_opening(
+        original.station,
+        artist=spoken_artist(original.opening_track_artist) or "这位艺人",
+        title=spoken_title(original.opening_track_title) or "这首歌",
+        names_artist=False,
+        seed=f"{seed}|{original.opening_track_ref}",
+    )
+    return opening.replace("《这首歌》", "这首歌")
+
+
 def _opening_narration_text(
     request: ProposalGenerationRequest,
     draft: ProgramProposalDraft,
