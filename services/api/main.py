@@ -157,6 +157,9 @@ from wavecast.user_context import (
 
 logger = logging.getLogger(__name__)
 
+# Longest the first request of an episode waits for the opening host's TTS.
+_OPENING_HOST_BUDGET_SECONDS = 8.0
+
 
 def _configure_logging() -> None:
     """Make the counts-only ``wavecast.*`` INFO diagnostics visible in the API log."""
@@ -1623,6 +1626,17 @@ def _proposal_failure_http_error(error: ProgramProposalGenerationError) -> HTTPE
     )
 
 
+def _opening_host_budget_seconds() -> float:
+    """How long starting an episode may wait for the opening host's voice."""
+
+    raw = os.getenv("WAVECAST_OPENING_HOST_BUDGET_SECONDS", "").strip()
+    try:
+        value = float(raw) if raw else _OPENING_HOST_BUDGET_SECONDS
+    except ValueError:
+        return _OPENING_HOST_BUDGET_SECONDS
+    return value if value > 0 else _OPENING_HOST_BUDGET_SECONDS
+
+
 async def _prepare_opening_host(
     episode: LiveEpisode,
     seed: EpisodeSeed,
@@ -1661,7 +1675,21 @@ async def _prepare_opening_host(
         narration_role=NarrationRole.INTRO,
     )
     try:
-        materialized = await narration_materializer.materialize(narration)
+        materialized = await asyncio.wait_for(
+            narration_materializer.materialize(narration),
+            timeout=_opening_host_budget_seconds(),
+        )
+    except TimeoutError:
+        # Starting the music matters more than the host's first words: the
+        # opening track is published as one immutable stream on the first
+        # render, so a voice that arrives later has nowhere to go. Do not make
+        # the listener wait for a slow TTS provider (its own timeout is 20s).
+        logger.warning(
+            "opening_narration_skipped episode_id=%s reason=budget_exceeded budget_seconds=%s",
+            episode.id,
+            _opening_host_budget_seconds(),
+        )
+        return episode
     except Exception as error:
         # The opening host is a quality enhancement, never a playback gate.
         logger.warning(

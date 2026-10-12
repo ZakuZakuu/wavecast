@@ -52,6 +52,55 @@ def test_program_proposal_can_be_created_viewed_and_started() -> None:
         api_module.proposal_repository = previous_repository
 
 
+def test_slow_opening_host_voice_does_not_hold_up_the_start(monkeypatch) -> None:
+    """A TTS provider that takes longer than the budget costs the host's words, not the wait."""
+
+    import asyncio
+    import time
+
+    class SlowMaterializer:
+        storage = api_module.narration_materializer.storage
+        cancelled = False
+
+        async def materialize(self, narration):
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                SlowMaterializer.cancelled = True
+                raise
+            return narration
+
+    client = TestClient(api_module.app)
+    headers = {"X-Wavecast-Listener": "slow-opening-host-listener"}
+    previous_repository = api_module.proposal_repository
+    api_module.proposal_repository = InMemoryProgramProposalRepository()
+    monkeypatch.setattr(api_module, "narration_materializer", SlowMaterializer())
+    monkeypatch.setenv("WAVECAST_OPENING_HOST_BUDGET_SECONDS", "0.3")
+
+    try:
+        proposal = client.post(
+            "/api/program-proposals",
+            json={
+                "prompt": "慢速语音合成时也要立刻开播的雨夜爵士",
+                "duration_intent": "SHORT",
+                "count": 1,
+            },
+            headers=headers,
+        ).json()["proposals"][0]
+
+        started_at = time.monotonic()
+        started = client.post(f"/api/episodes/from-seed/{proposal['id']}", headers=headers)
+        elapsed = time.monotonic() - started_at
+
+        assert started.status_code == 200
+        assert elapsed < 5
+        segments = started.json()["segments"]
+        assert [segment["id"] for segment in segments] == ["segment-opening"]
+        assert SlowMaterializer.cancelled
+    finally:
+        api_module.proposal_repository = previous_repository
+
+
 def test_invalid_bearer_is_rejected_while_guest_requests_stay_anonymous(monkeypatch) -> None:
     client = TestClient(api_module.app)
 
