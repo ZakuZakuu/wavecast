@@ -39,6 +39,8 @@ from .fact_support import (
     _IGNORED,
     _TITLE_IN_BRACKETS,
     _squash,
+    credited_people,
+    people_missing_from_quote,
     quote_backs_roles,
     quote_in_source,
     roles_in,
@@ -253,6 +255,7 @@ class TrackResearchService:
         self._found: OrderedDict[str, dict[str, list[Evidence]]] = OrderedDict()
         self._asked: dict[str, set[str]] = {}
         self._background: dict[str, list[TalkingPoint]] = {}
+        self._chapters: dict[str, int] = {}
 
     def enabled_for(self, station: StationId | None) -> bool:
         return station in SEARCH_BUDGET
@@ -277,6 +280,8 @@ class TrackResearchService:
         while len(self._found) > _CACHE_EPISODES:
             dropped, _ = self._found.popitem(last=False)
             self._asked.pop(dropped, None)
+            self._chapters.pop(dropped, None)
+            self._background.pop(dropped, None)
         key = _album_key(track)
         known_ids = {item.id for item in evidence}
 
@@ -296,7 +301,7 @@ class TrackResearchService:
         for round_number in range(budget + 1):
             candidates = about_track()
             if candidates:
-                outcome.points = await self._brief(track, subject, candidates)
+                outcome.points = await self._brief(track, subject, candidates, subject_names)
                 if outcome.points:
                     break
             if outcome.searches >= budget:
@@ -313,12 +318,15 @@ class TrackResearchService:
                     item for item in fresh if item.id not in {e.id for e in per_episode.get(key, [])}
                 )
         used = about_track()
-        if not outcome.points and station in BACKGROUND_STATIONS:
-            # Nothing checkable about this song, but the programme's own research may hold a
-            # story about the person or the period that has not been told yet.
-            story = await self._next_background(episode_id, subject, subject_names, evidence)
-            if story is not None:
-                outcome.points = [story]
+        if station in BACKGROUND_STATIONS:
+            # A portrait is about a person: every other chapter (and any with nothing checkable
+            # about its song) tells one of the programme's background stories, each once, so
+            # the talk is not only catalogue notes on the songs.
+            number = self._chapters[episode_id] = self._chapters.get(episode_id, 0) + 1
+            if number % 2 == 0 or not outcome.points:
+                story = await self._next_background(episode_id, subject, subject_names, evidence)
+                if story is not None:
+                    outcome.points = [story]
         outcome.evidence_ids = [item.id for item in used]
         outcome.evidence_ids.extend(
             point.evidence_id for point in outcome.points if point.evidence_id not in outcome.evidence_ids
@@ -415,7 +423,11 @@ class TrackResearchService:
         return found
 
     async def _brief(
-        self, track: ResolvedTrack, subject: str, candidates: Sequence[Evidence]
+        self,
+        track: ResolvedTrack,
+        subject: str,
+        candidates: Sequence[Evidence],
+        people: Sequence[str] = (),
     ) -> list[TalkingPoint]:
         chosen = list(candidates[:6])
         sources = {item.id: item.claim_or_excerpt for item in chosen}
@@ -442,7 +454,7 @@ class TrackResearchService:
             return []
         if not isinstance(result, _Briefing):
             return []
-        return verified_points(result.points, sources, track, leads)
+        return verified_points(result.points, sources, track, leads, people)
 
 
 class _Stories(BaseModel):
@@ -493,6 +505,8 @@ def verified_stories(
         roles = roles_in(text)
         if roles and not quote_backs_roles(quote, roles):
             continue
+        if roles and people_missing_from_quote(text, quote, credited_people(subject_names)):
+            continue
         if years_in(text) - years_in(source):
             continue
         if wanted and not any(name in _squash(f"{text}{quote}") for name in wanted):
@@ -526,6 +540,7 @@ def verified_points(
     sources: dict[str, str],
     track: ResolvedTrack | None = None,
     leads: dict[str, str] | None = None,
+    people: Sequence[str] = (),
 ) -> list[TalkingPoint]:
     """The points whose quote is in the named source, speaks of the claimed role and the work.
 
@@ -550,6 +565,10 @@ def verified_points(
         roles = roles_in(text)
         if roles and not quote_backs_roles(quote, roles):
             continue
+        if roles and track is not None and people_missing_from_quote(
+            text, quote, credited_people([track.canonical_artist, *people])
+        ):
+            continue  # the right role, but the line does not name the person the point credits
         if item.scope == "album" and roles & _CREDIT_ROLES:
             continue  # who composed, arranged or sang is a statement about one song
         if track is not None:

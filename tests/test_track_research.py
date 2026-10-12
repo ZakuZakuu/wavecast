@@ -521,3 +521,48 @@ def test_the_writer_is_told_a_background_story_is_not_about_the_song() -> None:
 
     assert "programme background about the person or the period" in llm.prompts[0]
     assert "never call it 这首歌" in llm.prompts[0]
+
+
+def test_a_point_crediting_someone_the_quote_does_not_name_is_dropped() -> None:
+    sources = {"evidence-k": "《いつも何度でも》 作曲：木村弓"}
+    point = _point("它的作曲是久石让", "evidence-k", "《いつも何度でも》 作曲：木村弓")
+    right = _point("它的作曲是木村弓", "evidence-k", "《いつも何度でも》 作曲：木村弓")
+
+    assert verified_points([point], sources, KIMURA, sources, ["久石让"]) == []
+    assert len(verified_points([right], sources, KIMURA, sources, ["久石让"])) == 1
+
+
+def test_a_portrait_tells_a_background_story_on_every_other_chapter_even_with_song_facts() -> None:
+    class Both:
+        async def structured(self, prompt: str, output_type: type[object], **_kwargs: object) -> object:
+            if output_type is _Stories:
+                return _Stories(
+                    stories=[
+                        _story("1983年宫崎骏在酒吧改的工作室见到了久石让", "在一间破烂酒吧改造的工作室里见到了久石让"),
+                        _story("宫崎骏说他的作品都患了久石让依赖症", "他的作品都患了久石让依赖症"),
+                    ]
+                )
+            import re
+
+            source = re.search(r"\[(evidence-[0-9a-f]+)\]", prompt)
+            return _Briefing(
+                points=[_RawPoint(text="它是《千与千寻》的片尾曲", source=source.group(1), quote="是动画电影《千与千寻》的片尾曲")]
+                if source
+                else []
+            )
+
+    service = TrackResearchService(search=Searcher(("千与千寻原声", KIMURA_PAGE)), llm=Both())  # type: ignore[arg-type]
+    programme = [_evidence("b", BIO)]
+
+    scopes = []
+    for track in (KIMURA, KIMURA.model_copy(update={"track_ref": "n:9"}), KIMURA.model_copy(update={"track_ref": "n:10"})):
+        result = asyncio.run(
+            service.prepare(
+                episode_id="alt", track=track, evidence=programme, station=StationId.PORTRAIT,
+                subject="久石让", subject_names=["久石让"],
+            )
+        )
+        assert result is not None
+        scopes.append([point.scope for point in result.points])
+
+    assert scopes[0] == ["track"] and scopes[1] == ["background"] and scopes[2] == ["track"]
