@@ -71,3 +71,21 @@ def test_adopting_gives_the_visitor_their_own_copy_once(shared) -> None:
     # The copy starts a normal episode.
     started = client.post(f"/api/episodes/from-seed/{copy['id']}", headers=VISITOR)
     assert started.status_code == 200
+
+
+def test_the_visitors_copy_does_not_carry_the_sharers_own_words(shared) -> None:
+    client, proposal = shared
+    secret = "给我女朋友的生日准备一档她会喜欢的"
+    stored = api_module.ProgramProposal(**{**proposal, "id": "proposal-" + "ab12" * 8, "topic": secret})
+    api_module.proposal_repository.save_many([stored], owner_listener_id="share-owner-listener")
+
+    copy = client.post(f"/api/programs/{stored.id}/adopt", headers=VISITOR).json()
+
+    # The visitor can read their copy back and see it in the library, so it must hold only what
+    # the link itself showed them: the title and the one-line promise.
+    assert secret not in copy["topic"]
+    assert stored.title in copy["topic"]
+    assert stored.short_description in copy["topic"]
+    assert secret not in client.get(f"/api/programs/{copy['id']}", headers=VISITOR).text
+    # The owner's own copy is untouched.
+    assert client.get(f"/api/programs/{stored.id}", headers=OWNER).json()["topic"] == secret
