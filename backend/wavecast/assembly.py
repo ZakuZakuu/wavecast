@@ -143,7 +143,13 @@ from wavecast.route_spread import (
     same_song_other_artist,
     spread_cap,
 )
-from wavecast.route_work import is_version_of, requested_work
+from wavecast.route_work import (
+    is_version_of,
+    names_work,
+    requested_scope,
+    requested_work,
+    scope_works,
+)
 from wavecast.spoken_form import catalog_album, chinese_title
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
@@ -205,11 +211,17 @@ class LiveEpisodeAssemblyRequest(BaseModel):
     # (see ``_confirm_work``), so a request mistaken for one about a work cannot empty the route.
     required_work: str | None = Field(default=None, max_length=120)
     work_checked: bool = False
+    # The creator whose works the music must come from ("久石让为宫崎骏电影写的配乐" -> 宫崎骏): the
+    # same performer is not enough, so a track the data cannot tie to that creator's works is not
+    # taken over from FastStart (see ``_scope_confirmed``).
+    required_scope: str | None = Field(default=None, max_length=120)
 
     @model_validator(mode="after")
     def _read_required_work(self) -> LiveEpisodeAssemblyRequest:
         if not self.work_checked and self.required_work is None:
             self.required_work = requested_work(self.topic)
+        if self.required_scope is None and self.required_work is None:
+            self.required_scope = requested_scope(self.topic)
         return self
 
 
@@ -656,6 +668,12 @@ class LiveEpisodeAssemblyService:
                 resolved.canonical_title, request.required_work
             ):
                 return None  # a request for versions of a work does not continue with another song
+            if request.required_scope and not _scope_confirmed(
+                resolved,
+                request.required_scope,
+                [item.claim_or_excerpt for item in fast_result.research.bundle.evidence],
+            ):
+                return None  # the same performer is not the same creator's works
 
             # FastStart owns continuity, not final host copy. Persist music
             # immediately and let the evidence-scoped Writer author the first
@@ -2529,6 +2547,17 @@ def _research_depth(request: LiveEpisodeAssemblyRequest) -> ResearchDepth:
 
     deep = request.station in (StationId.PORTRAIT, StationId.LINEAGE)
     return ResearchDepth.DEEP if deep else ResearchDepth.STANDARD
+
+
+def _scope_confirmed(track: ResolvedTrack, owner: str, texts: Sequence[str]) -> bool:
+    """The track's own catalog album or title names a work the research puts next to ``owner``."""
+
+    works = scope_works(owner, texts)
+    labels = [track.album or "", track.canonical_title, track.spoken_title or ""]
+    confirmed = bool(works) and any(names_work(label, works) for label in labels if label)
+    if not confirmed:
+        logger.info("route_scope_unconfirmed works=%d has_album=%s", len(works), bool(track.album))
+    return confirmed
 
 
 def _confirm_work(

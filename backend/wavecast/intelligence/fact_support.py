@@ -8,10 +8,13 @@ each factual sentence before it is voiced:
 * Code decides what must be supported: attribution and creation words (who composed, wrote,
   sang, directed, released), years, and the names of works in 《》.  A sentence the checker
   calls "not factual" is still checked when it carries one of those markers.
-* One short model call returns, per factual sentence, "supported", "contradicted" or
-  "insufficient" together with the source it relies on and a quote.  The quote must be found
-  in that source (code checks), so the checker cannot supply evidence from its own memory.
-  The sources are the scoped evidence plus the catalog's own lines about the tracks.
+* One short model call returns a judgement for every sentence: a fact is "supported",
+  "contradicted" or "insufficient" (with the source it relies on and a quote), anything else
+  is "not_factual".  A sentence it leaves out is asked about once more, and is never taken as
+  "not a fact".  The quote must be found in that source (code checks), and must carry the
+  qualifiers the sentence adds ("first", "says himself", "so", "influenced", instruments),
+  so the checker cannot supply evidence from its own memory or let one keyword stand for a
+  whole claim.  The sources are the scoped evidence plus the catalog's own lines.
 * A name in 《》 must be a track of this programme or appear in the evidence; a title the
   Writer made up is not.
 
@@ -37,7 +40,7 @@ from wavecast.spoken_form import KnownTrack, to_spoken_form
 from wavecast.text_identity import base_title_key, canonical_name
 
 from .fast_start import FastStructuredProvider
-from .models import ClaimSupport, ClaimType, Evidence, RadioScript, RadioScriptBlockKind
+from .models import ClaimSupport, ClaimType, Evidence, RadioScript
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +73,106 @@ _ROLE_TRIGGER = re.compile(
     "|".join(re.escape(word) for words in _ROLES.values() for word in words)
     + r"|出自|寄给|写给|参与|制作|改编|根据|诞生|灵感"
 )
+# Biographical turns, self-attribution, influence and music-theory statements are facts too,
+# whatever the checker calls them; "转变" or "延续" alone are not (a host may say them as a view).
+_FACT_TRIGGER = re.compile(
+    r"第一次|首次|头一次|初次|首度|第一回|自己说|自己讲|曾说|说过|曾表示|坦言|自述|亲口|"
+    r"影响了|影响着|启发了|奠定|开创|二五一|二级|五级|一级|AABC|和声|和弦|调式|调性|大调|小调|转调|曲式|BPM"
+)
+
+
+def _alternatives(words: Sequence[str]) -> re.Pattern[str]:
+    return re.compile("|".join(re.escape(canonical_name(word)) for word in words))
+
+
+# A sentence that adds one of these to a claim needs a quote that says it as well: a source that
+# only names the work does not show that it was "the first", "said by himself", "why", or played
+# on a "small band".  (sentence words, words that carry the same qualifier in a quote)
+_QUALIFIERS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        "first",
+        ("第一次", "首次", "头一次", "初次", "首度", "第一回"),
+        ("初めて", "はじめて", "初の", "初次", "第一次", "第一回", "首次", "首度", "头一次", "first", "ようやく"),
+    ),
+    (
+        "self-said",
+        ("自己说", "自己讲", "曾说", "说过", "曾表示", "坦言", "自述", "亲口", "他说", "她说"),
+        ("说", "語", "話", "述", "言", "表示", "談", "コメント", "インタビュー", "said", "told", "says", "「", "“", '"'),
+    ),
+    (
+        "cause",
+        ("所以", "因此", "因而", "从而", "正因", "导致", "使得", "才让", "才能", "才会", "因为", "由于"),
+        ("所以", "ため", "ので", "から", "ゆえ", "故", "因", "由于", "为了", "によって", "ことで", "結果", "导", "導",
+         "せい", "おかげ", "because", "so that", "thus", "therefore", "led to", "result", "why"),
+    ),
+    (
+        "influence",
+        ("影响了", "影响着", "影响后", "启发了", "奠定", "开创", "后来的", "此后的"),
+        ("影響", "影响", "啓発", "启发", "インスパイア", "influence", "inspired", "手本", "模範", "基礎", "後の", "後に",
+         "后来", "later", "legacy", "先駆", "pioneer"),
+    ),
+    ("period", ("一年里", "一年中", "一年内", "每年"), ("年", "year", "annual")),
+    (
+        "always",
+        ("一直", "始终", "总是", "从未", "从来没", "从不", "一向"),
+        ("いつも", "ずっと", "常に", "一貫", "一直", "始终", "总是", "从未", "从来", "从不", "決して", "一度も",
+         "never", "always", "ever"),
+    ),
+    ("only", ("唯一", "只有", "仅有"), ("唯一", "only", "のみ", "だけ", "ただ", "仅", "只有", "sole")),
+    (
+        "whole",
+        ("所有", "全部", "整个", "每首", "每部"),
+        ("すべて", "全て", "全部", "所有", "整个", "全体", "全", "all", "every", "each", "entire", "whole"),
+    ),
+)
+_QUALIFIER_PATTERNS = tuple(
+    (name, _alternatives(sentence_words), _alternatives(quote_words))
+    for name, sentence_words, quote_words in _QUALIFIERS
+)
+# Instruments and ensembles named in a sentence must be named by the quote too.
+_INSTRUMENTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("小乐队", ("小乐队", "小編成", "少人数", "バンド", "small", "combo", "ensemble", "chamber", "室内")),
+    ("大乐队", ("大乐队", "大編成", "オーケストラ", "管弦楽", "交響", "orchestra", "symphon", "乐团", "管弦")),
+    ("合唱", ("合唱", "コーラス", "混声", "choir", "chorus", "choral")),
+    ("定音鼓", ("定音鼓", "ティンパニ", "timpani")),
+    ("弦乐", ("弦乐", "弦", "ストリングス", "string")),
+    ("钢琴", ("钢琴", "ピアノ", "piano")),
+    ("小提琴", ("小提琴", "ヴァイオリン", "バイオリン", "violin")),
+    ("吉他", ("吉他", "ギター", "guitar")),
+    ("萨克斯", ("萨克斯", "サックス", "sax")),
+    ("小号", ("小号", "トランペット", "trumpet")),
+    ("长笛", ("长笛", "フルート", "flute")),
+    ("合成器", ("合成器", "シンセ", "synth")),
+    ("贝斯", ("贝斯", "ベース", "bass")),
+)
+_INSTRUMENT_PATTERNS = tuple((word, _alternatives(quote_words)) for word, quote_words in _INSTRUMENTS)
+
+
+def qualifiers_missing(sentence: str, quote: str) -> list[str]:
+    """Qualifiers the sentence adds to its claim that the quote does not carry.
+
+    A quote that states a different, narrower or plainer thing than the sentence does not
+    support the sentence, even when both name the same work or person.
+    """
+
+    folded = canonical_name(quote)
+    missing = [
+        name
+        for name, in_sentence, in_quote in _QUALIFIER_PATTERNS
+        if in_sentence.search(sentence) and not in_quote.search(folded)
+    ]
+    missing += [
+        word
+        for word, in_quote in _INSTRUMENT_PATTERNS
+        if word in sentence and not in_quote.search(folded)
+    ]
+    return missing
+
+
 # A sentence that starts like this leans on the one before it.
 _DANGLING_START = re.compile(
     r"^\s*(?:因此|所以|于是|但是?|可是|不过|而且?|并且|同时|此外|另外|然后|接着|其中|同样|"
-    r"也|还|又|他们?|她们?|它们?|其|该|此|这也|这就|这样|这些|那)"
+    r"也|还|又|他们?|她们?|它们?|其|该|此|这也|这就|这样|这些|那|这一首[，,]|这首[，,])"
 )
 
 
@@ -168,7 +267,11 @@ def quote_backs_roles(quote: str, roles: set[str]) -> bool:
 def must_be_supported(sentence: str) -> bool:
     """Attributions, creation stories and dated statements are never taken on trust."""
 
-    return bool(_ROLE_TRIGGER.search(sentence)) or bool(years_in(sentence))
+    return (
+        bool(_ROLE_TRIGGER.search(sentence))
+        or bool(_FACT_TRIGGER.search(sentence))
+        or bool(years_in(sentence))
+    )
 
 
 def _known_titles(tracks: Sequence[KnownTrack], route_labels: Sequence[str]) -> set[str]:
@@ -265,34 +368,45 @@ _PROMPT = """You check what a radio host says against written sources. Use ONLY 
 Never use your own knowledge: if the sources do not say it, it is "insufficient", even when you \
 believe it is true.
 
-Sentences (numbered):
-{sentences}
+Return exactly one finding for EVERY numbered sentence, none left out.
+
+Classify each sentence first.
+A FACT states something objective and checkable: who composed, wrote, sang, played, directed or \
+released something; which film, album or work a piece belongs to; dates, numbers and events; how a \
+piece was made or what led to it; what someone said, felt or did, including "for the first time", \
+"only", "always", "says himself" and similar turns in a life or career; that one work or person \
+influenced another; why something is the way it is (a cause or a "so"); technical statements about a \
+specific piece (its scale, key, chord progression, form, instrumentation). A comparison between \
+people or works is a fact when it states a relation (influence, teacher, same period), not when it is \
+the host's own way of putting the connection.
+Everything else is "not_factual": the host's own impressions of how music feels or sounds (mood, \
+atmosphere, space, warmth, "simple", "slowly unfolds"); an invitation to listen for something; a \
+transition; a sentence that only says a track is playing now, was just played or plays next, or only \
+sums up the programme's own route in the host's words; a sentence that only names a track together \
+with the artist the catalog credits for it. A sentence that mixes an impression with a fact is a fact.
+
+verdict for a fact:
+- "supported": ONE source states the WHOLE sentence. Give that source's id and a quote copied word for \
+word, in the source's own script and without translating (at most 60 characters). The quote itself must \
+say who or what, the relation, and every qualifier the sentence adds (first time, only, always, \
+who said it, why, which version, how many, which instruments). If the sentence says more than the \
+quote does, even one connecting reason or one adjective of degree, it is "insufficient"; a name that \
+merely appears near another name proves nothing, and a source about the work in general does not prove \
+something about a particular recording or person.
+- "contradicted": a source states something different. Give its id and quote.
+- "insufficient": no source states it as the sentence does. The role (composer, lyricist, performer, \
+director, release) must be stated. The catalog lines say only who is credited on a recording; they \
+say nothing about composers, lyricists or films.
+verdict for everything else: "not_factual".
 
 Sources (id: text):
 {sources}
 
-For every sentence that states an objective, checkable fact, return one finding. Facts are: who \
-composed, wrote, sang, played, directed or released something; which film, album or work a piece \
-belongs to; dates, numbers and events; how a piece was made or what led to it; and technical statements \
-about a specific piece (its scale, key, instrumentation, structure). A comparison between people or \
-works is a fact when it states a relation (influence, teacher, same period), not when it is the host's \
-own way of putting the connection.
+Sentences (numbered):
+{sentences}
 
-Do NOT return a finding for: the host's own impressions and descriptions of how music feels or sounds \
-(mood, atmosphere, space, warmth, "simple", "slowly unfolds"); an invitation to listen for something; a \
-transition; a sentence that only says a track is playing now, was just played or plays next, or only sums up \
-the programme's own route in the host's words; a sentence that only names a track together with the artist \
-the catalog credits for it (the catalog lines are a source for that, use them if you do return a finding).
-
-verdict:
-- "supported": a source states it. Give that source's id and a quote copied word for word, in the \
-source's own script and without translating, from the source (at most 60 characters).
-- "contradicted": a source states something different. Give its id and quote.
-- "insufficient": no source states it. A name that merely appears near another name does not show who \
-did what; the role (composer, lyricist, performer, director, release) must be stated. The catalog \
-lines say only who is credited on a recording; they say nothing about composers, lyricists or films.
-
-Return JSON {{"findings": [{{"sentence": n, "verdict": "...", "source": "id", "quote": "..."}}]}}."""
+Return JSON {{"findings": [{{"sentence": n, "verdict": "supported|contradicted|insufficient|not_factual", \
+"source": "id", "quote": "..."}}]}}."""
 
 
 class FactChecker:
@@ -322,7 +436,11 @@ class FactChecker:
         if not sentences:
             return report
 
-        sources: dict[str, str] = {item.id: item.claim_or_excerpt for item in evidence}
+        # A stable order (by id, the catalog last) keeps the long source block identical between
+        # the checks of one chapter, so the provider's prompt cache can serve it.
+        sources: dict[str, str] = {
+            item.id: item.claim_or_excerpt for item in sorted(evidence, key=lambda item: item.id)
+        }
         catalog = _catalog_lines(tracks, route_labels)
         if catalog:
             sources[CATALOG_SOURCE] = "\n".join(catalog)
@@ -350,6 +468,12 @@ class FactChecker:
         findings = await self._ask(sentences, sources)
         if findings is not None:
             report.model_checked = True
+            # A sentence the checker left out is not "not a fact": ask about those once more.
+            unjudged = {number for number in range(len(sentences))} - {f.sentence for f in findings}
+            unjudged -= set(flagged)
+            if unjudged:
+                logger.warning("fact_check_unjudged count=%d of=%d", len(unjudged), len(sentences))
+                findings = [*findings, *(await self._ask(sentences, sources, only=unjudged) or [])]
         by_sentence = {finding.sentence: finding for finding in findings or ()}
 
         for number, (block, index, text) in enumerate(sentences):
@@ -367,7 +491,9 @@ class FactChecker:
                     report.issues.append(_unsupported(block, index, text, "unchecked"))
                 continue
             if finding is None:
-                if needs_source:
+                # Still without a judgement after the second ask (or called not factual while
+                # carrying a marker): it cannot be shown to be harmless, so it does not stay.
+                if needs_source or number not in by_sentence:
                     report.issues.append(_unsupported(block, index, text, "unchecked"))
                 continue
             verdict, source_id = finding.verdict, finding.source.strip()
@@ -381,6 +507,9 @@ class FactChecker:
                     or not quote_backs_roles(finding.quote, roles)
                 ):
                     verdict = "insufficient"
+            if verdict == "supported" and qualifiers_missing(text, finding.quote):
+                # The quote names the same thing but not what the sentence adds to it.
+                verdict = "insufficient"
             if verdict == "supported" and _TITLE_IN_BRACKETS.search(text) and roles_in(text):
                 # An attribution about a named work must be backed by a quote that names the
                 # work: "composer of another piece" does not show who wrote this one.
@@ -438,10 +567,6 @@ class FactChecker:
                         + ". Say what the evidence says, or leave the sentence out.",
                     )
                 )
-            elif script.blocks[block].kind is RadioScriptBlockKind.OUTRO and not needs_source:
-                # A closing only gathers the route the listener has heard, in the host's words;
-                # without an attribution, a date or a made-up title, it is not cut for that.
-                continue
             else:
                 report.issues.append(_unsupported(block, index, text, "insufficient"))
         logger.info(
@@ -454,13 +579,23 @@ class FactChecker:
         return report
 
     async def _ask(
-        self, sentences: Sequence[tuple[int, int, str]], sources: dict[str, str]
+        self,
+        sentences: Sequence[tuple[int, int, str]],
+        sources: dict[str, str],
+        *,
+        only: set[int] | None = None,
     ) -> list[FactFinding] | None:
         if not sources:
             return None
+        # Rules and sources come first and are the same for every ask about a chapter; only the
+        # sentences, last, change.
         prompt = _PROMPT.format(
-            sentences="\n".join(f"{number}. {text.strip()}" for number, (_b, _i, text) in enumerate(sentences)),
             sources="\n".join(f"[{source_id}]: {text}" for source_id, text in sources.items()),
+            sentences="\n".join(
+                f"{number}. {text.strip()}"
+                for number, (_b, _i, text) in enumerate(sentences)
+                if only is None or number in only
+            ),
         )
         result: object = None
         for attempt in range(2):

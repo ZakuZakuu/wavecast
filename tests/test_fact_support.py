@@ -7,6 +7,7 @@ background and listening talk must pass untouched.
 """
 
 import asyncio
+import re
 
 from wavecast.intelligence.fact_support import (
     FactCheck,
@@ -63,7 +64,12 @@ def _script(*texts: str, kind: RadioScriptBlockKind = RadioScriptBlockKind.TRACK
 class Dispatch:
     """Scripts: Writer drafts in order, and one fact check answer per check call."""
 
-    def __init__(self, drafts: list[RadioScript], checks: list[FactCheck | Exception]) -> None:
+    def __init__(
+        self, drafts: list[RadioScript], checks: list[FactCheck | Exception], *, complete: bool = True
+    ) -> None:
+        # ``complete`` answers like a compliant checker: a sentence the test gives no finding
+        # for is judged "not_factual".  ``complete=False`` leaves it out.
+        self.complete = complete
         self.drafts, self.checks = list(drafts), list(checks)
         self.prompts: list[str] = []
         self.check_prompts: list[str] = []
@@ -74,6 +80,12 @@ class Dispatch:
             answer = self.checks[min(len(self.check_prompts) - 1, len(self.checks) - 1)]
             if isinstance(answer, Exception):
                 raise answer
+            if self.complete:
+                asked = {int(n) for n in re.findall(r"^(\d+)\. ", prompt.split("Sentences (numbered):")[-1], re.M)}
+                missing = asked - {finding.sentence for finding in answer.findings}
+                answer = FactCheck(
+                    findings=[*answer.findings, *(_finding(n, "not_factual") for n in sorted(missing))]
+                )
             return answer
         self.prompts.append(prompt)
         return self.drafts[min(len(self.prompts) - 1, len(self.drafts) - 1)]
@@ -324,13 +336,21 @@ def test_a_quote_must_speak_of_the_same_role_not_a_neighbouring_one() -> None:
     assert [issue.code for issue in played.issues] == ["insufficient"]  # played is not sang
 
 
-def test_a_closing_is_not_cut_for_summing_up_the_route_but_is_for_an_attribution() -> None:
+def test_a_closing_is_not_cut_for_summing_up_the_route_but_is_for_a_fact() -> None:
     summing_up = _review(
+        _script("这条线从《天空之城》走到最后。", kind=RadioScriptBlockKind.OUTRO),
+        _evidence(HISAISHI_PAGE),
+        FactCheck(findings=[_finding(0, "not_factual")]),
+    )
+    assert summing_up.issues == []
+
+    # A closing is checked like any other block: a claim the checker calls a fact without a source goes.
+    claiming = _review(
         _script("这条线从《天空之城》走到最后，一直是在给故事铺底。", kind=RadioScriptBlockKind.OUTRO),
         _evidence(HISAISHI_PAGE),
         FactCheck(findings=[_finding(0, "insufficient")]),
     )
-    assert summing_up.issues == []
+    assert [issue.code for issue in claiming.issues] == ["insufficient"]
 
     attributing = _review(
         _script("最后这首的作曲是久石让。", kind=RadioScriptBlockKind.OUTRO),
@@ -582,3 +602,125 @@ def test_the_right_role_for_the_wrong_person_is_not_support() -> None:
 
     assert [issue.code for issue in wrong_person.issues] == ["insufficient"]
     assert right_person.issues == []
+
+
+# --- every sentence is judged; qualifiers belong to the claim --------------------------------
+
+
+HOSHINO_SENTENCES = (
+    "最后来听《好き》。他自己说，从前一直回避写自己，到了《喜劇》才第一次把家庭写进歌里。这一首，延续的就是那个方向。"
+)
+HOSHINO_TRACKS = [KnownTrack(artist="星野源", title="好き")]
+HOSHINO_SOURCE = "星野源在读完漫画《间谍过家家》里的家庭故事之后，写下了《喜劇》。"
+
+
+def _asked_numbers(prompt: str) -> list[int]:
+    return [int(n) for n in re.findall(r"^(\d+)\. ", prompt.split("Sentences (numbered):")[-1], re.M)]
+
+
+def test_a_sentence_the_checker_left_out_is_asked_about_once_and_never_taken_as_harmless() -> None:
+    llm = Dispatch([], [FactCheck(findings=[]), FactCheck(findings=[_finding(0, "not_factual"), _finding(2, "not_factual")])], complete=False)
+    report = asyncio.run(
+        FactChecker(llm).review(_script(HOSHINO_SENTENCES), _evidence(HOSHINO_SOURCE), tracks=HOSHINO_TRACKS)  # type: ignore[arg-type]
+    )
+    assert len(llm.check_prompts) == 2  # the one extra ask is for the sentences left out
+    assert _asked_numbers(llm.check_prompts[1]) == [0, 1, 2]
+    # Sentence 1 stayed without a judgement through both asks, so it is flagged, not passed.
+    assert [(issue.sentence, issue.code) for issue in report.issues] == [(1, "unchecked")]
+
+
+def test_a_complete_answer_costs_one_ask_and_an_unavailable_second_ask_flags_the_rest() -> None:
+    llm = Dispatch([], [FactCheck(findings=[_finding(0, "not_factual")])], complete=False)
+    asyncio.run(FactChecker(llm).review(_script("先听一段。"), _evidence(HOSHINO_SOURCE)))  # type: ignore[arg-type]
+    assert len(llm.check_prompts) == 1
+
+    llm = Dispatch([], [FactCheck(findings=[]), RuntimeError("down")], complete=False)
+    report = asyncio.run(FactChecker(llm).review(_script("先听一段。"), _evidence(HOSHINO_SOURCE)))  # type: ignore[arg-type]
+    assert [issue.code for issue in report.issues] == ["unchecked"]
+
+
+def test_a_quote_that_only_names_the_work_does_not_back_first_time_or_says_himself() -> None:
+    # The checker says "supported" with a quote that does name 《喜劇》 and the writing of it.
+    report = _review(
+        _script("他自己说，到了《喜劇》才第一次把家庭写进歌里。"),
+        _evidence(HOSHINO_SOURCE),
+        FactCheck(findings=[_finding(0, "supported", "e1", "写下了《喜劇》")]),
+    )
+    assert [issue.code for issue in report.issues] == ["insufficient"]
+
+    plain = _review(
+        _script("他读完漫画里的家庭故事之后，写下了《喜劇》。"),
+        _evidence(HOSHINO_SOURCE),
+        FactCheck(findings=[_finding(0, "supported", "e1", "读完漫画《间谍过家家》里的家庭故事之后，写下了《喜劇》")]),
+    )
+    assert plain.issues == []
+
+
+def test_cause_influence_and_instruments_need_to_be_in_the_quote() -> None:
+    page = (
+        "〈秋天的落叶〉采用 AABC 结构。比尔·埃文斯三重奏的录音是 this kind of melodically "
+        "interactive trio。《回到那个夏天》由钢琴和弦乐演奏。"
+    )
+    cause = _review(
+        _script("它采用 AABC 结构，所以比尔·埃文斯能弹出对话感。", kind=RadioScriptBlockKind.OUTRO),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "〈秋天的落叶〉采用 AABC 结构")]),
+    )
+    assert [issue.code for issue in cause.issues] == ["insufficient"]
+
+    influence = _review(
+        _script("这种三重奏的对话方式影响了后来的爵士钢琴三重奏。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "this kind of melodically interactive trio")]),
+    )
+    assert [issue.code for issue in influence.issues] == ["insufficient"]
+
+    instruments = _review(
+        _script("刚才那首是钢琴和小乐队的写法。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "由钢琴和弦乐演奏")]),
+    )
+    assert [issue.code for issue in instruments.issues] == ["insufficient"]  # no "small band" in the quote
+
+    kept = _review(
+        _script("那一首由钢琴和弦乐演奏。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "由钢琴和弦乐演奏")]),
+    )
+    assert kept.issues == []
+
+
+def test_a_period_claim_needs_the_period_in_the_quote() -> None:
+    page = "宮崎さんの映画は、ぼくにとって、特に一番大きな仕事ですね。"
+    report = _review(
+        _script("宫崎骏的电影，是他一年里最大的一份工作。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "特に一番大きな仕事ですね")]),
+    )
+    assert [issue.code for issue in report.issues] == ["insufficient"]
+
+
+def test_biographical_turns_and_theory_are_facts_even_when_called_not_factual() -> None:
+    for text in ("到《好き》，家庭第一次成了正面写的东西。", "它几乎全靠二级、五级、一级的进行撑起来。"):
+        report = _review(
+            _script(text), _evidence(HOSHINO_SOURCE), FactCheck(findings=[_finding(0, "not_factual")]), tracks=HOSHINO_TRACKS
+        )
+        assert [issue.code for issue in report.issues] == ["unchecked"], text
+    # A view the host puts is still welcome.
+    view = _review(_script("这一首，是那条线的延续。"), _evidence(HOSHINO_SOURCE), FactCheck(findings=[_finding(0, "not_factual")]))
+    assert view.issues == []
+
+
+def test_the_prompt_puts_rules_and_sources_before_the_sentences_in_a_stable_order() -> None:
+    llm = Dispatch([], [FactCheck(findings=[_finding(0, "not_factual")])])
+    evidence = list(reversed(_evidence("乙的说明文字。", "甲的说明文字。")))
+    asyncio.run(FactChecker(llm).review(_script("先听一段。"), evidence))  # type: ignore[arg-type]
+    prompt = llm.check_prompts[0]
+    assert prompt.index("Return exactly one finding") < prompt.index("Sources (id: text):") < prompt.index("Sentences (numbered):")
+    assert prompt.index("[e1]") < prompt.index("[e2]")
+
+
+def test_a_sentence_after_a_removed_one_that_starts_with_this_piece_goes_with_it() -> None:
+    from wavecast.intelligence.fact_support import _kept_sentences
+
+    assert _kept_sentences(["先说他自己说。", "这一首，延续的就是那个方向。", "好，听歌。"], {0}) == ["好，听歌。"]
