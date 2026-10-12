@@ -20,6 +20,22 @@ _usage_scope: ContextVar[str | None] = ContextVar("wavecast_usage_scope", defaul
 DEFAULT_MAX_EVENTS = 4000
 
 
+# Whether the calls belong to a whole generation or to a text-only rewrite of a stored episode
+# ("generation" / "replay"); unset when the caller does not say.
+_usage_run_kind: ContextVar[str | None] = ContextVar("wavecast_usage_run_kind", default=None)
+
+
+@contextmanager
+def usage_run_kind(kind: str) -> Iterator[None]:
+    """Label every provider call made inside the block, so reports can tell replays apart."""
+
+    token = _usage_run_kind.set(kind)
+    try:
+        yield
+    finally:
+        _usage_run_kind.reset(token)
+
+
 @contextmanager
 def usage_scope(scope: str) -> Iterator[None]:
     """Attribute every provider call made inside the block to ``scope``."""
@@ -49,6 +65,10 @@ class UsageEvent(BaseModel):
     elapsed_ms: int = Field(ge=0)
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
+    # Prompt-cache split of ``input_tokens``.  ``None`` means the provider did not say, which is
+    # not the same as zero: an unknown split is never counted as a miss or as a hit.
+    cached_input_tokens: int | None = Field(default=None, ge=0)
+    uncached_input_tokens: int | None = Field(default=None, ge=0)
     usage_characters: int | None = Field(default=None, ge=0)
     search_queries: int | None = Field(default=None, ge=0)
     search_credits: float | None = Field(default=None, ge=0)
@@ -67,6 +87,12 @@ class UsageTotals(BaseModel):
     slowest_ms: int
     input_tokens: int
     output_tokens: int
+    # Only calls that reported a cache split count here; ``cache_reported_input_tokens`` is
+    # their input, so the hit rate is cached / reported and unreported calls stay out of it.
+    cached_input_tokens: int = 0
+    uncached_input_tokens: int = 0
+    cache_reported_input_tokens: int = 0
+    cache_unreported_calls: int = 0
     usage_characters: int
     reasoning_tokens: int
     search_queries: int
@@ -90,11 +116,14 @@ class UsageLedger:
         return list(self._events)
 
     def record(self, event: UsageEvent) -> None:
+        kind = _usage_run_kind.get()
+        if kind is not None and "run_kind" not in event.metadata:
+            event.metadata["run_kind"] = kind
         self._events.append(event)
         # Counts, timings and cost only: never prompts, responses, URLs or user identifiers.
         logger.info(
             "provider_call provider=%s operation=%s stage=%s scope=%s ms=%d in=%s out=%s "
-            "chars=%s queries=%s cost_usd=%s",
+            "cached=%s chars=%s queries=%s cost_usd=%s",
             event.provider,
             event.operation,
             event.metadata.get("stage") if isinstance(event.metadata.get("stage"), str) else None,
@@ -102,6 +131,7 @@ class UsageLedger:
             event.elapsed_ms,
             event.input_tokens,
             event.output_tokens,
+            event.cached_input_tokens,
             event.usage_characters,
             event.search_queries,
             event.actual_cost_usd if event.actual_cost_usd is not None else event.estimated_cost_usd,
@@ -118,12 +148,21 @@ class UsageLedger:
 
     @staticmethod
     def _totals(events: list[UsageEvent]) -> UsageTotals:
+        reported = [event for event in events if event.cached_input_tokens is not None]
         return UsageTotals(
             event_count=len(events),
             elapsed_ms=sum(event.elapsed_ms for event in events),
             slowest_ms=max((event.elapsed_ms for event in events), default=0),
             input_tokens=sum(event.input_tokens or 0 for event in events),
             output_tokens=sum(event.output_tokens or 0 for event in events),
+            cached_input_tokens=sum(event.cached_input_tokens or 0 for event in reported),
+            uncached_input_tokens=sum(event.uncached_input_tokens or 0 for event in reported),
+            cache_reported_input_tokens=sum(event.input_tokens or 0 for event in reported),
+            cache_unreported_calls=sum(
+                1
+                for event in events
+                if event.input_tokens is not None and event.cached_input_tokens is None
+            ),
             usage_characters=sum(event.usage_characters or 0 for event in events),
             reasoning_tokens=sum(
                 value
@@ -155,6 +194,8 @@ def safe_usage_event(event: UsageEvent) -> dict[str, object]:
         "elapsed_ms": event.elapsed_ms,
         "input_tokens": event.input_tokens,
         "output_tokens": event.output_tokens,
+        "cached_input_tokens": event.cached_input_tokens,
+        "uncached_input_tokens": event.uncached_input_tokens,
         "usage_characters": event.usage_characters,
         "search_queries": event.search_queries,
         "search_credits": event.search_credits,
@@ -162,6 +203,8 @@ def safe_usage_event(event: UsageEvent) -> dict[str, object]:
         "estimated_cost_usd": event.estimated_cost_usd,
         "model": metadata_value("model"),
         "transport": metadata_value("transport"),
+        "response_model": metadata_value("response_model"),
+        "run_kind": metadata_value("run_kind"),
         "finish_reason": metadata_value("finish_reason"),
         "reasoning_tokens": metadata_value("reasoning_tokens"),
     }
