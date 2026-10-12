@@ -242,6 +242,8 @@ export function useProgrammePlayback({
   const episodeIdRef = useRef<string | null>(bootstrapEpisodeId);
   const browserPositionRef = useRef(bootstrapPosition);
   const browserPlayingRef = useRef(bootstrapPlaying);
+  const recoveringSessionRef = useRef(false);
+  const sessionRecoveryAttemptsRef = useRef(0);
   const seekPreviewRef = useRef<number | null>(null);
   const checkpointBucketRef = useRef(-1);
   const materializationRequestVersionRef = useRef<number | null>(null);
@@ -596,6 +598,30 @@ export function useProgrammePlayback({
     setSaved(isEpisodeSaved(localEpisode.id));
   }, [current?.id, current?.title, localEpisode?.id]);
 
+  // The server drops the listener lease after 30s without a heartbeat (a
+  // throttled background tab, a flaky mobile network). While the listener still
+  // intends to play, take the lease back instead of leaving generation stopped
+  // behind a player that silently runs out of programme.
+  const recoverListenerSession = useCallback(() => {
+    const target = localEpisodeRef.current;
+    if (!target || !browserPlayingRef.current) return;
+    if (target.state === "MATERIALIZED" || target.state === "PUBLISHED") return;
+    if (recoveringSessionRef.current) return;
+    recoveringSessionRef.current = true;
+    void api.resume(target.id)
+      .then((resumed) => {
+        if (localEpisodeRef.current?.id !== resumed.id) return;
+        setEpisode(resumed);
+        setError(null);
+      })
+      .catch(() => {
+        // The next heartbeat or lease check tries again.
+      })
+      .finally(() => {
+        recoveringSessionRef.current = false;
+      });
+  }, [setEpisode]);
+
   useEffect(() => {
     if (!localEpisode?.is_listener_active) return;
     const synchronizationGuard = synchronizationGuardRef.current;
@@ -607,8 +633,13 @@ export function useProgrammePlayback({
       )) return;
       try {
         await api.heartbeat(localEpisode.id);
-      } catch {
-        // Heartbeat only owns listener liveness and generation scheduling.
+      } catch (reason: unknown) {
+        // 409: the server already expired this lease; heartbeats alone cannot
+        // revive it ("resume it before generating").
+        if (reason instanceof ApiRequestError && reason.status === 409) {
+          recoverListenerSession();
+        }
+        // Otherwise heartbeat only owns listener liveness and scheduling.
       }
     };
     void heartbeat();
@@ -617,7 +648,26 @@ export function useProgrammePlayback({
       synchronizationGuard.invalidate();
       window.clearInterval(interval);
     };
-  }, [localEpisode?.id, localEpisode?.is_listener_active]);
+  }, [localEpisode?.id, localEpisode?.is_listener_active, recoverListenerSession]);
+
+  // The episode itself reports the lease as gone (event stream or reload) while
+  // the listener is still playing: resume, a few times at most per spell.
+  useEffect(() => {
+    if (!localEpisode) return;
+    if (localEpisode.is_listener_active) {
+      sessionRecoveryAttemptsRef.current = 0;
+      return;
+    }
+    if (!browserPlaying) return;
+    const tryResume = () => {
+      if (sessionRecoveryAttemptsRef.current >= 3) return;
+      sessionRecoveryAttemptsRef.current += 1;
+      recoverListenerSession();
+    };
+    tryResume();
+    const interval = window.setInterval(tryResume, 4_000);
+    return () => window.clearInterval(interval);
+  }, [browserPlaying, localEpisode?.id, localEpisode?.is_listener_active, recoverListenerSession]);
 
   const leaveEpisode = useCallback(() => {
     const target = localEpisodeRef.current;

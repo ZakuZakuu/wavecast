@@ -5,21 +5,28 @@ import { useEffect, useRef } from "react";
 import { approach, cleanTarget, swingOffset, waveformPathAt } from "../../lib/motion/ambient";
 import { prefersReducedMotion } from "../../lib/motion/easing";
 import { useOverlay } from "../../lib/overlay-stack";
+import { Portal } from "../portal";
 import { formatFreq, type Station } from "../../lib/stations";
 import { PX_PER_MHZ } from "../../lib/tuner";
 import { TuningWindow, useElementWidth } from "./tuning-window";
 
 export type TuningStep = { label: string; done: boolean };
 
-/** Full-screen "开播中": the steps map to real events, never decorative copy. */
-export function TuningInScreen({
-  station,
-  steps,
-  error,
-  retryable = true,
-  onCancel,
-  onRetry,
-}: {
+/**
+ * Full-screen "开播中": the steps map to real events, never decorative copy.
+ * Portalled to <body> like the sheets: rendered inside a scrolling page it
+ * scrolled away with it and exposed the page underneath. The portal renders
+ * nothing on its first pass, so the body (and its effects) is a child.
+ */
+export function TuningInScreen(props: TuningInProps) {
+  return (
+    <Portal>
+      <TuningInBody {...props} />
+    </Portal>
+  );
+}
+
+type TuningInProps = {
   station: Station;
   steps: TuningStep[];
   error: string | null;
@@ -27,7 +34,16 @@ export function TuningInScreen({
   retryable?: boolean;
   onCancel: () => void;
   onRetry: () => void;
-}) {
+};
+
+function TuningInBody({
+  station,
+  steps,
+  error,
+  retryable = true,
+  onCancel,
+  onRetry,
+}: TuningInProps) {
   const { ref, width } = useElementWidth<HTMLDivElement>();
   const doneCount = steps.filter((step) => step.done).length;
   const waveRef = useRef<SVGPathElement | null>(null);
@@ -40,10 +56,10 @@ export function TuningInScreen({
   useEffect(() => {
     const wave = waveRef.current;
     const pointer = ref.current?.querySelector<HTMLElement>(".tw-pointer") ?? null;
-    if (prefersReducedMotion()) {
-      wave?.setAttribute("d", waveformPathAt(0, 1));
-      return;
-    }
+    // Reduced motion keeps the waveform flowing (it is the only sign that the
+    // station is being tuned) but slower, and drops the pointer's swing.
+    const reduced = prefersReducedMotion();
+    const flow = reduced ? 0.35 : 1;
     const amplitude = 1.2 * PX_PER_MHZ;
     const start = performance.now();
     let last = start;
@@ -52,11 +68,11 @@ export function TuningInScreen({
       const elapsed = now - start;
       clean = approach(clean, targetRef.current, now - last);
       last = now;
-      if (pointer) {
+      if (pointer && !reduced) {
         const offset = swingOffset(elapsed, amplitude);
         pointer.style.transform = offset ? `translate3d(${offset}px, 0, 0)` : "";
       }
-      wave?.setAttribute("d", waveformPathAt(elapsed / 1000, clean));
+      wave?.setAttribute("d", waveformPathAt((elapsed / 1000) * flow, clean));
       frame = requestAnimationFrame(tick);
     });
     return () => cancelAnimationFrame(frame);
