@@ -278,6 +278,22 @@ class WriterService:
                     known.add((artist, title))
                     known_tracks.append(KnownTrack(artist=artist, title=title))
         route_titles = [label.split(" - ", 1)[-1] for label in route_tracks]
+        # The tracks this slot is about, and the other songs of the programme: a statement may
+        # not rest on material about one of the latter (the final slot may refer to any).
+        focus_known: list[KnownTrack] = []
+        other_known: list[KnownTrack] = []
+        if slots and not any(slot.is_final for slot in slots):
+            focus_known = [
+                KnownTrack(artist=track.canonical_artist, title=track.canonical_title, spoken_title=track.spoken_title)
+                for slot in slots
+                for track in (slot.chapter_track, slot.just_played_track, slot.upcoming_track)
+                if track is not None
+            ]
+            focus_titles_now = {track.title for track in focus_known}
+            for label in route_tracks:
+                artist, _sep, title = label.partition(" - ")
+                if title and title not in focus_titles_now:
+                    other_known.append(KnownTrack(artist=artist, title=title))
         supported = _supported_years(scoped, previous_committed_context, known_tracks)
         # The Writer is not given the played file's length, and a length found in the evidence is
         # usually the album version's; a wrong length is plain to the listener on the progress
@@ -307,6 +323,8 @@ class WriterService:
                     route_labels=route_tracks,
                     context=previous_committed_context,
                     known_text=evidence,
+                    focus_tracks=focus_known,
+                    other_tracks=other_known,
                 )
                 for issue in fact_report.issues:
                     found.setdefault(issue.block, []).append(issue.message)
@@ -344,6 +362,7 @@ class WriterService:
         if isinstance(result, RadioScript) and report is not None:
             result = without_flagged_sentences(result, report, known_tracks)
         if isinstance(result, RadioScript):
+            result = _without_misplaced(result, known_tracks, slots, route_titles)
             result = _without_identity_conflicts(result, known_tracks, unplayed_artists)
             result = _without_unspeakable(result, known_tracks)
             if signoff:
@@ -423,6 +442,36 @@ def _without_identity_conflicts(
                 block.kind.value,
                 len(found),
             )
+            continue
+        kept.append(block)
+    if len(kept) == len(script.blocks):
+        return script
+    return script.model_copy(update={"blocks": kept})
+
+
+def _without_misplaced(
+    script: RadioScript,
+    tracks: Sequence[KnownTrack],
+    slots: Sequence[NarrationSlotContext],
+    route_titles: Sequence[str],
+) -> RadioScript:
+    """Drop the blocks that still talk about another song of the route after the rewrite."""
+
+    if any(slot.is_final for slot in slots):
+        return script
+    focus = [
+        track.canonical_title
+        for slot in slots
+        for track in (slot.just_played_track, slot.upcoming_track)
+        if track is not None
+    ]
+    kept = []
+    for block in script.blocks:
+        check = check_block(
+            block.text, tracks=tracks, route_titles=route_titles, focus_titles=focus
+        )
+        if any(issue.startswith("names_other_track") for issue in check.issues):
+            logger.warning("writer_block_dropped reason=names_other_track kind=%s", block.kind.value)
             continue
         kept.append(block)
     if len(kept) == len(script.blocks):

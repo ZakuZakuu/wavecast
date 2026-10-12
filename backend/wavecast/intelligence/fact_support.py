@@ -286,6 +286,8 @@ class FactChecker:
         route_labels: Sequence[str] = (),
         context: str = "",
         known_text: Sequence[Evidence] = (),
+        focus_tracks: Sequence[KnownTrack] = (),
+        other_tracks: Sequence[KnownTrack] = (),
     ) -> FactReport:
         report = FactReport()
         sentences: list[tuple[int, int, str]] = []  # (block, index in block, text)
@@ -364,6 +366,25 @@ class FactChecker:
                 named = [track for track in tracks if _names_track(text, track)]
                 if named and not any(_names_track(finding.quote, track) for track in named):
                     verdict = "insufficient"
+            if verdict == "supported" and focus_tracks and other_tracks:
+                # A statement that rests on a source about another song of the programme is not
+                # about the song this slot is for, whatever the sentence calls it.
+                lead = f"{finding.quote}\n{sources.get(source_id, '')[:150]}"
+                other = next((track for track in other_tracks if _names_track(lead, track)), None)
+                if other is not None and not any(_names_track(lead, track) for track in focus_tracks):
+                    focus_names = "、".join(track.spoken_title or track.title for track in focus_tracks)
+                    report.issues.append(
+                        SentenceIssue(
+                            block,
+                            index,
+                            text,
+                            "wrong_subject",
+                            f"“{text.strip()}” rests on a source about “{other.title}”, but this slot "
+                            f"is between {focus_names}. Talk about the tracks named in the slot "
+                            "context, or leave the sentence out.",
+                        )
+                    )
+                    continue
             if verdict == "supported":
                 logger.info(
                     "fact_supported source=%s quote=%s", source_id[-8:], finding.quote.strip()[:80]

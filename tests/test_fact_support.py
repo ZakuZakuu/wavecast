@@ -513,3 +513,50 @@ def test_a_closing_cut_by_the_fact_check_becomes_a_route_closing_with_the_sign_o
     signoff = compose_signoff(StationId.PORTRAIT, "programme-1")
     # the first and last songs are named when the voice can say them; a Japanese title is not
     assert [block.text for block in result.blocks] == [f"这一程从《Summer》听到《Spirited Away》，就走到这里。{signoff}"]
+
+
+def test_a_statement_resting_on_another_song_of_the_programme_is_not_about_this_slot() -> None:
+    page = "さんぽ 宫崎骏请中川李枝子写词，后来进了小学音乐课本。"
+    opening = KnownTrack(artist="久石譲", title="さんぽ")
+    following = KnownTrack(artist="久石譲", title="君をのせて", spoken_title="伴随着你")
+
+    report = _review(
+        _script("这首歌本来是动画歌，后来进了小学音乐课本。"),
+        _evidence(page),
+        FactCheck(findings=[_finding(0, "supported", "e1", "后来进了小学音乐课本")]),
+        focus_tracks=[following],
+        other_tracks=[opening],
+    )
+    background = _review(
+        _script("这首歌本来是动画歌，后来进了小学音乐课本。"),
+        _evidence("宫崎骏的动画歌曲后来进了小学音乐课本。"),
+        FactCheck(findings=[_finding(0, "supported", "e1", "后来进了小学音乐课本")]),
+        focus_tracks=[following],
+        other_tracks=[opening],
+    )
+
+    assert [issue.code for issue in report.issues] == ["wrong_subject"]
+    assert background.issues == []  # general background that names no other song is fine
+
+
+def test_a_block_that_still_talks_about_another_song_after_the_rewrite_is_dropped() -> None:
+    from tests.test_voice import Sequenced, _slot
+
+    text = "刚才的One之后，是Other Song的故事。"
+    llm = Sequenced(_script(text), _script(text))
+
+    result = asyncio.run(
+        WriterService(llm).write(
+            _chapter(),
+            [],
+            slot_context=_slot(),
+            target_duration_seconds=14,
+            output_language=OutputLanguage.ZH_CN,
+            station=StationId.PORTRAIT,
+            voice_seed="programme-1",
+            route_tracks=["A - One", "A - Jody", "B - Other Song"],
+        )
+    )
+
+    assert isinstance(result, RadioScript)
+    assert result.blocks == []
