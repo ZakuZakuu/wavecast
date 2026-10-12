@@ -12,6 +12,7 @@
     "auth:migrate": "pnpm dlx auth@1.7.6 migrate --config ./lib/auth-cli.ts --yes"
   },
   "dependencies": {
+    "@vercel/analytics": "2.0.1",
     "better-auth": "1.7.6",
     "hls.js": "1.7.3",
     "kysely": "^0.29.6",
