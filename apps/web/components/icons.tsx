@@ -111,3 +111,7 @@ export const DownloadIcon = (p: IconProps) => (
 export const StopIcon = (p: IconProps) => (
   <svg {...stroke(p)}><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
 );
+
+export const InfoIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5M12 8h.01" strokeWidth={2.4} /></svg>
+);

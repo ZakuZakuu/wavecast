@@ -1,0 +1,161 @@
+/* Programme detail and share sheet — design: Frost-Detail / Frost-ShareSheet. */
+.pd {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+.pd-head {
+  position: relative;
+  flex: 0 0 auto;
+  height: calc(var(--safe-top) + 54px);
+  padding: calc(var(--safe-top) + 10px) 12px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pd-head-actions { display: flex; align-items: center; gap: 8px; }
+.pd-icon, .pd-icon-slot {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--fill);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+}
+.pd-icon-slot { background: transparent; }
+.pd-brand {
+  height: 44px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 600;
+}
+.pd-login {
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 22px;
+  background: var(--ink);
+  color: #FFFFFF;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.pd-main {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px var(--gutter) 176px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.pd-hero { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+.pd-cover {
+  display: block;
+  width: 224px;
+  max-width: 62vw;
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  border-radius: var(--radius-cover);
+  overflow: hidden;
+  box-shadow: 0 14px 36px rgba(29, 29, 31, .18);
+}
+.pd-skeleton { background: var(--fill); box-shadow: none; align-self: center; }
+.pd-meta { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); }
+.pd-dot { width: 7px; height: 7px; border-radius: 50%; }
+.pd-title { margin: 6px 0 0; font-size: 22px; font-weight: 700; line-height: 1.3; letter-spacing: -.01em; }
+.pd-description { margin: 0; font-size: 17px; line-height: 1.6; }
+
+.pd-route { display: flex; flex-direction: column; gap: 10px; }
+.pd-route ol { margin: 0; padding: 0; list-style: none; background: var(--surface); border-radius: var(--radius-group); overflow: hidden; }
+.pd-route li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 10px 16px;
+  font-size: 15px;
+  line-height: 1.45;
+}
+.pd-route li + li { border-top: .5px solid var(--separator); }
+.pd-step {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--fill);
+  color: var(--ink-2);
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.pd-route-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink-3); }
+.pd-tags { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
+.pd-tags li { height: 30px; padding: 0 12px; border-radius: 15px; background: var(--fill); color: var(--ink-2); display: grid; place-items: center; font-size: 13px; }
+
+/* The bar never changes height: the button, then one line of message. */
+.pd-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 14px var(--gutter) calc(10px + var(--safe-bottom));
+  background: rgba(242, 242, 244, .78);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-top: .5px solid var(--separator);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pd-primary, .pd-secondary {
+  width: 100%;
+  min-height: 54px;
+  border-radius: 27px;
+  font-size: 17px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.pd-secondary { background: var(--fill); color: var(--ink); }
+.pd-note { margin: 0; min-height: 40px; font-size: 13px; line-height: 20px; color: var(--ink-2); text-align: center; }
+.pd-note.is-error { color: var(--danger); }
+
+.pd-missing .pd-bar { background: transparent; border-top: 0; backdrop-filter: none; -webkit-backdrop-filter: none; padding-bottom: calc(34px + var(--safe-bottom)); }
+.pd-missing-body { flex: 1 1 auto; padding: 0 28px 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; }
+.pd-missing-mark { width: 120px; height: 120px; border-radius: var(--radius-cover); background: var(--fill); color: var(--ink-3); display: grid; place-items: center; }
+.pd-missing-body h1 { margin: 8px 0 0; font-size: 22px; font-weight: 700; }
+.pd-missing-body p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--ink-2); }
+
+/* Share sheet */
+.share-sheet { padding: 0 var(--gutter) calc(20px + var(--safe-bottom)); display: flex; flex-direction: column; gap: 16px; }
+.ss-head { display: flex; align-items: center; justify-content: space-between; }
+.ss-title { margin: 0; font-size: 20px; font-weight: 600; }
+.ss-card { display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--surface); border-radius: var(--radius-group); }
+.ss-cover { display: block; width: 64px; height: 64px; flex: 0 0 auto; border-radius: 10px; overflow: hidden; }
+.ss-card-text { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ss-card-title { font-size: 15px; font-weight: 600; line-height: 1.35; }
+.ss-card-meta { font-size: 13px; color: var(--ink-2); }
+.ss-card-url { font-size: 13px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-actions { display: flex; flex-direction: column; gap: 10px; }
+.ss-primary, .ss-secondary { width: 100%; min-height: 54px; border-radius: 27px; font-size: 17px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.ss-secondary { background: var(--fill); color: var(--ink); }
+.ss-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink-2); text-align: center; }
+.ss-note.is-error { color: var(--danger); }
+.ss-close { width: 44px; height: 44px; margin-right: -10px; padding: 0; border: 0; background: transparent; color: var(--ink-2); display: grid; place-items: center; }

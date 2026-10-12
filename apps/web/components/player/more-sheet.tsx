@@ -2,17 +2,31 @@
 
 import { downloadFilename } from "../../lib/episode-export";
 import { BottomSheet } from "../bottom-sheet";
-import { DownloadIcon, PlayIcon, SaveIcon, StopIcon } from "../icons";
+import { DownloadIcon, InfoIcon, PlayIcon, SaveIcon, ShareIcon, StopIcon } from "../icons";
 import type { NowPlaying } from "./playback-provider";
+
+/**
+ * A sheet that closes by itself pops its own history entry a moment later; navigating or
+ * opening another sheet before that happens would be undone by the pop.
+ */
+function afterSheetClosed(action: () => void): void {
+  window.setTimeout(action, 320);
+}
 
 export function MoreSheet({
   open,
   onClose,
   playback,
+  onDetail,
+  onShare,
 }: {
   open: boolean;
   onClose: () => void;
   playback: NowPlaying;
+  /** Open the programme's own page. */
+  onDetail: () => void;
+  /** Open the share sheet for this programme. */
+  onShare: () => void;
 }) {
   const episode = playback.localEpisode;
   if (!episode) return null;
@@ -29,6 +43,14 @@ export function MoreSheet({
     <BottomSheet open={open} onClose={onClose} label="更多操作" tone="light">
       <h2 className="visually-hidden">更多操作</h2>
       <div className="action-group">
+        <button type="button" className="action-row" onClick={() => { onClose(); afterSheetClosed(onDetail); }}>
+          <InfoIcon size={22} />
+          <span>节目详情</span>
+        </button>
+        <button type="button" className="action-row" onClick={() => { onClose(); afterSheetClosed(onShare); }}>
+          <ShareIcon size={22} />
+          <span>分享这档节目</span>
+        </button>
         <button
           type="button"
           className="action-row"
