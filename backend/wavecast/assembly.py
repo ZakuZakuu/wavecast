@@ -72,7 +72,7 @@ from wavecast.intelligence.research import (
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.intelligence.trace import GenerationTrace
 from wavecast.intelligence.track_research import TrackResearchService
-from wavecast.intelligence.writer import WriterService
+from wavecast.intelligence.writer import WriterService, fallback_closing
 from wavecast.materialization import NarrationMaterializer
 from wavecast.models.episode import (
     LiveEpisode,
@@ -3781,6 +3781,26 @@ class StagedProgressiveChapterGenerator:
                 scoped_ids.extend(i for i in researched.evidence_ids if i not in scoped_ids)
                 writer_chapter = chapter.chapter.model_copy(update={"evidence_ids": scoped_ids})
 
+        is_final_chapter = bool(self.session.chapters) and (
+            chapter.chapter_id == self.session.chapters[-1].chapter_id
+        )
+
+        def assemble(script: RadioScript | NarrationScript) -> PlayableEpisode:
+            radio_script, _ = _assemble_writer_scripts(
+                [script],
+                len(prepared_tracks),
+                chapter_music_indices=[chapter_music_index],
+                slot_contexts=[chapter.slot_contexts],
+                chapter_connections=[chapter.chapter.connection_from_previous_track],
+                previous_music_indices=[0 if has_previous_music else None],
+                require_final_slot=is_final_chapter,
+            )
+            composed = self.composer.compose_prepared(prepared_tracks, radio_script)
+            _assert_narration_blocks_materialized(radio_script, composed)
+            return composed
+
+        playable: PlayableEpisode | None = None
+        authoring_errors = (ProviderError, NarrationPlacementError, EpisodeAssemblyError, ValueError)
         try:
             script = await self.writer.write(
                 writer_chapter,
@@ -3800,26 +3820,8 @@ class StagedProgressiveChapterGenerator:
                 slot_contexts=chapter.slot_contexts,
                 track_points=track_points,
             )
-            radio_script, _ = _assemble_writer_scripts(
-                [script],
-                len(prepared_tracks),
-                chapter_music_indices=[chapter_music_index],
-                slot_contexts=[chapter.slot_contexts],
-                chapter_connections=[chapter.chapter.connection_from_previous_track],
-                previous_music_indices=[0 if has_previous_music else None],
-                require_final_slot=(
-                    bool(self.session.chapters)
-                    and chapter.chapter_id == self.session.chapters[-1].chapter_id
-                ),
-            )
-            playable = self.composer.compose_prepared(prepared_tracks, radio_script)
-            _assert_narration_blocks_materialized(radio_script, playable)
-        except (
-            ProviderError,
-            NarrationPlacementError,
-            EpisodeAssemblyError,
-            ValueError,
-        ) as error:
+            playable = assemble(script)
+        except authoring_errors as error:
             # Writer is the quality layer, not the existence guarantee. P0
             # deliberately prefers a clean music-only gap over canned catalog
             # copy when Writer cannot produce a trustworthy bridge.
@@ -3830,6 +3832,23 @@ class StagedProgressiveChapterGenerator:
                 self.session.presentation_intent.host_mode.value,
                 str(error)[:120],
             )
+        if playable is None and is_final_chapter and self.session.output_language is OutputLanguage.ZH_CN:
+            # A programme always ends: without the Writer's closing the application says where
+            # the route ended and signs off.
+            closing = fallback_closing(
+                self.session.station, episode.seed_id, chapter.slot_contexts, route_tracks
+            )
+            if closing is not None:
+                try:
+                    playable = assemble(closing)
+                    logger.info("narration_closing_fallback chapter_id=%s", chapter.chapter_id)
+                except authoring_errors as error:
+                    logger.warning(
+                        "narration_closing_fallback_failed chapter_id=%s error_type=%s",
+                        chapter.chapter_id,
+                        type(error).__name__,
+                    )
+        if playable is None:
             return None
         generated = _generated_runtime_chapter(
             chapter.chapter_id,

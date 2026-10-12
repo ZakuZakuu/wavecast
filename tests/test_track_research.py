@@ -186,7 +186,7 @@ def test_points_survive_only_when_the_quote_is_in_the_source() -> None:
     sources = {"evidence-k": KIMURA_PAGE}
 
     kept = verified_points(
-        [_point("《永远同在》由木村弓作曲并演唱", "evidence-k", "《いつも何度でも》由木村弓作曲并演唱")], sources, KIMURA
+        [_point("《永远同在》由木村弓作曲并演唱", "evidence-k", "《いつも何度でも》由木村弓作曲并演唱")], sources, KIMURA, {}
     )
     invented = verified_points(
         [_point("《永远同在》由久石让作曲", "evidence-k", "由久石让作曲并担任指挥")], sources, KIMURA
@@ -235,26 +235,52 @@ def test_a_film_may_be_named_as_any_source_names_it_but_an_invented_title_is_dro
     sources = {"evidence-a": "いつも何度でも は 千と千尋の神隠し の主題歌。", "evidence-b": "《千与千寻》是宫崎骏的作品。"}
 
     named_elsewhere = verified_points(
-        [_point("它是《千与千寻》的主题歌", "evidence-a", "千と千尋の神隠し の主題歌")], sources, KIMURA, {}
+        [_point("它是《千与千寻》的主题歌", "evidence-a", "千と千尋の神隠し の主題歌")], sources, KIMURA, sources
     )
     invented = verified_points(
-        [_point("它是《龙猫》的主题歌", "evidence-a", "千と千尋の神隠し の主題歌")], sources, KIMURA, {}
+        [_point("它是《龙猫》的主题歌", "evidence-a", "千と千尋の神隠し の主題歌")], sources, KIMURA, sources
     )
 
     assert len(named_elsewhere) == 1 and invented == []
 
 
-def test_a_second_track_on_the_same_album_reuses_the_search() -> None:
+def test_a_second_track_on_the_same_album_shares_the_search_but_not_the_song_facts() -> None:
     searcher = Searcher(("千与千寻原声", KIMURA_PAGE))
     briefer = DynamicBriefer("它是《千与千寻》的片尾曲", "是动画电影《千与千寻》的片尾曲")
     service = _service(searcher, briefer)  # type: ignore[arg-type]
 
-    _prepare(service, KIMURA, [])
-    first_round = len(searcher.queries)
+    first = _prepare(service, KIMURA, [])
+    album_query = searcher.queries[0]
     second = _prepare(service, SECOND_ON_ALBUM, [])
 
-    assert first_round == 1 and len(searcher.queries) == 1  # the album page served both tracks
-    assert second is not None and second.evidence_ids and second.points  # bound to the second too
+    assert first is not None and first.points  # the page opens with Kimura's song: it speaks for it
+    assert searcher.queries.count(album_query) == 1  # the album question was asked once
+    assert second is not None and second.evidence_ids  # the page is still available to the second
+    # and no claim about the first song's role in the film is lent to the second track
+    assert all("片尾曲" not in point.text for point in second.points)
+
+
+def test_album_background_is_shared_and_labelled_but_song_facts_are_not() -> None:
+    page = "《千と千尋の神隠し サウンドトラック》收录久石让的配乐，2001年发行。いつも何度でも 作曲：木村弓"
+    sources = {"evidence-a": page}
+    leads = {"evidence-a": "千と千尋の神隠し サウンドトラック"}
+
+    album = verified_points(
+        [_RawPoint(text="这张原声带收录了久石让的配乐", source="evidence-a", quote="收录久石让的配乐", scope="album")],
+        sources, SECOND_ON_ALBUM, leads,
+    )
+    song = verified_points(
+        [_RawPoint(text="它是木村弓作曲的", source="evidence-a", quote="いつも何度でも 作曲：木村弓", scope="track")],
+        sources, SECOND_ON_ALBUM, leads,
+    )
+    unrelated_album = verified_points(
+        [_RawPoint(text="这张原声带收录了久石让的配乐", source="evidence-a", quote="收录久石让的配乐", scope="album")],
+        sources, SUMMER, {"evidence-a": "无关页面"},
+    )
+
+    assert [point.scope for point in album] == ["album"]
+    assert song == []  # that row is another song's
+    assert unrelated_album == []  # the page is not about this track's album
 
 
 def test_the_search_budget_is_per_station_and_stops_when_nothing_turns_up() -> None:

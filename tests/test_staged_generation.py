@@ -279,6 +279,39 @@ def test_writer_failure_returns_no_authored_copy_before_orchestrator_degrades_ga
     assert placeholder.state is SegmentState.PLANNED
 
 
+def test_the_final_chapter_still_gets_a_closing_when_the_writer_fails(tmp_path) -> None:
+    from wavecast.stations import StationId, compose_signoff
+
+    track = ResolvedTrack(track_ref="mock:bridge", canonical_artist="Bridge Artist", canonical_title="Bridge Track")
+
+    class _FailingWriter:
+        async def write(self, *args: object, **kwargs: object) -> RadioScript:
+            raise ProviderTimeoutError("writer timeout")
+
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    session = _session(track).model_copy(
+        update={"output_language": OutputLanguage.ZH_CN, "station": StationId.PORTRAIT}
+    )
+    generator = StagedProgressiveChapterGenerator(
+        session=session,
+        writer=_FailingWriter(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+    )
+    episode = _episode()
+    generated = asyncio.run(generator.generate_next(episode))
+    assert generated is not None
+    episode.segments.extend(generated.segments)
+
+    authored = asyncio.run(generator.author_narration(episode, "chapter-2"))
+
+    assert authored is not None
+    narration = [s for s in authored.segments if isinstance(s, NarrationSegment)]
+    assert len(narration) == 1 and narration[0].state is SegmentState.SCRIPT_READY
+    text = narration[0].narration_text or ""
+    assert text.startswith("这一程") and text.endswith(compose_signoff(StationId.PORTRAIT, "seed") or "?")
+
+
 def test_degraded_writer_marks_pending_host_seam_skipped(tmp_path) -> None:
     track = ResolvedTrack(
         track_ref="mock:bridge",

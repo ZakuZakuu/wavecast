@@ -178,7 +178,10 @@ class WriterService:
                 route_line += (
                     "Verified points about this chapter's track (each one is stated by a source and "
                     "was checked; say them in your own words, no need to say where they come from): "
-                    + " | ".join(point.text for point in track_points)
+                    + " | ".join(
+                        point.text if point.scope == "track" else f"(about the album or film, not the song) {point.text}"
+                        for point in track_points
+                    )
                     + ". Build this chapter's talk around one of them; one is enough. Add only "
                     "listening cues and transitions of your own; every other factual statement "
                     "needs support in the scoped evidence.\n"
@@ -439,6 +442,28 @@ def _without_unspeakable(script: RadioScript, tracks: Sequence[KnownTrack]) -> R
     if len(kept) == len(script.blocks):
         return script
     return script.model_copy(update={"blocks": kept})
+
+
+def fallback_closing(
+    station: StationId | None,
+    voice_seed: str,
+    slot_contexts: Sequence[NarrationSlotContext],
+    route_tracks: Sequence[str],
+) -> RadioScript | None:
+    """The programme's closing when the Writer could not produce one: route plus sign-off.
+
+    Built only from what the application knows, so it cannot be wrong; None for a station
+    that says no sign-off (夜里) or a programme with no station.
+    """
+
+    signoff = compose_signoff(station, voice_seed)
+    if not signoff:
+        return None
+    return _with_signoff(
+        RadioScript(blocks=[], intended_duration_seconds=1),
+        signoff,
+        closing=_route_closing(_known_tracks(slot_contexts), route_tracks),
+    )
 
 
 def _route_closing(known_tracks: Sequence[KnownTrack], route_tracks: Sequence[str]) -> str:

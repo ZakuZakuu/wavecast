@@ -73,17 +73,29 @@ _VERSION_MARKER = re.compile(r"\((?:live|remix|piano|instrumental|[^)]*版)[^)]*
 
 
 class TalkingPoint(BaseModel):
-    """One statement about the chapter's work that a source states, with the proof."""
+    """One statement that a source states, with the proof.
+
+    ``scope`` says what it is about: the recording itself (``track``), or the album / film it
+    belongs to (``album``).  What a source says about the album is shared by its tracks; what
+    it says about one song is that song's alone.
+    """
 
     text: str = Field(min_length=1, max_length=200)
     evidence_id: str = Field(min_length=1, max_length=120)
     quote: str = Field(min_length=1, max_length=300)
+    scope: str = Field(default="track", pattern="^(track|album)$")
 
 
 class _RawPoint(BaseModel):
     text: str = ""
     source: str = ""
     quote: str = ""
+    scope: str = "track"
+
+    @field_validator("scope", mode="before")
+    @classmethod
+    def _scope(cls, value: object) -> str:
+        return "album" if str(value or "").strip().lower() == "album" else "track"
 
     @field_validator("text", "source", "quote", mode="before")
     @classmethod
@@ -174,10 +186,10 @@ def _queries(track: ResolvedTrack) -> list[str]:
     artist = _primary_artist(track.canonical_artist)
     title = _VERSION_MARKER.sub("", track.canonical_title).strip() or track.canonical_title
     name = f"{title} {track.spoken_title}" if track.spoken_title else title
+    # The album query does not name the artist, so every track of the album asks the same
+    # question and the search is done once.
     first = (
-        f"{artist} {track.album} 曲目 作曲 创作背景"
-        if track.album
-        else f"{artist} {name} 创作背景 作曲 来源"
+        f"{track.album} 曲目 作曲 创作背景" if track.album else f"{artist} {name} 创作背景 作曲 来源"
     )
     return [first, f"{artist} {name} 歌曲 电影 专辑 作曲 编曲 简介"]
 
@@ -196,7 +208,9 @@ Sources (id: text):
 
 Give up to {limit} talking points that a host could say about THIS work or recording, most interesting \
 first: where the piece comes from (film, album, event), who composed / arranged / wrote / sang it as the \
-source states, how it was made, how this version relates to the original. Each point is one short \
+source states, how it was made, how this version relates to the original. Say in "scope" what a point \
+is about: "track" when it is about this very recording or work, "album" when it is about the \
+album, film or event it belongs to (never about the song itself). Each point is one short \
 Chinese statement (at most 80 characters) that one source states, with that source's id and a quote \
 copied word for word, in the source's own script and without translating (at most 60 characters). The \
 quote must itself say what the point says, including who did what, and must include the work's name \
@@ -207,7 +221,7 @@ soundtrack cut, a cover), the point must say which version or be left out. If a 
 song, a different version, or only about the artist in general, it supports no point. Return an empty \
 list when nothing qualifies.
 
-Return JSON {{"points": [{{"text": "...", "source": "id", "quote": "..."}}]}}."""
+Return JSON {{"points": [{{"text": "...", "source": "id", "quote": "...", "scope": "track|album"}}]}}."""
 
 
 class TrackResearchService:
@@ -226,6 +240,7 @@ class TrackResearchService:
         self._llm = llm
         self._profile = profile
         self._found: OrderedDict[str, dict[str, list[Evidence]]] = OrderedDict()
+        self._asked: dict[str, set[str]] = {}
 
     def enabled_for(self, station: StationId | None) -> bool:
         return station in SEARCH_BUDGET
@@ -247,7 +262,8 @@ class TrackResearchService:
         per_episode = self._found.setdefault(episode_id, {})
         self._found.move_to_end(episode_id)
         while len(self._found) > _CACHE_EPISODES:
-            self._found.popitem(last=False)
+            dropped, _ = self._found.popitem(last=False)
+            self._asked.pop(dropped, None)
         key = _album_key(track)
         known_ids = {item.id for item in evidence}
 
@@ -272,7 +288,12 @@ class TrackResearchService:
                     break
             if outcome.searches >= budget:
                 break
-            fresh = await self._find(queries[min(outcome.searches, len(queries) - 1)], track, station)
+            asked = self._asked.setdefault(episode_id, set())
+            query = next((item for item in queries if item not in asked), None)
+            if query is None:
+                break  # everything worth asking about this track has been asked
+            asked.add(query)
+            fresh = await self._find(query, track, station)
             outcome.searches += 1
             if fresh:
                 per_episode.setdefault(key, []).extend(
@@ -380,12 +401,19 @@ def verified_points(
         if not text or not source or not quote_in_source(quote, source):
             continue
         roles = roles_in(text)
-        if roles:
-            if not quote_backs_roles(quote, roles):
-                continue
-            if track is not None and not (
+        if roles and not quote_backs_roles(quote, roles):
+            continue
+        if track is not None:
+            line = f"{quote}\n{(leads or {}).get(source_id, '')}"
+            if item.scope == "album":
+                # Background about the album or film: the line (or the page) must be about it.
+                if not track.album or _squash(track.album) not in _squash(line):
+                    continue
+            elif not (
                 mentions_title(quote, track) or mentions_title((leads or {}).get(source_id, ""), track)
             ):
+                # About the song itself: the line, or a page about it, must name this song.
+                # A page about the album or another track cannot speak for this one.
                 continue
         if years_in(text) - years_in(source):
             continue  # a year the source does not contain
@@ -401,7 +429,7 @@ def verified_points(
             continue
         if _IGNORED.sub("", text) in {_IGNORED.sub("", p.text) for p in points}:
             continue
-        points.append(TalkingPoint(text=text[:200], evidence_id=source_id, quote=quote[:300]))
+        points.append(TalkingPoint(text=text[:200], evidence_id=source_id, quote=quote[:300], scope=item.scope))
         if len(points) == _MAX_POINTS:
             break
     return points
