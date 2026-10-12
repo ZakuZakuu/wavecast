@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef } from "react";
 
+import { prefersNativeHls } from "../lib/program-stream";
+
 const HLS_MIME = "application/vnd.apple.mpegurl";
 const FRONTIER_WAKE_SECONDS = 45;
 const FRONTIER_SEEK_EPSILON_SECONDS = 0.05;
@@ -209,7 +211,7 @@ export function ProgrammeAudioPlayer({
       wakeIfDesired();
     };
 
-    if (audio.canPlayType(HLS_MIME)) {
+    if (prefersNativeHls((type) => audio.canPlayType(type), navigator.userAgent)) {
       attachNative();
     } else {
       void import("hls.js")

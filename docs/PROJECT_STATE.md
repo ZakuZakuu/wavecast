@@ -84,6 +84,8 @@ WaveCast 是 AI 音乐电台：用户说一句想听什么，围绕主题检索�
 | [#172](https://github.com/ZakuZakuu/wavecast/issues/172) | 人物志预估 42 分钟，完成后约 18 分钟。需核对目标、可用曲目、路线/终止条件和音频前缀显示口径；尚未证明“路线没走完”是根因。 |
 | [#173](https://github.com/ZakuZakuu/wavecast/issues/173) | 中文界面出现长日文节目标题；封面无字是既有长标题降级。待明确中文标题与独立封面短标题（不超过 8 汉字）的合同及兼容。 |
 
+2026-10-12 已修复并复现验证：新版 Chrome/Edge（含 Android）自带原生 HLS，旧逻辑一检测到 `canPlayType` 就跳过 hls.js；Chromium 原生播放器把增长中的 EVENT 播放列表当直播，开头落在列表末尾、卡住后整体跳到最新片段而进度条留在原处（表现为“卡在 12–36 秒、突然跳到歌尾”）。`prefersNativeHls` 现让 Chromium 一律走 hls.js，Safari/iOS 仍用原生。本地用 Chrome 155 复现并验证（修复前卡在 17.9s/35.9s，修复后连续播放）。
+
 Claude 另报告泛化章节名“第 N 段”、偶发播放错误及提示遮挡封面；目前仅为待复现反馈，未在本次核实为已建 issue 或已确认根因。先取得节目 URL/ID 和日志，不泛化为所有节目故障。
 
 ## 文档与协作入口
