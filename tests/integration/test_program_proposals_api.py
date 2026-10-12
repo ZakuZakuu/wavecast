@@ -255,5 +255,8 @@ def test_the_avoid_list_survives_saving_the_onboarding_form(monkeypatch) -> None
     )
     assert saved.json()["avoid_artists"] == ["Mogwai"]
     assert client.get("/api/user-preferences/me", headers=headers).json()["avoid_artists"] == ["Mogwai"]
+    removed = client.post("/api/user-preferences/me/avoid-artists/remove", json={"artist": " mogwai "}, headers=headers)
+    assert removed.json()["avoid_artists"] == []
+    client.post("/api/user-preferences/me/avoid-artists", json={"artist": "Mogwai"}, headers=headers)
     assert client.post("/api/user-preferences/me/avoid-artists", json={"artist": ""}, headers=headers).status_code == 422
     assert client.post("/api/user-preferences/me/avoid-artists", json={"artist": "x"}).status_code in {401, 403}

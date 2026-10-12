@@ -71,3 +71,30 @@ def test_adopting_gives_the_visitor_their_own_copy_once(shared) -> None:
     # The copy starts a normal episode.
     started = client.post(f"/api/episodes/from-seed/{copy['id']}", headers=VISITOR)
     assert started.status_code == 200
+
+
+def test_a_short_code_finds_the_programme_and_nothing_else(shared) -> None:
+    client, proposal = shared
+    code = proposal["id"].removeprefix("proposal-")[:10]
+
+    found = client.get(f"/api/programs/by-code/{code}")
+    assert found.status_code == 200
+    assert found.json() == {"id": proposal["id"]}
+
+    assert client.get("/api/programs/by-code/0000000000").status_code == 404
+    # Only the exact short form is accepted: no prefixes of other lengths, no patterns.
+    assert client.get(f"/api/programs/by-code/{code[:6]}").status_code == 404
+    assert client.get("/api/programs/by-code/%25%25%25%25%25%25%25%25%25%25").status_code == 404
+
+
+def test_a_short_code_matching_two_programmes_is_not_guessed(shared) -> None:
+    client, proposal = shared
+    from wavecast.proposals import InMemoryProgramProposalRepository
+
+    repository = InMemoryProgramProposalRepository()
+    first = proposal["id"]
+    twin = first[:19] + ("0" if first[19] != "0" else "1") + first[20:]
+    for pid in (first, twin):
+        repository.save_many([api_module.ProgramProposal(**{**proposal, "id": pid})], owner_listener_id="x")
+    assert repository.find_id_by_prefix(first[:19]) is None
+    assert repository.find_id_by_prefix(first[:25]) == first

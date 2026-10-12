@@ -264,6 +264,10 @@ class ProgramProposalRepository(Protocol):
 
     def get_owner(self, proposal_id: str) -> tuple[str | None, str | None] | None: ...
 
+    def find_id_by_prefix(self, prefix: str) -> str | None:
+        """The one proposal id starting with `prefix`; None when there is none or several."""
+        ...
+
     def claim_user(self, proposal_id: str, listener_id: str, user_id: str) -> bool: ...
 
     def get_for_user(self, user_id: str, proposal_id: str) -> ProgramProposal | None: ...
@@ -301,6 +305,10 @@ class InMemoryProgramProposalRepository:
 
     def get_owner(self, proposal_id: str) -> tuple[str | None, str | None] | None:
         return self._owners.get(proposal_id)
+
+    def find_id_by_prefix(self, prefix: str) -> str | None:
+        matches = [proposal_id for proposal_id in self._proposals if proposal_id.startswith(prefix)]
+        return matches[0] if len(matches) == 1 else None
 
     def claim_user(self, proposal_id: str, listener_id: str, user_id: str) -> bool:
         owner = self._owners.get(proposal_id)

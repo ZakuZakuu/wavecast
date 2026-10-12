@@ -152,7 +152,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
         key: "featured:" + item.id,
         id: item.id,
         stationId: item.stationId,
-        title: item.prompt,
+        title: item.displayTitle,
         coverTitle: item.title,
         description: item.blurb,
         minutes: item.minutes,

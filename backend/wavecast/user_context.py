@@ -81,6 +81,16 @@ def with_avoided_artist(preferences: UserPreferences, artist: str) -> UserPrefer
     )
 
 
+def without_avoided_artist(preferences: UserPreferences, artist: str) -> UserPreferences:
+    name = " ".join(artist.split()).casefold()
+    return preferences.model_copy(
+        update={
+            "avoid_artists": [item for item in preferences.avoid_artists if item.casefold() != name],
+            "updated_at": datetime.now(UTC),
+        }
+    )
+
+
 class UserPreferencesRepository(Protocol):
     def get(self, user_id: str) -> UserPreferences | None: ...
 

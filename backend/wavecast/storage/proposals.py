@@ -59,6 +59,9 @@ class PostgresProgramProposalRepository:
     def get_owner(self, proposal_id: str) -> tuple[str | None, str | None] | None:
         return cast(tuple[str | None, str | None] | None, self._run(self._get_owner(proposal_id)))
 
+    def find_id_by_prefix(self, prefix: str) -> str | None:
+        return cast(str | None, self._run(self._find_id_by_prefix(prefix)))
+
     def claim_user(self, proposal_id: str, listener_id: str, user_id: str) -> bool:
         return bool(self._run(self._claim_user(proposal_id, listener_id, user_id)))
 
@@ -70,6 +73,19 @@ class PostgresProgramProposalRepository:
 
     def close(self) -> None:
         self._run(self.engine.dispose())
+
+    async def _find_id_by_prefix(self, prefix: str) -> str | None:
+        # The caller passes a validated hex prefix; escaping keeps LIKE from reading it as a pattern.
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        async with self.engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    select(program_proposals_table.c.id)
+                    .where(program_proposals_table.c.id.like(escaped + "%", escape="\\"))
+                    .limit(2)
+                )
+            ).all()
+        return str(rows[0][0]) if len(rows) == 1 else None
 
     @staticmethod
     def _run(coroutine: Any) -> Any:
