@@ -1,7 +1,7 @@
 /* Tuner (Frost-Tune) and tuning-in (Frost-Tuning). */
 .tune {
   height: 100%;
-  padding: calc(58px) var(--gutter) calc(var(--nav-height) + 12px);
+  padding: var(--page-top-gap) var(--gutter) calc(var(--nav-height) + 12px);
   display: flex;
   flex-direction: column;
   gap: 16px;

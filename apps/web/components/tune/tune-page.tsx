@@ -7,7 +7,7 @@ import {
   FREQ_MAX,
   FREQ_MIN,
   formatFreq,
-  matchStation,
+  matchStationRule,
   stationById,
   STATIONS,
   type Station,
@@ -173,7 +173,14 @@ export function TunePage() {
     }
     if (manualRef.current) return;
     const timer = window.setTimeout(() => {
-      const target = stationById(matchStation(text));
+      // Only a real keyword match moves the dial. Anything else leaves the
+      // station the listener is on (a default of 随便听 would yank it away).
+      const matchedId = matchStationRule(text);
+      if (!matchedId) {
+        setMatched(false);
+        return;
+      }
+      const target = stationById(matchedId);
       setMatched(true);
       if (Math.abs(target.freq - freqRef.current) > 0.01) animateTo(target.freq);
     }, 350);

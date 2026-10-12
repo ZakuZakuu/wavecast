@@ -88,6 +88,11 @@ export const CaptionsIcon = (p: IconProps) => (
   <svg {...stroke(p)}><rect x="3" y="5" width="18" height="14" rx="3" /><path d="M7 11h4M13 11h4M7 15h7" /></svg>
 );
 
+/** A speech bubble with lines: the host's words. */
+export const ScriptIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-6.5L8 20.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" /><path d="M7.5 10h9M7.5 13h5.5" /></svg>
+);
+
 export const RouteIcon = (p: IconProps) => (
   <svg {...stroke(p)}><path d="M8 6h12M8 12h12M8 18h12" /><path d="M4 6h.01M4 12h.01M4 18h.01" strokeWidth={2.4} /></svg>
 );

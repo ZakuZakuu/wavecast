@@ -5,27 +5,40 @@ import { useEffect, useRef } from "react";
 import { BottomSheet } from "../bottom-sheet";
 import { CloseIcon } from "../icons";
 
-/** Full host script with the spoken sentence highlighted and kept in view. */
+export type NarrationPassage = { id: string; sentences: string[] };
+
+/**
+ * Everything the host has said in this programme so far. While the host is
+ * talking, the spoken sentence is highlighted and kept in view; otherwise the
+ * sheet opens at the latest passage. It can be opened at any time.
+ */
 export function NarrationSheet({
   open,
   onClose,
   subtitle,
-  sentences,
-  index,
+  passages,
+  activeId,
+  activeIndex,
 }: {
   open: boolean;
   onClose: () => void;
   subtitle: string;
-  sentences: string[];
-  index: number;
+  passages: NarrationPassage[];
+  /** The passage being spoken right now, if any. */
+  activeId: string | null;
+  activeIndex: number;
 }) {
-  const listRef = useRef<HTMLOListElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const activeAt = passages.findIndex((passage) => passage.id === activeId);
 
   useEffect(() => {
     if (!open) return;
-    const node = listRef.current?.children[index] as HTMLElement | undefined;
-    node?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [index, open]);
+    const root = bodyRef.current;
+    if (!root) return;
+    const target = root.querySelector<HTMLElement>("[data-current]")
+      ?? (root.querySelector("li:last-of-type") ? [...root.querySelectorAll<HTMLElement>("li")].pop() : null);
+    target?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [activeId, activeIndex, open, passages.length]);
 
   return (
     <BottomSheet open={open} onClose={onClose} label="主持词" tone="dark" height="min(560px, calc(100dvh - 60px))" className="narration-sheet">
@@ -38,18 +51,31 @@ export function NarrationSheet({
           <CloseIcon size={16} strokeWidth={2.4} />
         </button>
       </header>
-      <ol ref={listRef} className="ns-list">
-        {sentences.map((sentence, i) => (
-          <li
-            key={i}
-            className={i < index ? "is-said" : i === index ? "is-current" : "is-upcoming"}
-            aria-current={i === index || undefined}
-          >
-            {sentence}
-          </li>
-        ))}
-      </ol>
-      <p className="ns-foot">字幕跟着主持的进度走，正在说的那句会高亮。</p>
+      <div ref={bodyRef} className="ns-body">
+        {passages.length ? (
+          passages.map((passage, passageIndex) => (
+            <ol key={passage.id} className="ns-list">
+              {passage.sentences.map((sentence, i) => {
+                const current = passageIndex === activeAt && i === activeIndex;
+                const said = activeAt < 0 || passageIndex < activeAt || (passageIndex === activeAt && i < activeIndex);
+                return (
+                  <li
+                    key={i}
+                    className={current ? "is-current" : said ? "is-said" : "is-upcoming"}
+                    aria-current={current || undefined}
+                    data-current={current || undefined}
+                  >
+                    {sentence}
+                  </li>
+                );
+              })}
+            </ol>
+          ))
+        ) : (
+          <p className="ns-empty">主持还没开口。开口之后，说过的话会留在这里。</p>
+        )}
+      </div>
+      <p className="ns-foot">正在说的那句会高亮，说过的话可以随时翻回来看。</p>
     </BottomSheet>
   );
 }

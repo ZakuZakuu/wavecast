@@ -13,10 +13,10 @@ import { currentSentenceIndex, nowLineMode, splitSentences, type NowLineMode } f
 import { nextProgramMusicStart } from "../../lib/playback";
 import { formatFreq, stationForProgramme } from "../../lib/stations";
 import { TypeCover } from "../cover/type-cover";
-import { Back15Icon, CaptionsIcon, ChevronDownIcon, MoreIcon, PauseIcon, PlayIcon, RouteIcon, SkipIcon, ThumbDownIcon } from "../icons";
+import { Back15Icon, CaptionsIcon, ChevronDownIcon, MoreIcon, PauseIcon, PlayIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
 import { ShareSheet } from "../programme/share-sheet";
 import { MoreSheet } from "./more-sheet";
-import { NarrationSheet } from "./narration-sheet";
+import { NarrationSheet, type NarrationPassage } from "./narration-sheet";
 import { NowLine } from "./now-line";
 import { authClient } from "../../lib/auth-client";
 import { useNowPlaying, usePlaybackControl, usePlaybackTarget } from "./playback-provider";
@@ -101,16 +101,28 @@ export function PlayerScreen({
 
   const collapse = onCollapse;
 
-  // Narration shown in the NowLine and the full-script sheet. The sheet keeps
-  // the last narration so it does not empty out when the host stops talking.
+  // Narration shown in the NowLine; the script sheet keeps every passage the
+  // host has spoken in this programme, so it can be opened whether or not the
+  // host is talking right now.
   const narration = np?.current?.kind === "NARRATION" ? np.current : null;
   const narrationText = narration?.narration_text?.trim() || (forcedMode === "narration" ? LAYOUT_SAMPLE : "");
   const sentences = useMemo(() => splitSentences(narrationText), [narrationText]);
-  const [sheetNarration, setSheetNarration] = useState<{ id: string; sentences: string[] } | null>(null);
+  const [passages, setPassages] = useState<{ episodeId: string | null; list: NarrationPassage[] }>({ episodeId: null, list: [] });
   const narrationId = narration?.id ?? (forcedMode === "narration" ? "layout-sample" : null);
+  const passageEpisodeId = episode?.id ?? null;
   useEffect(() => {
-    if (narrationId && sentences.length) setSheetNarration({ id: narrationId, sentences });
-  }, [narrationId, sentences]);
+    if (!narrationId || !sentences.length) return;
+    setPassages((state) => {
+      const list = state.episodeId === passageEpisodeId ? state.list : [];
+      const known = list.findIndex((passage) => passage.id === narrationId);
+      if (known >= 0) {
+        if (list[known].sentences.join("") === sentences.join("")) return state.episodeId === passageEpisodeId ? state : { episodeId: passageEpisodeId, list };
+        return { episodeId: passageEpisodeId, list: list.map((passage, i) => i === known ? { id: narrationId, sentences } : passage) };
+      }
+      return { episodeId: passageEpisodeId, list: [...list, { id: narrationId, sentences }] };
+    });
+  }, [narrationId, sentences, passageEpisodeId]);
+  const passageList = passages.episodeId === passageEpisodeId ? passages.list : [];
 
   const music = useMemo(
     () => episode && np ? currentMusicSegment(episode, np.mixPlan, np.browserPosition, np.current) : undefined,
@@ -197,10 +209,6 @@ export function PlayerScreen({
     return currentSentenceIndex(list, np.browserPosition - start, timing?.durationSeconds ?? null);
   };
   const sentenceIndex = sentenceIndexFor(narrationId, sentences);
-  const sheetId = sheetNarration?.id ?? null;
-  const sheetIndex = sheetId === narrationId
-    ? sentenceIndex
-    : sentenceIndexFor(sheetId, sheetNarration?.sentences ?? []);
 
   const mode = forcedMode ?? nowLineMode({ narrating: Boolean(narration), preparing: preparingHint });
   const nextMusic = nextMusicSegment(episode, np.mixPlan, np.browserPosition, music?.id ?? null);
@@ -208,7 +216,6 @@ export function PlayerScreen({
   const next = nextMusic
     ? { primary: trackLabel(nextMusic), secondary: nextChapter ? `第 ${nextChapter} 段` : "" }
     : { primary: `继续收听：${episode.title ?? "WaveCast"}`, secondary: "" };
-  const narrationChapter = chapterNumberOf(episode, sheetId);
 
   return (
     <main className="player" data-cover-tone={darkCover ? "dark" : "light"}>
@@ -311,9 +318,15 @@ export function PlayerScreen({
               onClick={toggleCaptions}
             >
               <CaptionsIcon size={22} strokeWidth={1.8} />
+              <span className="bottom-tool-label">字幕</span>
+            </button>
+            <button type="button" className="bottom-tool" aria-label="主持词" onClick={() => setNarrationOpen(true)}>
+              <ScriptIcon size={22} strokeWidth={1.8} />
+              <span className="bottom-tool-label">主持词</span>
             </button>
             <button type="button" className="bottom-tool" aria-label="节目路线" onClick={() => setRouteOpen(true)}>
               <RouteIcon size={22} strokeWidth={1.8} />
+              <span className="bottom-tool-label">路线</span>
             </button>
           </div>
         </div>
@@ -350,9 +363,10 @@ export function PlayerScreen({
       <NarrationSheet
         open={narrationOpen}
         onClose={() => setNarrationOpen(false)}
-        subtitle={narrationChapter ? `第 ${narrationChapter} 段` : episode.title ?? "WaveCast"}
-        sentences={sheetNarration?.sentences ?? []}
-        index={Math.max(0, sheetIndex)}
+        subtitle={episode.title ?? "WaveCast"}
+        passages={passageList}
+        activeId={narration ? narrationId : null}
+        activeIndex={Math.max(0, sentenceIndex)}
       />
     </main>
   );

@@ -114,16 +114,22 @@ const RULES: Array<{ station: StationId; patterns: RegExp[] }> = [
 ];
 
 /**
- * P0 keyword matcher from free text to a station (HANDOFF §6.1). Order matters:
- * the first matching rule wins; anything else is 随便听.
+ * P0 keyword rules from free text to a station (HANDOFF §6.1). Order matters: the
+ * first matching rule wins. Returns null when no rule fits, so callers can leave
+ * the dial where the listener put it instead of pretending a match.
  */
-export function matchStation(text: string): StationId {
+export function matchStationRule(text: string): StationId | null {
   const normalized = text.trim();
-  if (!normalized) return DEFAULT_STATION_ID;
+  if (!normalized) return null;
   for (const rule of RULES) {
     if (rule.patterns.some((pattern) => pattern.test(normalized))) return rule.station;
   }
-  return DEFAULT_STATION_ID;
+  return null;
+}
+
+/** The rule's station, or 随便听 when nothing matches. */
+export function matchStation(text: string): StationId {
+  return matchStationRule(text) ?? DEFAULT_STATION_ID;
 }
 
 // --- Local station ownership for programmes (P1 will return it from the backend).
