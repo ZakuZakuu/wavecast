@@ -139,6 +139,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
         key: "idea:" + idea.id,
         id: idea.id,
         title: idea.title,
+        coverTitle: idea.cover_title ?? undefined,
         minutes: RECOMMENDATION_MINUTES,
         busy: busyId === idea.id,
         onOpen: () => void openIdea(idea),
@@ -148,6 +149,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
       key: "seed:" + seed.id,
       id: seed.id,
       title: seed.title,
+      coverTitle: seed.cover_title ?? undefined,
       minutes: Math.max(1, Math.round(seed.estimated_duration_seconds / 60)),
       busy: false,
       onOpen: () => {

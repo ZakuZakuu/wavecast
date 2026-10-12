@@ -16,6 +16,8 @@ export type Seed = {
   title: string;
   topic: string;
   short_description: string;
+  /** Short cover label from the backend; absent on programmes made before it existed. */
+  cover_title?: string | null;
   estimated_duration_seconds: number;
   opening_track_ref: string;
   opening_track_title: string;
@@ -108,6 +110,7 @@ export type LiveEpisode = {
   id: string;
   seed_id: string;
   title?: string | null;
+  cover_title?: string | null;
   topic?: string | null;
   listener_id: string;
   version: number;
@@ -162,6 +165,7 @@ export type UserEventInput = { event_type: UserEventType; program_id?: string; e
 export type ProgramIdea = {
   id: string;
   title: string;
+  cover_title?: string | null;
   description: string;
   reason: string;
   tags: string[];

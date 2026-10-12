@@ -228,9 +228,9 @@ function PlaybackHost({
   );
   const cover = useMemo(
     () => seedId && station
-      ? programmeCover({ id: seedId, title: title ?? "WaveCast", stationId: station.id })
+      ? programmeCover({ id: seedId, title: title ?? "WaveCast", stationId: station.id, coverTitle: episode?.cover_title })
       : null,
-    [seedId, station, title],
+    [seedId, station, title, episode?.cover_title],
   );
 
   const [artwork, setArtwork] = useState<string | null>(null);
