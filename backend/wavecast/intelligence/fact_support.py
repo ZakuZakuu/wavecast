@@ -634,6 +634,53 @@ def _unsupported(block: int, index: int, text: str, code: str) -> SentenceIssue:
     )
 
 
+def similar_claim(left: str, right: str) -> bool:
+    """Two statements that overlap by half or more of the shorter one say the same thing."""
+
+    def grams(value: str) -> set[str]:
+        squashed = _squash(value)
+        return {squashed[i : i + 2] for i in range(len(squashed) - 1)}
+
+    a, b = grams(left), grams(right)
+    return bool(a and b) and len(a & b) / min(len(a), len(b)) >= 0.5
+
+
+def with_carried_risks(script: RadioScript, report: FactReport, other: FactReport) -> FactReport:
+    """``report`` plus the sentences of ``script`` that say what another draft was found wrong.
+
+    When a rewrite is rejected and the earlier draft is kept, the rewrite's check may still have
+    found that a claim is contradicted or unsupported.  That finding must not be forgotten just
+    because the sentence in the kept draft was judged differently: the two checks disagree, and
+    the claim stays out.  Sentences are matched by what they say, never by their number.
+    """
+
+    risky = [issue.text for issue in other.issues if issue.code in {"contradicted", "insufficient"}]
+    if not risky:
+        return report
+    known = {(issue.block, issue.sentence) for issue in report.issues}
+    carried: list[SentenceIssue] = []
+    for block_index, block in enumerate(script.blocks):
+        for sentence_index, text in enumerate(split_sentences(block.text)):
+            if (block_index, sentence_index) in known:
+                continue
+            if any(similar_claim(text, other_text) for other_text in risky):
+                logger.warning("fact_check_risk_carried block=%d sentence=%d", block_index, sentence_index)
+                carried.append(
+                    SentenceIssue(
+                        block_index,
+                        sentence_index,
+                        text,
+                        "carried",
+                        f"“{text.strip()}” says what a later check found contradicted or unsupported.",
+                    )
+                )
+    if not carried:
+        return report
+    return FactReport(
+        issues=[*report.issues, *carried], supported=report.supported, model_checked=report.model_checked
+    )
+
+
 def _kept_sentences(sentences: Sequence[str], removed: set[int]) -> list[str]:
     """What is left after the removed sentences, without sentences that lost their context.
 

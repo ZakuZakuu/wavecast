@@ -724,3 +724,59 @@ def test_a_sentence_after_a_removed_one_that_starts_with_this_piece_goes_with_it
     from wavecast.intelligence.fact_support import _kept_sentences
 
     assert _kept_sentences(["先说他自己说。", "这一首，延续的就是那个方向。", "好，听歌。"], {0}) == ["好，听歌。"]
+
+
+# --- a rewrite that is not used still tells what it found ------------------------------------
+
+KIKI_FIRST = "琪琪从火车顶飞向城市的那个场景里，响起的就是它。"
+KIKI_REWRITTEN = "琪琪从火车顶飞向城市的那一段，用的就是它。"
+SOURCE_QUOTE = "久石让的电影配乐主要是与宫崎骏和北野武两位导演"
+
+
+def test_a_claim_the_rejected_rewrite_found_contradicted_is_not_kept_from_the_old_draft() -> None:
+    # Draft 1: one unsupported sentence + a scene claim the first check accepted.  The rewrite fixes the
+    # first but its check finds the scene claim contradicted: equal problem counts, so draft 1 stays.
+    llm = Dispatch(
+        [
+            _script(f"{BAD}{KIKI_FIRST}{GOOD}"),
+            _script(f"{KIKI_REWRITTEN}{GOOD}"),
+        ],
+        [
+            FactCheck(findings=[_finding(0, "insufficient"), _finding(1, "supported", "e1", SOURCE_QUOTE)]),
+            FactCheck(findings=[_finding(0, "contradicted", "e1", SOURCE_QUOTE)]),
+        ],
+    )
+
+    result = _write(llm)
+
+    assert len(llm.prompts) == 2
+    assert [block.text for block in result.blocks] == [GOOD]
+
+
+def test_what_the_rewrite_found_is_matched_by_what_is_said_not_by_sentence_number() -> None:
+    from wavecast.intelligence.fact_support import FactReport, SentenceIssue, with_carried_risks
+
+    script = _script(f"{GOOD}{GOOD}{KIKI_FIRST}")  # the claim is sentence 2 here, sentence 0 in the rewrite
+    other = FactReport(
+        issues=[SentenceIssue(0, 0, KIKI_REWRITTEN, "contradicted", "m"), SentenceIssue(0, 1, GOOD, "unchecked", "m")]
+    )
+
+    carried = with_carried_risks(script, FactReport(), other)
+
+    assert [(issue.sentence, issue.code) for issue in carried.issues] == [(2, "carried")]
+    unrelated = FactReport(issues=[SentenceIssue(0, 0, "他一九八一年生于埼玉县。", "insufficient", "m")])
+    assert with_carried_risks(script, FactReport(), unrelated).issues == []
+
+
+def test_an_unrelated_finding_in_the_rejected_rewrite_costs_the_old_draft_nothing() -> None:
+    llm = Dispatch(
+        [_script(f"{BAD}{KIKI_FIRST}{GOOD}"), _script(f"他一九八一年生于埼玉县。{GOOD}")],
+        [
+            FactCheck(findings=[_finding(0, "insufficient"), _finding(1, "supported", "e1", SOURCE_QUOTE)]),
+            FactCheck(findings=[_finding(0, "insufficient")]),
+        ],
+    )
+
+    result = _write(llm)
+
+    assert [block.text for block in result.blocks] == [f"{KIKI_FIRST}{GOOD}"]

@@ -44,6 +44,7 @@ from .fact_support import (
     quote_backs_roles,
     quote_in_source,
     roles_in,
+    similar_claim,
 )
 from .fast_start import FastStructuredProvider
 from .models import Evidence, ResolvedTrack
@@ -524,15 +525,7 @@ def verified_stories(
     return stories
 
 
-def _similar(left: str, right: str) -> bool:
-    """Two statements that overlap by half or more of the shorter one tell the same thing."""
-
-    def grams(value: str) -> set[str]:
-        squashed = _squash(value)
-        return {squashed[i : i + 2] for i in range(len(squashed) - 1)}
-
-    a, b = grams(left), grams(right)
-    return bool(a and b) and len(a & b) / min(len(a), len(b)) >= 0.5
+_similar = similar_claim
 
 
 def verified_points(

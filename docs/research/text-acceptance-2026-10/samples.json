@@ -1,0 +1,401 @@
+{
+ "note": "Samples of the 2026-10 text acceptance round. stored_narration is what the stored episode says; replays are offline text replays made with commit c65d7df (chapter -> [role, text]). No credentials, audio URLs, prompts or reasoning.",
+ "samples": [
+  {
+   "key": "hisaishi",
+   "episode_id": "840d130d-b018-40e7-9dcd-c249e9ca2e9e",
+   "topic": "久石让为宫崎骏电影写的配乐",
+   "station": "portrait",
+   "how": "stored v18 generation; the narration shown in acceptance.md was an offline replay of it",
+   "chapters": [
+    {
+     "chapter": "chapter-2",
+     "track": "久石譲 - Summer",
+     "album": null,
+     "reason": "Preserve the already prepared FastStart successor."
+    },
+    {
+     "chapter": "chapter-3",
+     "track": "久石譲 - 月光の雲海",
+     "album": "天空の城ラピュタ サウンドトラック ―飛行石の謎―",
+     "reason": "以《天空之城》原声中的〈月光の雲海〉开场。该曲以弦乐与钢琴为主，旋律朦胧梦幻，对应电影中月光下云海的场景，是久石让围绕电影核心线索铺设情绪基调的典型例证。"
+    },
+    {
+     "chapter": "chapter-4",
+     "track": "久石譲 - 風のとおり道",
+     "album": "となりのトトロ サウンドトラック",
+     "reason": "由《天空之城》转入久石让为宫崎骏电影写作的下一阶段代表作《龙猫》。〈風のとおり道〉属于《龙猫》中钢琴与木管、弦乐结合的温润声音，是在同一作曲家语汇内向外延展到另一部作品的合理一步。"
+    },
+    {
+     "chapter": "chapter-5",
+     "track": "久石譲 - あの夏へ",
+     "album": "千と千尋の神隠し サウンドトラック",
+     "reason": "继续久石让为宫崎骏电影创作的路线，转向《千与千寻》的〈あの夏へ〉。该曲在中国常被回忆为‘那个夏天’的旋律，属于久石让风格中空灵、悠长并带有怀旧感的一面，与《龙猫》的田园温润形成对照。"
+    },
+    {
+     "chapter": "chapter-6",
+     "track": "久石譲 - 幽灵公主",
+     "album": "久石譲 in 武道館 ~宮崎アニメと共に歩んだ25年間~",
+     "reason": "引入《幽灵公主》的〈幽灵公主〉，呈现久石让在1997年前后转向大型交响乐队与合唱、宗教性深度的声音。这与《千与千寻》的怀旧抒情形成明显对比，但仍在同一作曲家的作品脉络内。"
+    },
+    {
+     "chapter": "chapter-7",
+     "track": "久石譲 - 風の丘",
+     "album": "魔女の宅急便 イメージアルバム",
+     "reason": "回到久石让个人器乐创作线，以〈風の丘〉收束本期节目。该曲延续其简约旋律与钢琴、管弦乐结合的语汇，呼应开场的《天空之城》，也提示久石让音乐超越单部电影、成为独立聆听对象的一面。"
+    }
+   ],
+   "stored_narration": [
+    {
+     "chapter": "chapter-1",
+     "order": 1,
+     "role": "INTRO",
+     "state": "AUDIO_READY",
+     "text": "现在先来听《天空之城》，来自你点的久石让。欢迎收听FM九七四，人物志。"
+    },
+    {
+     "chapter": "chapter-2",
+     "order": 2,
+     "role": "TRACK_INTRO",
+     "state": "AUDIO_READY",
+     "text": "两首都是久石譲的作品。这首《Summer》，接下来慢慢听。"
+    },
+    {
+     "chapter": "chapter-3",
+     "order": 4,
+     "role": "TRACK_INTRO",
+     "state": "AUDIO_READY",
+     "text": "这首《月光下的云海》也来自久石譲，是他为《天空之城》写的原声。它用弦乐和钢琴搭出朦胧的旋律，对应电影里月光照在云海上的那一段。放在这里听，刚好接着刚才的氛围往下走。"
+    },
+    {
+     "chapter": "chapter-5",
+     "order": 7,
+     "role": "TRACK_INTRO",
+     "state": "AUDIO_READY",
+     "text": "这首《回到那个夏天》出自《千与千寻》的原声，久石譲写的。它旋律纤细，像十岁女孩轻轻哼唱，其实承担着片中千寻的主题。放在这里听，是接着《风之甬道》一路走来的久石譲。"
+    },
+    {
+     "chapter": "chapter-6",
+     "order": 9,
+     "role": "TRACK_INTRO",
+     "state": "AUDIO_READY",
+     "text": "宫崎骏当时想在小桑为莫娜处理伤口的洞窟场景里放一段音乐，于是有了它。这一次他把大型交响乐队请了进来。"
+    },
+    {
+     "chapter": "chapter-7",
+     "order": 12,
+     "role": "OUTRO",
+     "state": "AUDIO_READY",
+     "text": "这一路听下来，久石譲的旋律一直站在电影旁边，也站得住。《风之丘》就是最后落下的那一段，回到他自己。故事到这里。这里是FM九七四，人物志，我们下次再见。"
+    }
+   ],
+   "replays": {
+    "chapter-4": [
+     [
+      "TRACK_INTRO",
+      "《风之甬道》是《龙猫》原声里的一首器乐曲，久石譲把日本的传统旋律和西洋音乐的元素放在了一起。接下来这首，就是它。"
+     ]
+    ],
+    "chapter-6": [
+     [
+      "TRACK_INTRO",
+      "这首《幽灵公主》和刚才《回到那个夏天》不一样。这首曲子里有混声合唱和定音鼓，接下来听。"
+     ]
+    ],
+    "chapter-7": [
+     [
+      "TRACK_INTRO",
+      "这首《风之丘》来自《魔女宅急便》的印象专辑。它出现在琪琪从火车顶飞向城市的那个场景。"
+     ],
+     [
+      "OUTRO",
+      "这一路听下来，久石让的器乐不只在电影里成立，也能单独拿出来听。像刚才的《风之丘》，还有开场那首《天空之城》，都是这样。今天的音乐之旅就到这里。这里是FM九七四，人物志，我们下次再见。"
+     ]
+    ]
+   }
+  },
+  {
+   "key": "versions",
+   "episode_id": "4d305818-6fc1-4975-a05c-2a76ca129c98",
+   "topic": "Autumn Leaves 的不同演奏版本",
+   "station": "lineage",
+   "how": "stored v17 generation; the narration shown in acceptance.md was an offline replay of it",
+   "chapters": [
+    {
+     "chapter": "chapter-2",
+     "track": "Jo Stafford - Autumn Leaves",
+     "album": "It Sparkles And Shines",
+     "reason": "展示英语改词如何将法语原词的沉重哀悼转化为更温和、怀旧的英语流行歌曲，形成语词与情感的关键转折。"
+    },
+    {
+     "chapter": "chapter-3",
+     "track": "Roger Williams - Autumn Leaves",
+     "album": "The Very Best of Roger Williams",
+     "reason": "以 Roger Williams 的钢琴器乐版展示歌曲如何从人声香颂跨入美国流行器乐，成为唯一登上告示牌冠军的钢琴器乐。"
+    },
+    {
+     "chapter": "chapter-4",
+     "track": "Nat King Cole - Autumn Leaves",
+     "album": "Greatest Love Songs",
+     "reason": "以 Nat King Cole 的丝绒嗓音人声版展示歌曲在英语世界的流行人声黄金标准，并关联1956年同名电影。"
+    },
+    {
+     "chapter": "chapter-5",
+     "track": "Bill Evans Trio - Autumn Leaves",
+     "album": "Portrait in Jazz, 1959",
+     "reason": "以 Bill Evans 钢琴三重奏展示同一标准曲在编制与互动上的另一极：钢琴、贝斯、鼓的民主对话，将慢板情歌改为轻快节奏。"
+    },
+    {
+     "chapter": "chapter-6",
+     "track": null,
+     "album": null,
+     "reason": "以和声与曲式结构收束整集，说明 ii–V–I 进行与 AABC/AABA 曲式如何让同一旋律在不同乐手手中持续产生差异。"
+    }
+   ],
+   "stored_narration": [
+    {
+     "chapter": "chapter-1",
+     "order": 1,
+     "role": "INTRO",
+     "state": "AUDIO_READY",
+     "text": "现在先来听Chet Baker的《Autumn Leaves》。欢迎收听FM一零一五，来龙去脉。"
+    },
+    {
+     "chapter": "chapter-2",
+     "order": 2,
+     "role": "TRACK_INTRO",
+     "state": "AUDIO_READY",
+     "text": "Johnny Mercer 在1950年7月写下英语词，Jo Stafford 录了第一个英语版本，当时她是 Capitol 旗下的歌手。"
+    },
+    {
+     "chapter": "chapter-3",
+     "order": 4,
+     "role": "TRACK_INTRO",
+     "state": "AUDIO_READY",
+     "text": "这段旋律到了1955年，由钢琴家罗杰·威廉斯弹成器乐版，登上美国《告示牌》排行榜冠军，也是唯一登顶的钢琴器乐录音。同一首歌，从人声换成一架钢琴。"
+    },
+    {
+     "chapter": "chapter-5",
+     "order": 7,
+     "role": "TRACK_INTRO",
+     "state": "AUDIO_READY",
+     "text": "同一条旋律，Bill Evans 换了个做法。他1959年12月在纽约录《Portrait in Jazz》，钢琴是他自己，贝斯 Scott LaFaro，鼓 Paul Motian。这一版把慢板情歌改成了轻快节奏，三个人同时即兴。"
+    },
+    {
+     "chapter": "chapter-6",
+     "order": 9,
+     "role": "OUTRO",
+     "state": "AUDIO_READY",
+     "text": "这条线从 Jo Stafford 的人声唱到罗杰·威廉斯的钢琴，最后停在 Bill Evans 的三重奏。同一首《Autumn Leaves》，换一个人就换一种说法。 要把它们串在一起，靠的是和声里那套 ii–V–I，和 AABC 的曲式。，这是它每次听起来都不一样的底子。来龙去脉，FM一零一五，下次再见。"
+    }
+   ],
+   "replays": {
+    "chapter-5": [
+     [
+      "TRACK_INTRO",
+      "接下来是 Bill Evans Trio 的《Autumn Leaves》，收录在专辑《Portrait in Jazz》里，弹钢琴的是 Bill Evans，贝斯是 Scott LaFaro，鼓是 Paul Motian。这一版把同一段旋律交给钢琴、贝斯和鼓轮流说话，不再是一个人唱、另外两个人伴奏。"
+     ]
+    ],
+    "chapter-6": [
+     [
+      "OUTRO",
+      "这段路走的都是同一段旋律，AABC的曲式，ii–V–I的和声骨干，谁都改不动。可Chet Baker的弱音小号、Jo Stafford的英语词、Roger Williams的一架钢琴，到Bill Evans Trio的钢琴、贝斯、鼓轮流说话，同一首《Autumn Leaves》就这么一次次变了样。来龙去脉，FM一零一五，下次再见。"
+     ]
+    ]
+   }
+  },
+  {
+   "key": "postrock",
+   "episode_id": "65eebb53-c2ec-4633-96e3-de38fdd947d3",
+   "topic": "后摇入门，从不同乐队听它的变化",
+   "station": "crate",
+   "how": "real generation (first result, TTS off)",
+   "chapters": [
+    {
+     "chapter": "chapter-2",
+     "track": "Sigur Rós - Fljótavík",
+     "album": null,
+     "reason": "Preserve the already prepared FastStart successor."
+    },
+    {
+     "chapter": "chapter-3",
+     "track": null,
+     "album": null,
+     "reason": "以听众熟悉的《Svefn-g-englar》作为锚点：它不属于传统摇滚的连复段逻辑，而是把弓拉吉他和假声当作音色纹理来铺陈空间，这正是后摇定义中『用摇滚乐器做非摇滚之事』的最直观例子。"
+    },
+    {
+     "chapter": "chapter-4",
+     "track": "Matryoshka - Sacred Play Secret Place",
+     "album": "Virgin Babylon Records Sampler 20161126",
+     "reason": "Use a catalog-resolved replacement while preserving this chapter's editorial role."
+    },
+    {
+     "chapter": "chapter-5",
+     "track": "MONO - Ashes in the Snow",
+     "album": "Hymn to the Immortal Wind",
+     "reason": "Monumental 器乐后摇以极慢的推进与巨大的动态落差见长，《Ashes in the Snow》把『渐强式后摇』的极端形态摆出来，与Sigur Rós的人声空间感形成对位。"
+    }
+   ],
+   "stored_narration": [
+    {
+     "chapter": "chapter-1",
+     "order": 1,
+     "role": "INTRO",
+     "state": "AUDIO_READY",
+     "text": "现在先来听Sigur Rós的《Svefn-g-englar》。欢迎来到唱片行，FM九三一。"
+    },
+    {
+     "chapter": "chapter-2",
+     "order": 2,
+     "role": "TRACK_INTRO",
+     "state": "AUDIO_READY",
+     "text": "同一个乐队，换了年份。"
+    },
+    {
+     "chapter": "chapter-3",
+     "order": 4,
+     "role": "GENERAL",
+     "state": "SKIPPED",
+     "text": null
+    },
+    {
+     "chapter": "chapter-5",
+     "order": 7,
+     "role": "OUTRO",
+     "state": "AUDIO_READY",
+     "text": "这一路从冰岛的人声空间，走到MONO的《Ashes in the Snow》。同一张标签下，不靠唱，也能把一首长曲慢慢推向音墙。唱片行，FM九三一，回头接着挖。"
+    }
+   ],
+   "replays": {
+    "chapter-5": [
+     [
+      "OUTRO",
+      "《Ashes in the Snow》是《Hymn to the Immortal Wind》的开场曲，温暖的吉他和极简的大提琴。这一路就是从Sigur Rós的人声空间，走到MONO靠音墙堆出来的器乐长曲。唱片行，FM九三一，回头接着挖。"
+     ]
+    ]
+   }
+  },
+  {
+   "key": "hoshino",
+   "episode_id": "2c1093d8-c495-4621-adbb-be2fe1e98b9f",
+   "topic": "星野源：从早期作品到流行创作",
+   "station": "portrait",
+   "how": "real generation (first result, TTS off)",
+   "chapters": [
+    {
+     "chapter": "chapter-2",
+     "track": "星野源 - 喜劇",
+     "album": null,
+     "reason": "Preserve the already prepared FastStart successor."
+    },
+    {
+     "chapter": "chapter-3",
+     "track": "星野源 - いきどまり",
+     "album": "いきどまり",
+     "reason": "以《くだらないの中に》作为叙事原点，这首2011年的首张单曲确立了星野源作为独奏者的声音身份——朴素民谣编曲、日常语言与对身体和感官的执着，正是他后来所有流行创作的地基。"
+    },
+    {
+     "chapter": "chapter-4",
+     "track": null,
+     "album": null,
+     "reason": "引入《喜劇》作为星野源流行创作阶段的高峰之一：从个人日常走向对家庭、邂逅与守护的普遍表达，恰好对应他从独奏者到国民创作人的转变。"
+    },
+    {
+     "chapter": "chapter-5",
+     "track": "星野源 - Sayonara",
+     "album": "Gen",
+     "reason": "《Sayonara》作为他成熟期另一首流行单曲，用轻快节奏包裹离别情绪，展示了星野源如何在流行框架里维持独特语感。"
+    },
+    {
+     "chapter": "chapter-6",
+     "track": "星野源 - Melody",
+     "album": "Gen",
+     "reason": "《Melody》连接流行旋律与实验性音色，呈现星野源在所谓“Yellow Music”方向上的节奏与编曲探索。"
+    },
+    {
+     "chapter": "chapter-7",
+     "track": "星野源 - 電波塔 (House ver.)",
+     "album": "夢の外へ",
+     "reason": "《電波塔 (House ver.)》出自早期专辑的宅录版本，揭示星野源在正式流行创作之前那种家庭录音般的亲密感与低限度编曲。"
+    },
+    {
+     "chapter": "chapter-8",
+     "track": "星野源 - 好き",
+     "album": "好き",
+     "reason": "《好き》延续星野源近年从回避自我书写转向正面书写家庭与亲密关系的脉络，以流行旋律收束这条从早期私人感官到成熟生命肯定的创作路径。"
+    }
+   ],
+   "stored_narration": [
+    {
+     "chapter": "chapter-1",
+     "order": 1,
+     "role": "INTRO",
+     "state": "AUDIO_READY",
+     "text": "先来听这首歌，是你点的星野源。欢迎收听FM九七四，人物志。"
+    },
+    {
+     "chapter": "chapter-2",
+     "order": 2,
+     "role": "GENERAL",
+     "state": "SKIPPED",
+     "text": null
+    },
+    {
+     "chapter": "chapter-3",
+     "order": 4,
+     "role": "TRACK_INTRO",
+     "state": "AUDIO_READY",
+     "text": "把它放在节目里听，是因为它也像前面那首一样，用的是很日常的语气。"
+    },
+    {
+     "chapter": "chapter-4",
+     "order": 6,
+     "role": "TRANSITION",
+     "state": "AUDIO_READY",
+     "text": "这张专辑被很多人看作是他音乐里重要的一步。两首连在一起，一张专辑的两个面。"
+    },
+    {
+     "chapter": "chapter-8",
+     "order": 10,
+     "role": "TRACK_INTRO",
+     "state": "AUDIO_READY",
+     "text": "最后来听《好き》。他自己说，从前一直回避写自己，到了《喜劇》才第一次把家庭写进歌里。这一首，延续的就是那个方向。"
+    },
+    {
+     "chapter": "chapter-8",
+     "order": 12,
+     "role": "OUTRO",
+     "state": "AUDIO_READY",
+     "text": "这一路听到的，是他怎么把私人经验慢慢写进流行歌里；到《好き》，家庭和亲密关系第一次成了正面写的东西。就停在这儿。这里是FM九七四，人物志，我们下次再见。"
+    }
+   ],
+   "replays": {
+    "chapter-3": [
+     [
+      "TRACK_INTRO",
+      "今天就听这首。"
+     ]
+    ],
+    "chapter-4": [
+     [
+      "TRANSITION",
+      "有乐评人写，那首歌带着他熟悉的AOR律动。他自己也做这种律动的歌，不过星野源有他自己的做法。"
+     ]
+    ],
+    "chapter-6": [],
+    "chapter-7": [
+     [
+      "TRACK_INTRO",
+      "同一支笔，这次放进了家里的录音。"
+     ]
+    ],
+    "chapter-8": [
+     [
+      "OUTRO",
+      "这条路线，讲的是他如何把私人的写作，慢慢变成唱给更多人的表达。这里是FM九七四，人物志，我们下次再见。"
+     ]
+    ]
+   }
+  }
+ ]
+}
