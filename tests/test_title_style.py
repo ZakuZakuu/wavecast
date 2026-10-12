@@ -153,3 +153,22 @@ def test_ideas_carry_a_fitting_cover_label_into_the_proposal() -> None:
     # an idea without a label leaves the proposal's own
     plain = ProgramIdea(id="i2", user_id="u", title="t", description="d", reason="r")
     assert plain.apply_to_proposal(proposal).cover_title == proposal.cover_title
+
+
+def test_the_model_writes_the_title_after_the_plan_it_names() -> None:
+    from wavecast.proposals import ProgramProposalDraft
+    from wavecast.recommendations import ProgramIdeaDraft
+
+    assert list(ProgramProposalDraft.model_fields)[-2:] == ["title", "cover_title"]
+    assert list(ProgramIdeaDraft.model_fields)[-2:] == ["title", "cover_title"]
+
+
+def test_the_tuned_station_reaches_the_proposal_prompt() -> None:
+    from wavecast.proposals import LLMProgramProposalGenerator, ProposalGenerationRequest
+    from wavecast.stations import StationId
+
+    with_station = ProposalGenerationRequest(prompt="后摇入门", station=StationId.CRATE)
+    without = ProposalGenerationRequest(prompt="后摇入门")
+
+    assert "Station: 唱片行" in LLMProgramProposalGenerator._prompt(with_station)
+    assert "Station:" not in LLMProgramProposalGenerator._prompt(without)

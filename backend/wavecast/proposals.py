@@ -29,7 +29,12 @@ from wavecast.providers.errors import ProviderError, ProviderSchemaValidationErr
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.spoken_form import catalog_album, chinese_title, spoken_artist, spoken_title
-from wavecast.stations import StationId, compose_opening, resolve_presentation_intent
+from wavecast.stations import (
+    STATION_PROFILES,
+    StationId,
+    compose_opening,
+    resolve_presentation_intent,
+)
 from wavecast.text_identity import canonical_name, text_mentions_name
 from wavecast.title_style import TITLE_GUIDANCE, cover_title
 
@@ -184,10 +189,7 @@ class ProgramProposalDraft(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(min_length=1, max_length=200)
     short_description: str = Field(min_length=1, max_length=500)
-    # Optional on purpose: a draft without one still works, the application derives a label.
-    cover_title: str | None = Field(default=None, max_length=60)
     editorial_route: list[str] = Field(min_length=2, max_length=8)
     genre_tags: list[str] = Field(default_factory=list, max_length=8)
     mood_tags: list[str] = Field(default_factory=list, max_length=8)
@@ -195,6 +197,11 @@ class ProgramProposalDraft(BaseModel):
     opening_track_candidates: list[OpeningTrackCandidate] = Field(min_length=1, max_length=4)
     # Artists the request names or clearly requires the programme to play; empty when none.
     required_artists: list[str] = Field(default_factory=list, max_length=4)
+    # The model fills the schema in this order, so the title is written last, once the plan
+    # it has to name already exists (title_style.TITLE_GUIDANCE).
+    title: str = Field(min_length=1, max_length=200)
+    # Optional on purpose: a draft without one still works, the application derives a label.
+    cover_title: str | None = Field(default=None, max_length=60)
 
     @field_validator("title", "short_description")
     @classmethod
@@ -395,6 +402,13 @@ def _theme_for(prompt: str) -> tuple[str, list[str], list[str], list[str]]:
 def _prompt_excerpt(prompt: str, *, limit: int = 26) -> str:
     compact = " ".join(prompt.strip().split())
     return compact if len(compact) <= limit else compact[: limit - 1] + "…"
+
+
+def _station_line(station: StationId | None) -> str:
+    """The station the listener tuned says what kind of programme they expect."""
+
+    profile = STATION_PROFILES.get(station) if station is not None else None
+    return f"Station: {profile.name}, {profile.positioning}\n" if profile else ""
 
 
 def _proposal_catalog_name(value: str) -> str:
@@ -830,6 +844,7 @@ class LLMProgramProposalGenerator:
             "play (for example “from Mogwai to Explosions in the Sky” requires both); leave it "
             "empty when the request names no artist.\n"
             f"Duration intent: {request.duration_intent.value}\n"
+            f"{_station_line(request.station)}"
             f"{_variety_lens(variety_seed)}"
             f"Taste context: {taste_context}\n"
             f"Listener request: {request.prompt.strip()}"
