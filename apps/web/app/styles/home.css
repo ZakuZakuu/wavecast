@@ -179,6 +179,8 @@
   z-index: 1;
 }
 .lib-link { -webkit-user-drag: none; user-select: none; -webkit-user-select: none; height: 100%; padding: 0 14px; display: flex; align-items: center; gap: 12px; }
+.lib-main { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; gap: 12px; }
+.ring-button { flex: 0 0 auto; width: 44px; height: 44px; margin-right: -8px; padding: 0; border: 0; background: transparent; display: grid; place-items: center; }
 .lib-cover { width: 52px; height: 52px; flex: 0 0 auto; border-radius: 8px; overflow: hidden; }
 .lib-copy { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .lib-title { font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

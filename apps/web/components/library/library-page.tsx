@@ -192,27 +192,33 @@ export function LibraryPage() {
                 open={openKey === row.key}
                 onOpenChange={(next) => setOpenKey(next ? row.key : null)}
               >
-                <Link
-                  href={row.href}
-                  className="lib-link"
-                  draggable={false}
-                  onClick={(event) => {
-                    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey) return;
-                    event.preventDefault();
-                    openPlayer(row.href);
-                  }} aria-label={`${row.title}，${row.status}，继续播放`}>
-                  <span className="lib-cover">
-                    <ProgrammeCoverView id={row.programmeId} title={row.title} stationId={row.stationId} bare radius={0} />
-                  </span>
-                  <span className="lib-copy">
-                    <span className="lib-title">{row.title}</span>
-                    <span className="lib-status">
-                      <span className="filter-dot" style={{ background: STATIONS.find((s) => s.id === row.stationId)?.light }} />
-                      {row.status}
+                <div className="lib-link">
+                  <Link
+                    href={`/program/${encodeURIComponent(row.programmeId)}`}
+                    className="lib-main"
+                    draggable={false}
+                    aria-label={`${row.title}，${row.status}，节目详情`}
+                  >
+                    <span className="lib-cover">
+                      <ProgrammeCoverView id={row.programmeId} title={row.title} stationId={row.stationId} bare radius={0} />
                     </span>
-                  </span>
-                  <ProgressRing ratio={row.ratio} />
-                </Link>
+                    <span className="lib-copy">
+                      <span className="lib-title">{row.title}</span>
+                      <span className="lib-status">
+                        <span className="filter-dot" style={{ background: STATIONS.find((s) => s.id === row.stationId)?.light }} />
+                        {row.status}
+                      </span>
+                    </span>
+                  </Link>
+                  <button
+                    type="button"
+                    className="ring-button"
+                    aria-label={`播放 ${row.title}`}
+                    onClick={() => openPlayer(row.href)}
+                  >
+                    <ProgressRing ratio={row.ratio} />
+                  </button>
+                </div>
               </SwipeRow>
             ))}
           </ul>

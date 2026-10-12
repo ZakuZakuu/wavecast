@@ -8,6 +8,7 @@ import type {
   LiveEpisode,
   ProgramProposal,
   ProgramProposalBatch,
+  PublicProgramme,
   ProgramRenderManifest,
   ProposalGenerationRequest,
   Seed,
@@ -64,6 +65,10 @@ async function request<T>(
 export const api = {
   seeds: () => request<Seed[]>("/seeds"),
   program: (id: string) => request<ProgramProposal>(`/programs/${id}`),
+  publicProgramme: (id: string) => request<PublicProgramme>(`/programs/${encodeURIComponent(id)}/public`),
+  /** The caller's own copy of a shared programme (the same one when they already hold it). */
+  adoptProgramme: (id: string) =>
+    request<ProgramProposal>(`/programs/${encodeURIComponent(id)}/adopt`, { method: "POST" }),
   userPreferences: (expectedUserId: string) =>
     request<UserPreferences>("/user-preferences/me", undefined, expectedUserId),
   saveUserPreferences: (input: UserPreferencesUpdate, expectedUserId: string) =>

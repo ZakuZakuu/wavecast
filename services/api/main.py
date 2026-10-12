@@ -115,6 +115,7 @@ from wavecast.rendering import (
 )
 from wavecast.rendering.fingerprint import mix_plan_fingerprint
 from wavecast.spoken_form import KnownTrack, to_spoken_form
+from wavecast.stations import StationId
 from wavecast.storage import (
     EpisodeConcurrencyError,
     GenerationJobMode,
@@ -1375,6 +1376,115 @@ def program(program_id: str, request: Request) -> ProgramProposal:
     if proposal is None:
         raise HTTPException(status_code=404, detail="Program not found")
     return proposal
+
+
+class PublicProgramme(BaseModel):
+    """What a programme link shows anyone who opens it: the promise, not the listener's prompt."""
+
+    id: str
+    title: str
+    cover_title: str | None = None
+    description: str
+    estimated_duration_seconds: int
+    station: StationId | None = None
+    route: list[str]
+    tags: list[str]
+    opening_track_title: str
+    opening_track_artist: str
+    cover: CoverParams
+    is_owner: bool
+
+
+def _public_programme(program_id: str, actor: AuthPrincipal) -> PublicProgramme | None:
+    stored = proposal_repository.get(program_id)
+    seed = None if stored is not None else _static_seed(program_id)
+    proposal = stored or (ProgramProposal.from_episode_seed(seed) if seed is not None else None)
+    if proposal is None:
+        return None
+    owner = proposal_repository.get_owner(program_id) if stored is not None else None
+    is_owner = seed is not None or (
+        owner is not None
+        and (
+            (owner[1] is not None and owner[1] == actor.user_id)
+            or (owner[1] is None and owner[0] == actor.listener_id)
+        )
+    )
+    tags = list(dict.fromkeys([*proposal.genre_tags, *proposal.mood_tags]))[:6]
+    return PublicProgramme(
+        id=proposal.id,
+        title=proposal.title,
+        cover_title=proposal.cover_title,
+        description=proposal.short_description,
+        estimated_duration_seconds=proposal.estimated_duration_seconds,
+        station=proposal.station,
+        # Built-in programmes carry a generic four-step outline that says nothing.
+        route=list(proposal.editorial_route) if stored is not None else [],
+        tags=tags,
+        opening_track_title=proposal.opening_track_title,
+        opening_track_artist=proposal.opening_track_artist,
+        cover=proposal.cover,
+        is_owner=is_owner,
+    )
+
+
+@app.get("/api/programs/{program_id}/public", response_model=PublicProgramme)
+def public_program(program_id: str, request: Request) -> PublicProgramme:
+    programme = _public_programme(program_id, principal(request))
+    if programme is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return programme
+
+
+@app.post("/api/programs/{program_id}/adopt", response_model=ProgramProposal)
+async def adopt_program(program_id: str, request: Request) -> ProgramProposal:
+    """Give the caller their own copy of a shared programme (it is made fresh for them).
+
+    Nothing is generated here, so only a quota slot is spent; listening then starts the
+    usual episode flow on the copy.
+    """
+    owner = principal(request)
+    mine = _proposal_for_program(program_id, owner)
+    if mine is not None:
+        return mine
+    original = proposal_repository.get(program_id)
+    if original is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    try:
+        reservations = await to_thread.run_sync(
+            lambda: generation_quota_repository.reserve(
+                owner.listener_id, owner.user_id, 1,
+                guest_limit=GUEST_PROGRAM_LIMIT,
+                auth_daily_limit=AUTH_DAILY_PROGRAM_LIMIT,
+                global_daily_limit=GLOBAL_DAILY_PROGRAM_LIMIT,
+            )
+        )
+    except QuotaExceededError as error:
+        if error.reason == "guest_limit":
+            detail = "今天的游客次数用完了。登录后，每天能听更多。"
+        elif error.reason == "account_daily_limit":
+            detail = "今天的调频次数已达上限，请明天再试。"
+        else:
+            detail = "今天的调频服务已达到使用上限，请稍后再试。"
+        raise HTTPException(status_code=429, detail=detail) from error
+    try:
+        copy = original.model_copy(
+            update={"id": f"proposal-{uuid4().hex}", "created_at": datetime.now(UTC)}
+        )
+        await to_thread.run_sync(
+            lambda: proposal_repository.save_many(
+                [copy], owner_listener_id=owner.listener_id,
+                owner_user_id=owner.user_id, source="shared",
+            )
+        )
+        await to_thread.run_sync(generation_quota_repository.charge, reservations, [copy.id])
+        if owner.user_id is not None:
+            await to_thread.run_sync(
+                user_library_repository.put, owner.user_id, "CREATED", copy.id, {"id": copy.id},
+            )
+        return copy
+    except BaseException:
+        await to_thread.run_sync(generation_quota_repository.release, reservations)
+        raise
 
 
 @app.post("/api/program-proposals", response_model=ProgramProposalBatch)

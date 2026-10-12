@@ -36,6 +36,22 @@ export type ProgramProposal = Seed & {
   created_at: string;
 };
 
+/** What a programme link shows anyone who opens it (never the listener's prompt). */
+export type PublicProgramme = {
+  id: string;
+  title: string;
+  cover_title: string | null;
+  description: string;
+  estimated_duration_seconds: number;
+  station: "casual" | "crate" | "portrait" | "lineage" | "night" | null;
+  /** Empty for built-in programmes, which have no real outline. */
+  route: string[];
+  tags: string[];
+  opening_track_title: string;
+  opening_track_artist: string;
+  is_owner: boolean;
+};
+
 export type ProgramProposalBatch = {
   proposals: ProgramProposal[];
 };
