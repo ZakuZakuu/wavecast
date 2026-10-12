@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, musicChaptersForEpisode, nextProgramMusicStart, nextVisibleSegment, reconcileBrowserPosition, remainingSegmentSeconds, segmentAtPosition, segmentOffset, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
+import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, musicChaptersForEpisode, nextProgramMusicStart, nextVisibleSegment, previousProgramMusicStart, reconcileBrowserPosition, remainingSegmentSeconds, segmentAtPosition, segmentOffset, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
 import type { MixPlan } from "../lib/mix-timeline";
 import type { LiveEpisode } from "../lib/types";
 
@@ -293,5 +293,31 @@ describe("local seek target resolution", () => {
     };
 
     expect(segmentAtPosition(skipped, 22)?.id).toBe("bridge");
+  });
+
+  describe("previousProgramMusicStart", () => {
+    const clip = (id: string, lane: "MUSIC" | "VOICE", start: number) => ({
+      id, segmentId: id, lane, timelineStartSeconds: start, sourceUrl: "/x", sourceOffsetSeconds: 0,
+      playableDurationSeconds: 100, gain: 1, fadeInSeconds: 0, fadeOutSeconds: 0, gainAutomation: [],
+    });
+    const plan = {
+      clips: [clip("one", "MUSIC", 0), clip("host", "VOICE", 90), clip("two", "MUSIC", 100), clip("three", "MUSIC", 300)],
+    } as unknown as MixPlan;
+
+    it("restarts the track once it has played for a few seconds", () => {
+      expect(previousProgramMusicStart(plan, 150)).toBe(100);
+      expect(previousProgramMusicStart(plan, 104)).toBe(100);
+    });
+
+    it("goes to the track before when it has only just started", () => {
+      expect(previousProgramMusicStart(plan, 101)).toBe(0);
+      expect(previousProgramMusicStart(plan, 301)).toBe(100);
+    });
+
+    it("restarts the first track, and ignores narration as a track", () => {
+      expect(previousProgramMusicStart(plan, 1)).toBe(0);
+      expect(previousProgramMusicStart(plan, 92)).toBe(0);
+      expect(previousProgramMusicStart(plan, 0)).toBe(0);
+    });
   });
 });

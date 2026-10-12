@@ -19,6 +19,8 @@
   --font-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
 
   --gutter: 20px;
+  /* Space between the status area and the first line of a tab page. */
+  --page-top-gap: 44px;
   --radius-tuner-card: 28px;
   --radius-station-card: 20px;
   --radius-group: 18px;

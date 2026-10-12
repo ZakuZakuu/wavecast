@@ -1,7 +1,7 @@
 /* Tuner (Frost-Tune) and tuning-in (Frost-Tuning). */
 .tune {
   height: 100%;
-  padding: calc(58px) var(--gutter) calc(var(--nav-height) + 12px);
+  padding: var(--page-top-gap) var(--gutter) calc(var(--nav-height) + 12px);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -43,14 +43,6 @@
   animation: fade-in-plain var(--dur-fast) var(--ease-standard) both;
 }
 .tuner-name.is-between { color: var(--ink-3); }
-.match-badge {
-  font-size: 13px;
-  font-weight: 500;
-  padding: 3px 8px;
-  border-radius: 999px;
-  animation: fade-in-plain var(--t-state) var(--ease) both;
-}
-
 .tuning-window {
   position: relative;
   height: 96px;
