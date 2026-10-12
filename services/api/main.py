@@ -74,6 +74,7 @@ from wavecast.proposals import (
     ProgramProposalRepository,
     ProposalGenerationRequest,
     ProposalPersistenceConflict,
+    shared_copy,
 )
 from wavecast.providers.audius import AudiusMusicProvider
 from wavecast.providers.config import ProviderSettings
@@ -1509,16 +1510,7 @@ async def adopt_program(program_id: str, request: Request) -> ProgramProposal:
             detail = "今天的调频服务已达到使用上限，请稍后再试。"
         raise HTTPException(status_code=429, detail=detail) from error
     try:
-        copy = original.model_copy(
-            update={
-                "id": f"proposal-{uuid4().hex}",
-                "created_at": datetime.now(UTC),
-                # `topic` is what the owner typed. The visitor can read their copy back, so it
-                # gets what the link showed them (the title and the promise), which still says
-                # what to make.
-                "topic": f"{original.title}。{original.short_description}"[:500],
-            }
-        )
+        copy = shared_copy(original, new_id=f"proposal-{uuid4().hex}")
         await to_thread.run_sync(
             lambda: proposal_repository.save_many(
                 [copy], owner_listener_id=owner.listener_id,

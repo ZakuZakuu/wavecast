@@ -10,7 +10,7 @@ import { programmeCover, rememberCoverSource } from "../../lib/cover/programme-c
 import { listeningStatus, isFinished } from "../../lib/library-view";
 import { lastTabPathOr } from "../../lib/nav-memory";
 import { openPlayer } from "../../lib/player-nav";
-import { adoptedCopyOf, rememberAdoptedCopy } from "../../lib/share";
+import { adoptedCopies, forgetAdoptedCopy, GUEST_IDENTITY, rememberAdoptedCopy } from "../../lib/share";
 import { formatFreq, rememberProgrammeStation, stationById, stationForProgramme } from "../../lib/stations";
 import type { PublicProgramme } from "../../lib/types";
 import { emptyUserLibrary, readUserLibrary, subscribeUserLibrary, type RecentProgramRecord } from "../../lib/user-library";
@@ -150,7 +150,8 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
 
   // Where this listener is in the programme: playing now, heard before, or not yet.
   // A visitor's own copy of a shared programme has another id than the one in the link.
-  const mineId = adoptedCopyOf(programmeId) ?? programmeId;
+  const identity = session?.user?.id ?? GUEST_IDENTITY;
+  const mineId = adoptedCopies(programmeId, identity)[0] ?? programmeId;
   const record: RecentProgramRecord | undefined = library.recentPrograms
     .filter((item) => item.seedId === mineId)
     .sort((left, right) => right.updatedAt - left.updatedAt)[0];
@@ -209,12 +210,25 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
     try {
       let target = programmeId;
       if (visitor) {
-        const copyId = adoptedCopyOf(programmeId);
-        if (copyId) {
-          target = copyId;
+        // A copy remembered on this device may belong to someone else (the account changed) or
+        // be gone: ask the server, forget what it does not know, and make a new one.
+        let held: string | null = null;
+        for (const candidate of adoptedCopies(programmeId, identity)) {
+          try {
+            await api.program(candidate);
+            held = candidate;
+            break;
+          } catch (error) {
+            if (!(error instanceof ApiRequestError && error.status === 404)) throw error;
+            forgetAdoptedCopy(programmeId, candidate);
+          }
+        }
+        if (held) {
+          rememberAdoptedCopy(programmeId, held, identity);
+          target = held;
         } else {
           const copy = await api.adoptProgramme(programmeId);
-          rememberAdoptedCopy(programmeId, copy.id);
+          rememberAdoptedCopy(programmeId, copy.id, identity);
           rememberProgrammeStation(copy.id, station.id);
           rememberCoverSource(copy.id, coverFromLink ?? programmeId);
           target = copy.id;

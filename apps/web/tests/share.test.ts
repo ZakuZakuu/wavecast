@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { rememberCoverSource } from "../lib/cover/programme-cover";
-import { displayShareUrl, programmeShareUrl, shortCodeFor } from "../lib/share";
+import {
+  adoptedCopies,
+  displayShareUrl,
+  forgetAdoptedCopy,
+  GUEST_IDENTITY,
+  programmeShareUrl,
+  rememberAdoptedCopy,
+  shortCodeFor,
+} from "../lib/share";
 
 function installStorage() {
   const data = new Map<string, string>();
@@ -38,5 +46,27 @@ describe("programme share links", () => {
 
   it("shows the address without its scheme", () => {
     expect(displayShareUrl("https://wavecast.space/program/k3f9x2")).toBe("wavecast.space/program/k3f9x2");
+  });
+
+  it("keeps a visitor's copy per identity: another account does not inherit it", () => {
+    rememberAdoptedCopy("proposal-orig", "proposal-copy-a", "user-a");
+    expect(adoptedCopies("proposal-orig", "user-a")).toEqual(["proposal-copy-a"]);
+    expect(adoptedCopies("proposal-orig", "user-b")).toEqual([]);
+    expect(adoptedCopies("proposal-orig", GUEST_IDENTITY)).toEqual([]);
+  });
+
+  it("offers a guest's copy to the account the guest signs in to, to be checked with the server", () => {
+    rememberAdoptedCopy("proposal-orig", "proposal-guest-copy", GUEST_IDENTITY);
+    expect(adoptedCopies("proposal-orig", "user-a")).toEqual(["proposal-guest-copy"]);
+    rememberAdoptedCopy("proposal-orig", "proposal-own-copy", "user-a");
+    expect(adoptedCopies("proposal-orig", "user-a")).toEqual(["proposal-own-copy", "proposal-guest-copy"]);
+  });
+
+  it("forgets a copy the server does not know, wherever it was recorded", () => {
+    rememberAdoptedCopy("proposal-orig", "proposal-copy", GUEST_IDENTITY);
+    rememberAdoptedCopy("proposal-orig", "proposal-copy", "user-a");
+    forgetAdoptedCopy("proposal-orig", "proposal-copy");
+    expect(adoptedCopies("proposal-orig", "user-a")).toEqual([]);
+    expect(adoptedCopies("proposal-orig", GUEST_IDENTITY)).toEqual([]);
   });
 });

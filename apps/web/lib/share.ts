@@ -64,8 +64,11 @@ export async function nativeShare(data: { title: string; text: string; url: stri
   }
 }
 
-// A visitor who already made their copy of a link should not spend a second slot.
-const ADOPTED_KEY = "wavecast-adopted-v1";
+// A visitor who already made their copy of a link should not spend a second slot. The copy
+// belongs to one identity (an account, or this browser's guest), so the record is kept per
+// identity and checked with the server before it is used again.
+const ADOPTED_KEY = "wavecast-adopted-v2";
+export const GUEST_IDENTITY = "guest";
 
 function readAdopted(): Record<string, string> {
   try {
@@ -76,17 +79,38 @@ function readAdopted(): Record<string, string> {
   }
 }
 
-export function adoptedCopyOf(programmeId: string): string | null {
-  if (typeof window === "undefined") return null;
-  return readAdopted()[programmeId] ?? null;
-}
-
-export function rememberAdoptedCopy(programmeId: string, copyId: string): void {
+function writeAdopted(map: Record<string, string>): void {
   try {
-    const map = readAdopted();
-    map[programmeId] = copyId;
     window.localStorage.setItem(ADOPTED_KEY, JSON.stringify(Object.fromEntries(Object.entries(map).slice(-100))));
   } catch {
     // The server returns the same copy for the owner anyway; this only saves a round trip.
   }
+}
+
+const adoptedKey = (identity: string, programmeId: string) => `${identity}|${programmeId}`;
+
+/**
+ * Copies this identity may already hold of a shared programme, most likely first. A guest's copy
+ * becomes the account's when they sign in, so the guest record is a candidate for an account too.
+ */
+export function adoptedCopies(programmeId: string, identity: string): string[] {
+  if (typeof window === "undefined") return [];
+  const map = readAdopted();
+  const own = map[adoptedKey(identity, programmeId)];
+  const guest = identity === GUEST_IDENTITY ? undefined : map[adoptedKey(GUEST_IDENTITY, programmeId)];
+  return [own, guest].filter((id, index, list): id is string => Boolean(id) && list.indexOf(id) === index);
+}
+
+export function rememberAdoptedCopy(programmeId: string, copyId: string, identity: string): void {
+  const map = readAdopted();
+  map[adoptedKey(identity, programmeId)] = copyId;
+  writeAdopted(map);
+}
+
+export function forgetAdoptedCopy(programmeId: string, copyId: string): void {
+  const map = readAdopted();
+  for (const key of Object.keys(map)) {
+    if (key.endsWith("|" + programmeId) && map[key] === copyId) delete map[key];
+  }
+  writeAdopted(map);
 }

@@ -116,3 +116,41 @@ def test_a_short_code_matching_two_programmes_is_not_guessed(shared) -> None:
         repository.save_many([api_module.ProgramProposal(**{**proposal, "id": pid})], owner_listener_id="x")
     assert repository.find_id_by_prefix(first[:19]) is None
     assert repository.find_id_by_prefix(first[:25]) == first
+
+
+# Every field of a programme is either copied as it is or made again for the visitor. A new field
+# added to ProgramProposal fails the test below until someone decides which it is.
+COPIED_AS_IS = {
+    "title", "short_description", "cover_title", "estimated_duration_seconds", "opening_track_ref",
+    "opening_track_title", "opening_track_artist", "opening_track_duration_seconds",
+    "opening_track_timing_profile", "cover", "editorial_route", "genre_tags", "mood_tags",
+    "anchor_artists", "presentation_intent", "output_language", "station", "required_artists",
+    "generation_profile",
+}
+MADE_AGAIN = {"id", "topic", "opening_narration_text", "created_at"}
+
+
+def test_every_field_of_a_shared_copy_is_decided() -> None:
+    assert set(api_module.ProgramProposal.model_fields) == COPIED_AS_IS | MADE_AGAIN
+
+
+def test_the_copy_is_opened_without_the_sharers_request(shared) -> None:
+    from wavecast.proposals import shared_copy
+
+    _, proposal = shared
+    secret = "给我女朋友的生日准备一档她会喜欢的"
+    original = api_module.ProgramProposal(
+        **{
+            **proposal,
+            "topic": secret,
+            "opening_narration_text": f"现在先来听《Neon First Light》，来自你点的Mira Fields。{secret}",
+        }
+    )
+
+    copy = shared_copy(original, new_id="proposal-" + "cd34" * 8)
+
+    assert copy.opening_narration_text
+    assert "你点" not in copy.opening_narration_text and secret not in copy.opening_narration_text
+    assert copy.opening_track_ref == original.opening_track_ref
+    for name in COPIED_AS_IS:
+        assert getattr(copy, name) == getattr(original, name), name
