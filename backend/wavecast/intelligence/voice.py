@@ -207,8 +207,13 @@ def voice_instructions(
     used_openers: Sequence[str] = (),
     is_opening: bool = False,
     is_final: bool = False,
+    has_points: bool = False,
 ) -> str:
-    """The voice section of the Writer prompt for one block."""
+    """The voice section of the Writer prompt for one block.
+
+    ``has_points``: the application hands the Writer checked points for the last song, so the
+    closing may tell one of them before it gathers the route (every sentence is still checked).
+    """
 
     voice = _voice(station)
     profile = STATION_PROFILES[voice.station]
@@ -218,7 +223,18 @@ def voice_instructions(
         "arriving, parking, walking, working, cooking): mention a situation only if their "
         "request does. A closing is about the music, never about a journey ending."
     )
-    if is_final:
+    if is_final and has_points:
+        lines.append(
+            "This block closes the programme in two or three plain sentences. First tell ONE of the "
+            "verified points given below, in your own words and about exactly what its label says "
+            "(the song that just played, its album or film, or the person); then say in one sentence "
+            "what the route was about, the idea or the thread the listener has been following. Name "
+            "at most two of the songs actually played, never list them, state no other fact about who "
+            "composed, wrote, sang or released anything, repeat nothing an earlier block already said, "
+            "and say nothing about what comes next. Do not say goodbye, thank the listener or name "
+            "the station: the application adds the sign-off after your text."
+        )
+    elif is_final:
         lines.append(
             "This block closes the programme in one or two plain sentences: say what the route "
             "was about, the idea or the thread the listener has been following, and let it end "

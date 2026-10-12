@@ -185,6 +185,8 @@ def test_failed_report_preserves_usage_and_only_safe_provider_event_fields() -> 
             "elapsed_ms": 321,
             "input_tokens": 1200,
             "output_tokens": 2048,
+            "cached_input_tokens": None,
+            "uncached_input_tokens": None,
             "usage_characters": None,
             "search_queries": None,
             "search_credits": None,
@@ -192,6 +194,8 @@ def test_failed_report_preserves_usage_and_only_safe_provider_event_fields() -> 
             "estimated_cost_usd": None,
             "model": "deepseek-test",
             "transport": "responses_json_schema",
+            "response_model": None,
+            "run_kind": None,
             "finish_reason": "incomplete",
             "reasoning_tokens": 900,
         }

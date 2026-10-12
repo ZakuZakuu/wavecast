@@ -14,8 +14,9 @@ database is involved.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
-from wavecast.text_identity import base_title_key, song_title_key
+from wavecast.text_identity import base_title_key, canonical_name, song_title_key
 
 _VERSION_PHRASE = (
     r"(?:(?:的\s*|\s+)?(?:(?:不同(?:的)?|各种|所有|多个|各个)(?:演奏|演绎|录音|翻唱)?版本|(?:演奏|演绎|翻唱)版本)"
@@ -62,3 +63,71 @@ def is_version_of(title: str, work: str) -> bool:
     wanted.discard("")
     heads = [title, _EDITION_SPLIT.split(title.strip(), maxsplit=1)[0]]
     return any(key in wanted for head in heads for key in (song_title_key(head), base_title_key(head)))
+
+
+# --- "music written for X's films" -------------------------------------------------------------
+#
+# A request such as "久石让为宫崎骏电影写的配乐" limits the music to the works of one creator, and the
+# same performer is not enough: 久石让 also scored films by others.  The application cannot know
+# whose film a song belongs to, so it asks the data: a track counts only when its own catalog
+# album or title names a work that the research puts next to that creator.  Without that
+# confirmation it is simply not used for this request.
+
+_FOR_OWNER = re.compile(
+    r"为(?P<owner>[^，,。、的为]{2,12}?)(?:的)?(?:电影|动画|动漫|影片|剧集|游戏|作品)"
+    r"(?:所|而)?(?:写|创作|制作|谱写|作)?的?(?:配乐|音乐|原声|主题曲|曲子)"
+)
+_OWNER_FILMS = re.compile(
+    r"(?:^|[，,\s与和])(?P<owner>[^，,\s的为与和]{2,10})的?(?:电影|动画|动漫|影片)的?(?:配乐|原声|音乐)"
+)
+_FOR_OWNER_EN = re.compile(
+    r"(?:music|scores?|soundtracks?)\s+(?:for|of|to)\s+(?P<owner>[A-Z][\w.'’\- ]{2,30}?)(?:'s|’s)?\s+"
+    r"(?:films?|movies?|anime)",
+    re.IGNORECASE,
+)
+_WORK_NAME = re.compile(r"《([^《》]{2,40})》")
+_SENTENCE_BREAK = re.compile(r"[。！？!?；;\n]+")
+_SOUNDTRACK_WORDS = re.compile(
+    r"original\s*sound\s*track|soundtrack|ost|サウンドトラック|オリジナル|イメージアルバム|"
+    r"image\s*album|原声带?|原声大碟|电影原声",
+    re.IGNORECASE,
+)
+_CONNECTORS = re.compile(r"[\sのノ之的・･:：\-–—~～()（）\[\]「」『』《》〈〉.,，、!！?？'’\"“”]+")
+
+
+def requested_scope(topic: str) -> str | None:
+    """The creator whose works the music must come from ("宫崎骏"), or None for any other request."""
+
+    text = topic.strip()
+    for pattern in (_FOR_OWNER, _OWNER_FILMS, _FOR_OWNER_EN):
+        match = pattern.search(text)
+        if match:
+            owner = match.group("owner").strip(" ，,、'’")
+            if len(owner) >= 2:
+                return owner
+    return None
+
+
+def scope_works(owner: str, texts: Sequence[str]) -> list[str]:
+    """Works named in the same sentence as the creator in the research ("宫崎骏……《千与千寻》")."""
+
+    wanted = canonical_name(owner)
+    found: list[str] = []
+    for text in texts:
+        for sentence in _SENTENCE_BREAK.split(text):
+            if wanted and wanted in canonical_name(sentence):
+                for name in _WORK_NAME.findall(sentence):
+                    if name not in found:
+                        found.append(name)
+    return found
+
+
+def _bare(value: str) -> str:
+    return _CONNECTORS.sub("", _SOUNDTRACK_WORDS.sub(" ", canonical_name(value)))
+
+
+def names_work(label: str, works: Sequence[str]) -> bool:
+    """``label`` (a catalog album or title) names one of the works, ignoring の / 之 / 的 and edition words."""
+
+    bare = _bare(label)
+    return bool(bare) and any(len(key) >= 3 and key in bare for key in (_bare(work) for work in works))

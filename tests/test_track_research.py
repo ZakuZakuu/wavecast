@@ -371,6 +371,30 @@ def test_with_no_verified_point_the_closing_is_still_written() -> None:
     assert result.blocks
 
 
+def test_a_closing_may_tell_one_verified_point_before_it_gathers_the_route() -> None:
+    from tests.test_voice import _final_slot
+
+    llm = Sequenced(_script("这张专辑附了一篇短篇故事。这一路到这里。"))
+    album = TalkingPoint(text="这张专辑是概念专辑，随CD附有一篇短篇故事", evidence_id="e", quote="x" * 4, scope="album")
+    asyncio.run(
+        WriterService(llm).write(
+            _chapter(),
+            [],
+            slot_context=_final_slot(),
+            target_duration_seconds=14,
+            output_language=OutputLanguage.ZH_CN,
+            station=StationId.CRATE,
+            voice_seed="programme-1",
+            track_points=[album],
+        )
+    )
+
+    prompt = llm.prompts[0]
+    assert "First tell ONE of the verified points" in prompt
+    assert "(about the album or film, not the song) 这张专辑是概念专辑" in prompt
+    assert "say nothing about who composed, wrote, sang or released anything" not in prompt
+
+
 def test_without_track_research_the_prompt_is_unchanged() -> None:
     llm = Sequenced(_script("听听这段旋律。"))
 

@@ -154,6 +154,7 @@ class WriterService:
                 used_openers=used_openers,
                 is_opening=any(slot.is_opening for slot in slots),
                 is_final=any(slot.is_final for slot in slots),
+                has_points=bool(track_points),
             )
             if selected_language is OutputLanguage.ZH_CN and (station is not None or voice_seed)
             else (f"Station: {station.value}\n" if station is not None else "")
