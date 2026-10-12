@@ -61,12 +61,14 @@ class ProgramIdeaStatus(StrEnum):
 class ProgramIdeaDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(min_length=1, max_length=200)
-    # Short cover label; optional so older drafts and the heuristic planner still validate.
-    cover_title: str | None = Field(default=None, max_length=60)
     description: str = Field(min_length=1, max_length=500)
     reason: str = Field(min_length=1, max_length=500)
     tags: list[str] = Field(default_factory=list, max_length=12)
+    # Last on purpose: the model fills the schema in this order, so the title is written once
+    # the idea it names already exists (title_style.TITLE_GUIDANCE).
+    title: str = Field(min_length=1, max_length=200)
+    # Short cover label; optional so older drafts and the heuristic planner still validate.
+    cover_title: str | None = Field(default=None, max_length=60)
 
     @field_validator("title", "description", "reason")
     @classmethod
