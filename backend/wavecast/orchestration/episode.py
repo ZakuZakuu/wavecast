@@ -182,9 +182,13 @@ class EpisodeOrchestrator:
             owner_user_id=owner_user_id,
             state=EpisodeState.STREAMING,
             title=seed.title,
+            cover_title=seed.cover_title,
             topic=seed.topic,
             program_estimated_duration_seconds=seed.estimated_duration_seconds,
             presentation_intent=seed.presentation_intent,
+            output_language=seed.output_language,
+            station=seed.station,
+            required_artists=list(seed.required_artists),
             segments=[opening],
             current_segment_id=opening.id,
             last_activity_at=now,
@@ -1142,7 +1146,22 @@ class EpisodeOrchestrator:
         episode.state = EpisodeState.MATERIALIZED
         episode.generation_mode = GenerationMode.FULL
         episode.last_activity_at = self.now()
-        return await asyncio.to_thread(self.repository.save, episode)
+        saved = await asyncio.to_thread(self.repository.save, episode)
+        logger.info(
+            "episode_materialized id=%s estimated_s=%d actual_s=%d music=%d narration=%d skipped=%d",
+            saved.id,
+            saved.program_estimated_duration_seconds,
+            saved.timeline_duration_seconds,
+            sum(1 for item in saved.timeline_segments if item.kind is SegmentKind.MUSIC),
+            sum(1 for item in saved.timeline_segments if item.kind is SegmentKind.NARRATION),
+            # timeline_segments leaves SKIPPED ones out, so count them from the full list.
+            sum(
+                1
+                for item in saved.ordered_segments
+                if item.kind is SegmentKind.NARRATION and item.state is SegmentState.SKIPPED
+            ),
+        )
+        return saved
 
     def prepare_materialization(self, episode_id: str) -> LiveEpisode:
         """Prepare a full timeline while leaving narration network I/O external.

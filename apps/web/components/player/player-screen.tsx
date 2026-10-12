@@ -1,17 +1,20 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { api } from "../../lib/api";
 import { isDarkColour } from "../../lib/cover/build-cover";
 import { readCaptionsEnabled, recordLessLikeThis, writeCaptionsEnabled } from "../../lib/listener-feedback";
 import { friendlyError } from "../../lib/friendly-error";
 import { chapterNumberOf, currentMusicSegment, estimatedTotalSeconds, nextMusicSegment, trackLabel, voiceClipTiming } from "../../lib/now-playing";
 import { currentSentenceIndex, nowLineMode, splitSentences, type NowLineMode } from "../../lib/now-line";
 import { nextProgramMusicStart } from "../../lib/playback";
-import { formatFreq } from "../../lib/stations";
+import { formatFreq, stationForProgramme } from "../../lib/stations";
 import { TypeCover } from "../cover/type-cover";
 import { Back15Icon, CaptionsIcon, ChevronDownIcon, MoreIcon, PauseIcon, PlayIcon, RouteIcon, SkipIcon, ThumbDownIcon } from "../icons";
+import { ShareSheet } from "../programme/share-sheet";
 import { MoreSheet } from "./more-sheet";
 import { NarrationSheet } from "./narration-sheet";
 import { NowLine } from "./now-line";
@@ -75,9 +78,12 @@ export function PlayerScreen({
   const playback = useNowPlaying();
   const { reload } = usePlaybackControl();
   const toast = useToast();
-  const signedIn = Boolean(authClient.useSession().data?.user);
+  const userId = authClient.useSession().data?.user?.id ?? null;
+  const signedIn = userId !== null;
   const [routeOpen, setRouteOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const router = useRouter();
   const [captions, setCaptions] = useState(true);
   const [narrationOpen, setNarrationOpen] = useState(false);
   const [forcedMode, setForcedMode] = useState<NowLineMode | null>(null);
@@ -163,9 +169,15 @@ export function PlayerScreen({
     if (music) {
       recordLessLikeThis({ trackRef: music.track_ref, title: music.title, artist: music.artist, episodeId: episode.id });
     }
+    const artist = music?.artist?.trim();
     // Guests: the preference lives on this device only until they sign in.
-    if (signedIn) toast.show("会少放这类歌");
-    else toast.show("已记下。登录后，这些偏好会一直保存", 3200);
+    if (!signedIn) {
+      toast.show("已记下。登录后，这些偏好会一直保存", 3200);
+      return;
+    }
+    if (userId && artist) void api.avoidArtist(artist, userId).catch(() => undefined);
+    // It steers what is recommended or tuned next; the programme already playing is not redone.
+    toast.show(artist ? `已记下，之后的推荐会少放 ${artist}` : "已记下", 3200);
   };
 
   const toggleCaptions = () => {
@@ -318,7 +330,23 @@ export function PlayerScreen({
         currentMusicId={music?.id ?? null}
         totalSeconds={total}
       />
-      <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} playback={np} />
+      <MoreSheet
+        open={moreOpen}
+        onClose={() => setMoreOpen(false)}
+        playback={np}
+        onDetail={() => router.push(`/program/${encodeURIComponent(episode.seed_id)}`)}
+        onShare={() => setShareOpen(true)}
+      />
+      <ShareSheet
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        target={{
+          id: episode.seed_id,
+          title: episode.title ?? "WaveCast",
+          coverTitle: episode.cover_title,
+          stationId: np.station?.id ?? stationForProgramme(episode.seed_id, episode.title).id,
+        }}
+      />
       <NarrationSheet
         open={narrationOpen}
         onClose={() => setNarrationOpen(false)}

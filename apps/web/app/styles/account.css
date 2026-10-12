@@ -186,3 +186,17 @@
   font-size: 16px;
   font-weight: 500;
 }
+
+/* 少放的歌手 */
+.avoid-sheet { padding-bottom: calc(20px + var(--safe-bottom)); }
+.avoid-body { padding: 0 var(--gutter); display: flex; flex-direction: column; gap: 12px; }
+.avoid-title { margin: 0; font-size: 20px; font-weight: 600; }
+.avoid-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+.avoid-list { list-style: none; margin: 0; padding: 0; border-radius: 18px; background: var(--surface); overflow: hidden; }
+.avoid-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 0 16px; }
+.avoid-list li + li { border-top: .5px solid rgba(60, 60, 67, .14); }
+.avoid-name { min-width: 0; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avoid-remove { flex: 0 0 auto; min-height: 44px; padding: 0 4px; border: 0; background: transparent; font-size: 15px; font-weight: 600; color: var(--ink); }
+.avoid-remove:disabled { color: var(--ink-3); }
+.avoid-empty { margin: 8px 0; font-size: 15px; line-height: 1.6; color: var(--ink-2); }
+.avoid-error { margin: 0; font-size: 13px; color: var(--danger); }

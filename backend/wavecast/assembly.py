@@ -14,15 +14,28 @@ import logging
 import re
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from wavecast.catalog_pool import (
+    AvailabilityStatus,
+    CatalogPool,
+    CatalogPoolBuilder,
+    PoolBuildConfig,
+)
 from wavecast.composer import EpisodeComposer, PreparedMusicAsset
+from wavecast.coverage import (
+    candidate_artist_names,
+    covered_artists,
+    ensure_required_coverage,
+    unfulfilled_artists,
+)
 from wavecast.intelligence.background import BackgroundIntelligencePipeline
 from wavecast.intelligence.curation import CuratorContractError, CuratorService
+from wavecast.intelligence.fact_support import FactChecker
 from wavecast.intelligence.fast_start import FastPathCoordinator, FastPathResult, FastStartPlanner
 from wavecast.intelligence.models import (
     ChapterPlan,
@@ -42,6 +55,7 @@ from wavecast.intelligence.models import (
     RadioScriptBlock,
     RadioScriptBlockKind,
     ResearchBundle,
+    ResearchDepth,
     ResearchFacet,
     ResearchPlan,
     ResolvedTrack,
@@ -57,7 +71,8 @@ from wavecast.intelligence.research import (
 )
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
 from wavecast.intelligence.trace import GenerationTrace
-from wavecast.intelligence.writer import WriterService
+from wavecast.intelligence.track_research import TrackResearchService
+from wavecast.intelligence.writer import WriterService, fallback_closing
 from wavecast.materialization import NarrationMaterializer
 from wavecast.models.episode import (
     LiveEpisode,
@@ -67,6 +82,8 @@ from wavecast.models.episode import (
     SegmentKind,
     SegmentState,
 )
+from wavecast.music_discovery import catalog_queries, community_tags
+from wavecast.narration_quality import opener_of
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
@@ -98,12 +115,50 @@ from wavecast.providers.fakes import (
     FakeSearchProvider,
     MockTTSProvider,
 )
+from wavecast.providers.lastfm import LastFmArtistHints
 from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.search import ExaSearchProvider, TavilySearchProvider
-from wavecast.providers.usage import UsageLedger, UsageTotals, usage_diagnostics
+from wavecast.providers.usage import (
+    UsageLedger,
+    UsageTotals,
+    scoped_to_episode,
+    usage_diagnostics,
+)
+from wavecast.route_consistency import (
+    foreign_artists,
+    known_artist_names,
+    track_true_chapter,
+    used_an_alternate,
+)
+from wavecast.route_duration import (
+    is_underfilled,
+    last_track_to_keep,
+    music_budget_seconds,
+    track_seconds,
+)
+from wavecast.route_spread import (
+    at_artist_cap,
+    same_song_other_artist,
+    spread_cap,
+)
+from wavecast.route_work import (
+    is_version_of,
+    names_work,
+    requested_scope,
+    requested_work,
+    scope_works,
+)
+from wavecast.spoken_form import catalog_album, chinese_title
+from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
+from wavecast.text_identity import (
+    base_title_key,
+    canonical_name,
+    song_title_key,
+    strip_latin_accents,
+)
 from wavecast.timing import (
     ProgramTimingPlan,
     ProgramTimingSummary,
@@ -141,11 +196,33 @@ class LiveEpisodeAssemblyRequest(BaseModel):
     topic: str = Field(min_length=1, max_length=300)
     anchor_tracks: list[str] = Field(default_factory=list, max_length=8)
     desired_duration_seconds: int = Field(default=900, gt=0)
-    max_tracks: int = Field(default=4, ge=2, le=8)
+    max_tracks: int = Field(default=4, ge=2, le=16)
     max_chapters: int = Field(default=16, ge=2, le=32)
     listener_taste_context: str | None = Field(default=None, max_length=1000)
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
     output_language: OutputLanguage = OutputLanguage.AUTO
+    station: StationId | None = None
+    required_artists: list[str] = Field(default_factory=list, max_length=4)
+    # Seeds the variety of choices (which tracks the Curator sees first); the programme's id.
+    variety_seed: str = Field(default="", max_length=120)
+
+    # The work whose versions were asked for ("Autumn Leaves 的不同版本"), read from the request
+    # unless ``work_checked``.  Once the opening track is known the claim is confirmed or dropped
+    # (see ``_confirm_work``), so a request mistaken for one about a work cannot empty the route.
+    required_work: str | None = Field(default=None, max_length=120)
+    work_checked: bool = False
+    # The creator whose works the music must come from ("久石让为宫崎骏电影写的配乐" -> 宫崎骏): the
+    # same performer is not enough, so a track the data cannot tie to that creator's works is not
+    # taken over from FastStart (see ``_scope_confirmed``).
+    required_scope: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def _read_required_work(self) -> LiveEpisodeAssemblyRequest:
+        if not self.work_checked and self.required_work is None:
+            self.required_work = requested_work(self.topic)
+        if self.required_scope is None and self.required_work is None:
+            self.required_scope = requested_scope(self.topic)
+        return self
 
 
 class UnresolvedAssemblyProposal(BaseModel):
@@ -230,6 +307,8 @@ class _PreparedIntelligence:
     background_research_ms: int
     curator_ms: int
     resolution_ms: int
+    catalog_pool: CatalogPool | None = None
+    unfulfilled_artists: tuple[str, ...] = ()
 
 
 _ESTIMATED_TRACK_DURATION_SECONDS = 180
@@ -249,9 +328,13 @@ def _required_progressive_music_seconds(
     requested_music_seconds = int(
         request.desired_duration_seconds * (1.0 - target_narration_ratio)
     )
+    # The floor below which a route is refused stays tied to the fixed route size even when
+    # duration scaling raises the track cap: a longer request may add tracks when the catalog
+    # has them, but a catalog with fewer playable tracks must yield a shorter programme, not
+    # a failed one.
     bounded_music_target_seconds = min(
         requested_music_seconds,
-        request.max_tracks * _ESTIMATED_TRACK_DURATION_SECONDS,
+        min(request.max_tracks, _FIXED_ROUTE_LIMITS[0]) * _ESTIMATED_TRACK_DURATION_SECONDS,
     )
     return (
         bounded_music_target_seconds * _MIN_PROGRESSIVE_DURATION_COVERAGE_NUMERATOR
@@ -259,18 +342,74 @@ def _required_progressive_music_seconds(
         - 1
     ) // _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR
 
-def _required_progressive_track_count(
+def _route_underfilled(
     request: LiveEpisodeAssemblyRequest,
     narration_ratio: float,
-) -> int:
-    required_music_seconds = _required_progressive_music_seconds(
-        request,
-        narration_ratio,
-    )
-    return (
-        required_music_seconds + _ESTIMATED_TRACK_DURATION_SECONDS - 1
-    ) // _ESTIMATED_TRACK_DURATION_SECONDS
+    route: Sequence[_ResolvedChapter],
+) -> bool:
+    """True when the route's music is clearly shorter than the programme's music budget.
 
+    Uses the lengths the catalog reported (a typical song's when it did not), so a route of
+    seven-minute tracks is not asked for as many songs as one of three-minute tracks.
+    """
+
+    budget = music_budget_seconds(
+        request.desired_duration_seconds,
+        narration_ratio_for_host_mode(
+            request.presentation_intent.host_mode, full_ratio=narration_ratio
+        ),
+    )
+    return is_underfilled(
+        [item.track.duration_seconds for item in route if item.track is not None], budget
+    )
+
+
+def _fit_route_to_time_budget(
+    route: list[_ResolvedChapter],
+    *,
+    request: LiveEpisodeAssemblyRequest,
+    narration_ratio: float,
+    keep_at_least: int,
+) -> list[_ResolvedChapter]:
+    """End the route on the track whose running total lands closest to the time budget.
+
+    The opening and the locked successor are never dropped.  Everything after the chosen
+    track is speculative future that was never played, so it is simply not part of the
+    programme; the last kept chapter closes it.
+    """
+
+    budget = music_budget_seconds(
+        request.desired_duration_seconds,
+        narration_ratio_for_host_mode(
+            request.presentation_intent.host_mode, full_ratio=narration_ratio
+        ),
+    )
+    music = [(index, item.track) for index, item in enumerate(route) if item.track is not None]
+    if len(music) <= keep_at_least:
+        return route
+    last = last_track_to_keep(
+        [track.duration_seconds for _index, track in music],
+        budget,
+        keep_at_least=keep_at_least,
+    )
+    if last == len(music) - 1:
+        return route
+    kept = route[: music[last][0] + 1]
+    closing = kept[-1]
+    kept[-1] = replace(
+        closing,
+        chapter=closing.chapter.model_copy(update={"narrative_role": NarrativeRole.RESOLUTION}),
+        writer_chapter=closing.writer_chapter.model_copy(
+            update={"narrative_role": NarrativeRole.RESOLUTION}
+        ),
+    )
+    logger.info(
+        "route_fitted budget_s=%d kept_tracks=%d dropped_tracks=%d",
+        budget,
+        last + 1,
+        len(music) - last - 1,
+    )
+    return kept
 
 
 _NOVELTY_RANK = {
@@ -282,10 +421,108 @@ _NOVELTY_RANK = {
 }
 
 
+_POOL_PROPOSAL_LIMIT = 12
+
+# Fixed route size used before duration scaling (kept as the default behaviour).
+_FIXED_ROUTE_LIMITS = (5, 8)
+# Typical length of a song in the catalog and the music share of a light-hosted programme.
+_SCALED_TRACK_SECONDS = 190
+_SCALED_MUSIC_SHARE = 0.9
+_SCALED_MIN_TRACKS = 3
+_SCALED_MAX_TRACKS = 16
+_SCALED_MAX_CHAPTERS = 32
+
+
+def route_limits_for_duration(desired_seconds: int, *, scaled: bool) -> tuple[int, int]:
+    """``(max_tracks, max_chapters)`` for a programme of the requested length.
+
+    Unscaled, a fixed route of 5 tracks / 8 chapters capped every programme near 18
+    minutes whatever length the listener chose.  Scaled, the cap follows the request:
+    enough tracks to fill the music share at a typical song length, plus room for the
+    narrative-only beats, within the schema ceilings.  The actual length still depends on
+    how many playable tracks the catalog offers.
+    """
+
+    if not scaled:
+        return _FIXED_ROUTE_LIMITS
+    tracks = -(-int(desired_seconds * _SCALED_MUSIC_SHARE) // _SCALED_TRACK_SECONDS)
+    tracks = max(_SCALED_MIN_TRACKS, min(_SCALED_MAX_TRACKS, tracks))
+    chapters = min(_SCALED_MAX_CHAPTERS, tracks + max(3, tracks // 2))
+    return tracks, chapters
+
+
+def _pool_proposals(fast_plan: FastStartPlan, bundle: ResearchBundle) -> list[TrackProposal]:
+    """LLM-named tracks worth verifying: FastStart's route first, then research candidates."""
+
+    ordered: list[TrackProposal] = []
+    if fast_plan.selected_next_track is not None:
+        ordered.append(fast_plan.selected_next_track)
+    ordered.extend(fast_plan.next_candidates)
+    ordered.extend(bundle.candidates)
+    seen: set[tuple[str, str]] = set()
+    unique: list[TrackProposal] = []
+    for proposal in ordered:
+        key = _proposal_identity_key(proposal)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(proposal)
+    return unique[:_POOL_PROPOSAL_LIMIT]
+
+
+_POOL_ARTIST_LIMIT = 3
+_POOL_TOPIC_ARTIST_LIMIT = 2
+_COVERAGE_POOL_CONFIG = PoolBuildConfig(max_verifications=8, timeout_seconds=15.0)
+# Same bounds the factory gives the pool when its flag is on.
+_NAMED_ARTIST_POOL_CONFIG = PoolBuildConfig(timeout_seconds=30.0)
+
+
+def _pool_artist_queries(
+    proposals: Sequence[TrackProposal],
+    required: Sequence[str] = (),
+    topic: str = "",
+) -> list[str]:
+    """Distinct artists to search: the ones the request names, then the model's, in order.
+
+    Artists the listener named come first and are never cut: the route has to play them.
+    An artist whose own catalog is mostly unplayable (licensing) still leads to related
+    playable music through the artists the model associates with the topic; the pool caps
+    how many tracks any one artist can contribute.  Name-like phrases in the request itself
+    are searched too, so an artist the model forgot to propose can still be found.
+    """
+
+    artists: list[str] = []
+    seen: set[str] = set()
+
+    def add(name: str) -> bool:
+        key = canonical_name(name)
+        if not key or key in seen:
+            return False
+        seen.add(key)
+        artists.append(name)
+        return True
+
+    for name in required:
+        add(name)
+    proposed = 0
+    for proposal in proposals:
+        if proposed >= _POOL_ARTIST_LIMIT:
+            break
+        if add(proposal.artist):
+            proposed += 1
+    added = 0
+    for name in candidate_artist_names(topic, limit=_POOL_TOPIC_ARTIST_LIMIT + len(required)):
+        if added >= _POOL_TOPIC_ARTIST_LIMIT:
+            break
+        if add(name):
+            added += 1
+    return artists
+
+
 def _proposal_identity_key(proposal: TrackProposal) -> tuple[str, str]:
     return (
-        " ".join(proposal.artist.casefold().split()),
-        " ".join(proposal.title.casefold().split()),
+        canonical_name(proposal.artist),
+        canonical_name(proposal.title),
     )
 
 
@@ -356,7 +593,13 @@ class LiveEpisodeAssemblyService:
         materializer: NarrationMaterializer,
         ledger: UsageLedger | None = None,
         narration_ratio: float = 0.15,
+        catalog_pool_builder: CatalogPoolBuilder | None = None,
+        track_research: TrackResearchService | None = None,
+        duration_scaling: bool = False,
     ) -> None:
+        self.catalog_pool_builder = catalog_pool_builder
+        self.track_research = track_research
+        self.duration_scaling = duration_scaling
         self.fast_path = fast_path
         self.background_pipeline = background_pipeline
         self.retrieval = retrieval
@@ -381,12 +624,14 @@ class LiveEpisodeAssemblyService:
         ready successor while the fuller route is still being planned.
         """
 
+        request = _confirm_work(request, opening_track)
         intelligence_input = FastResearchInput(
             topic=request.topic,
             anchor_tracks=list(request.anchor_tracks),
             desired_duration_seconds=request.desired_duration_seconds,
             listener_taste_context=request.listener_taste_context,
             output_language=request.output_language,
+            depth=_research_depth(request),
         )
         try:
             fast_result = await self.fast_path.run(
@@ -406,7 +651,7 @@ class LiveEpisodeAssemblyService:
         async def prepare_candidate(
             proposal: TrackProposal,
         ) -> GeneratedChapter | None:
-            proposal_key = (proposal.artist.casefold(), proposal.title.casefold())
+            proposal_key = (canonical_name(proposal.artist), canonical_name(proposal.title))
             if proposal_key in seen:
                 return None
             seen.add(proposal_key)
@@ -419,6 +664,16 @@ class LiveEpisodeAssemblyService:
                 return None
             if resolved is None or _same_song_identity(resolved, opening_track):
                 return None
+            if request.required_work and not is_version_of(
+                resolved.canonical_title, request.required_work
+            ):
+                return None  # a request for versions of a work does not continue with another song
+            if request.required_scope and not _scope_confirmed(
+                resolved,
+                request.required_scope,
+                [item.claim_or_excerpt for item in fast_result.research.bundle.evidence],
+            ):
+                return None  # the same performer is not the same creator's works
 
             # FastStart owns continuity, not final host copy. Persist music
             # immediately and let the evidence-scoped Writer author the first
@@ -510,6 +765,7 @@ class LiveEpisodeAssemblyService:
         before Writer, composition, TTS, and playback-asset preparation.
         """
 
+        request = _confirm_work(request, opening_track)
         prepared = await self._prepare_intelligence(
             request,
             request_id=request_id,
@@ -534,6 +790,7 @@ class LiveEpisodeAssemblyService:
             writer=self.background_pipeline.writer,
             composer=self.composer,
             materializer=self.materializer,
+            track_research=self.track_research,
         )
 
     async def _resolve_catalog_replacement(
@@ -544,6 +801,10 @@ class LiveEpisodeAssemblyService:
         *,
         attempted: set[tuple[str, str]],
         used_tracks: list[ResolvedTrack],
+        catalog_pool: CatalogPool | None = None,
+        artist_cap: int | None = None,
+        station: StationId | None = None,
+        required_work: str | None = None,
     ) -> tuple[ResolvedTrack, TrackProposal, str] | None:
         """Recover one unresolved speculative slot without weakening identity safety."""
 
@@ -564,6 +825,8 @@ class LiveEpisodeAssemblyService:
                 _same_song_identity(candidate, used) for used in used_tracks
             ):
                 continue
+            if _blocked_by_spread(candidate, used_tracks, artist_cap, station, required_work):
+                continue
             return candidate, proposal, "researched_candidate"
 
         # Final bounded recovery: keep the Curator-selected artist but use a
@@ -576,9 +839,9 @@ class LiveEpisodeAssemblyService:
             artist_proposals.append(chapter.track)
         artist_proposals.extend(chapter.track_alternates)
         for candidate_proposal in artist_proposals:
-            normalized = " ".join(candidate_proposal.artist.casefold().split())
+            normalized = canonical_name(candidate_proposal.artist)
             if normalized and normalized not in {
-                " ".join(item.casefold().split()) for item in artists
+                canonical_name(item) for item in artists
             }:
                 artists.append(candidate_proposal.artist)
         for artist in artists[:_CATALOG_REPLACEMENT_LIMIT]:
@@ -590,18 +853,23 @@ class LiveEpisodeAssemblyService:
                 )
             except ProviderError:
                 continue
-            artist_key = " ".join(artist.casefold().split())
+            artist_key = canonical_name(artist)
             for alternative in alternatives:
                 if not alternative.playable:
                     continue
-                if " ".join(alternative.artist.casefold().split()) != artist_key:
+                if canonical_name(alternative.artist) != artist_key:
                     continue
                 candidate = ResolvedTrack(
                     track_ref=alternative.track_ref,
                     canonical_artist=alternative.artist,
                     canonical_title=alternative.title,
+                    duration_seconds=alternative.duration_seconds or None,
+                    spoken_title=chinese_title(alternative.metadata),
+                    album=catalog_album(alternative.metadata),
                 )
                 if any(_same_song_identity(candidate, used) for used in used_tracks):
+                    continue
+                if _blocked_by_spread(candidate, used_tracks, artist_cap, station, required_work):
                     continue
                 proposal = TrackProposal(
                     artist=alternative.artist,
@@ -625,6 +893,23 @@ class LiveEpisodeAssemblyService:
                     ),
                 )
                 return candidate, proposal, "same_artist_catalog"
+        # A slot whose artist is at the route limit, or has nothing left to play, is filled
+        # from the verified pool by an artist the route has not used up.
+        if artist_cap is not None and catalog_pool is not None:
+            for entry in catalog_pool.listing():
+                candidate = entry.resolved_track()
+                if any(_same_song_identity(candidate, used) for used in used_tracks):
+                    continue
+                if _blocked_by_spread(candidate, used_tracks, artist_cap, station, required_work):
+                    continue
+                proposal = TrackProposal(
+                    artist=entry.artist,
+                    title=entry.title,
+                    reasons=["Verified-playable pool track from an artist the route has not used up."],
+                    confidence=0.5,
+                    novelty_distance=chapter.novelty_distance or NoveltyDistance.CLOSE,
+                )
+                return candidate, proposal, "pool_other_artist"
         return None
 
     async def _extend_underfilled_route_with_curator(
@@ -638,6 +923,7 @@ class LiveEpisodeAssemblyService:
         resolved_chapters: list[_ResolvedChapter],
         used_tracks: list[ResolvedTrack],
         trace: GenerationTrace,
+        catalog_pool: CatalogPool | None = None,
     ) -> tuple[list[_ResolvedChapter], list[UnresolvedAssemblyProposal]]:
         """Ask Curator once for topic-driven continuation before emergency catalog fill."""
 
@@ -647,13 +933,9 @@ class LiveEpisodeAssemblyService:
             opening_track=opening_track,
             locked_successor=locked_successor,
         )
-        required_track_count = _required_progressive_track_count(
-            request,
-            self.narration_ratio,
-        )
         current_track_count = sum(item.track is not None for item in normalized)
         if (
-            current_track_count >= required_track_count
+            not _route_underfilled(request, self.narration_ratio, normalized)
             or current_track_count >= request.max_tracks
             or len(normalized) >= request.max_chapters
         ):
@@ -697,7 +979,6 @@ class LiveEpisodeAssemblyService:
         trace.mark(
             "curator_continuation_started",
             committed_track_count=len(committed),
-            required_track_count=required_track_count,
         )
         try:
             continuation = await self.background_pipeline.curator.curate(
@@ -713,6 +994,9 @@ class LiveEpisodeAssemblyService:
                 ),
                 topic=request.topic,
                 trace=trace,
+                catalog_pool=catalog_pool,
+                required_artists=request.required_artists,
+                variety_seed=request.variety_seed,
             )
         except (CuratorContractError, ProviderError) as error:
             trace.mark(
@@ -732,6 +1016,9 @@ class LiveEpisodeAssemblyService:
 
         continuation_unresolved: list[UnresolvedAssemblyProposal] = []
         added_count = 0
+        artist_cap = spread_cap(
+            required_artists=request.required_artists, station=request.station
+        )
         for continuation_chapter in additions:
             normalized_now = _normalize_progressive_route(
                 request=request,
@@ -739,10 +1026,7 @@ class LiveEpisodeAssemblyService:
                 opening_track=opening_track,
                 locked_successor=locked_successor,
             )
-            if (
-                sum(item.track is not None for item in normalized_now)
-                >= required_track_count
-            ):
+            if not _route_underfilled(request, self.narration_ratio, normalized_now):
                 break
 
             chapter = continuation_chapter.model_copy(
@@ -757,10 +1041,7 @@ class LiveEpisodeAssemblyService:
                 last_resolution_reason = "no exact playable catalog match"
                 for candidate_rank, proposal in enumerate(candidates):
                     try:
-                        candidate = await resolve_track_proposal_across_providers(
-                            self.retrieval,
-                            proposal,
-                        )
+                        candidate = await self._resolve_proposal_track(proposal, catalog_pool)
                     except ProviderError as error:
                         candidate = None
                         last_resolution_reason = (
@@ -773,6 +1054,11 @@ class LiveEpisodeAssemblyService:
                         for used in used_tracks
                     ):
                         last_resolution_reason = "duplicate episode song identity"
+                        continue
+                    if _blocked_by_spread(
+                        candidate, used_tracks, artist_cap, request.station, request.required_work
+                    ):
+                        last_resolution_reason = "artist already at the route limit"
                         continue
                     resolved = candidate
                     selected_proposal = proposal
@@ -791,6 +1077,10 @@ class LiveEpisodeAssemblyService:
                         fast_plan,
                         attempted=attempted,
                         used_tracks=used_tracks,
+                        catalog_pool=catalog_pool,
+                        artist_cap=artist_cap,
+                        station=request.station,
+                        required_work=request.required_work,
                     )
                     if replacement is not None:
                         resolved, selected_proposal, replacement_kind = replacement
@@ -858,6 +1148,7 @@ class LiveEpisodeAssemblyService:
         resolved_chapters: list[_ResolvedChapter],
         used_tracks: list[ResolvedTrack],
         trace: GenerationTrace,
+        catalog_pool: CatalogPool | None = None,
     ) -> list[_ResolvedChapter]:
         """Boundedly fill an undercovered live route from the real catalog.
 
@@ -867,11 +1158,6 @@ class LiveEpisodeAssemblyService:
         from those exact artists. Song identity and exact-artist checks remain
         unchanged.
         """
-
-        required_track_count = _required_progressive_track_count(
-            request,
-            self.narration_ratio,
-        )
 
         effective_used = list(used_tracks)
         if not any(
@@ -885,10 +1171,7 @@ class LiveEpisodeAssemblyService:
             opening_track=opening_track,
             locked_successor=locked_successor,
         )
-        if (
-            sum(item.track is not None for item in normalized_initial)
-            >= required_track_count
-        ):
+        if not _route_underfilled(request, self.narration_ratio, normalized_initial):
             return resolved_chapters
 
         artist_seeds: list[TrackProposal] = []
@@ -924,11 +1207,13 @@ class LiveEpisodeAssemblyService:
         unique_seeds: list[TrackProposal] = []
         seen_artists: set[str] = set()
         for seed in artist_seeds:
-            artist_key = " ".join(seed.artist.casefold().split())
+            artist_key = canonical_name(seed.artist)
             if not artist_key or artist_key in seen_artists:
                 continue
             seen_artists.add(artist_key)
             unique_seeds.append(seed)
+
+        artist_cap = [spread_cap(required_artists=request.required_artists, station=request.station)]
 
         def needs_more_music() -> bool:
             normalized = _normalize_progressive_route(
@@ -939,7 +1224,7 @@ class LiveEpisodeAssemblyService:
             )
             route_track_count = sum(item.track is not None for item in normalized)
             return (
-                route_track_count < required_track_count
+                _route_underfilled(request, self.narration_ratio, normalized)
                 and route_track_count < request.max_tracks
                 and len(normalized) < request.max_chapters
             )
@@ -952,7 +1237,7 @@ class LiveEpisodeAssemblyService:
             if not needs_more_music():
                 return False
 
-            artist_key = " ".join(seed.artist.casefold().split())
+            artist_key = canonical_name(seed.artist)
             try:
                 alternatives = await self.retrieval.search(
                     seed.artist,
@@ -963,7 +1248,7 @@ class LiveEpisodeAssemblyService:
                 return False
 
             for alternative in alternatives:
-                if " ".join(alternative.artist.casefold().split()) != artist_key:
+                if canonical_name(alternative.artist) != artist_key:
                     continue
 
                 proposal = TrackProposal(
@@ -989,6 +1274,9 @@ class LiveEpisodeAssemblyService:
                         track_ref=alternative.track_ref,
                         canonical_artist=alternative.artist,
                         canonical_title=alternative.title,
+                        duration_seconds=alternative.duration_seconds or None,
+                        spoken_title=chinese_title(alternative.metadata),
+                    album=catalog_album(alternative.metadata),
                     )
                 else:
                     try:
@@ -1006,42 +1294,74 @@ class LiveEpisodeAssemblyService:
                     for used in effective_used
                 ):
                     continue
-                chapter = ChapterPlan(
-                    index=len(resolved_chapters),
-                    track=proposal,
-                    narrative_role=NarrativeRole.BRIDGE,
-                    reason=(
-                        "Keep the live programme moving with a real playable "
-                        "catalog track from an editorially relevant artist."
-                    ),
-                    novelty_distance=proposal.novelty_distance,
-                    evidence_ids=list(proposal.evidence_ids),
-                    claim_support=[],
-                    narration_goal=(
-                        "Connect this catalog-backed continuation to the programme "
-                        "direction without unsupported song-specific claims."
-                    ),
-                )
-                resolved_chapters.append(
-                    _ResolvedChapter(
-                        chapter=chapter,
-                        writer_chapter=chapter,
-                        track=candidate,
-                        music_index=None,
-                    )
-                )
-                effective_used.append(candidate)
-                trace.mark(
-                    (
-                        "track_catalog_emergency_continuation_resolved"
-                        if emergency
-                        else "track_catalog_continuation_resolved"
-                    ),
-                    resolved_track_count=len(effective_used),
-                    required_track_count=required_track_count,
-                )
+                if _blocked_by_spread(
+                    candidate, effective_used, artist_cap[0], request.station, request.required_work
+                ):
+                    continue
+                append_candidate(candidate, proposal, emergency=emergency)
                 return True
             return False
+
+        def append_candidate(
+            candidate: ResolvedTrack, proposal: TrackProposal, *, emergency: bool
+        ) -> None:
+            chapter = ChapterPlan(
+                index=len(resolved_chapters),
+                track=proposal,
+                narrative_role=NarrativeRole.BRIDGE,
+                reason=(
+                    "Keep the live programme moving with a real playable "
+                    "catalog track from an editorially relevant artist."
+                ),
+                novelty_distance=proposal.novelty_distance,
+                evidence_ids=list(proposal.evidence_ids),
+                claim_support=[],
+                narration_goal=(
+                    "Connect this catalog-backed continuation to the programme "
+                    "direction without unsupported song-specific claims."
+                ),
+            )
+            resolved_chapters.append(
+                _ResolvedChapter(
+                    chapter=chapter,
+                    writer_chapter=chapter,
+                    track=candidate,
+                    music_index=None,
+                )
+            )
+            effective_used.append(candidate)
+            trace.mark(
+                (
+                    "track_catalog_emergency_continuation_resolved"
+                    if emergency
+                    else "track_catalog_continuation_resolved"
+                ),
+                resolved_track_count=len(effective_used),
+            )
+
+        # Pass 0: songs the pool already verified, by artists the route has not used up.
+        if artist_cap[0] is not None and catalog_pool is not None:
+            for entry in catalog_pool.listing():
+                if not needs_more_music():
+                    break
+                candidate = entry.resolved_track()
+                if any(_same_song_identity(candidate, used) for used in effective_used):
+                    continue
+                if _blocked_by_spread(
+                    candidate, effective_used, artist_cap[0], request.station, request.required_work
+                ):
+                    continue
+                append_candidate(
+                    candidate,
+                    TrackProposal(
+                        artist=entry.artist,
+                        title=entry.title,
+                        reasons=["Verified-playable pool track from an artist the route has not used up."],
+                        confidence=0.5,
+                        novelty_distance=NoveltyDistance.CLOSE,
+                    ),
+                    emergency=False,
+                )
 
         # Pass 1: preserve route diversity by taking at most one continuation
         # from each Curator/confirmed artist.
@@ -1049,6 +1369,12 @@ class LiveEpisodeAssemblyService:
             if not needs_more_music():
                 break
             await append_one_from_artist(seed, emergency=False)
+
+        # Nothing else is left to offer: a longer programme beats an artist limit.
+        if artist_cap[0] is not None and needs_more_music():
+            trace.mark("artist_route_limit_relaxed")
+            logger.info("route_spread_relaxed")
+            artist_cap[0] = None
 
         # Pass 2: continuity is the hard requirement. Round-robin through the
         # same exact artists and take additional distinct songs until the
@@ -1082,6 +1408,7 @@ class LiveEpisodeAssemblyService:
             desired_duration_seconds=request.desired_duration_seconds,
             listener_taste_context=request.listener_taste_context,
             output_language=request.output_language,
+            depth=_research_depth(request),
         )
 
         if locked_successor is not None:
@@ -1121,6 +1448,17 @@ class LiveEpisodeAssemblyService:
         background_research_ms = _elapsed_ms(background_started)
         trace.mark("background_research_ready", elapsed_ms=background_research_ms)
 
+        catalog_pool = await self._build_catalog_pool(
+            request,
+            fast_plan=fast_result.plan,
+            bundle=bundle,
+            reserved_tracks=(
+                (*reserved_tracks, locked_successor)
+                if locked_successor is not None
+                else reserved_tracks
+            ),
+            trace=trace,
+        )
         curator_started = perf_counter()
         trace.mark("curator_started")
         try:
@@ -1138,6 +1476,9 @@ class LiveEpisodeAssemblyService:
                 output_language=resolve_output_language(request.output_language, request.topic),
                 topic=request.topic,
                 trace=trace,
+                catalog_pool=catalog_pool,
+                required_artists=request.required_artists,
+                variety_seed=request.variety_seed,
             )
         except CuratorContractError as error:
             raise EpisodeAssemblyError(
@@ -1171,6 +1512,16 @@ class LiveEpisodeAssemblyService:
             skeleton.chapters, request.max_tracks, request.max_chapters
         )
         chapters = _normalize_chapters(chapters)
+        if request.required_artists:
+            chapters = await self._cover_required_artists(
+                request,
+                chapters,
+                bundle=bundle,
+                catalog_pool=catalog_pool,
+                reserved_tracks=reserved_tracks,
+                locked_successor=locked_successor,
+                trace=trace,
+            )
         skeleton = skeleton.model_copy(update={"chapters": chapters})
         trace.mark("program_skeleton_ready", chapter_count=len(chapters))
 
@@ -1178,6 +1529,26 @@ class LiveEpisodeAssemblyService:
         resolved_chapters: list[_ResolvedChapter] = []
         unresolved: list[UnresolvedAssemblyProposal] = []
         used_tracks = list(reserved_tracks)
+        artist_cap = spread_cap(
+            required_artists=request.required_artists, station=request.station
+        )
+
+        def spread_planned_used() -> list[ResolvedTrack]:
+            # The locked second track is fixed before this loop and always plays, so it counts
+            # toward every artist's limit from the start, even while its own slot is resolved.
+            if locked_successor is None or any(
+                _same_resolved_track(locked_successor, used) for used in used_tracks
+            ):
+                return used_tracks
+            return [*used_tracks, locked_successor]
+
+        def spread_blocked(candidate: ResolvedTrack) -> bool:
+            if locked_successor is not None and _same_resolved_track(candidate, locked_successor):
+                return False
+            return _blocked_by_spread(
+                candidate, spread_planned_used(), artist_cap, request.station, request.required_work
+            )
+
         for chapter in chapters:
             resolved: ResolvedTrack | None = None
             selected_proposal: TrackProposal | None = None
@@ -1188,9 +1559,7 @@ class LiveEpisodeAssemblyService:
                 last_resolution_reason = "no exact playable catalog match"
                 for candidate_rank, proposal in enumerate(candidates):
                     try:
-                        candidate = await resolve_track_proposal_across_providers(
-                            self.retrieval, proposal
-                        )
+                        candidate = await self._resolve_proposal_track(proposal, catalog_pool)
                     except ProviderError as error:
                         candidate = None
                         last_resolution_reason = (
@@ -1205,6 +1574,14 @@ class LiveEpisodeAssemblyService:
                         last_resolution_reason = "duplicate episode song identity"
                         trace.mark(
                             "duplicate_resolved_track_skipped",
+                            chapter_index=chapter.index,
+                            candidate_rank=candidate_rank + 1,
+                        )
+                        continue
+                    if spread_blocked(candidate):
+                        last_resolution_reason = "artist already at the route limit"
+                        trace.mark(
+                            "artist_route_limit_skipped",
                             chapter_index=chapter.index,
                             candidate_rank=candidate_rank + 1,
                         )
@@ -1226,7 +1603,11 @@ class LiveEpisodeAssemblyService:
                         bundle,
                         fast_result.plan,
                         attempted=attempted,
-                        used_tracks=used_tracks,
+                        used_tracks=spread_planned_used(),
+                        catalog_pool=catalog_pool,
+                        artist_cap=artist_cap,
+                        station=request.station,
+                        required_work=request.required_work,
                     )
                     if replacement is not None:
                         resolved, selected_proposal, replacement_kind = replacement
@@ -1251,24 +1632,7 @@ class LiveEpisodeAssemblyService:
                         )
             route_chapter = chapter
             if replacement_kind is not None and selected_proposal is not None:
-                route_chapter = chapter.model_copy(
-                    update={
-                        "track": selected_proposal,
-                        "track_alternates": [],
-                        "connection_from_previous_track": None,
-                        "reason": (
-                            "Use a catalog-resolved replacement while preserving "
-                            "this chapter's editorial role."
-                        ),
-                        "novelty_distance": selected_proposal.novelty_distance,
-                        "evidence_ids": list(selected_proposal.evidence_ids),
-                        "claim_support": [],
-                        "narration_goal": (
-                            "Connect this playable replacement to the programme "
-                            "direction without unsupported song-specific claims."
-                        ),
-                    }
-                )
+                route_chapter = track_true_chapter(chapter, selected_proposal)
             resolved_chapters.append(
                 _ResolvedChapter(
                     chapter=route_chapter,
@@ -1296,6 +1660,7 @@ class LiveEpisodeAssemblyService:
                     resolved_chapters=resolved_chapters,
                     used_tracks=used_tracks,
                     trace=trace,
+                    catalog_pool=catalog_pool,
                 )
             )
             curator_ms += _elapsed_ms(continuation_started)
@@ -1308,8 +1673,31 @@ class LiveEpisodeAssemblyService:
                 resolved_chapters=resolved_chapters,
                 used_tracks=used_tracks,
                 trace=trace,
+                catalog_pool=catalog_pool,
             )
         resolved_chapters = _reindex_resolved_chapters(resolved_chapters)
+        resolved_chapters = _reconcile_route_text(
+            resolved_chapters,
+            known_artists=known_artist_names(
+                [
+                    *(
+                        proposal
+                        for chapter in chapters
+                        for proposal in (chapter.track, *chapter.track_alternates)
+                        if proposal is not None
+                    ),
+                    *_pool_proposals(fast_result.plan, bundle),
+                ],
+                request.required_artists,
+                request.topic,
+            ),
+            earlier_tracks=(
+                (*reserved_tracks, locked_successor)
+                if locked_successor is not None
+                else reserved_tracks
+            ),
+            trace=trace,
+        )
         resolution_ms = _elapsed_ms(resolution_started)
         trace.mark(
             "tracks_resolved",
@@ -1329,6 +1717,15 @@ class LiveEpisodeAssemblyService:
                 diagnostics={"narration_failure_boundary": "slot_derivation"},
             ) from error
 
+        route_tracks = [
+            *reserved_tracks,
+            *([locked_successor] if locked_successor is not None else []),
+            *(item.track for item in resolved_chapters if item.track is not None),
+        ]
+        unmet = unfulfilled_artists(request.required_artists, route_tracks)
+        if unmet:
+            trace.mark("required_artists_unfulfilled", count=len(unmet))
+
         return _PreparedIntelligence(
             fast_result=fast_result,
             bundle=bundle,
@@ -1340,7 +1737,222 @@ class LiveEpisodeAssemblyService:
             background_research_ms=background_research_ms,
             curator_ms=curator_ms,
             resolution_ms=resolution_ms,
+            catalog_pool=catalog_pool,
+            unfulfilled_artists=tuple(unmet),
         )
+
+    async def _cover_required_artists(
+        self,
+        request: LiveEpisodeAssemblyRequest,
+        chapters: list[ChapterPlan],
+        *,
+        bundle: ResearchBundle,
+        catalog_pool: CatalogPool | None,
+        reserved_tracks: Sequence[ResolvedTrack],
+        locked_successor: ResolvedTrack | None,
+        trace: GenerationTrace,
+    ) -> list[ChapterPlan]:
+        """Put every artist the request names into the plan, from verified-playable tracks.
+
+        The Curator is told to cover them, but it plans from a candidate list and memory and
+        can leave one out.  A missing artist is searched in the catalog (the pool already did
+        when enabled) and given the chapter of an artist the request did not name.
+        """
+
+        credited = [
+            *(track.canonical_artist for track in reserved_tracks),
+            *([locked_successor.canonical_artist] if locked_successor is not None else []),
+            *(chapter.track.artist for chapter in chapters if chapter.track is not None),
+        ]
+        absent = [
+            name
+            for name in request.required_artists
+            if not covered_artists([name], credited)
+        ]
+        if not absent:
+            return chapters
+        pool = catalog_pool
+        if pool is None:
+            pool = await self._build_coverage_pool(absent, reserved_tracks, trace)
+        # Without a reserved opening, the first chapter is the track the listener starts with.
+        protected = set() if reserved_tracks else {0}
+        if locked_successor is not None:
+            protected.update(
+                index
+                for index, chapter in enumerate(chapters)
+                if chapter.track is not None
+                and canonical_name(chapter.track.title)
+                == canonical_name(locked_successor.canonical_title)
+            )
+        patched, missing = ensure_required_coverage(
+            chapters,
+            pool,
+            request.required_artists,
+            bundle.evidence,
+            reserved=(
+                (*reserved_tracks, locked_successor)
+                if locked_successor is not None
+                else reserved_tracks
+            ),
+            protected_indices=sorted(protected),
+        )
+        trace.mark(
+            "required_artists_checked",
+            required_count=len(request.required_artists),
+            absent_count=len(absent),
+            patched_count=len(absent) - len(missing),
+        )
+        logger.info(
+            "required_artists_checked required=%d absent=%d patched=%d unpatched=%d",
+            len(request.required_artists),
+            len(absent),
+            len(absent) - len(missing),
+            len(missing),
+        )
+        return patched
+
+    async def _build_coverage_pool(
+        self,
+        artists: Sequence[str],
+        reserved_tracks: Sequence[ResolvedTrack],
+        trace: GenerationTrace,
+    ) -> CatalogPool | None:
+        """A small pool of the named artists' playable tracks, when the full pool is off."""
+
+        try:
+            pool = await CatalogPoolBuilder(self.retrieval, _COVERAGE_POOL_CONFIG).build(
+                artist_queries=list(artists)
+            )
+        except Exception as error:  # noqa: BLE001 - optional optimisation, degrade quietly
+            logger.warning("coverage_pool_failed error_type=%s", type(error).__name__)
+            trace.mark("coverage_pool_failed", error_type=type(error).__name__)
+            return None
+        return pool.model_copy(
+            update={
+                "entries": [
+                    entry
+                    for entry in pool.entries
+                    if not any(
+                        _same_song_identity(reserved, entry.resolved_track())
+                        for reserved in reserved_tracks
+                    )
+                ]
+            }
+        )
+
+    async def _build_catalog_pool(
+        self,
+        request: LiveEpisodeAssemblyRequest,
+        *,
+        fast_plan: FastStartPlan,
+        bundle: ResearchBundle,
+        reserved_tracks: Sequence[ResolvedTrack],
+        trace: GenerationTrace,
+    ) -> CatalogPool | None:
+        """Build the verified-playable pool, or None when disabled or unavailable.
+
+        The pool only improves selection; any failure here must never stop generation.
+        """
+
+        builder = self.catalog_pool_builder
+        if builder is None and request.required_artists:
+            # A request that names artists is where an exact-title miss costs most: the
+            # Curator names a plausible album as a song, the catalog has no such track, and
+            # the route comes up short.  Live, 2 of 9 such programmes failed without the pool
+            # and 4 of 4 succeeded with it, so these requests use it even when the flag is off.
+            builder = CatalogPoolBuilder(self.retrieval, _NAMED_ARTIST_POOL_CONFIG)
+        if builder is None:
+            return None
+        try:
+            proposals = _pool_proposals(fast_plan, bundle)
+            work = request.required_work
+            if work:
+                proposals = [item for item in proposals if is_version_of(item.title, work)]
+            pool = await builder.build(
+                proposals=proposals,
+                artist_queries=(
+                    []
+                    if work
+                    else _pool_artist_queries(proposals, request.required_artists, request.topic)
+                ),
+                # Versions of a work are found by its title; the artists who recorded it are
+                # whoever the catalog returns.
+                keyword_queries=[work, f"{work} jazz", f"{work} cover"] if work else catalog_queries(request.topic),
+                hint_tags=community_tags(request.topic),
+                seed=request.variety_seed,
+                named_artists=request.required_artists,
+                evidence_texts=[
+                    f"{item.source_title} {item.claim_or_excerpt}" for item in bundle.evidence
+                ],
+            )
+            pool.named_artists = list(request.required_artists)
+            pool.spread_artists = (
+                spread_cap(required_artists=request.required_artists, station=request.station)
+                is not None
+            )
+        except Exception as error:  # noqa: BLE001 - optional optimisation, degrade quietly
+            logger.warning("catalog_pool_failed error_type=%s", type(error).__name__)
+            trace.mark("catalog_pool_failed", error_type=type(error).__name__)
+            return None
+        # Never offer a song the programme has already reserved (e.g. the opening track).
+        pool = pool.model_copy(
+            update={
+                "entries": [
+                    entry
+                    for entry in pool.entries
+                    if (not request.required_work or is_version_of(entry.title, request.required_work))
+                    and not any(
+                        _same_song_identity(reserved, entry.resolved_track())
+                        for reserved in reserved_tracks
+                    )
+                ],
+                "reserved_song_keys": [
+                    base_title_key(reserved.canonical_title) for reserved in reserved_tracks
+                ],
+            }
+        )
+        logger.info(
+            "catalog_pool_ready entries=%d playable=%d unplayable=%d not_found=%d "
+            "provider_error=%d verifications=%d search_failures=%d failure_kinds=%s elapsed_ms=%d "
+            "truncated=%s",
+            len(pool.entries),
+            pool.count(AvailabilityStatus.PLAYABLE),
+            pool.count(AvailabilityStatus.UNPLAYABLE),
+            pool.count(AvailabilityStatus.NOT_FOUND),
+            pool.count(AvailabilityStatus.PROVIDER_ERROR),
+            pool.verification_count,
+            pool.search_failure_count,
+            dict(sorted(pool.failure_kinds.items())),
+            pool.elapsed_ms,
+            pool.truncated,
+        )
+        # Who the Curator can choose from (artist names are catalogue metadata, not user data).
+        logger.info(
+            "catalog_pool_artists %s",
+            dict(Counter(entry.primary_artist for entry in pool.entries).most_common(8)),
+        )
+        trace.mark(
+            "catalog_pool_ready",
+            entry_count=len(pool.entries),
+            playable_count=pool.count(AvailabilityStatus.PLAYABLE),
+            unplayable_count=pool.count(AvailabilityStatus.UNPLAYABLE),
+            not_found_count=pool.count(AvailabilityStatus.NOT_FOUND),
+            verification_count=pool.verification_count,
+            elapsed_ms=pool.elapsed_ms,
+            truncated=pool.truncated,
+        )
+        return pool
+
+    async def _resolve_proposal_track(
+        self, proposal: TrackProposal, catalog_pool: CatalogPool | None
+    ) -> ResolvedTrack | None:
+        """Resolve a Curator proposal, trusting only entries already verified playable."""
+
+        if catalog_pool is not None:
+            entry = catalog_pool.find(proposal.artist, proposal.title)
+            if entry is not None:
+                return entry.resolved_track()
+        return await resolve_track_proposal_across_providers(self.retrieval, proposal)
 
     async def assemble(
         self,
@@ -1801,7 +2413,9 @@ _GENERIC_ARTIST_WORDS = {
 
 
 def _identity_words(value: str) -> tuple[str, ...]:
-    return tuple(re.findall(r"[\w]+", value.casefold(), flags=re.UNICODE))
+    return tuple(
+        re.findall(r"[\w]+", strip_latin_accents(canonical_name(value)), flags=re.UNICODE)
+    )
 
 
 def _artist_identity_words(value: str) -> frozenset[str]:
@@ -1809,6 +2423,95 @@ def _artist_identity_words(value: str) -> frozenset[str]:
         word
         for word in _identity_words(value)
         if word not in _GENERIC_ARTIST_WORDS
+    )
+
+
+def _route_summary(
+    session: ProgressiveAssemblySession, episode: LiveEpisode
+) -> tuple[list[str], list[str]]:
+    """The tracks this programme really plays, and artists the plan named but will not play.
+
+    Narration is written from the plan's evidence; when a planned track could not be played the
+    Writer must not talk about it as if the listener heard it.
+    """
+
+    played: list[str] = []
+    played_artists: set[str] = set()
+
+    def add(artist: str, title: str) -> None:
+        label = f"{artist} - {title}"
+        if label not in played:
+            played.append(label)
+        played_artists.add(canonical_name(artist))
+
+    for segment in episode.ordered_segments:
+        if isinstance(segment, MusicSegment) and segment.artist and segment.title:
+            add(segment.artist, segment.title)
+    for item in session.chapters:
+        if item.resolved_track is not None:
+            add(item.resolved_track.canonical_artist, item.resolved_track.canonical_title)
+
+    # An artist the listener asked for but the route could not play is never to be talked
+    # about as if it were part of the programme.
+    unplayed: list[str] = [
+        name for name in session.unfulfilled_artists if canonical_name(name) not in played_artists
+    ]
+    for chapter in session.skeleton.chapters:
+        for proposal in (chapter.track, *chapter.track_alternates):
+            if proposal is None:
+                continue
+            folded = canonical_name(proposal.artist)
+            if any(folded in artist or artist in folded for artist in played_artists):
+                continue
+            if proposal.artist not in unplayed:
+                unplayed.append(proposal.artist)
+    return played, unplayed
+
+
+def _used_openers(episode: LiveEpisode) -> list[str]:
+    """How the narration already authored for this programme begins, in order."""
+
+    openers: list[str] = []
+    for segment in episode.ordered_segments:
+        if (
+            isinstance(segment, NarrationSegment)
+            and segment.narration_text
+            and segment.state is not SegmentState.SKIPPED
+        ):
+            opener = opener_of(segment.narration_text)
+            if opener and opener not in openers:
+                openers.append(opener)
+    return openers
+
+
+_TRANSLATED_TITLE_SECONDS = 3
+
+
+def _is_cjk_only(title: str) -> bool:
+    letters = [char for char in title if char.isalpha()]
+    return bool(letters) and all("\u3040" <= char <= "\u9fff" for char in letters)
+
+
+def _is_latin_only(title: str) -> bool:
+    letters = [char for char in title if char.isalpha()]
+    return bool(letters) and all(char.isascii() for char in letters)
+
+
+def _translated_title_of_same_length(left: ResolvedTrack, right: ResolvedTrack) -> bool:
+    """One recording listed under its original title and a Chinese rendering of it.
+
+    The catalog lists "What A Wonderful World" and "多美妙的世界" as separate tracks of the
+    same artist.  Without a shared word the titles cannot be compared, so this accepts the
+    pair only when one title is entirely Chinese/Japanese, the other entirely Latin, and the
+    recordings' lengths agree to within a few seconds (both lengths must be known).
+    """
+
+    if left.duration_seconds is None or right.duration_seconds is None:
+        return False
+    if abs(left.duration_seconds - right.duration_seconds) > _TRANSLATED_TITLE_SECONDS:
+        return False
+    return (_is_cjk_only(left.canonical_title) and _is_latin_only(right.canonical_title)) or (
+        _is_latin_only(left.canonical_title) and _is_cjk_only(right.canonical_title)
     )
 
 
@@ -1825,18 +2528,78 @@ def _same_song_identity(left: ResolvedTrack | None, right: ResolvedTrack) -> boo
         return False
     if left.track_ref == right.track_ref:
         return True
-    if _identity_words(left.canonical_title) != _identity_words(
-        right.canonical_title
+    if song_title_key(left.canonical_title) != song_title_key(right.canonical_title) and not (
+        _translated_title_of_same_length(left, right)
     ):
         return False
     left_artist = _artist_identity_words(left.canonical_artist)
     right_artist = _artist_identity_words(right.canonical_artist)
     if not left_artist or not right_artist:
         return (
-            left.canonical_artist.casefold().strip()
-            == right.canonical_artist.casefold().strip()
+            canonical_name(left.canonical_artist)
+            == canonical_name(right.canonical_artist)
         )
     return left_artist <= right_artist or right_artist <= left_artist
+
+
+def _research_depth(request: LiveEpisodeAssemblyRequest) -> ResearchDepth:
+    """Stations whose host talks a lot are written from evidence, so they research more."""
+
+    deep = request.station in (StationId.PORTRAIT, StationId.LINEAGE)
+    return ResearchDepth.DEEP if deep else ResearchDepth.STANDARD
+
+
+def _scope_confirmed(track: ResolvedTrack, owner: str, texts: Sequence[str]) -> bool:
+    """The track's own catalog album or title names a work the research puts next to ``owner``."""
+
+    works = scope_works(owner, texts)
+    labels = [track.album or "", track.canonical_title, track.spoken_title or ""]
+    confirmed = bool(works) and any(names_work(label, works) for label in labels if label)
+    if not confirmed:
+        logger.info("route_scope_unconfirmed works=%d has_album=%s", len(works), bool(track.album))
+    return confirmed
+
+
+def _confirm_work(
+    request: LiveEpisodeAssemblyRequest, opening_track: ResolvedTrack
+) -> LiveEpisodeAssemblyRequest:
+    """Keep a "versions of a work" request only if the opening track really is that work."""
+
+    if request.work_checked:
+        return request
+    work = request.required_work
+    if work and not is_version_of(opening_track.canonical_title, work):
+        logger.info("route_work_unconfirmed")
+        return request.model_copy(update={"required_work": None, "work_checked": True})
+    return request.model_copy(update={"work_checked": True})
+
+
+def _blocked_by_spread(
+    candidate: ResolvedTrack,
+    used_tracks: Sequence[ResolvedTrack],
+    artist_cap: int | None,
+    station: StationId | None,
+    required_work: str | None = None,
+) -> bool:
+    """A programme not about particular artists plays none of them more than the limit, and
+    does not play one song twice under two artists (a cover) unless the station is about that.
+
+    A request for the versions of one work plays only recordings of that work."""
+
+    if required_work and not is_version_of(candidate.canonical_title, required_work):
+        logger.info("route_work_blocked reason=not_a_version")
+        return True
+    if artist_cap is None:
+        return False
+    if at_artist_cap(candidate.canonical_artist, used_tracks, artist_cap):
+        logger.info("route_spread_blocked reason=artist_limit artist=%s", candidate.canonical_artist)
+        return True
+    if station is not StationId.LINEAGE and any(
+        same_song_other_artist(candidate, used) for used in used_tracks
+    ):
+        logger.info("route_spread_blocked reason=same_song artist=%s", candidate.canonical_artist)
+        return True
+    return False
 
 
 def _same_resolved_track(left: ResolvedTrack | None, right: ResolvedTrack) -> bool:
@@ -2017,6 +2780,61 @@ def _bound_progressive_resolved_route(
     return bounded
 
 
+def _reconcile_route_text(
+    items: list[_ResolvedChapter],
+    *,
+    known_artists: Sequence[str],
+    earlier_tracks: Sequence[ResolvedTrack],
+    trace: GenerationTrace,
+) -> list[_ResolvedChapter]:
+    """Make every chapter's text describe the track that actually plays.
+
+    The Writer trusts a chapter's reason, goal, claims and evidence.  When resolution played
+    an alternate instead of the planned track, or the text is about an artist the listener is
+    not hearing, the chapter falls back to generic text for the played track.
+    """
+
+    heard = [track.canonical_artist for track in earlier_tracks]
+    result: list[_ResolvedChapter] = []
+    for item in items:
+        track = item.track
+        if track is None:
+            result.append(item)
+            continue
+        selected = item.writer_chapter.track
+        cause: str | None = None
+        foreign: list[str] = []
+        if used_an_alternate(item.chapter, selected):
+            cause = "alternate_track"
+        else:
+            foreign = foreign_artists(
+                item.writer_chapter, track.canonical_artist, known_artists, heard
+            )
+            if foreign:
+                cause = "text_names_other_artist"
+        if cause is not None:
+            trace.mark(
+                "chapter_text_neutralised",
+                chapter_index=item.writer_chapter.index,
+                cause=cause,
+                foreign_artist_count=len(foreign),
+            )
+            logger.info(
+                "chapter_text_neutralised chapter=%d cause=%s foreign_artists=%d",
+                item.writer_chapter.index,
+                cause,
+                len(foreign),
+            )
+            item = replace(
+                item,
+                chapter=track_true_chapter(item.chapter, selected),
+                writer_chapter=track_true_chapter(item.writer_chapter, selected),
+            )
+        heard.append(track.canonical_artist)
+        result.append(item)
+    return result
+
+
 def _reindex_resolved_chapters(
     chapters: list[_ResolvedChapter],
 ) -> list[_ResolvedChapter]:
@@ -2090,11 +2908,17 @@ def _build_progressive_session(
 ) -> ProgressiveAssemblySession:
     """Build the pre-Writer session from route identities and slot contexts."""
 
-    normalized = _normalize_progressive_route(
+    normalized = _fit_route_to_time_budget(
+        _normalize_progressive_route(
+            request=request,
+            resolved_chapters=prepared.resolved_chapters,
+            opening_track=opening_track,
+            locked_successor=locked_successor,
+        ),
         request=request,
-        resolved_chapters=prepared.resolved_chapters,
-        opening_track=opening_track,
-        locked_successor=locked_successor,
+        narration_ratio=narration_ratio,
+        # The opening and at least one more track: a programme is never cut to its opening.
+        keep_at_least=2,
     )
     try:
         all_slot_contexts = _apply_host_mode_to_slot_contexts(
@@ -2151,10 +2975,19 @@ def _build_progressive_session(
         request,
         narration_ratio,
     )
-    estimated_resolved_music_seconds = (
-        1 + future_music_count
-    ) * _ESTIMATED_TRACK_DURATION_SECONDS
-    if estimated_resolved_music_seconds < required_resolved_music_seconds:
+    # Real lengths where the catalog reported them: a route of a few long songs is as full as
+    # one of many short ones (the route was fitted to its time budget above).  A catalog of
+    # very short clips (previews, the mock provider) is still judged by track count, as it was
+    # before lengths were known, so the real-length view can only accept more routes.
+    resolved_lengths = [opening_track.duration_seconds] + [
+        item.track.duration_seconds for item in future if item.track is not None
+    ]
+    estimated_resolved_music_seconds = max(
+        sum(track_seconds(length) for length in resolved_lengths),
+        len(resolved_lengths) * _ESTIMATED_TRACK_DURATION_SECONDS,
+    )
+    if estimated_resolved_music_seconds < required_resolved_music_seconds and not request.required_work:
+        # (A request for the versions of one work ends where the confirmed versions end.)
         raise EpisodeAssemblyError(
             "progressive route duration coverage is too short to be finalized",
             stage="resolution",
@@ -2167,10 +3000,21 @@ def _build_progressive_session(
             },
         )
 
+    logger.info(
+        "route_artists %s",
+        dict(
+            Counter(
+                [opening_track.canonical_artist]
+                + [item.track.canonical_artist for item in future if item.track is not None]
+            )
+        ),
+    )
     timing_plan = build_program_timing_plan(
         desired_total_seconds=request.desired_duration_seconds,
         target_narration_ratio=target_narration_ratio,
-        resolved_music_seconds=future_music_count * _ESTIMATED_TRACK_DURATION_SECONDS,
+        resolved_music_seconds=sum(
+            track_seconds(item.track.duration_seconds) for item in future if item.track is not None
+        ),
         chapter_slot_counts=[len(contexts) for contexts in future_slots],
     )
     session_chapters = [
@@ -2190,6 +3034,9 @@ def _build_progressive_session(
         max_tracks=request.max_tracks,
         max_chapters=request.max_chapters,
         output_language=resolve_output_language(request.output_language, request.topic),
+        station=request.station,
+        required_artists=list(request.required_artists),
+        unfulfilled_artists=list(prepared.unfulfilled_artists),
         presentation_intent=request.presentation_intent,
         opening_track_ref=opening_track.track_ref,
         fast_plan=prepared.fast_result.plan,
@@ -2822,12 +3669,15 @@ class StagedProgressiveChapterGenerator:
         writer: WriterService,
         composer: EpisodeComposer,
         materializer: NarrationMaterializer,
+        track_research: TrackResearchService | None = None,
     ) -> None:
         self.session = session
         self.writer = writer
         self.composer = composer
         self.materializer = materializer
+        self.track_research = track_research
 
+    @scoped_to_episode
     async def generate_next(self, episode: LiveEpisode) -> GeneratedChapter | None:
         """Prepare the next route step without waiting for Writer or TTS."""
         chapter = self.session.next_chapter(episode)
@@ -2963,12 +3813,14 @@ class StagedProgressiveChapterGenerator:
                 reason_code="narration_trackless_music_mismatch",
             )
 
+        # Everything already authored for this programme, not only what has been played:
+        # narration is written ahead of playback, so "committed" would let facts repeat.
         previous_context = " ".join(
             segment.narration_text
             for segment in episode.ordered_segments
             if (
                 isinstance(segment, NarrationSegment)
-                and segment.is_committed
+                and segment.state is not SegmentState.SKIPPED
                 and segment.narration_text
             )
         )[-1000:]
@@ -2985,23 +3837,59 @@ class StagedProgressiveChapterGenerator:
             if upcoming is not None
             else ""
         )
+        route_tracks, unplayed_artists = _route_summary(self.session, episode)
         has_previous_music = any(
             isinstance(segment, MusicSegment) and segment.order < chapter_start_order
             for segment in episode.ordered_segments
         )
 
-        try:
-            script = await self.writer.write(
-                chapter.chapter,
-                self.session.research.evidence,
-                previous_committed_context=previous_context,
-                next_track_metadata=next_track_metadata,
-                host_mode=self.session.presentation_intent.host_mode,
-                target_duration_seconds=chapter.target_narration_seconds,
-                output_language=self.session.output_language,
-                topic=self.session.topic,
-                slot_contexts=chapter.slot_contexts,
+        # What can be said about this chapter's track: found (and checked) now, in the background,
+        # because the route is known only after the programme-level research is done.
+        writer_chapter = chapter.chapter
+        writer_evidence = self.session.research.evidence
+        track_points = None
+        track_evidence: list[Evidence] = []
+        track_evidence_ids: list[str] = []
+        research_track = _research_focus(chapter)
+        if self.track_research is not None and research_track is not None:
+            researched = await self.track_research.prepare(
+                episode_id=episode.id,
+                track=research_track,
+                evidence=self.session.research.evidence,
+                station=self.session.station,
+                subject=self.session.topic,
+                subject_names=self.session.required_artists,
             )
+            if researched is not None:
+                track_points = researched.points
+                track_evidence = researched.evidence
+                track_evidence_ids = researched.evidence_ids
+                writer_evidence = [*self.session.research.evidence, *researched.evidence]
+                if chapter.resolved_track is not None:
+                    scoped_ids = list(chapter.chapter.evidence_ids)
+                    scoped_ids.extend(i for i in researched.evidence_ids if i not in scoped_ids)
+                    writer_chapter = chapter.chapter.model_copy(update={"evidence_ids": scoped_ids})
+                else:
+                    # A narrative beat with no song of its own sits between two songs.  What the
+                    # plan once said about it (a song that did not make the route, its evidence)
+                    # must not compete with the song that actually follows.
+                    writer_chapter = chapter.chapter.model_copy(
+                        update={
+                            "track": None,
+                            "track_alternates": [],
+                            "connection_from_previous_track": None,
+                            "reason": "A bridge between the songs on either side of this slot.",
+                            "narration_goal": "Say one checked thing about the song that follows, or nothing.",
+                            "evidence_ids": list(researched.evidence_ids),
+                            "claim_support": [],
+                        }
+                    )
+
+        is_final_chapter = bool(self.session.chapters) and (
+            chapter.chapter_id == self.session.chapters[-1].chapter_id
+        )
+
+        def assemble(script: RadioScript | NarrationScript) -> PlayableEpisode:
             radio_script, _ = _assemble_writer_scripts(
                 [script],
                 len(prepared_tracks),
@@ -3009,34 +3897,124 @@ class StagedProgressiveChapterGenerator:
                 slot_contexts=[chapter.slot_contexts],
                 chapter_connections=[chapter.chapter.connection_from_previous_track],
                 previous_music_indices=[0 if has_previous_music else None],
-                require_final_slot=(
-                    bool(self.session.chapters)
-                    and chapter.chapter_id == self.session.chapters[-1].chapter_id
-                ),
+                require_final_slot=is_final_chapter,
             )
-            playable = self.composer.compose_prepared(prepared_tracks, radio_script)
-            _assert_narration_blocks_materialized(radio_script, playable)
-        except (
-            ProviderError,
-            NarrationPlacementError,
-            EpisodeAssemblyError,
-            ValueError,
-        ) as error:
+            composed = self.composer.compose_prepared(prepared_tracks, radio_script)
+            _assert_narration_blocks_materialized(radio_script, composed)
+            return composed
+
+        playable: PlayableEpisode | None = None
+        authoring_errors = (ProviderError, NarrationPlacementError, EpisodeAssemblyError, ValueError)
+        try:
+            script = await self.writer.write(
+                writer_chapter,
+                writer_evidence,
+                previous_committed_context=previous_context,
+                next_track_metadata=next_track_metadata,
+                host_mode=self.session.presentation_intent.host_mode,
+                target_duration_seconds=chapter.target_narration_seconds,
+                output_language=self.session.output_language,
+                station=self.session.station,
+                voice_seed=episode.seed_id,
+                used_openers=_used_openers(episode),
+                route_tracks=route_tracks,
+                unplayed_artists=unplayed_artists,
+                unfulfilled_artists=self.session.unfulfilled_artists,
+                topic=self.session.topic,
+                slot_contexts=chapter.slot_contexts,
+                track_points=track_points,
+            )
+            if (
+                isinstance(script, RadioScript)
+                and not script.blocks
+                and not is_final_chapter
+                and self.track_research is not None
+                and (story := await self.track_research.background_story(
+                    episode_id=episode.id,
+                    station=self.session.station,
+                    subject=self.session.topic,
+                    subject_names=self.session.required_artists,
+                    evidence=self.session.research.evidence,
+                ))
+                is not None
+            ):
+                # What was written about this song did not survive the checks; tell one of the
+                # programme's background stories instead of leaving the slot silent.
+                logger.info("narration_background_retry chapter_id=%s", chapter.chapter_id)
+                scoped = list(writer_chapter.evidence_ids)
+                if story.evidence_id not in scoped:
+                    scoped.append(story.evidence_id)
+                    track_evidence_ids = [*track_evidence_ids, story.evidence_id]
+                script = await self.writer.write(
+                    writer_chapter.model_copy(update={"evidence_ids": scoped}),
+                    writer_evidence,
+                    previous_committed_context=previous_context,
+                    next_track_metadata=next_track_metadata,
+                    host_mode=self.session.presentation_intent.host_mode,
+                    target_duration_seconds=chapter.target_narration_seconds,
+                    output_language=self.session.output_language,
+                    station=self.session.station,
+                    voice_seed=episode.seed_id,
+                    used_openers=_used_openers(episode),
+                    route_tracks=route_tracks,
+                    unplayed_artists=unplayed_artists,
+                    unfulfilled_artists=self.session.unfulfilled_artists,
+                    topic=self.session.topic,
+                    slot_contexts=chapter.slot_contexts,
+                    track_points=[story],
+                )
+            playable = assemble(script)
+        except authoring_errors as error:
             # Writer is the quality layer, not the existence guarantee. P0
             # deliberately prefers a clean music-only gap over canned catalog
             # copy when Writer cannot produce a trustworthy bridge.
             logger.warning(
-                "narration_authoring_failed chapter_id=%s error_type=%s host_mode=%s",
+                "narration_authoring_failed chapter_id=%s error_type=%s host_mode=%s reason=%s",
                 chapter.chapter_id,
                 type(error).__name__,
                 self.session.presentation_intent.host_mode.value,
+                str(error)[:120],
             )
+        if playable is None and is_final_chapter and self.session.output_language is OutputLanguage.ZH_CN:
+            # A programme always ends: without the Writer's closing the application says where
+            # the route ended and signs off.
+            closing = fallback_closing(
+                self.session.station, episode.seed_id, chapter.slot_contexts, route_tracks
+            )
+            if closing is not None:
+                try:
+                    playable = assemble(closing)
+                    logger.info("narration_closing_fallback chapter_id=%s", chapter.chapter_id)
+                except authoring_errors as error:
+                    logger.warning(
+                        "narration_closing_fallback_failed chapter_id=%s error_type=%s",
+                        chapter.chapter_id,
+                        type(error).__name__,
+                    )
+        if playable is None:
             return None
-        return _generated_runtime_chapter(
+        generated = _generated_runtime_chapter(
             chapter.chapter_id,
             list(playable.segments),
             base_order=chapter_start_order,
         )
+        return generated.model_copy(
+            update={
+                "research_evidence": track_evidence,
+                "research_evidence_ids": track_evidence_ids,
+            }
+        )
+
+
+def _research_focus(chapter: ProgressiveAssemblyChapter) -> ResolvedTrack | None:
+    """The song a chapter's talk is about: its own, or for a beat without one, the song that follows."""
+
+    if chapter.resolved_track is not None:
+        return chapter.resolved_track
+    for slot in chapter.slot_contexts:
+        if not slot.is_final and slot.upcoming_track is not None:
+            return slot.upcoming_track
+    return None
 
 
 def _pending_narration_placeholder(
@@ -3509,9 +4487,13 @@ def create_episode_assembly_service(
     if settings.resolved_research_provider == "mock":
         discovery: SearchProvider = FakeSearchProvider()
         research: SearchProvider = FakeSearchProvider()
+        deep_research: SearchProvider | None = None
     else:
         discovery = ExaSearchProvider(live_settings, ledger=ledger)
         research = TavilySearchProvider(live_settings, ledger=ledger)
+        deep_research = TavilySearchProvider(
+            live_settings, ledger=ledger, search_depth="advanced"
+        )
 
     if settings.resolved_tts_provider == "mock":
         tts: TTSProvider = MockTTSProvider(storage)
@@ -3527,6 +4509,7 @@ def create_episode_assembly_service(
         research=research,
         ledger=ledger,
         planner=BackgroundResearchPlanner(research_llm),
+        deep_research=deep_research,
     )
     fast_path = FastPathCoordinator(
         research=fast_research,
@@ -3535,13 +4518,29 @@ def create_episode_assembly_service(
     background_pipeline = BackgroundIntelligencePipeline(
         research=background_research,
         curator=CuratorService(curator_llm),
-        writer=WriterService(writer_llm),
+        writer=WriterService(writer_llm, fact_checker=FactChecker(writer_llm)),
     )
+    retrieval = MusicRetrievalService(music_registry)
     return LiveEpisodeAssemblyService(
         fast_path=fast_path,
         background_pipeline=background_pipeline,
-        retrieval=MusicRetrievalService(music_registry),
+        retrieval=retrieval,
         composer=EpisodeComposer(music_registry),
         materializer=NarrationMaterializer(tts, storage),
         ledger=ledger,
+        catalog_pool_builder=(
+            CatalogPoolBuilder(
+                retrieval,
+                PoolBuildConfig(timeout_seconds=30.0),
+                hints=LastFmArtistHints.from_settings(settings),
+            )
+            if settings.catalog_pool
+            else None
+        ),
+        duration_scaling=settings.duration_scaling,
+        track_research=(
+            TrackResearchService(search=research, llm=writer_llm, deep_search=deep_research)
+            if settings.track_research and settings.resolved_research_provider != "mock"
+            else None
+        ),
     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from wavecast.models.episode import NarrationSegment, SegmentKind, SegmentState
@@ -15,6 +16,9 @@ from wavecast.providers.contracts import (
 )
 from wavecast.providers.errors import ProviderError, ProviderInvalidResponseError
 from wavecast.speech import SpeechDirector, SpeechProfile
+from wavecast.spoken_form import has_unspeakable_script
+
+logger = logging.getLogger(__name__)
 
 
 class NarrationMaterializer:
@@ -43,6 +47,11 @@ class NarrationMaterializer:
         synthesis_text = segment.tts_text or segment.narration_text
         if not synthesis_text:
             raise ProviderInvalidResponseError("narration segment has no script text")
+        if has_unspeakable_script(synthesis_text):
+            # Last line of defence: never send text the voice cannot read to the TTS provider.
+            logger.warning("narration_skipped segment_id=%s reason=unspeakable_script", segment.id)
+            segment.state = SegmentState.SKIPPED
+            return segment
 
         rendered = render_narration(synthesis_text, segment.tts_cues)
         # Profile selection must inspect authored synthesis text, not rendered cue markers.

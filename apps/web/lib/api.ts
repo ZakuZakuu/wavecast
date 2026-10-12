@@ -8,6 +8,7 @@ import type {
   LiveEpisode,
   ProgramProposal,
   ProgramProposalBatch,
+  PublicProgramme,
   ProgramRenderManifest,
   ProposalGenerationRequest,
   Seed,
@@ -64,12 +65,26 @@ async function request<T>(
 export const api = {
   seeds: () => request<Seed[]>("/seeds"),
   program: (id: string) => request<ProgramProposal>(`/programs/${id}`),
+  publicProgramme: (id: string) => request<PublicProgramme>(`/programs/${encodeURIComponent(id)}/public`),
+  /** The caller's own copy of a shared programme (the same one when they already hold it). */
+  adoptProgramme: (id: string) =>
+    request<ProgramProposal>(`/programs/${encodeURIComponent(id)}/adopt`, { method: "POST" }),
   userPreferences: (expectedUserId: string) =>
     request<UserPreferences>("/user-preferences/me", undefined, expectedUserId),
   saveUserPreferences: (input: UserPreferencesUpdate, expectedUserId: string) =>
     request<UserPreferences>("/user-preferences/me", {
       method: "PUT",
       body: JSON.stringify(input),
+    }, expectedUserId),
+  avoidArtist: (artist: string, expectedUserId: string) =>
+    request<UserPreferences>("/user-preferences/me/avoid-artists", {
+      method: "POST",
+      body: JSON.stringify({ artist }),
+    }, expectedUserId),
+  stopAvoidingArtist: (artist: string, expectedUserId: string) =>
+    request<UserPreferences>("/user-preferences/me/avoid-artists/remove", {
+      method: "POST",
+      body: JSON.stringify({ artist }),
     }, expectedUserId),
   deleteUserPreferences: (expectedUserId: string) =>
     request<UserPreferences>("/user-preferences/me", { method: "DELETE" }, expectedUserId),
@@ -88,6 +103,13 @@ export const api = {
   },
   recommendations: (expectedUserId: string) =>
     request<ProgramIdea[]>("/recommendations/me", undefined, expectedUserId),
+  /** 换一批: ideas not shown yet; `has_more` is false once nothing new can be offered today. */
+  nextRecommendations: (shownIds: string[], expectedUserId: string) =>
+    request<{ ideas: ProgramIdea[]; has_more: boolean }>(
+      "/recommendations/me/next",
+      { method: "POST", body: JSON.stringify({ shown_ids: shownIds }) },
+      expectedUserId,
+    ),
   refreshRecommendations: (expectedUserId: string) =>
     request<ProgramIdea[]>(
       "/recommendations/me/refresh",

@@ -1,8 +1,8 @@
 // Home "猜你想听" / "先听这几档" card helpers.
 import { DURATIONS } from "./stations";
 
-/** Recommendations become STANDARD-length programmes (backend default). */
-export const RECOMMENDATION_MINUTES = DURATIONS.find((option) => option.value === "STANDARD")?.minutes ?? 30;
+/** Recommendations become short-tier programmes (backend default). */
+export const RECOMMENDATION_MINUTES = DURATIONS.find((option) => option.value === "SHORT")?.minutes ?? 35;
 
 function titleKey(title: string): string {
   return title.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();

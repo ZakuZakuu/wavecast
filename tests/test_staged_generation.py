@@ -279,6 +279,155 @@ def test_writer_failure_returns_no_authored_copy_before_orchestrator_degrades_ga
     assert placeholder.state is SegmentState.PLANNED
 
 
+def test_the_final_chapter_still_gets_a_closing_when_the_writer_fails(tmp_path) -> None:
+    from wavecast.stations import StationId, compose_signoff
+
+    track = ResolvedTrack(track_ref="mock:bridge", canonical_artist="Bridge Artist", canonical_title="Bridge Track")
+
+    class _FailingWriter:
+        async def write(self, *args: object, **kwargs: object) -> RadioScript:
+            raise ProviderTimeoutError("writer timeout")
+
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    session = _session(track).model_copy(
+        update={"output_language": OutputLanguage.ZH_CN, "station": StationId.PORTRAIT}
+    )
+    generator = StagedProgressiveChapterGenerator(
+        session=session,
+        writer=_FailingWriter(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+    )
+    episode = _episode()
+    generated = asyncio.run(generator.generate_next(episode))
+    assert generated is not None
+    episode.segments.extend(generated.segments)
+
+    authored = asyncio.run(generator.author_narration(episode, "chapter-2"))
+
+    assert authored is not None
+    narration = [s for s in authored.segments if isinstance(s, NarrationSegment)]
+    assert len(narration) == 1 and narration[0].state is SegmentState.SCRIPT_READY
+    text = narration[0].narration_text or ""
+    assert text.startswith("这一程") and text.endswith(compose_signoff(StationId.PORTRAIT, "seed") or "?")
+
+
+def test_a_beat_without_a_song_is_written_about_the_song_that_follows_not_the_old_plan(tmp_path) -> None:
+    from wavecast.intelligence.track_research import TalkingPoint, TrackResearch
+
+    following = ResolvedTrack(track_ref="mock:next", canonical_artist="Next Artist", canonical_title="Next Track")
+    base = _session(following)
+    planned = base.chapters[0].chapter.model_copy(
+        update={"reason": "the Totoro song", "narration_goal": "tell the Totoro story", "evidence_ids": ["old"]}
+    )
+    beat = base.chapters[0].model_copy(
+        update={
+            "chapter": planned,
+            "resolved_track": None,
+            "slot_contexts": [
+                NarrationSlotContext(
+                    slot_id="chapter-0:transition",
+                    chapter_index=0,
+                    placement=NarrationSlotPlacement.AFTER_TRACK,
+                    allowed_block_kinds=[RadioScriptBlockKind.TRANSITION],
+                    just_played_track=ResolvedTrack(
+                        track_ref="mock:opening", canonical_artist="Opening Artist", canonical_title="Opening Track"
+                    ),
+                    upcoming_track=following,
+                )
+            ],
+        }
+    )
+    session = base.model_copy(update={"chapters": [beat]})
+    seen: dict[str, object] = {}
+
+    class _Researcher:
+        async def prepare(self, **kwargs: object) -> TrackResearch:
+            seen["researched"] = kwargs["track"]
+            return TrackResearch(
+                evidence_ids=["new"],
+                points=[TalkingPoint(text="它是下一首的故事", evidence_id="new", quote="quote text")],
+            )
+
+    class _SpyWriter:
+        async def write(self, chapter: object, evidence: object, **kwargs: object) -> RadioScript:
+            seen["chapter"], seen["points"] = chapter, kwargs.get("track_points")
+            return RadioScript(blocks=[], intended_duration_seconds=1)
+
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    generator = StagedProgressiveChapterGenerator(
+        session=session,
+        writer=_SpyWriter(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+        track_research=_Researcher(),  # type: ignore[arg-type]
+    )
+    episode = _episode()
+    placeholder = asyncio.run(generator.generate_next(episode))
+    assert placeholder is not None
+    episode.segments.extend(placeholder.segments)
+
+    asyncio.run(generator.author_narration(episode, "chapter-2"))
+
+    assert seen["researched"] == following  # the song that follows, not the unresolved plan
+    written = seen["chapter"]
+    assert written.evidence_ids == ["new"]  # type: ignore[attr-defined]
+    assert written.track is None and "Totoro" not in written.reason + written.narration_goal  # type: ignore[attr-defined]
+    assert [point.text for point in seen["points"]] == ["它是下一首的故事"]  # type: ignore[union-attr]
+
+
+def test_a_chapter_whose_talk_did_not_survive_tells_a_background_story_instead(tmp_path) -> None:
+    from wavecast.intelligence.models import OutputLanguage as Lang
+    from wavecast.intelligence.track_research import TalkingPoint, TrackResearch
+    from wavecast.stations import StationId
+
+    track = ResolvedTrack(track_ref="mock:bridge", canonical_artist="Bridge Artist", canonical_title="Bridge Track")
+    base = _session(track)
+    first = base.chapters[0].model_copy(update={"slot_contexts": base.chapters[0].slot_contexts[:1]})
+    last = first.model_copy(update={"chapter_id": "chapter-3"})
+    session = base.model_copy(
+        update={"output_language": Lang.ZH_CN, "station": StationId.PORTRAIT, "chapters": [first, last]}
+    )
+    story = TalkingPoint(text="1983年两人第一次见面", evidence_id="bio", quote="quote text", scope="background")
+    writes: list[object] = []
+
+    class _Researcher:
+        async def prepare(self, **kwargs: object) -> TrackResearch:
+            return TrackResearch(evidence_ids=[], points=[TalkingPoint(text="歌的事", evidence_id="x", quote="q q q q")])
+
+        async def background_story(self, **kwargs: object) -> TalkingPoint:
+            return story
+
+    class _Writer:
+        async def write(self, chapter: object, evidence: object, **kwargs: object) -> RadioScript:
+            writes.append(kwargs["track_points"])
+            if len(writes) == 1:  # everything written about the song was removed by the checks
+                return RadioScript(blocks=[], intended_duration_seconds=1)
+            return RadioScript(
+                blocks=[RadioScriptBlock(kind=RadioScriptBlockKind.TRACK_INTRO, text="1983年他们第一次见面。", duration_seconds=3)],
+                intended_duration_seconds=3,
+            )
+
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+    generator = StagedProgressiveChapterGenerator(
+        session=session, writer=_Writer(),  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+        track_research=_Researcher(),  # type: ignore[arg-type]
+    )
+    episode = _episode()
+    generated = asyncio.run(generator.generate_next(episode))
+    assert generated is not None
+    episode.segments.extend(generated.segments)
+
+    authored = asyncio.run(generator.author_narration(episode, "chapter-2"))
+
+    assert authored is not None and len(writes) == 2
+    assert [point.scope for point in writes[1]] == ["background"]  # type: ignore[union-attr]
+    assert "bio" in authored.research_evidence_ids
+    assert any(isinstance(s, NarrationSegment) and s.narration_text for s in authored.segments)
+
+
 def test_degraded_writer_marks_pending_host_seam_skipped(tmp_path) -> None:
     track = ResolvedTrack(
         track_ref="mock:bridge",

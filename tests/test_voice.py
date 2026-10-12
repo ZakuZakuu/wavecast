@@ -1,0 +1,458 @@
+import asyncio
+
+import pytest
+from wavecast.intelligence.models import (
+    NarrationSlotContext,
+    NarrationSlotPlacement,
+    OutputLanguage,
+    RadioScript,
+    RadioScriptBlock,
+    RadioScriptBlockKind,
+    ResolvedTrack,
+)
+from wavecast.intelligence.voice import (
+    MOVE_INSTRUCTIONS,
+    STATION_VOICES,
+    Move,
+    max_characters,
+    move_for,
+    pick_examples,
+    voice_instructions,
+)
+from wavecast.intelligence.writer import WriterService
+from wavecast.stations import StationId
+
+from tests.test_intelligence_services import StructuredFixture, skeleton
+
+
+def test_every_station_has_a_voice_and_every_move_an_instruction() -> None:
+    assert set(STATION_VOICES) == set(StationId)
+    assert set(MOVE_INSTRUCTIONS) == set(Move)
+
+
+def test_moves_are_deterministic_for_a_seed() -> None:
+    first = [move_for("programme-1", StationId.CRATE, index) for index in range(12)]
+    again = [move_for("programme-1", StationId.CRATE, index) for index in range(12)]
+
+    assert first == again
+
+
+def test_a_move_never_repeats_the_one_before_it() -> None:
+    for station in (StationId.CASUAL, StationId.CRATE, StationId.PORTRAIT, StationId.LINEAGE):
+        for seed in ("a", "b", "c", "programme-42"):
+            moves = [move_for(seed, station, index) for index in range(20)]
+            assert all(left != right for left, right in zip(moves, moves[1:], strict=False))
+
+
+def test_different_programmes_get_different_move_sequences() -> None:
+    sequences = {
+        tuple(move_for(f"programme-{n}", StationId.CASUAL, i) for i in range(8)) for n in range(20)
+    }
+
+    assert len(sequences) > 10
+
+
+def test_moves_come_from_the_stations_own_mix() -> None:
+    portrait_moves = {move_for(f"p{n}", StationId.PORTRAIT, 1) for n in range(60)}
+
+    assert Move.ASK not in portrait_moves  # the profile station never asks questions
+    assert Move.FACT in portrait_moves
+
+
+def test_examples_vary_with_the_programme_but_are_a_subset_of_the_voice() -> None:
+    voice = STATION_VOICES[StationId.CASUAL]
+    picks = {tuple(pick_examples(f"p{n}", StationId.CASUAL, 1)) for n in range(30)}
+
+    assert len(picks) > 1
+    assert all(set(pick) <= set(voice.examples) for pick in picks)
+
+
+def test_the_character_limit_follows_the_window() -> None:
+    assert max_characters(None) is None
+    assert max_characters(14) == 63
+    assert max_characters(2) == 12
+
+
+def test_instructions_name_the_move_limit_and_banned_openers() -> None:
+    text = voice_instructions(
+        station=StationId.LINEAGE,
+        seed="s",
+        index=2,
+        window_seconds=14,
+        used_openers=["刚才", "Jody"],
+    )
+
+    assert "Station: 来龙去脉" in text
+    assert f"({move_for('s', StationId.LINEAGE, 2).value})" in text
+    assert "between 40 and 63 Chinese characters" in text
+    assert "never with 刚才、接下来、我们先从、下一首" in text
+    assert "刚才、Jody" in text
+    assert "不是……而是……" in text
+
+
+def test_opening_and_closing_blocks_have_their_own_instruction() -> None:
+    opening = voice_instructions(
+        station=StationId.CASUAL, seed="s", index=0, window_seconds=12, is_opening=True
+    )
+    closing = voice_instructions(
+        station=StationId.CASUAL, seed="s", index=9, window_seconds=25, is_final=True
+    )
+
+    assert "This is the opening" in opening and "This block's move" not in opening
+    assert "closes the programme" in closing and "This block's move" not in closing
+
+
+def test_the_night_voice_offers_no_examples_to_copy() -> None:
+    text = voice_instructions(station=StationId.NIGHT, seed="s", index=1, window_seconds=6)
+
+    assert "Register samples" not in text
+
+
+def _slot() -> NarrationSlotContext:
+    return NarrationSlotContext(
+        chapter_index=2,
+        placement=NarrationSlotPlacement.BEFORE_TRACK,
+        allowed_block_kinds=[RadioScriptBlockKind.TRACK_INTRO],
+        chapter_track=ResolvedTrack(track_ref="n:2", canonical_artist="A", canonical_title="Jody"),
+        just_played_track=ResolvedTrack(track_ref="n:1", canonical_artist="A", canonical_title="One"),
+        upcoming_track=ResolvedTrack(track_ref="n:2", canonical_artist="A", canonical_title="Jody"),
+    )
+
+
+def _chapter():
+    return skeleton().chapters[0].model_copy(update={"evidence_ids": []})
+
+
+def _script(text: str) -> RadioScript:
+    return RadioScript(
+        blocks=[
+            RadioScriptBlock(kind=RadioScriptBlockKind.TRACK_INTRO, text=text, duration_seconds=8)
+        ]
+    )
+
+
+class Sequenced:
+    """Returns the scripted outputs in order; records every prompt."""
+
+    def __init__(self, *outputs: RadioScript) -> None:
+        self.outputs = list(outputs)
+        self.prompts: list[str] = []
+
+    async def structured(self, prompt: str, _type: type[object], **_kwargs: object) -> object:
+        self.prompts.append(prompt)
+        return self.outputs[min(len(self.prompts) - 1, len(self.outputs) - 1)]
+
+
+def _write(llm: Sequenced, **kwargs) -> RadioScript:
+    result = asyncio.run(
+        WriterService(llm).write(
+            _chapter(),
+            [],
+            slot_context=_slot(),
+            target_duration_seconds=14,
+            output_language=OutputLanguage.ZH_CN,
+            station=StationId.CASUAL,
+            voice_seed="programme-1",
+            **kwargs,
+        )
+    )
+    assert isinstance(result, RadioScript)
+    return result
+
+
+def test_the_voice_section_reaches_the_prompt() -> None:
+    llm = Sequenced(_script("Jody 是同一个人写的。"))
+
+    _write(llm, used_openers=["刚才"])
+
+    assert "Voice:" in llm.prompts[0]
+    assert "Chinese characters" in llm.prompts[0]
+    assert "刚才" in llm.prompts[0]
+
+
+def test_a_clean_draft_is_not_rewritten() -> None:
+    llm = Sequenced(_script("Jody 是同一个人写的。"))
+
+    result = _write(llm)
+
+    assert len(llm.prompts) == 1
+    assert result.blocks[0].text == "Jody 是同一个人写的。"
+
+
+def test_a_draft_with_stock_phrasing_gets_one_rewrite_with_the_reasons() -> None:
+    llm = Sequenced(
+        _script("刚才那首，吉他一层层叠起来，慢慢铺开。"),
+        _script("Jody 是同一个人写的，节奏松很多。"),
+    )
+
+    result = _write(llm)
+
+    assert len(llm.prompts) == 2
+    assert "stock figurative wording" in llm.prompts[1]
+    assert "一层层" in llm.prompts[1]
+    assert "starts with 刚才" in llm.prompts[1]
+    assert result.blocks[0].text == "Jody 是同一个人写的，节奏松很多。"
+
+
+def test_a_rewrite_that_is_no_better_is_discarded() -> None:
+    first = _script("刚才那首，吉他一层层叠起来。")
+    worse = _script("刚才那首，吉他一层层叠起来，慢慢铺开，这也提醒我们很多。")
+    llm = Sequenced(first, worse)
+
+    result = _write(llm)
+
+    assert len(llm.prompts) == 2
+    assert result.blocks[0].text == first.blocks[0].text
+
+
+def test_rewriting_is_bounded_to_one_extra_call() -> None:
+    bad = _script("刚才那首，吉他一层层叠起来。")
+    llm = Sequenced(bad, bad, bad)
+
+    _write(llm)
+
+    assert len(llm.prompts) == 2
+
+
+def test_rewriting_can_be_turned_off() -> None:
+    llm = Sequenced(_script("刚才那首，吉他一层层叠起来。"))
+
+    asyncio.run(
+        WriterService(llm, max_revisions=0).write(
+            _chapter(), [], slot_context=_slot(), output_language=OutputLanguage.ZH_CN
+        )
+    )
+
+    assert len(llm.prompts) == 1
+
+
+@pytest.mark.parametrize("language", [OutputLanguage.EN_US, OutputLanguage.JA_JP])
+def test_the_chinese_voice_section_is_not_used_for_other_languages(language) -> None:
+    llm = StructuredFixture(RadioScript(blocks=[]))
+    asyncio.run(
+        WriterService(llm).write(
+            _chapter(), [], slot_context=_slot(), output_language=language, station=StationId.CASUAL
+        )
+    )
+
+    assert "Voice:" not in llm.prompts[0]
+
+
+def test_a_year_that_is_not_in_the_evidence_triggers_a_rewrite() -> None:
+    from wavecast.intelligence.models import Evidence
+
+    chapter = skeleton().chapters[0]  # evidence_ids == ["e1"]
+    evidence = [
+        Evidence(
+            id="e1",
+            claim_or_excerpt="《Ride on Time》是山下达郎 1980 年的专辑。",
+            source_url="https://example.test",
+            source_provider="fixture",
+            confidence=0.8,
+            query="q",
+        )
+    ]
+    llm = Sequenced(_script("Jody 是 1979 年的歌。"), _script("Jody 是 1980 年的歌。"))
+
+    result = asyncio.run(
+        WriterService(llm).write(
+            chapter,
+            evidence,
+            slot_context=_slot(),
+            target_duration_seconds=14,
+            output_language=OutputLanguage.ZH_CN,
+        )
+    )
+
+    assert len(llm.prompts) == 2
+    assert "gives a year that is not in the evidence (1979)" in llm.prompts[1]
+    assert result.blocks[0].text == "Jody 是 1980 年的歌。"
+
+
+def test_a_station_caps_the_spoken_window_whatever_the_plan_offers() -> None:
+    from wavecast.intelligence.voice import MAX_SECONDS, window_for
+
+    assert window_for(StationId.LINEAGE, 54) == MAX_SECONDS[StationId.LINEAGE] == 30
+    assert window_for(StationId.CASUAL, 54) == 15
+    assert window_for(StationId.CASUAL, 8) == 8  # a shorter plan is respected
+    assert window_for(None, 54) == 54  # no station, no cap
+    assert window_for(StationId.CASUAL, None) is None
+
+
+def test_the_capped_window_reaches_the_prompt_and_the_length_check() -> None:
+    long_text = "这首歌的故事很长很长。" * 20
+    llm = Sequenced(_script(long_text), _script("Jody 是同一个人写的。"))
+
+    asyncio.run(
+        WriterService(llm).write(
+            _chapter(),
+            [],
+            slot_context=_slot(),
+            target_duration_seconds=54,
+            output_language=OutputLanguage.ZH_CN,
+            station=StationId.CASUAL,
+            voice_seed="p",
+        )
+    )
+
+    assert "Target narration duration seconds: 15" in llm.prompts[0]
+    assert len(llm.prompts) == 2  # 200 characters is far over a 15 s window
+    assert "longer than its spoken window" in llm.prompts[1]
+
+
+def test_the_previous_context_is_kept_from_its_end() -> None:
+    llm = Sequenced(_script("Jody 是同一个人写的。"))
+    context = "旧" * 1200 + "最近说过的一句话"
+
+    asyncio.run(
+        WriterService(llm).write(
+            _chapter(), [], slot_context=_slot(), previous_committed_context=context
+        )
+    )
+
+    assert "最近说过的一句话" in llm.prompts[0]
+
+
+def test_the_route_and_the_unplayed_artists_reach_the_prompt() -> None:
+    llm = Sequenced(_script("Jody 是同一个人写的。"))
+
+    _write(
+        llm,
+        route_tracks=["A - One", "A - Jody"],
+        unplayed_artists=["Explosions In The Sky"],
+    )
+
+    assert "the only ones that are played: A - One; A - Jody" in llm.prompts[0]
+    assert "do not mention them: Explosions In The Sky" in llm.prompts[0]
+
+
+def test_a_draft_that_mentions_an_unplayed_artist_is_rewritten() -> None:
+    llm = Sequenced(
+        _script("Jody 之后，Explosions In The Sky 会接上来。"),
+        _script("Jody 是同一个人写的。"),
+    )
+
+    result = _write(llm, unplayed_artists=["Explosions In The Sky"])
+
+    assert len(llm.prompts) == 2
+    assert "mentions an artist who is not played in this programme" in llm.prompts[1]
+    assert result.blocks[0].text == "Jody 是同一个人写的。"
+
+
+def test_the_route_summary_separates_played_from_planned_artists() -> None:
+    from wavecast.assembly import _route_summary, create_episode_assembly_service
+    from wavecast.intelligence.models import TrackProposal
+    from wavecast.models.episode import CoverParams, EpisodeSeed
+    from wavecast.orchestration.episode import EpisodeOrchestrator, InMemoryEpisodeRepository
+    from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
+    from wavecast.providers.config import ProviderSettings
+
+    seed = EpisodeSeed(
+        id="route-summary",
+        title="Route",
+        topic="A deterministic staged route",
+        short_description="x",
+        estimated_duration_seconds=900,
+        opening_track_ref="mock:opening",
+        opening_track_title="Opening Track",
+        opening_track_artist="Opening Artist",
+        cover=CoverParams(family="editorial", seed=1, palette=("#000", "#fff")),
+    )
+    orchestrator = EpisodeOrchestrator(
+        InMemoryEpisodeRepository(),
+        progressive_runtime=StagedProgressiveRuntimeAdapter(
+            create_episode_assembly_service(ProviderSettings(mode="mock"))
+        ),
+    )
+    episode = orchestrator.start(seed)
+    buffered = asyncio.run(
+        orchestrator.ensure_buffer_async(episode.id, target_chapters=1, target_ahead_seconds=300)
+    )
+    session = buffered.progressive_session
+    assert session is not None
+    ghost = TrackProposal(artist="Ghost Band", title="Never Played", reasons=["x"], confidence=0.5)
+    chapters = list(session.skeleton.chapters)
+    chapters[0] = chapters[0].model_copy(update={"track_alternates": [ghost]})
+    session = session.model_copy(
+        update={"skeleton": session.skeleton.model_copy(update={"chapters": chapters})}
+    )
+
+    played, unplayed = _route_summary(session, buffered)
+
+    assert any(label.startswith("Opening Artist") for label in played)
+    assert "Ghost Band" in unplayed
+    assert all("Opening Artist" != artist for artist in unplayed)
+
+
+def _final_slot() -> NarrationSlotContext:
+    return _slot().model_copy(
+        update={
+            "placement": NarrationSlotPlacement.AFTER_TRACK,
+            "allowed_block_kinds": [RadioScriptBlockKind.OUTRO],
+            "upcoming_track": None,
+            "is_final": True,
+        }
+    )
+
+
+def _closing(llm: Sequenced, station: StationId | None) -> RadioScript:
+    result = asyncio.run(
+        WriterService(llm).write(
+            _chapter(),
+            [],
+            slot_context=_final_slot(),
+            target_duration_seconds=16,
+            output_language=OutputLanguage.ZH_CN,
+            station=station,
+            voice_seed="programme-1",
+        )
+    )
+    assert isinstance(result, RadioScript)
+    return result
+
+
+def test_the_closing_ends_with_the_stations_sign_off() -> None:
+    from wavecast.stations import compose_signoff
+
+    llm = Sequenced(
+        RadioScript(
+            blocks=[
+                RadioScriptBlock(
+                    kind=RadioScriptBlockKind.OUTRO,
+                    text="这一程从翻弹听到原作，线索一直是那把钢琴",
+                    duration_seconds=8,
+                )
+            ]
+        )
+    )
+
+    result = _closing(llm, StationId.PORTRAIT)
+
+    signoff = compose_signoff(StationId.PORTRAIT, "programme-1")
+    assert signoff is not None
+    assert result.blocks[0].text == "这一程从翻弹听到原作，线索一直是那把钢琴。" + signoff
+    assert "不要说再见" not in llm.prompts[0]
+    assert "Do not say goodbye" in llm.prompts[0]
+
+
+def test_a_night_programme_or_one_without_a_station_gets_no_sign_off() -> None:
+    for station in (StationId.NIGHT, None):
+        llm = Sequenced(
+            RadioScript(
+                blocks=[
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.OUTRO, text="停在这里。", duration_seconds=4
+                    )
+                ]
+            )
+        )
+
+        assert _closing(llm, station).blocks[0].text == "停在这里。"
+
+
+def test_the_sign_off_is_not_added_to_an_ordinary_block() -> None:
+    llm = Sequenced(_script("Jody 是同一个人写的。"))
+
+    result = _write(llm)
+
+    assert result.blocks[0].text == "Jody 是同一个人写的。"

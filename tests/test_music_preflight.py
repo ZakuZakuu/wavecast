@@ -202,3 +202,29 @@ def test_live_probe_continues_after_successful_music_preflight(
     assert result == 0
     assert assembly_calls == 1
     assert '"status": "ok"' in report_path.read_text()
+
+
+@pytest.mark.parametrize("token", [None, "test-gateway-token"])
+def test_music_preflight_uses_optional_gateway_bearer(token: str | None) -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        assert request.url.path == "/ready"
+        assert request.headers.get("Authorization") == (f"Bearer {token}" if token else None)
+        return httpx.Response(200)
+
+    async def run() -> MusicPreflightResult:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await preflight_music(
+                ProviderSettings(
+                    netease_music_api_base_url="https://gateway.example",
+                    netease_music_api_bearer_token=token,
+                ),
+                [],
+                registry=MusicProviderRegistry({"netease": FixtureCatalog([])}),
+                readiness_client=client,
+            )
+
+    assert asyncio.run(run()).ready
+    assert len(calls) == 1

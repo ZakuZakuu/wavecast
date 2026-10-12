@@ -24,3 +24,23 @@ def test_minimax_maps_speech_profile_speed_and_language(tmp_path) -> None:
     assert fallback["language_boost"] == "Chinese,English"
     assert override["voice_setting"]["speed"] == 0.88
     assert override["language_boost"] == "English"
+
+
+def test_the_voice_level_is_sent_and_changes_the_cache_key(tmp_path) -> None:
+    def make(volume: float) -> MiniMaxTTSProvider:
+        return MiniMaxTTSProvider(
+            ProviderSettings(
+                mode="live",
+                minimax_api_key="test-key",
+                minimax_tts_voice_id="test-voice",
+                minimax_tts_volume=volume,
+            ),
+            storage=LocalObjectStorageProvider(tmp_path / "audio"),
+        )
+
+    quiet, loud = make(1.0), make(1.7)
+
+    assert quiet._request_payload("hello", "test-voice")["voice_setting"]["vol"] == 1.0
+    assert loud._request_payload("hello", "test-voice")["voice_setting"]["vol"] == 1.7
+    assert quiet.cache_key("hello", []) != loud.cache_key("hello", [])
+    assert loud.cache_key("hello", []) == make(1.7).cache_key("hello", [])

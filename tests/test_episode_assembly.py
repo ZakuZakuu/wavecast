@@ -197,7 +197,15 @@ def test_fast_successor_is_locked_into_full_progressive_route(tmp_path, monkeypa
     )
 
     assert session.chapters[0].chapter_id == "chapter-2"
-    assert session.chapters[0].resolved_track == locked
+    resolved = session.chapters[0].resolved_track
+    assert resolved is not None
+    # The session's track also carries the catalog's length; identity is the three fields.
+    assert (resolved.track_ref, resolved.canonical_artist, resolved.canonical_title) == (
+        locked.track_ref,
+        locked.canonical_artist,
+        locked.canonical_title,
+    )
+    assert resolved.duration_seconds == 24
     resolved_refs = [
         chapter.resolved_track.track_ref
         for chapter in session.chapters
@@ -293,6 +301,78 @@ def test_song_identity_collapses_catalog_aliases_without_merging_unrelated_cover
     assert _same_song_identity(bill_evans, bill_evans_trio) is True
     assert _same_song_identity(bill_evans_trio, bill_evans) is True
     assert _same_song_identity(bill_evans, unrelated_cover) is False
+
+
+def test_one_recording_listed_with_a_date_label_and_different_spacing_is_one_song() -> None:
+    spaced = ResolvedTrack(
+        track_ref="netease:one", canonical_artist="Louis Armstrong", canonical_title="Dippermouth Blues"
+    )
+    dated = ResolvedTrack(
+        track_ref="netease:two",
+        canonical_artist="Louis Armstrong",
+        canonical_title="Dipper Mouth Blues (04/23)",
+    )
+    live = ResolvedTrack(
+        track_ref="netease:three",
+        canonical_artist="Louis Armstrong",
+        canonical_title="Dippermouth Blues (Live)",
+    )
+
+    assert _same_song_identity(spaced, dated) is True
+    assert _same_song_identity(spaced, live) is False
+
+
+def test_a_chinese_title_and_the_original_of_the_same_length_are_one_song() -> None:
+    original = ResolvedTrack(
+        track_ref="netease:one",
+        canonical_artist="Louis Armstrong",
+        canonical_title="What A Wonderful World:",
+        duration_seconds=139,
+    )
+    translated = ResolvedTrack(
+        track_ref="netease:two",
+        canonical_artist="Louis Armstrong",
+        canonical_title="多美妙的世界",
+        duration_seconds=138,
+    )
+    longer = translated.model_copy(update={"duration_seconds": 190})
+    unknown = translated.model_copy(update={"duration_seconds": None})
+    other_artist = translated.model_copy(update={"canonical_artist": "Ella Fitzgerald"})
+    another_latin_song = ResolvedTrack(
+        track_ref="netease:three",
+        canonical_artist="Louis Armstrong",
+        canonical_title="All of Me",
+        duration_seconds=139,
+    )
+
+    assert _same_song_identity(original, translated) is True
+    assert _same_song_identity(translated, original) is True
+    assert _same_song_identity(original, longer) is False
+    assert _same_song_identity(original, unknown) is False
+    assert _same_song_identity(original, other_artist) is False
+    # two Latin titles of equal length are not a translation pair
+    assert _same_song_identity(original, another_latin_song) is False
+
+
+def test_the_same_recording_listed_with_and_without_accents_is_one_song() -> None:
+    accented = ResolvedTrack(
+        track_ref="netease:one",
+        canonical_artist="Pablo Casals",
+        canonical_title="Cello Suite No. 1 in G Major, Bwv 1007: I. Prélude",
+    )
+    plain = ResolvedTrack(
+        track_ref="netease:two",
+        canonical_artist="Pablo Casals",
+        canonical_title="Cello Suite No. 1 in G Major, BWV 1007:I. Prelude",
+    )
+    other_movement = ResolvedTrack(
+        track_ref="netease:three",
+        canonical_artist="Pablo Casals",
+        canonical_title="Cello Suite No. 1 in G Major, BWV 1007:IV. Sarabande",
+    )
+
+    assert _same_song_identity(accented, plain) is True
+    assert _same_song_identity(accented, other_movement) is False
 
 
 def test_progressive_route_drops_later_semantic_song_repeat_after_locked_prefix() -> None:
@@ -2307,7 +2387,18 @@ def test_max_tracks_limits_music_but_preserves_narrative_only_chapters(tmp_path)
 
     assert len(result.resolved_tracks) == 4
     assert [chapter.index for chapter in result.skeleton.chapters] == [0, 1, 2, 3, 4, 5]
-    assert len([call for call in llm.calls if call["output_type"] is RadioScript]) == 3
+    # One Writer call per chapter; the fixture's near-identical beats may add bounded rewrites.
+    assert (
+        len(
+            [
+                call
+                for call in llm.calls
+                if call["output_type"] is RadioScript
+                and "Your previous draft had these problems" not in str(call["prompt"])
+            ]
+        )
+        == 3
+    )
     assert {"narrative beat 1", "narrative beat 3"}.issubset(
         {segment.narration_text for segment in result.playable_episode.segments}
     )
@@ -2802,3 +2893,25 @@ def test_live_factory_requires_a_real_music_provider(monkeypatch) -> None:
 
     with pytest.raises(ProviderConfigurationError, match="real music provider"):
         create_episode_assembly_service(ProviderSettings(mode="live"))
+
+
+def test_song_identity_ignores_feature_credits_and_credit_order() -> None:
+    listed = ResolvedTrack(
+        track_ref="netease:one", canonical_artist="椎名林檎, TOWA TEI", canonical_title="APPLE"
+    )
+    reordered_with_feature = ResolvedTrack(
+        track_ref="netease:two",
+        canonical_artist="TOWA TEI, 椎名林檎",
+        canonical_title="APPLE (feat. 椎名林檎)",
+    )
+    other_song = ResolvedTrack(
+        track_ref="netease:three", canonical_artist="TOWA TEI, 椎名林檎", canonical_title="Other"
+    )
+    other_cover = ResolvedTrack(
+        track_ref="netease:four", canonical_artist="Someone Else", canonical_title="APPLE"
+    )
+
+    assert _same_song_identity(listed, reordered_with_feature) is True
+    assert _same_song_identity(reordered_with_feature, listed) is True
+    assert _same_song_identity(listed, other_song) is False
+    assert _same_song_identity(listed, other_cover) is False

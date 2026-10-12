@@ -1,6 +1,6 @@
 """Explicit, secret-safe provider configuration."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from math import isfinite
 from os import getenv
 from typing import Literal, cast
@@ -20,6 +20,8 @@ class ProviderSettings:
     deepseek_api_key: str | None = None
     exa_api_key: str | None = None
     tavily_api_key: str | None = None
+    # Optional discovery signal (ranking/candidates only); absent = Last.fm is simply not used.
+    lastfm_api_key: str | None = None
     minimax_api_key: str | None = None
     audius_api_key: str | None = None
     # Audius API keys identify the application and may be used in client-safe
@@ -28,6 +30,7 @@ class ProviderSettings:
     audius_bearer_token: str | None = None
     audius_base_url: str = "https://api.audius.co/v1"
     netease_music_api_base_url: str | None = None
+    netease_music_api_bearer_token: str | None = field(default=None, repr=False)
     qq_music_api_base_url: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-flash"
@@ -42,6 +45,11 @@ class ProviderSettings:
     curator_provider: LLMCapabilitySelector = "inherit"
     writer_provider: LLMCapabilitySelector = "inherit"
     tts_provider: TTSCapabilitySelector = "inherit"
+    # ADR 0022: build a verified-playable catalog pool before the Curator chooses tracks.
+    catalog_pool: bool = True
+    # Size the route (tracks and chapters) from the requested duration instead of a fixed cap.
+    duration_scaling: bool = True
+    track_research: bool = True
 
     # Search remains deliberately short. Structured synthesis can be materially larger.
     timeout_seconds: float = 20.0
@@ -54,7 +62,9 @@ class ProviderSettings:
     minimax_tts_base_url: str = "https://api.minimax.cn"
     minimax_tts_model: str = "speech-2.8-turbo"
     minimax_tts_voice_id: str | None = None
-    minimax_tts_speed: float = 0.8
+    minimax_tts_speed: float = 0.9
+    # MiniMax "vol": 1 gives about -25 LUFS, quieter than the music it sits on; 1.7 gives about -20.
+    minimax_tts_volume: float = 1.7
     minimax_tts_language_boost: str = "auto"
 
     @classmethod
@@ -67,11 +77,13 @@ class ProviderSettings:
             deepseek_api_key=getenv("DEEPSEEK_API_KEY"),
             exa_api_key=getenv("EXA_API_KEY"),
             tavily_api_key=getenv("TAVILY_API_KEY"),
+            lastfm_api_key=getenv("LASTFM_API_KEY") or None,
             minimax_api_key=getenv("MINIMAX_API_KEY"),
             audius_api_key=getenv("AUDIUS_API_KEY"),
             audius_bearer_token=getenv("AUDIUS_BEARER_TOKEN"),
             audius_base_url=getenv("AUDIUS_BASE_URL", "https://api.audius.co/v1"),
             netease_music_api_base_url=getenv("NETEASE_MUSIC_API_BASE_URL"),
+            netease_music_api_bearer_token=getenv("NETEASE_MUSIC_API_BEARER_TOKEN"),
             qq_music_api_base_url=getenv("QQ_MUSIC_API_BASE_URL"),
             deepseek_base_url=getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             deepseek_model=getenv("DEEPSEEK_MODEL", "deepseek-flash"),
@@ -124,6 +136,9 @@ class ProviderSettings:
                     {"inherit", "mock", "minimax"},
                 ),
             ),
+            catalog_pool=_flag_from_env("WAVECAST_CATALOG_POOL", default="on"),
+            duration_scaling=_flag_from_env("WAVECAST_DURATION_SCALING", default="on"),
+            track_research=_flag_from_env("WAVECAST_TRACK_RESEARCH", default="on"),
             deepseek_timeout_seconds=_positive_float_from_env(
                 "DEEPSEEK_TIMEOUT_SECONDS", default=20.0
             ),
@@ -139,7 +154,8 @@ class ProviderSettings:
             minimax_tts_base_url=getenv("MINIMAX_TTS_BASE_URL", "https://api.minimax.cn"),
             minimax_tts_model=getenv("MINIMAX_TTS_MODEL", "speech-2.8-turbo"),
             minimax_tts_voice_id=getenv("MINIMAX_TTS_VOICE_ID"),
-            minimax_tts_speed=_positive_float_from_env("MINIMAX_TTS_SPEED", default=0.8),
+            minimax_tts_speed=_positive_float_from_env("MINIMAX_TTS_SPEED", default=0.9),
+            minimax_tts_volume=_positive_float_from_env("MINIMAX_TTS_VOLUME", default=1.7),
             minimax_tts_language_boost=getenv("MINIMAX_TTS_LANGUAGE_BOOST", "auto"),
         )
 
@@ -236,6 +252,15 @@ def _selector_from_env(name: str, allowed: set[str]) -> str:
         choices = ", ".join(sorted(allowed))
         raise ProviderConfigurationError(f"{name} must be one of: {choices}")
     return value
+
+
+def _flag_from_env(name: str, default: str = "off") -> bool:
+    value = getenv(name, default).strip().lower()
+    if value in {"on", "true", "1"}:
+        return True
+    if value in {"off", "false", "0", ""}:
+        return False
+    raise ProviderConfigurationError(f"{name} must be on or off")
 
 
 def _positive_float_from_env(name: str, *, default: float) -> float:

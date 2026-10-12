@@ -6,6 +6,8 @@ from wavecast.models.episode import MusicSegment, SegmentKind, SegmentState
 from wavecast.providers.contracts import MusicProvider, TrackMetadata
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.retrieval import MusicRetrievalService
+from wavecast.spoken_form import catalog_album, chinese_title
+from wavecast.text_identity import same_catalog_name
 
 from .models import (
     ResolvedTrack,
@@ -15,10 +17,6 @@ from .models import (
 )
 
 
-def _same_catalog_name(left: str, right: str) -> bool:
-    return " ".join(left.casefold().split()) == " ".join(right.casefold().split())
-
-
 def _resolved_track(metadata: TrackMetadata) -> ResolvedTrack | None:
     if not metadata.playable:
         return None
@@ -26,11 +24,14 @@ def _resolved_track(metadata: TrackMetadata) -> ResolvedTrack | None:
         track_ref=metadata.track_ref,
         canonical_artist=metadata.artist,
         canonical_title=metadata.title,
+        duration_seconds=metadata.duration_seconds or None,
+        spoken_title=chinese_title(metadata.metadata),
+        album=catalog_album(metadata.metadata),
     )
 
 
 def _exact_identity(metadata: TrackMetadata, proposal: TrackProposal) -> bool:
-    return _same_catalog_name(metadata.artist, proposal.artist) and _same_catalog_name(
+    return same_catalog_name(metadata.artist, proposal.artist) and same_catalog_name(
         metadata.title, proposal.title
     )
 
@@ -118,7 +119,7 @@ async def resolve_track_proposal_across_providers(
         for candidate in candidates:
             if not candidate.track_ref.startswith(f"{candidate.provider}:"):
                 continue
-            if not _same_catalog_name(candidate.artist, proposal.artist) or not _same_catalog_name(
+            if not same_catalog_name(candidate.artist, proposal.artist) or not same_catalog_name(
                 candidate.title, proposal.title
             ):
                 continue
@@ -127,6 +128,9 @@ async def resolve_track_proposal_across_providers(
                     track_ref=candidate.track_ref,
                     canonical_artist=candidate.artist,
                     canonical_title=candidate.title,
+                    duration_seconds=candidate.duration_seconds or None,
+                    spoken_title=chinese_title(candidate.metadata),
+                    album=catalog_album(candidate.metadata),
                 )
             try:
                 provider = retrieval.registry.provider_for_track_ref(candidate.track_ref)

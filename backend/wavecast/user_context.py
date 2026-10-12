@@ -33,6 +33,9 @@ class DiscoveryLevel(StrEnum):
     ADVENTUROUS = "ADVENTUROUS"
 
 
+MAX_AVOID_ARTISTS = 20
+
+
 class UserPreferences(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -43,6 +46,8 @@ class UserPreferences(BaseModel):
     contexts: list[str] = Field(default_factory=list, max_length=20)
     discovery_level: DiscoveryLevel = DiscoveryLevel.BALANCED
     onboarding_completed: bool = False
+    # Artists the listener pressed 少放这类 on, newest first; not part of the onboarding form.
+    avoid_artists: list[str] = Field(default_factory=list, max_length=MAX_AVOID_ARTISTS)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -55,6 +60,35 @@ class UserPreferencesUpdate(BaseModel):
     contexts: list[str] = Field(default_factory=list, max_length=20)
     discovery_level: DiscoveryLevel = DiscoveryLevel.BALANCED
     onboarding_completed: bool = True
+
+
+class AvoidArtistInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artist: str = Field(min_length=1, max_length=80)
+
+
+def with_avoided_artist(preferences: UserPreferences, artist: str) -> UserPreferences:
+    """The preferences with one more artist to play less of (newest first, no duplicates)."""
+
+    name = " ".join(artist.split())
+    kept = [item for item in preferences.avoid_artists if item.casefold() != name.casefold()]
+    return preferences.model_copy(
+        update={
+            "avoid_artists": [name, *kept][:MAX_AVOID_ARTISTS],
+            "updated_at": datetime.now(UTC),
+        }
+    )
+
+
+def without_avoided_artist(preferences: UserPreferences, artist: str) -> UserPreferences:
+    name = " ".join(artist.split()).casefold()
+    return preferences.model_copy(
+        update={
+            "avoid_artists": [item for item in preferences.avoid_artists if item.casefold() != name],
+            "updated_at": datetime.now(UTC),
+        }
+    )
 
 
 class UserPreferencesRepository(Protocol):

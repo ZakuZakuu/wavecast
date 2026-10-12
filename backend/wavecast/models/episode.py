@@ -8,7 +8,9 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from wavecast.audio_timing import TrackTimingProfile
+from wavecast.language import OutputLanguage
 from wavecast.presentation import PresentationIntent
+from wavecast.stations import StationId
 
 
 def utc_now() -> datetime:
@@ -70,6 +72,8 @@ class EpisodeSeed(BaseModel):
     title: str
     topic: str
     short_description: str
+    # A short label for the cover (see title_style); None for programmes made before it existed.
+    cover_title: str | None = Field(default=None, max_length=40)
     estimated_duration_seconds: int = Field(gt=0)
     opening_track_ref: str
     opening_track_title: str
@@ -79,6 +83,10 @@ class EpisodeSeed(BaseModel):
     opening_narration_text: str | None = Field(default=None, max_length=320)
     cover: CoverParams
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
+    output_language: OutputLanguage = OutputLanguage.AUTO
+    station: StationId | None = None
+    # Artists the listener's request names or clearly requires the programme to play.
+    required_artists: list[str] = Field(default_factory=list, max_length=4)
     generation_profile: str = "balanced"
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -166,10 +174,19 @@ class PlayableEpisode(BaseModel):
         return self.duration_seconds
 
 
+class SourceNotice(BaseModel):
+    """Why the programme differs from the request, as data (never model-written text)."""
+
+    kind: Literal["UNPLAYABLE_ARTISTS"]
+    artists: list[str] = Field(default_factory=list, max_length=4)
+
+
 class LiveEpisode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     seed_id: str
     title: str | None = None
+    # Short cover label of the seed, so the player draws the same cover as the home page.
+    cover_title: str | None = Field(default=None, max_length=40)
     topic: str | None = None
     listener_id: str = "test-listener"
     # Account ownership is separate from immutable runtime listener identity.
@@ -179,6 +196,9 @@ class LiveEpisode(BaseModel):
     generation_mode: GenerationMode = GenerationMode.PROGRESSIVE
     program_estimated_duration_seconds: int = Field(gt=0)
     presentation_intent: PresentationIntent = Field(default_factory=PresentationIntent)
+    output_language: OutputLanguage = OutputLanguage.AUTO
+    station: StationId | None = None
+    required_artists: list[str] = Field(default_factory=list, max_length=4)
     progressive_session: ProgressiveAssemblySession | None = Field(
         default=None, exclude=True, repr=False
     )
@@ -206,6 +226,20 @@ class LiveEpisode(BaseModel):
     @property
     def timeline_segments(self) -> list[Segment]:
         return [segment for segment in self.ordered_segments if segment.is_timeline_active]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def source_notice(self) -> SourceNotice | None:
+        """A quiet, structured note that some requested artists have nothing playable.
+
+        Only facts the application established: the listener asked for these artists and the
+        route plays none of them.  The words shown to the listener are written by the client.
+        """
+
+        session = self.progressive_session
+        if session is None or not session.unfulfilled_artists:
+            return None
+        return SourceNotice(kind="UNPLAYABLE_ARTISTS", artists=list(session.unfulfilled_artists))
 
     @computed_field  # type: ignore[prop-decorator]
     @property

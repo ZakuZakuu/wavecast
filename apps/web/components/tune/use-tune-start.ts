@@ -4,12 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
 import { useImmersiveOverlay } from "../../lib/chrome-visibility";
-import { friendlyError } from "../../lib/friendly-error";
+import { failureCanRetry, friendlyError } from "../../lib/friendly-error";
 import { rememberCoverSource } from "../../lib/cover/programme-cover";
 import { DUR } from "../../lib/motion/easing";
 import { isPlaybackReadySegment } from "../../lib/playback";
 import { openPlayer } from "../../lib/player-nav";
 import { rememberProgrammeStation, type Station } from "../../lib/stations";
+import { lessLikeThisArtists } from "../../lib/listener-feedback";
 import { readLocalTaste, tasteContext } from "../../lib/taste";
 import type { DurationIntent, ProgramProposal } from "../../lib/types";
 import { recordCreatedProgram } from "../../lib/user-library";
@@ -17,6 +18,8 @@ import { useNowPlaying, usePlaybackControl } from "../player/playback-provider";
 import type { TuningStep } from "./tuning-in";
 
 export const LAST_STATION_KEY = "wavecast-last-station-v1";
+/** Spoken language of generated programmes; follows the (Chinese-only) interface language. */
+export const PROGRAMME_LANGUAGE = "zh-CN" as const;
 /** 开播中 stays under the player until its fade-in (DUR.slow) has finished. */
 const HANDOVER_MS = DUR.slow + 150;
 
@@ -31,6 +34,8 @@ type Phase =
     coverId?: string;
     proposal: ProgramProposal | null;
     error: string | null;
+    /** False when the failure is deterministic (no playable source): rephrase instead. */
+    retryable?: boolean;
   };
 
 export type TuneStart = ReturnType<typeof useTuneStart>;
@@ -68,7 +73,10 @@ export function useTuneStart() {
         prompt: prompt.trim().length >= 2 ? prompt.trim() : target.defaultTopic,
         duration_intent: duration,
         count: 1,
-        taste_context: tasteContext(readLocalTaste()),
+        taste_context: tasteContext(readLocalTaste(), lessLikeThisArtists()),
+        // The interface is Chinese: the programme follows it, not the language of the keyword.
+        output_language: PROGRAMME_LANGUAGE,
+        station: target.id,
       });
       if (requestRef.current !== requestId) return;
       const proposal = batch.proposals[0];
@@ -84,6 +92,7 @@ export function useTuneStart() {
         ...base,
         proposal: null,
         error: reason instanceof Error && /[一-鿿]/.test(reason.message) ? reason.message : "开播失败了，可以再试一次",
+        retryable: failureCanRetry(reason),
       });
     }
   }, [open]);
@@ -173,5 +182,6 @@ export function useTuneStart() {
     retry,
     steps,
     error,
+    retryable: phase.kind === "tuning" ? phase.retryable !== false : true,
   };
 }

@@ -134,3 +134,42 @@ def test_netease_sidecar_exposes_optional_timing_profile() -> None:
     assert profile.source_duration_seconds == 184
     assert profile.first_vocal_start_seconds == 4
     assert profile.last_vocal_end_seconds == 8
+
+
+def test_netease_gateway_token_is_server_only_and_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    token = "dedicated-test-token"
+    monkeypatch.setenv("NETEASE_MUSIC_API_BEARER_TOKEN", token)
+    settings = ProviderSettings.from_env()
+    assert settings.netease_music_api_bearer_token == token
+    assert token not in repr(settings)
+    assert settings.for_live_capability().netease_music_api_bearer_token == token
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.headers["Authorization"] == f"Bearer {token}"
+        if request.url.path == "/search":
+            return httpx.Response(200, json={"tracks": []})
+        if request.url.path.endswith("/playback"):
+            return httpx.Response(200, json={"data": {"playback_url": "https://audio.example/123"}})
+        if request.url.path.endswith("/timing"):
+            return httpx.Response(200, json={"source_duration_seconds": 180})
+        return httpx.Response(200, json={"id": "123", "artist": "Artist", "title": "Song", "duration_seconds": 180})
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            provider = NeteaseMusicProvider(settings, client=client, base_url="https://gateway.example")
+            await provider.search("song")
+            playback = await provider.resolve_upstream_playback_request("netease:123")
+            await provider.get_timing_profile("netease:123")
+            assert token not in repr(playback)
+            assert "Authorization" not in playback.headers
+            assert playback.url == "https://audio.example/123"
+            # A NetEase token must not be forwarded to the QQ sidecar.
+            qq = QQMusicProvider(settings, client=client, base_url="https://qq.example")
+            assert "Authorization" not in qq._request_headers()
+            local = NeteaseMusicProvider(ProviderSettings(), client=client, base_url="http://localhost:3101")
+            assert local._request_headers() == {"Accept": "application/json"}
+
+    asyncio.run(run())
+    assert [r.url.path for r in requests] == ["/search", "/tracks/123", "/tracks/123/playback", "/tracks/123/timing"]

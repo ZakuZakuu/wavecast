@@ -19,7 +19,15 @@ describe("guest featured programmes", () => {
     for (const item of FEATURED_PROGRAMMES) {
       expect(item.prompt.trim().length).toBeGreaterThanOrEqual(2);
       expect(item.title.trim()).not.toBe("");
+      expect(item.displayTitle.trim()).not.toBe("");
       expect(item.minutes).toBeGreaterThan(0);
+    }
+  });
+
+  it("shows titles in the generator's style: no colon subtitle, and the subject stays in it", () => {
+    for (const item of FEATURED_PROGRAMMES) {
+      expect(item.displayTitle).not.toMatch(/[:：]/);
+      expect(item.displayTitle.replace(/\s+/g, "")).toContain(item.title.replace(/\s+/g, "").slice(0, 3));
     }
   });
 
@@ -33,7 +41,7 @@ describe("guest featured programmes", () => {
     const intents = FEATURED_PROGRAMMES.map(featuredDurationIntent);
     expect(intents[0]).toBe("SHORT");
     expect(featuredDurationIntent({ ...FEATURED_PROGRAMMES[0], minutes: 55 })).toBe("DEEP");
-    expect(featuredDurationIntent({ ...FEATURED_PROGRAMMES[0], minutes: 28 })).toBe("STANDARD");
+    expect(featuredDurationIntent({ ...FEATURED_PROGRAMMES[0], minutes: 28 })).toBe("SHORT");
   });
 
   it("never cuts a title short on the cover", () => {
@@ -50,6 +58,19 @@ describe("guest featured programmes", () => {
       expect(again).toEqual(first);
       const station = STATIONS.find((candidate) => candidate.id === item.stationId)!;
       expect(station.templates).toContain(first.template);
+    }
+  });
+});
+
+describe("featured blurbs", () => {
+  it("every featured programme says in one sentence what it will take the listener through", async () => {
+    const { FEATURED_PROGRAMMES } = await import("../lib/featured");
+    for (const item of FEATURED_PROGRAMMES) {
+      expect(item.blurb.trim().length).toBeGreaterThan(8);
+      expect(item.blurb.length).toBeLessThanOrEqual(48);
+      // no colon-subtitle style, and no catalogue or research promise
+      expect(item.blurb).not.toMatch(/[:：]/);
+      expect(item.blurb).not.toMatch(/曲库|收录|全部|最全|独家|研究/);
     }
   });
 });

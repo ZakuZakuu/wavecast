@@ -15,6 +15,7 @@ from wavecast.models.episode import (
     NarrationSegment,
     SegmentState,
 )
+from wavecast.models.progressive import ProgressiveAssemblySession
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.runtime import StagedProgressiveRuntime
 from wavecast.presentation import HostMode
@@ -176,6 +177,28 @@ async def author_pending_narration(
     return await asyncio.to_thread(host.repository.get, episode_id)
 
 
+def _with_chapter_research(
+    session: ProgressiveAssemblySession, chapter_id: str, generated: GeneratedChapter
+) -> dict[str, object]:
+    """Session fields after adding the research found for one chapter's track."""
+
+    have = {item.id for item in session.research.evidence}
+    added = [item for item in generated.research_evidence if item.id not in have]
+    research = session.research.model_copy(
+        update={"evidence": [*session.research.evidence, *added]}
+    )
+    chapters = []
+    for item in session.chapters:
+        if item.chapter_id == chapter_id:
+            ids = list(item.chapter.evidence_ids)
+            ids.extend(i for i in generated.research_evidence_ids if i not in ids)
+            item = item.model_copy(
+                update={"chapter": item.chapter.model_copy(update={"evidence_ids": ids})}
+            )
+        chapters.append(item)
+    return {"research": research, "chapters": chapters}
+
+
 def _next_authoring_chapter_id(episode: LiveEpisode) -> str | None:
     session = episode.progressive_session
     if session is None:
@@ -289,14 +312,17 @@ def _finish_authoring(
                 retained.append(segment)
             episode.segments = retained + replacement
 
-        episode.progressive_session = session.model_copy(
-            update={
-                "narration_authored_chapter_ids": [
-                    *session.narration_authored_chapter_ids,
-                    chapter_id,
-                ]
-            }
-        )
+        session_update: dict[str, object] = {
+            "narration_authored_chapter_ids": [
+                *session.narration_authored_chapter_ids,
+                chapter_id,
+            ]
+        }
+        if generated is not None and replacement is not None and (
+            generated.research_evidence or generated.research_evidence_ids
+        ):
+            session_update.update(_with_chapter_research(session, chapter_id, generated))
+        episode.progressive_session = session.model_copy(update=session_update)
         episode.last_activity_at = host.now()
         try:
             return host.repository.save(episode)

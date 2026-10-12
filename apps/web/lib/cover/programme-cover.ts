@@ -101,8 +101,11 @@ export function programmeCover(input: {
   id: string;
   title: string;
   stationId: StationId;
+  /** The backend's short cover label; used when it fits, else the title is cut as before. */
+  coverTitle?: string | null;
 }): ProgrammeCover {
-  const heading = coverHeading(input.title);
+  const label = input.coverTitle?.trim();
+  const heading = (label && visualLength(label) <= MAX_HEADING_WIDTH ? breakHeading(label) : null) ?? coverHeading(input.title);
   const params: CoverParams = {
     stationId: stationById(input.stationId).id,
     seed: seedFromId(coverIdFor(input.id)),

@@ -82,6 +82,21 @@
   overflow: hidden;
 }
 .pick-meta { font-size: 13px; color: var(--ink-2); }
+.programme-sheet { display: flex; flex-direction: column; }
+.ps-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 24px 12px; display: flex; flex-direction: column; gap: 10px; }
+.ps-cover { display: block; width: min(60%, 240px); aspect-ratio: 1; align-self: center; margin-bottom: 6px; border-radius: var(--radius-cover); overflow: hidden; box-shadow: 0 6px 18px rgba(29, 29, 31, .08); }
+.ps-title { margin: 0; font-size: 22px; line-height: 1.3; font-weight: 700; }
+.ps-meta { margin: 0; font-size: 14px; color: var(--ink-2); }
+.ps-description { margin: 4px 0 0; font-size: 16px; line-height: 1.6; }
+.ps-reason { margin: 0; font-size: 14px; line-height: 1.6; color: var(--ink-2); }
+.ps-reason-label { display: block; font-size: 12px; font-weight: 600; letter-spacing: .04em; margin-bottom: 2px; }
+.ps-note { margin: 6px 0 0; font-size: 13px; color: var(--ink-2); }
+.ps-play { margin: 8px 24px calc(16px + env(safe-area-inset-bottom)); width: calc(100% - 48px); min-height: 54px; flex: 0 0 auto; }
+.pick-refresh {
+  align-self: center; margin-top: 4px; padding: 10px 22px; border-radius: 999px;
+  background: var(--fill); color: var(--ink); font-size: 15px; font-weight: 600;
+}
+.pick-refresh:disabled { opacity: .6; }
 .pick-skeleton { aspect-ratio: 1; border-radius: var(--radius-cover); background: var(--fill); }
 .inline-note { margin: 0; font-size: 15px; color: var(--ink-2); }
 .inline-note a { color: var(--ink); font-weight: 600; margin-left: 6px; }
@@ -164,6 +179,8 @@
   z-index: 1;
 }
 .lib-link { -webkit-user-drag: none; user-select: none; -webkit-user-select: none; height: 100%; padding: 0 14px; display: flex; align-items: center; gap: 12px; }
+.lib-main { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; gap: 12px; }
+.ring-button { flex: 0 0 auto; width: 44px; height: 44px; margin-right: -8px; padding: 0; border: 0; background: transparent; display: grid; place-items: center; }
 .lib-cover { width: 52px; height: 52px; flex: 0 0 auto; border-radius: 8px; overflow: hidden; }
 .lib-copy { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .lib-title { font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

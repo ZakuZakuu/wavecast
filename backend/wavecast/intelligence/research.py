@@ -22,6 +22,7 @@ from .models import (
     FastStartPlan,
     PlannedResearchQuery,
     ResearchBundle,
+    ResearchDepth,
     ResearchFacet,
     ResearchPlan,
     ResearchPlanMode,
@@ -62,6 +63,12 @@ class ResearchIntentPlanner(Protocol):
 
 FAST_RESEARCH_DEADLINE_SECONDS = 4.5
 BACKGROUND_RESEARCH_DEADLINE_SECONDS = 8.0
+# A programme written mostly from evidence (a portrait, a lineage) gets a larger budget: more
+# queries, more results each, Tavily's advanced depth, and longer to answer.  The opening track
+# is already playing while this runs, so the extra seconds are not heard.
+DEEP_RESEARCH_DEADLINE_SECONDS = 20.0
+STANDARD_BACKGROUND_BUDGET = (1, 2, 4)  # exa queries, tavily queries, results per query
+DEEP_BACKGROUND_BUDGET = (2, 5, 5)
 BACKGROUND_RESEARCH_PLANNER_DEADLINE_SECONDS = 20.0
 
 
@@ -100,6 +107,12 @@ class BackgroundResearchPlanner:
 
     @staticmethod
     def _prompt(request: FastResearchInput, fast_result: FastResultLike) -> str:
+        budget = (
+            DEEP_BACKGROUND_BUDGET
+            if request.depth is ResearchDepth.DEEP
+            else STANDARD_BACKGROUND_BUDGET
+        )
+        max_exa, max_tavily = budget[0], budget[1]
         return (
             "Plan the bounded background research for the listener's actual topic. This is a "
             "research-intent step, not a fixed show-type classifier and not a search call. "
@@ -107,8 +120,10 @@ class BackgroundResearchPlanner:
             "creative-work analysis, and non-music context should produce different questions "
             "when warranted. Use normalized fast evidence as context, but do not invent facts "
             "or track entities. Propose zero to eight distinct queries; application code will "
-            "execute at most one DISCOVERY query through Exa and two RESEARCH/EXACT queries "
-            "through Tavily. Every query needs a non-empty rationale and valid facet IDs. "
+            f"execute at most {max_exa} DISCOVERY queries through Exa and {max_tavily} "
+            "RESEARCH/EXACT queries through Tavily, in the order you list them, so put the "
+            "most informative first and make each facet (biography, collaborations, key works, "
+            "style, reception) a separate query when the request is about one artist. Every query needs a non-empty rationale and valid facet IDs. "
             "Use research_mode=adaptive when more evidence is useful; if no additional "
             "background research is needed, set research_mode=no_additional_research and give "
             "a concrete no_research_reason. An adaptive plan with no facets or queries is "
@@ -218,9 +233,11 @@ class BackgroundResearchService:
         deadline_seconds: float = BACKGROUND_RESEARCH_DEADLINE_SECONDS,
         planner_deadline_seconds: float = BACKGROUND_RESEARCH_PLANNER_DEADLINE_SECONDS,
         planner: ResearchIntentPlanner | None = None,
+        deep_research: SearchCallable | None = None,
     ) -> None:
         self.discovery = discovery
         self.research = research
+        self.deep_research = deep_research
         self.ledger = ledger
         self.deadline_seconds = deadline_seconds
         self.planner_deadline_seconds = planner_deadline_seconds
@@ -244,7 +261,12 @@ class BackgroundResearchService:
             if cancel_event is not None and cancel_event.is_set():
                 return None
             raise
-        selected = select_background_queries(plan, fast_result.queries)
+        deep = request.depth is ResearchDepth.DEEP
+        excerpt_chars = DEEP_EXCERPT_CHARS if deep else STANDARD_EXCERPT_CHARS
+        max_exa, max_tavily, per_query = DEEP_BACKGROUND_BUDGET if deep else STANDARD_BACKGROUND_BUDGET
+        selected = select_background_queries(
+            plan, fast_result.queries, max_exa=max_exa, max_tavily=max_tavily
+        )
         if trace:
             trace.mark(
                 "background_started",
@@ -264,7 +286,13 @@ class BackgroundResearchService:
         tasks: dict[asyncio.Task[list[SearchResult]], tuple[str, PlannedResearchQuery]] = {}
         for provider, query in selected:
             search = self.discovery if provider == "exa" else self.research
-            tasks[asyncio.create_task(search.search(query.query, limit=4, stage="background_research"))] = (
+            if deep and provider == "tavily" and self.deep_research is not None:
+                search = self.deep_research
+            tasks[
+                asyncio.create_task(
+                    search.search(query.query, limit=per_query, stage="background_research")
+                )
+            ] = (
                 provider,
                 query,
             )
@@ -290,7 +318,12 @@ class BackgroundResearchService:
         if cancel_event:
             cancel_task = asyncio.create_task(cancel_event.wait())
             waitables.add(cancel_task)
-        done, pending = await asyncio.wait(waitables, timeout=self.deadline_seconds)
+        done, pending = await asyncio.wait(
+            waitables,
+            timeout=max(self.deadline_seconds, DEEP_RESEARCH_DEADLINE_SECONDS)
+            if deep
+            else self.deadline_seconds,
+        )
         if cancel_task and cancel_task in done and cancel_event and cancel_event.is_set():
             for task in tasks:
                 task.cancel()
@@ -326,10 +359,11 @@ class BackgroundResearchService:
             fast_result.bundle,
             bundle_from_results(
                 request,
-                normalize_results(extra),
+                normalize_results(extra, excerpt_chars=excerpt_chars),
                 failures,
                 query_context=query_context,
                 research_plan=plan,
+                excerpt_chars=excerpt_chars,
             ),
         )
         if trace:
@@ -632,9 +666,13 @@ def _research_plan_for(
 
 
 def select_background_queries(
-    plan: ResearchPlan, fast_queries: list[str]
+    plan: ResearchPlan,
+    fast_queries: list[str],
+    *,
+    max_exa: int = 1,
+    max_tavily: int = 2,
 ) -> list[tuple[str, PlannedResearchQuery]]:
-    """Select at most one Exa and two Tavily queries in declared plan order."""
+    """Select at most ``max_exa`` Exa and ``max_tavily`` Tavily queries in declared plan order."""
 
     fast_keys = {query.strip().casefold() for query in fast_queries}
     seen: set[str] = set()
@@ -647,21 +685,27 @@ def select_background_queries(
             continue
         seen.add(key)
         if query.intent is SearchIntent.DISCOVERY:
-            if exa_count >= 1:
+            if exa_count >= max_exa:
                 continue
             exa_count += 1
             selected.append(("exa", query))
         else:
-            if tavily_count >= 2:
+            if tavily_count >= max_tavily:
                 continue
             tavily_count += 1
             selected.append(("tavily", query))
-        if len(selected) == 3:
+        if len(selected) == max_exa + max_tavily:
             break
     return selected
 
 
-def normalize_results(results: list[SearchResult]) -> list[SearchResult]:
+STANDARD_EXCERPT_CHARS = 800
+DEEP_EXCERPT_CHARS = 1600
+
+
+def normalize_results(
+    results: list[SearchResult], *, excerpt_chars: int = STANDARD_EXCERPT_CHARS
+) -> list[SearchResult]:
     seen: set[str] = set()
     normalized: list[SearchResult] = []
     for result in results:
@@ -675,7 +719,7 @@ def normalize_results(results: list[SearchResult]) -> list[SearchResult]:
                 update={
                     "url": canonical_url,
                     "snippet": result.snippet[:600],
-                    "content": (result.content or result.snippet)[:800],
+                    "content": (result.content or result.snippet)[:excerpt_chars],
                 }
             )
         )
@@ -689,6 +733,7 @@ def bundle_from_results(
     *,
     query_context: Mapping[str, PlannedResearchQuery] | None = None,
     research_plan: ResearchPlan | None = None,
+    excerpt_chars: int = STANDARD_EXCERPT_CHARS,
 ) -> ResearchBundle:
     evidence: list[Evidence] = []
     facets = {facet.id: facet for facet in (research_plan.facets if research_plan else [])}
@@ -718,7 +763,7 @@ def bundle_from_results(
         evidence.append(
             Evidence(
                 id=evidence_id,
-                claim_or_excerpt=excerpt[:800],
+                claim_or_excerpt=excerpt[:excerpt_chars],
                 source_url=canonical_url,
                 canonical_url=canonical_url,
                 source_domain=domain,

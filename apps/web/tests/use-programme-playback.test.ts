@@ -101,4 +101,30 @@ describe("useProgrammePlayback", () => {
     expect(stored.positionSeconds).toBe(42);
     expect(api.programCheckpoint).toHaveBeenLastCalledWith("episode-1", 42);
   });
+
+  it("takes the listener lease back when the server reports it expired", async () => {
+    const { ApiRequestError } = await import("../lib/api");
+    const expired = Object.assign(new ApiRequestError("listener session is inactive; resume it before generating", 409), { status: 409 });
+    api.heartbeat.mockRejectedValue(expired);
+    api.resume.mockResolvedValue({ ...episode, version: 2 });
+    await act(async () => { root.render(createElement(Probe, { episodeId: "episode-1" })); });
+    await flush();
+    expect(api.resume).toHaveBeenCalledWith("episode-1");
+    expect(latest?.localEpisode?.version).toBe(2);
+  });
+
+  it("does not resume an expired lease for a listener who paused", async () => {
+    const { ApiRequestError } = await import("../lib/api");
+    const expired = Object.assign(new ApiRequestError("listener session is inactive; resume it before generating", 409), { status: 409 });
+    api.get.mockResolvedValue({ ...episode, is_playing: false });
+    api.heartbeat.mockRejectedValue(expired);
+    await act(async () => { root.render(createElement(Probe, { episodeId: "episode-1" })); });
+    await flush();
+    act(() => latest!.pausePlayback());
+    await flush();
+    api.resume.mockClear();
+    await act(async () => { await Promise.resolve(); });
+    expect(latest!.browserPlaying).toBe(false);
+    expect(api.resume).not.toHaveBeenCalled();
+  });
 });

@@ -36,6 +36,7 @@ def test_preferences_and_product_events_are_durable() -> None:
         moods=["Late Night"],
         discovery_level=DiscoveryLevel.ADVENTUROUS,
         onboarding_completed=True,
+        avoid_artists=["Mogwai"],
     )
 
     async def cleanup() -> None:

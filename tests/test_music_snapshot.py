@@ -292,3 +292,52 @@ def test_provider_snapshot_fetcher_maps_timeout() -> None:
             )
 
     asyncio.run(run())
+
+
+def _retry_fetcher(statuses: list[int], resolved: list[int]) -> ProviderPlaybackSnapshotFetcher:
+    answers = iter(statuses)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        status = next(answers)
+        if status == 200:
+            return httpx.Response(200, headers={"content-type": "audio/mpeg"}, content=b"track")
+        return httpx.Response(status)
+
+    async def resolve(_source: object) -> ResolvedPlaybackRequest:
+        resolved.append(1)
+        return ResolvedPlaybackRequest(provider="test", url="https://upstream.example.test/audio")
+
+    return ProviderPlaybackSnapshotFetcher(
+        resolve,
+        client_factory=lambda _timeout: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+
+def test_a_refused_first_fetch_is_retried_once_with_a_freshly_resolved_url() -> None:
+    async def run() -> None:
+        resolved: list[int] = []
+        fetcher = _retry_fetcher([403, 200], resolved)
+
+        snapshot = await fetcher.fetch(
+            classify_music_source("/api/audio/sidecar/netease/track-1"), duration_seconds=7
+        )
+
+        assert snapshot.content == b"track"
+        assert len(resolved) == 2
+
+    asyncio.run(run())
+
+
+def test_a_missing_track_or_a_second_failure_is_not_retried_further() -> None:
+    async def run() -> None:
+        for statuses, expected_resolves in (([404], 1), ([502, 502], 2)):
+            resolved: list[int] = []
+            fetcher = _retry_fetcher(statuses, resolved)
+            with pytest.raises(MusicSnapshotError, match="snapshot_upstream_status"):
+                await fetcher.fetch(
+                    classify_music_source("/api/audio/sidecar/netease/track-1"),
+                    duration_seconds=7,
+                )
+            assert len(resolved) == expected_resolves
+
+    asyncio.run(run())

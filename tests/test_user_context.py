@@ -70,3 +70,18 @@ def test_event_service_records_only_product_event_fields() -> None:
 
     with pytest.raises(ValidationError):
         UserEventInput(event_type="PROVIDER_RESPONSE", raw_prompt="private")
+
+
+def test_avoided_artists_are_newest_first_deduplicated_and_capped() -> None:
+    from wavecast.user_context import MAX_AVOID_ARTISTS, with_avoided_artist
+
+    preferences = UserPreferences(user_id="u", avoid_artists=["Mogwai", "Perfume"])
+
+    again = with_avoided_artist(preferences, "  perfume ")
+    assert again.avoid_artists == ["perfume", "Mogwai"]
+
+    full = preferences
+    for index in range(MAX_AVOID_ARTISTS + 5):
+        full = with_avoided_artist(full, f"artist {index}")
+    assert len(full.avoid_artists) == MAX_AVOID_ARTISTS
+    assert full.avoid_artists[0] == f"artist {MAX_AVOID_ARTISTS + 4}"

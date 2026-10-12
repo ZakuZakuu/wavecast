@@ -51,7 +51,8 @@ def test_mock_mode_is_credential_free(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.resolved_tts_provider == "mock"
     assert settings.minimax_tts_base_url == "https://api.minimax.cn"
     assert settings.minimax_tts_model == "speech-2.8-turbo"
-    assert settings.minimax_tts_speed == 0.8
+    assert settings.minimax_tts_speed == 0.9
+    assert settings.minimax_tts_volume == 1.7
     with pytest.raises(ProviderConfigurationError):
         settings.credential_for("deepseek")
 
@@ -405,3 +406,13 @@ def test_usage_ledger_aggregates_by_stage() -> None:
 
     assert ledger.totals_for_stage("fast_start").output_tokens == 7
     assert ledger.totals_for_stage("background_research").search_credits == 2
+
+
+def test_the_catalog_pool_is_on_by_default_and_can_be_switched_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WAVECAST_CATALOG_POOL", raising=False)
+    assert ProviderSettings.from_env().catalog_pool is True
+
+    monkeypatch.setenv("WAVECAST_CATALOG_POOL", "off")
+    assert ProviderSettings.from_env().catalog_pool is False

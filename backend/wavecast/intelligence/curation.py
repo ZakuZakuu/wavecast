@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
+from wavecast.text_identity import canonical_name
 
 from .fast_start import FastStructuredProvider
 from .models import (
@@ -19,6 +21,9 @@ from .models import (
     resolve_output_language,
 )
 from .trace import GenerationTrace
+
+if TYPE_CHECKING:
+    from wavecast.catalog_pool import CatalogPool
 
 
 class CuratorContractError(ValueError):
@@ -52,6 +57,9 @@ class CuratorService:
         output_language: OutputLanguage = OutputLanguage.AUTO,
         topic: str = "",
         trace: GenerationTrace | None = None,
+        catalog_pool: CatalogPool | None = None,
+        required_artists: Sequence[str] = (),
+        variety_seed: str = "",
     ) -> ProgramSkeleton:
         committed = committed_chapters or []
         research_context, fast_context = _build_curator_context(bundle, fast_plan)
@@ -74,7 +82,8 @@ class CuratorService:
             "rather than expanding the episode just to fill duration. "
             "For explicit music-discovery or artist-to-artist, scene, genre, mood, or "
             "lineage route requests, when grounded candidates support it and max_tracks is at "
-            "least 3, prefer a 3-5 track-bearing listening arc rather than a brittle two-track "
+            f"least 3, prefer a {min(3, max_tracks)}-{max(5, max_tracks)} track-bearing listening "
+            "arc rather than a brittle two-track "
             "route. Treat a broad listener theme such as a mood or genre as a station brief, "
             "not as an instruction to turn whichever early artist was selected into an artist "
             "radio. Unless the listener explicitly asks for a single-artist deep dive, prefer "
@@ -113,6 +122,9 @@ class CuratorService:
             f"Research context: {_compact_json(research_context)}\n"
             f"FastStart context: {_compact_json(fast_context)}\n"
             f"Committed: {_compact_json([item.model_dump(mode='json') for item in committed])}\n"
+            f"{_catalog_pool_context(catalog_pool, variety_seed)}"
+            f"{_required_artists_context(required_artists)}"
+            f"{_long_programme_guidance(desired_duration_seconds, max_tracks)}"
             f"Duration: {desired_duration_seconds}\n"
             f"Output language: {resolve_output_language(output_language, topic).value}"
         )
@@ -132,6 +144,69 @@ class CuratorService:
         _validate_curator_contract(normalized, bundle)
         normalized = _restore_committed_prefix(normalized, committed)
         return ensure_distance_curve(normalized)
+
+
+def _long_programme_guidance(desired_duration_seconds: int, max_tracks: int) -> str:
+    """Ask for a route that fills a long programme; empty for the default 5-track route."""
+
+    if max_tracks <= 5:
+        return ""
+    return (
+        f"The listener asked for about {round(desired_duration_seconds / 60)} minutes, so plan "
+        f"up to {max_tracks} track-bearing chapters, and not fewer than {max(3, max_tracks - 3)} "
+        "when the research and available tracks support them; still select fewer rather than "
+        "padding with unrelated tracks.\n"
+    )
+
+
+def _required_artists_context(required: Sequence[str]) -> str:
+    """Artists the listener's request names; the route must play each of them."""
+
+    names = [name for name in required if name.strip()]
+    if not names:
+        return ""
+    return (
+        f"Required artists (the listener's request names them): {_compact_json(names)}. The route "
+        "must play at least one track by each of them, in the position that best serves the "
+        "request, taken from Available when it is listed there. A chapter's reason, "
+        "narration_goal and evidence_ids must describe the artist of its own track, never "
+        "another artist.\n"
+    )
+
+
+_POOL_INSTRUCTIONS = (
+    "Available catalog tracks were verified playable just now. Choose each TrackProposal "
+    "from this list whenever it fits the topic, copying artist and title exactly as written; "
+    "propose a track outside the list only when the list cannot serve the topic. Prefer "
+    "source llm_candidate, then artist_search, then keyword_search; inside a source the order "
+    "means nothing, so when several tracks fit equally well do not favour the first ones. "
+    "Never propose a track named in Unavailable.\n"
+)
+
+
+def _catalog_pool_context(pool: CatalogPool | None, seed: str = "") -> str:
+    """Prompt section for the verified catalog pool; empty (no change) without a pool."""
+
+    if pool is None:
+        return ""
+    listed = pool.listing(seed=seed)
+    if not listed:
+        return ""
+    available = [
+        {
+            "artist": entry.artist,
+            "title": entry.title,
+            "seconds": entry.duration_seconds,
+            "source": entry.source.value,
+        }
+        for entry in listed
+    ]
+    unavailable = pool.unavailable()
+    return (
+        _POOL_INSTRUCTIONS
+        + f"Available: {_compact_json(available)}\n"
+        + (f"Unavailable: {_compact_json(unavailable)}\n" if unavailable else "")
+    )
 
 
 def _build_curator_context(
@@ -239,7 +314,7 @@ def normalize_curator_skeleton(
                     )
                 )
             track = track.model_copy(update={"evidence_ids": track_ids})
-            seen_track_keys = {(track.artist.casefold().strip(), track.title.casefold().strip())}
+            seen_track_keys = {(canonical_name(track.artist), canonical_name(track.title))}
             for alternate in chapter.track_alternates:
                 alternate_ids, dropped, remaining = _retain_evidence_ids(
                     alternate.evidence_ids, available
@@ -257,8 +332,8 @@ def normalize_curator_skeleton(
                     update={"evidence_ids": alternate_ids}
                 )
                 key = (
-                    normalized_alternate.artist.casefold().strip(),
-                    normalized_alternate.title.casefold().strip(),
+                    canonical_name(normalized_alternate.artist),
+                    canonical_name(normalized_alternate.title),
                 )
                 if key in seen_track_keys:
                     diagnostics.append(

@@ -17,6 +17,6 @@ describe("home picks", () => {
   it("formats the station and length line", () => {
     expect(pickMeta("夜里", 30)).toBe("夜里，约 30 分钟");
     expect(pickMeta("唱片行", null)).toBe("唱片行");
-    expect(RECOMMENDATION_MINUTES).toBe(30);
+    expect(RECOMMENDATION_MINUTES).toBe(35);
   });
 });

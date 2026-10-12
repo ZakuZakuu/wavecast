@@ -16,7 +16,7 @@ export function formatClock(totalSeconds: number): string {
     : `${String(minutes).padStart(2, "0")}:${rest}`;
 }
 
-const TIER_SECONDS: Record<string, number> = { SHORT: 15 * 60, STANDARD: 30 * 60, DEEP: 60 * 60 };
+const TIER_SECONDS: Record<string, number> = { SHORT: 35 * 60, STANDARD: 35 * 60, DEEP: 60 * 60 };
 
 /**
  * Estimated programme length for the right-hand progress label. A complete

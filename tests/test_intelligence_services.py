@@ -316,3 +316,36 @@ def test_curator_and_planning_preserve_committed_prefix_exactly() -> None:
 
     assert result.chapters[0] == committed
     assert session.committed_chapters == [committed]
+
+
+def _writer_prompt(topic: str) -> str:
+    fixture = StructuredFixture(NarrationScript(text="x", intended_duration_seconds=6))
+    evidence = [
+        Evidence(
+            id="e1",
+            claim_or_excerpt="allowed",
+            source_url="https://example.test/allowed",
+            source_provider="fixture",
+            confidence=0.8,
+            query="q",
+        )
+    ]
+    asyncio.run(WriterService(fixture).write(skeleton().chapters[0], evidence, topic=topic))
+    return fixture.prompts[0]
+
+
+def test_writer_is_told_the_final_outro_closes_the_programme_in_every_language() -> None:
+    for topic in ("椎名林檎", "Bill Evans"):
+        prompt = _writer_prompt(topic)
+
+        assert "must not mention a next chapter, next track, a continuation" in prompt
+        assert "must not discuss the status of the evidence" in prompt
+
+
+def test_chinese_writing_guidance_forbids_spoken_talk_about_evidence_status() -> None:
+    chinese = _writer_prompt("椎名林檎")
+    english = _writer_prompt("Bill Evans")
+
+    assert "口播里不要交代依据或确定程度" in chinese
+    assert "不是证据上的结论" in chinese  # named as an example of what not to say
+    assert "口播里不要交代依据" not in english  # the Chinese rule never leaks into en-US

@@ -317,6 +317,24 @@ Run lint, type checks, tests, and production builds before declaring a milestone
 
 ---
 
+## Development loop efficiency
+
+The full backend suite takes about 15 minutes and CI runs the same suite, so do not run it twice.
+
+- While developing, run only the tests for the code you touched, plus `ruff` and `mypy`
+  (seconds to two minutes).
+- Leave the full suite to CI. Open the PR as soon as the targeted checks pass, then start
+  the next piece of work (live catalog checks, the next feature) while CI runs; come back
+  only if it goes red.
+- Run the full suite locally (in the background) only when changing cross-cutting code
+  whose effects are hard to predict: configuration defaults, domain models, shared
+  providers. A flipped default once failed CI on tests that still asserted the old one.
+- Batch related small changes into one PR so CI runs once.
+- Docs-only PRs skip the backend jobs; keep documentation updates separate from code when
+  that saves a backend run.
+
+---
+
 ## Git and PR discipline
 
 The repository is private and must remain private.

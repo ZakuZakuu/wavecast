@@ -1,5 +1,7 @@
+import pytest
 from fastapi.testclient import TestClient
 from wavecast.proposals import InMemoryProgramProposalRepository, ProgramProposalGenerationError
+from wavecast.providers.errors import ProviderInvalidResponseError
 
 from services.api import main as api_module
 
@@ -24,7 +26,7 @@ def test_program_proposal_can_be_created_viewed_and_started() -> None:
         assert response.status_code == 200
         proposal = response.json()["proposals"][0]
         assert proposal["id"].startswith("proposal-")
-        assert proposal["estimated_duration_seconds"] == 22 * 60
+        assert proposal["estimated_duration_seconds"] == 35 * 60
         assert proposal["editorial_route"]
         assert proposal["opening_track_ref"] == "mock:opening"
 
@@ -50,6 +52,55 @@ def test_program_proposal_can_be_created_viewed_and_started() -> None:
         api_module.proposal_repository = previous_repository
 
 
+def test_slow_opening_host_voice_does_not_hold_up_the_start(monkeypatch) -> None:
+    """A TTS provider that takes longer than the budget costs the host's words, not the wait."""
+
+    import asyncio
+    import time
+
+    class SlowMaterializer:
+        storage = api_module.narration_materializer.storage
+        cancelled = False
+
+        async def materialize(self, narration):
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                SlowMaterializer.cancelled = True
+                raise
+            return narration
+
+    client = TestClient(api_module.app)
+    headers = {"X-Wavecast-Listener": "slow-opening-host-listener"}
+    previous_repository = api_module.proposal_repository
+    api_module.proposal_repository = InMemoryProgramProposalRepository()
+    monkeypatch.setattr(api_module, "narration_materializer", SlowMaterializer())
+    monkeypatch.setenv("WAVECAST_OPENING_HOST_BUDGET_SECONDS", "0.3")
+
+    try:
+        proposal = client.post(
+            "/api/program-proposals",
+            json={
+                "prompt": "慢速语音合成时也要立刻开播的雨夜爵士",
+                "duration_intent": "SHORT",
+                "count": 1,
+            },
+            headers=headers,
+        ).json()["proposals"][0]
+
+        started_at = time.monotonic()
+        started = client.post(f"/api/episodes/from-seed/{proposal['id']}", headers=headers)
+        elapsed = time.monotonic() - started_at
+
+        assert started.status_code == 200
+        assert elapsed < 5
+        segments = started.json()["segments"]
+        assert [segment["id"] for segment in segments] == ["segment-opening"]
+        assert SlowMaterializer.cancelled
+    finally:
+        api_module.proposal_repository = previous_repository
+
+
 def test_invalid_bearer_is_rejected_while_guest_requests_stay_anonymous(monkeypatch) -> None:
     client = TestClient(api_module.app)
 
@@ -68,7 +119,9 @@ def test_valid_bearer_keeps_listener_identity_and_resolves_user(monkeypatch) -> 
     captured: dict[str, str | None] = {}
 
     class CapturingRepository(InMemoryProgramProposalRepository):
-        def save_many(self, proposals, *, owner_listener_id=None, owner_user_id=None, source="tune"):
+        def save_many(
+            self, proposals, *, owner_listener_id=None, owner_user_id=None, source="tune"
+        ):
             captured["listener"] = owner_listener_id
             captured["user"] = owner_user_id
             super().save_many(
@@ -148,3 +201,111 @@ def test_proposal_generation_returns_safe_gateway_error(monkeypatch) -> None:
     assert response.json()["detail"] == (
         "Program proposal generation failed (opening_track_unresolved)"
     )
+
+
+def test_a_provider_failure_is_logged_for_the_operator_but_not_shown_to_the_listener(
+    monkeypatch, caplog
+) -> None:
+    class FailingGenerator:
+        async def generate(self, body):
+            del body
+            raise ProviderInvalidResponseError("deepseek request failed with HTTP 402")
+
+    client = TestClient(api_module.app)
+    monkeypatch.setattr(api_module, "proposal_generator", FailingGenerator())
+
+    with caplog.at_level("WARNING", logger=api_module.logger.name):
+        response = client.post(
+            "/api/program-proposals",
+            json={"prompt": "Mogwai", "duration_intent": "AUTO", "count": 1},
+        )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Program proposal provider failed"
+    logged = " ".join(record.getMessage() for record in caplog.records)
+    assert "program_proposal_provider_failed" in logged
+    assert "ProviderInvalidResponseError" in logged and "HTTP 402" in logged
+
+
+@pytest.mark.parametrize(
+    ("reason", "status", "needle"),
+    [
+        ("opening_track_unplayable", 422, "版权"),
+        ("opening_track_not_found", 422, "写法"),
+        ("catalog_unavailable", 503, "稍后再试"),
+    ],
+)
+def test_proposal_failures_with_a_known_cause_return_listener_guidance(
+    monkeypatch, reason: str, status: int, needle: str
+) -> None:
+    class FailingGenerator:
+        async def generate(self, body):
+            del body
+            raise ProgramProposalGenerationError(reason)
+
+    client = TestClient(api_module.app)
+    monkeypatch.setattr(api_module, "proposal_generator", FailingGenerator())
+
+    response = client.post(
+        "/api/program-proposals",
+        json={"prompt": "椎名林檎", "duration_intent": "AUTO", "count": 1},
+    )
+
+    assert response.status_code == status
+    detail = response.json()["detail"]
+    assert needle in detail
+    assert reason not in detail  # internal codes never reach the listener
+    assert "opening_track" not in detail
+
+
+def test_programme_language_travels_from_request_to_started_episode() -> None:
+    client = TestClient(api_module.app)
+    headers = {"X-Wavecast-Listener": "language-flow-listener"}
+    previous_repository = api_module.proposal_repository
+    api_module.proposal_repository = InMemoryProgramProposalRepository()
+
+    try:
+        response = client.post(
+            "/api/program-proposals",
+            json={"prompt": "late night synth drive", "count": 1, "output_language": "zh-CN"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        proposal = response.json()["proposals"][0]
+        assert proposal["output_language"] == "zh-CN"
+
+        started = client.post(f"/api/episodes/from-seed/{proposal['id']}", headers=headers)
+        assert started.status_code == 200
+        assert started.json()["output_language"] == "zh-CN"
+    finally:
+        api_module.proposal_repository = previous_repository
+
+
+def test_the_avoid_list_survives_saving_the_onboarding_form(monkeypatch) -> None:
+    from wavecast.user_context import InMemoryUserPreferencesRepository
+
+    class FakeVerifier:
+        async def verify(self, token: str) -> str:
+            return "avoid-user"
+
+    monkeypatch.setattr(api_module, "_auth_verifier", FakeVerifier())
+    monkeypatch.setattr(api_module, "user_preferences_repository", InMemoryUserPreferencesRepository())
+    client = TestClient(api_module.app)
+    headers = {"Authorization": "Bearer t", "X-Wavecast-Listener": "avoid-listener"}
+
+    first = client.post("/api/user-preferences/me/avoid-artists", json={"artist": "Mogwai"}, headers=headers)
+    assert first.status_code == 200
+    assert first.json()["avoid_artists"] == ["Mogwai"]
+
+    saved = client.put(
+        "/api/user-preferences/me",
+        json={"genres": ["Jazz"], "artists": [], "moods": [], "contexts": [], "discovery_level": "BALANCED"},
+        headers=headers,
+    )
+    assert saved.json()["avoid_artists"] == ["Mogwai"]
+    assert client.get("/api/user-preferences/me", headers=headers).json()["avoid_artists"] == ["Mogwai"]
+    removed = client.post("/api/user-preferences/me/avoid-artists/remove", json={"artist": " mogwai "}, headers=headers)
+    assert removed.json()["avoid_artists"] == []
+    client.post("/api/user-preferences/me/avoid-artists", json={"artist": "Mogwai"}, headers=headers)
+    assert client.post("/api/user-preferences/me/avoid-artists", json={"artist": ""}, headers=headers).status_code == 422
+    assert client.post("/api/user-preferences/me/avoid-artists", json={"artist": "x"}).status_code in {401, 403}

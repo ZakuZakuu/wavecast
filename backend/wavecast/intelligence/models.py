@@ -15,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from wavecast.language import OutputLanguage as OutputLanguage  # re-exported for callers
+
 
 class NoveltyDistance(StrEnum):
     VERY_CLOSE = "very_close"
@@ -22,15 +24,6 @@ class NoveltyDistance(StrEnum):
     BRIDGE = "bridge"
     DISCOVERY = "discovery"
     SURPRISE = "surprise"
-
-
-class OutputLanguage(StrEnum):
-    """Supported spoken-language choices for one assembled program."""
-
-    AUTO = "auto"
-    ZH_CN = "zh-CN"
-    EN_US = "en-US"
-    JA_JP = "ja-JP"
 
 
 def resolve_output_language(requested: OutputLanguage | str, topic: str) -> OutputLanguage:
@@ -196,7 +189,7 @@ def empty_research_plan() -> ResearchPlan:
 
 class Evidence(BaseModel):
     id: str
-    claim_or_excerpt: str = Field(min_length=1, max_length=800)
+    claim_or_excerpt: str = Field(min_length=1, max_length=2000)
     source_url: str
     canonical_url: str = ""
     source_domain: str = ""
@@ -208,6 +201,9 @@ class Evidence(BaseModel):
     source_title: str = ""
     facet_ids: list[str] = Field(default_factory=list, max_length=8)
     search_intent: SearchIntent | None = None
+    # Set when the evidence was gathered for particular recordings (track research): it is about
+    # these tracks, not only about the programme's subject.
+    track_refs: list[str] = Field(default_factory=list, max_length=16)
 
 
 class TasteHypothesis(BaseModel):
@@ -241,6 +237,15 @@ class ResolvedTrack(BaseModel):
     track_ref: str = Field(min_length=1, max_length=300)
     canonical_artist: str = Field(min_length=1, max_length=120)
     canonical_title: str = Field(min_length=1, max_length=160)
+    # Length of the file the catalog will play, when the lookup reported it.  Planning uses it
+    # to fit a programme to its time budget; it is not part of the track's identity.
+    duration_seconds: int | None = Field(default=None, ge=1, le=36000)
+    # The catalog's own Chinese title, when its title is in another script and it records one.
+    # The voice says this instead of "这首歌"; it is not part of the track's identity.
+    spoken_title: str | None = Field(default=None, max_length=160)
+    # The album the catalog lists this recording on; research uses it to find (and share) what is
+    # known about the work, never as part of the track's identity.
+    album: str | None = Field(default=None, max_length=160)
 
 
 # Compatibility name for callers that still use the former proposal type.  It is
@@ -426,6 +431,14 @@ class FastStartPlan(BaseModel):
         return copied
 
 
+class ResearchDepth(StrEnum):
+    """How much background research a programme gets.  Stations whose host talks a lot
+    (portraits, lineages) are written from evidence, so they get a larger budget."""
+
+    STANDARD = "standard"
+    DEEP = "deep"
+
+
 class FastResearchInput(BaseModel):
     topic: str
     anchor_tracks: list[str] = Field(default_factory=list)
@@ -433,6 +446,7 @@ class FastResearchInput(BaseModel):
     desired_duration_seconds: int = Field(gt=0)
     listener_taste_context: str | None = None
     output_language: OutputLanguage = OutputLanguage.AUTO
+    depth: ResearchDepth = ResearchDepth.STANDARD
 
 
 class FastResearchResult(BaseModel):

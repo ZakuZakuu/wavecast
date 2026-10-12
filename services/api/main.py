@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from wavecast.arrangement import MixPlan, plan_episode_mix
 from wavecast.assembly import create_episode_assembly_service
 from wavecast.auth import AuthPrincipal, AuthTokenError, JwksJWTVerifier
+from wavecast.catalog_pool import CatalogPoolBuilder, PoolBuildConfig
 from wavecast.deployment import audio_root_from_env, normalize_database_url
 from wavecast.materialization import (
     MusicSnapshotError,
@@ -60,6 +61,9 @@ from wavecast.orchestration.episode import EpisodeRuntimeError, InMemoryEpisodeR
 from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
 from wavecast.presentation import HostMode
 from wavecast.proposals import (
+    REASON_CATALOG_UNAVAILABLE,
+    REASON_OPENING_NOT_FOUND,
+    REASON_OPENING_UNPLAYABLE,
     DeterministicMockProgramProposalGenerator,
     InMemoryProgramProposalRepository,
     LLMProgramProposalGenerator,
@@ -70,6 +74,7 @@ from wavecast.proposals import (
     ProgramProposalRepository,
     ProposalGenerationRequest,
     ProposalPersistenceConflict,
+    shared_copy,
 )
 from wavecast.providers.audius import AudiusMusicProvider
 from wavecast.providers.config import ProviderSettings
@@ -84,7 +89,7 @@ from wavecast.providers.netease import NeteaseMusicProvider
 from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
 from wavecast.providers.retrieval import MusicRetrievalService
-from wavecast.providers.usage import UsageLedger
+from wavecast.providers.usage import UsageLedger, usage_diagnostics
 from wavecast.recommendations import (
     DeterministicRecommendationPlanner,
     InMemoryProgramIdeaRepository,
@@ -110,6 +115,8 @@ from wavecast.rendering import (
     resolve_mix_sources,
 )
 from wavecast.rendering.fingerprint import mix_plan_fingerprint
+from wavecast.spoken_form import KnownTrack, to_spoken_form
+from wavecast.stations import StationId
 from wavecast.storage import (
     EpisodeConcurrencyError,
     GenerationJobMode,
@@ -134,6 +141,7 @@ from wavecast.storage.user_context import (
     PostgresUserPreferencesRepository,
 )
 from wavecast.user_context import (
+    AvoidArtistInput,
     InMemoryUserEventRepository,
     InMemoryUserPreferencesRepository,
     UserEvent,
@@ -143,9 +151,27 @@ from wavecast.user_context import (
     UserPreferences,
     UserPreferencesRepository,
     UserPreferencesUpdate,
+    with_avoided_artist,
+    without_avoided_artist,
 )
 
 logger = logging.getLogger(__name__)
+
+# Longest the first request of an episode waits for the opening host's TTS.
+_OPENING_HOST_BUDGET_SECONDS = 8.0
+
+
+def _configure_logging() -> None:
+    """Make the counts-only ``wavecast.*`` INFO diagnostics visible in the API log."""
+
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.WARNING, format="%(levelname)s [%(name)s] %(message)s"
+        )
+    logging.getLogger("wavecast").setLevel(os.getenv("WAVECAST_LOG_LEVEL", "INFO").upper())
+
+
+_configure_logging()
 
 LISTENER_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 DATABASE_URL = os.getenv("WAVECAST_DATABASE_URL")
@@ -374,15 +400,30 @@ _auth_verifier = (
 )
 
 
+def _provider_error_summary(error: Exception) -> str:
+    """Error class and the adapter's already-sanitized message, for the operator's log."""
+
+    return f"{type(error).__name__}: {str(error)[:200]}"
+
+
 def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGenerator:
     if settings.resolved_proposal_planner == "mock":
         return DeterministicMockProgramProposalGenerator()
     live_settings = settings.for_live_capability()
     live_settings.credential_for("deepseek")
     ledger = UsageLedger()
+    retrieval = MusicRetrievalService(build_music_registry(settings))
     return LLMProgramProposalGenerator(
         DeepSeekLLMProvider(live_settings, ledger=ledger),
-        MusicRetrievalService(build_music_registry(settings)),
+        retrieval,
+        pool_builder=(
+            CatalogPoolBuilder(
+                retrieval,
+                PoolBuildConfig(max_verifications=12, concurrency=2, timeout_seconds=20.0),
+            )
+            if settings.catalog_pool
+            else None
+        ),
     )
 
 
@@ -906,11 +947,29 @@ def get_user_preferences(request: Request) -> UserPreferences:
 def put_user_preferences(
     request: Request, body: UserPreferencesUpdate
 ) -> UserPreferences:
+    user_id = authenticated_user(request)
+    existing = user_preferences_repository.get(user_id)
     preferences = UserPreferences(
-        user_id=authenticated_user(request),
+        user_id=user_id,
+        # The onboarding form does not carry the 少放这类 list; saving it must not erase it.
+        avoid_artists=existing.avoid_artists if existing else [],
         **body.model_dump(),
     )
     return user_preferences_repository.save(preferences)
+
+
+@app.post("/api/user-preferences/me/avoid-artists/remove", response_model=UserPreferences)
+def stop_avoiding_artist(request: Request, body: AvoidArtistInput) -> UserPreferences:
+    user_id = authenticated_user(request)
+    current = user_preferences_repository.get(user_id) or UserPreferences(user_id=user_id)
+    return user_preferences_repository.save(without_avoided_artist(current, body.artist))
+
+
+@app.post("/api/user-preferences/me/avoid-artists", response_model=UserPreferences)
+def avoid_artist(request: Request, body: AvoidArtistInput) -> UserPreferences:
+    user_id = authenticated_user(request)
+    current = user_preferences_repository.get(user_id) or UserPreferences(user_id=user_id)
+    return user_preferences_repository.save(with_avoided_artist(current, body.artist))
 
 
 @app.delete("/api/user-preferences/me", response_model=UserPreferences)
@@ -944,10 +1003,32 @@ def _recommendation_service() -> RecommendationService:
     )
 
 
+class RecommendationShelfResponse(BaseModel):
+    """One shelf of ideas, and whether "换一批" can still offer something else."""
+
+    ideas: list[ProgramIdeaResponse]
+    has_more: bool
+
+
+class NextShelfRequest(BaseModel):
+    shown_ids: list[str] = Field(default_factory=list, max_length=12)
+
+
 @app.get("/api/recommendations/me", response_model=list[ProgramIdeaResponse])
 def list_recommendations(request: Request) -> list[ProgramIdeaResponse]:
-    ideas = _recommendation_service().inventory_for_user(authenticated_user(request))
-    return [ProgramIdeaResponse.from_idea(idea) for idea in ideas]
+    shelf = _recommendation_service().shelf_for_user(authenticated_user(request))
+    return [ProgramIdeaResponse.from_idea(idea) for idea in shelf.ideas]
+
+
+@app.post("/api/recommendations/me/next", response_model=RecommendationShelfResponse)
+def next_recommendations(body: NextShelfRequest, request: Request) -> RecommendationShelfResponse:
+    """换一批: ideas not shown yet; the daily generation cap bounds what this can cost."""
+
+    shelf = _recommendation_service().next_shelf(authenticated_user(request), body.shown_ids)
+    return RecommendationShelfResponse(
+        ideas=[ProgramIdeaResponse.from_idea(idea) for idea in shelf.ideas],
+        has_more=shelf.has_more,
+    )
 
 
 @app.post("/api/recommendations/me/refresh", response_model=list[ProgramIdeaResponse])
@@ -1053,13 +1134,11 @@ async def materialize_recommendation(
     except ProgramProposalGenerationError as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
         await restore_available()
-        raise HTTPException(
-            status_code=502,
-            detail=f"Program proposal generation failed ({error.reason})",
-        ) from error
+        raise _proposal_failure_http_error(error) from error
     except ProviderError as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
         await restore_available()
+        logger.warning("program_proposal_provider_failed error=%s", _provider_error_summary(error))
         raise HTTPException(status_code=502, detail="Program proposal provider failed") from error
     except ProposalPersistenceConflict as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
@@ -1324,6 +1403,134 @@ def program(program_id: str, request: Request) -> ProgramProposal:
     return proposal
 
 
+class PublicProgramme(BaseModel):
+    """What a programme link shows anyone who opens it: the promise, not the listener's prompt."""
+
+    id: str
+    title: str
+    cover_title: str | None = None
+    description: str
+    estimated_duration_seconds: int
+    station: StationId | None = None
+    route: list[str]
+    tags: list[str]
+    opening_track_title: str
+    opening_track_artist: str
+    cover: CoverParams
+    is_owner: bool
+
+
+def _public_programme(program_id: str, actor: AuthPrincipal) -> PublicProgramme | None:
+    stored = proposal_repository.get(program_id)
+    seed = None if stored is not None else _static_seed(program_id)
+    proposal = stored or (ProgramProposal.from_episode_seed(seed) if seed is not None else None)
+    if proposal is None:
+        return None
+    owner = proposal_repository.get_owner(program_id) if stored is not None else None
+    is_owner = seed is not None or (
+        owner is not None
+        and (
+            (owner[1] is not None and owner[1] == actor.user_id)
+            or (owner[1] is None and owner[0] == actor.listener_id)
+        )
+    )
+    tags = list(dict.fromkeys([*proposal.genre_tags, *proposal.mood_tags]))[:6]
+    return PublicProgramme(
+        id=proposal.id,
+        title=proposal.title,
+        cover_title=proposal.cover_title,
+        description=proposal.short_description,
+        estimated_duration_seconds=proposal.estimated_duration_seconds,
+        station=proposal.station,
+        # Built-in programmes carry a generic four-step outline that says nothing.
+        route=list(proposal.editorial_route) if stored is not None else [],
+        tags=tags,
+        opening_track_title=proposal.opening_track_title,
+        opening_track_artist=proposal.opening_track_artist,
+        cover=proposal.cover,
+        is_owner=is_owner,
+    )
+
+
+_SHORT_CODE = re.compile(r"^[0-9a-f]{10}$")
+
+
+class ResolvedProgramme(BaseModel):
+    id: str
+
+
+@app.get("/api/programs/by-code/{code}", response_model=ResolvedProgramme)
+def program_by_short_code(code: str) -> ResolvedProgramme:
+    """The programme behind a short link: the first characters of a `proposal-` id."""
+
+    program_id = (
+        proposal_repository.find_id_by_prefix(f"proposal-{code}")
+        if _SHORT_CODE.fullmatch(code)
+        else None
+    )
+    if program_id is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return ResolvedProgramme(id=program_id)
+
+
+@app.get("/api/programs/{program_id}/public", response_model=PublicProgramme)
+def public_program(program_id: str, request: Request) -> PublicProgramme:
+    programme = _public_programme(program_id, principal(request))
+    if programme is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return programme
+
+
+@app.post("/api/programs/{program_id}/adopt", response_model=ProgramProposal)
+async def adopt_program(program_id: str, request: Request) -> ProgramProposal:
+    """Give the caller their own copy of a shared programme (it is made fresh for them).
+
+    Nothing is generated here, so only a quota slot is spent; listening then starts the
+    usual episode flow on the copy.
+    """
+    owner = principal(request)
+    mine = _proposal_for_program(program_id, owner)
+    if mine is not None:
+        return mine
+    original = proposal_repository.get(program_id)
+    if original is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    try:
+        reservations = await to_thread.run_sync(
+            lambda: generation_quota_repository.reserve(
+                owner.listener_id, owner.user_id, 1,
+                guest_limit=GUEST_PROGRAM_LIMIT,
+                auth_daily_limit=AUTH_DAILY_PROGRAM_LIMIT,
+                global_daily_limit=GLOBAL_DAILY_PROGRAM_LIMIT,
+            )
+        )
+    except QuotaExceededError as error:
+        if error.reason == "guest_limit":
+            detail = "今天的游客次数用完了。登录后，每天能听更多。"
+        elif error.reason == "account_daily_limit":
+            detail = "今天的调频次数已达上限，请明天再试。"
+        else:
+            detail = "今天的调频服务已达到使用上限，请稍后再试。"
+        raise HTTPException(status_code=429, detail=detail) from error
+    try:
+        copy = shared_copy(original, new_id=f"proposal-{uuid4().hex}")
+        await to_thread.run_sync(
+            lambda: proposal_repository.save_many(
+                [copy], owner_listener_id=owner.listener_id,
+                owner_user_id=owner.user_id, source="shared",
+            )
+        )
+        await to_thread.run_sync(generation_quota_repository.charge, reservations, [copy.id])
+        if owner.user_id is not None:
+            await to_thread.run_sync(
+                user_library_repository.put, owner.user_id, "CREATED", copy.id, {"id": copy.id},
+            )
+        return copy
+    except BaseException:
+        await to_thread.run_sync(generation_quota_repository.release, reservations)
+        raise
+
+
 @app.post("/api/program-proposals", response_model=ProgramProposalBatch)
 async def create_program_proposals(
     body: ProposalGenerationRequest, request: Request,
@@ -1376,9 +1583,10 @@ async def create_program_proposals(
         return ProgramProposalBatch(proposals=proposals)
     except ProgramProposalGenerationError as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
-        raise HTTPException(status_code=502, detail=f"Program proposal generation failed ({error.reason})") from error
+        raise _proposal_failure_http_error(error) from error
     except ProviderError as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
+        logger.warning("program_proposal_provider_failed error=%s", _provider_error_summary(error))
         raise HTTPException(status_code=502, detail="Program proposal provider failed") from error
     except ProposalPersistenceConflict as error:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
@@ -1386,6 +1594,47 @@ async def create_program_proposals(
     except BaseException:
         await to_thread.run_sync(generation_quota_repository.release, reservations)
         raise
+
+
+# Listener-facing guidance for failures whose cause we can tell apart.  Anything else keeps
+# the generic English gateway detail, which the web client replaces with its own fallback.
+_PROPOSAL_FAILURE_GUIDANCE: dict[str, tuple[int, str]] = {
+    REASON_OPENING_UNPLAYABLE: (
+        422,
+        "没能找到可以播放的开场歌。这位艺人或这个主题的不少作品，可能因为版权暂时没有合适的音源。"
+        "换个说法，或试试相近的艺人和风格。",
+    ),
+    REASON_OPENING_NOT_FOUND: (
+        422,
+        "没有找到和这个说法对得上的歌曲。检查一下写法，或换个更常见的名字试试。",
+    ),
+    REASON_CATALOG_UNAVAILABLE: (
+        503,
+        "音乐服务暂时不太稳定，请稍后再试。",
+    ),
+}
+
+
+def _proposal_failure_http_error(error: ProgramProposalGenerationError) -> HTTPException:
+    guidance = _PROPOSAL_FAILURE_GUIDANCE.get(error.reason)
+    if guidance is not None:
+        status_code, detail = guidance
+        return HTTPException(status_code=status_code, detail=detail)
+    return HTTPException(
+        status_code=502,
+        detail=f"Program proposal generation failed ({error.reason})",
+    )
+
+
+def _opening_host_budget_seconds() -> float:
+    """How long starting an episode may wait for the opening host's voice."""
+
+    raw = os.getenv("WAVECAST_OPENING_HOST_BUDGET_SECONDS", "").strip()
+    try:
+        value = float(raw) if raw else _OPENING_HOST_BUDGET_SECONDS
+    except ValueError:
+        return _OPENING_HOST_BUDGET_SECONDS
+    return value if value > 0 else _OPENING_HOST_BUDGET_SECONDS
 
 
 async def _prepare_opening_host(
@@ -1405,6 +1654,15 @@ async def _prepare_opening_host(
     ):
         return episode
 
+    spoken = to_spoken_form(
+        text,
+        [KnownTrack(artist=seed.opening_track_artist, title=seed.opening_track_title)],
+    )
+    if not spoken.ok:
+        # The voice cannot read part of this line; the opening host is optional.
+        logger.warning("opening_narration_skipped episode_id=%s reason=unspeakable_script", episode.id)
+        return episode
+
     narration = NarrationSegment(
         id="segment-opening-host",
         chapter_id="chapter-1",
@@ -1413,10 +1671,25 @@ async def _prepare_opening_host(
         planned_duration_seconds=8,
         title="Track Intro",
         narration_text=text,
+        tts_text=spoken.tts_text if spoken.tts_text != text else None,
         narration_role=NarrationRole.INTRO,
     )
     try:
-        materialized = await narration_materializer.materialize(narration)
+        materialized = await asyncio.wait_for(
+            narration_materializer.materialize(narration),
+            timeout=_opening_host_budget_seconds(),
+        )
+    except TimeoutError:
+        # Starting the music matters more than the host's first words: the
+        # opening track is published as one immutable stream on the first
+        # render, so a voice that arrives later has nowhere to go. Do not make
+        # the listener wait for a slow TTS provider (its own timeout is 20s).
+        logger.warning(
+            "opening_narration_skipped episode_id=%s reason=budget_exceeded budget_seconds=%s",
+            episode.id,
+            _opening_host_budget_seconds(),
+        )
+        return episode
     except Exception as error:
         # The opening host is a quality enhancement, never a playback gate.
         logger.warning(
@@ -1644,6 +1917,77 @@ def delete_my_saved(episode_id: str, request: Request) -> dict[str, Any]:
 def episode(episode_id: str, request: Request) -> LiveEpisode:
     owned(episode_id, principal(request))
     return orchestrator.get(episode_id)
+
+
+@app.get("/api/episodes/{episode_id}/usage")
+def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
+    """Provider usage and a programme summary for one episode, without prompts or URLs.
+
+    Usage is held in memory by the running API process, so it covers calls made since the
+    last restart; it is meant for reviewing one generation, not as a billing record.
+    """
+
+    owned(episode_id, principal(request))
+    current = orchestrator.get(episode_id)
+    ledger = progressive_runtime.assembly.ledger if progressive_runtime is not None else None
+    segments = current.timeline_segments
+    return {
+        "episode_id": current.id,
+        "programme": {
+            "state": current.state.value,
+            "estimated_duration_seconds": current.program_estimated_duration_seconds,
+            "timeline_duration_seconds": current.timeline_duration_seconds,
+            "music_segments": sum(1 for item in segments if item.kind is SegmentKind.MUSIC),
+            "narration_segments": sum(1 for item in segments if item.kind is SegmentKind.NARRATION),
+            "narration_skipped": sum(
+                1
+                for item in current.ordered_segments
+                if item.kind is SegmentKind.NARRATION and item.state is SegmentState.SKIPPED
+            ),
+        },
+        "providers": usage_diagnostics(ledger, scope=episode_id) if ledger is not None else None,
+    }
+
+
+@app.get("/api/episodes/{episode_id}/evidence")
+def episode_evidence(episode_id: str, request: Request) -> dict[str, Any]:
+    """The evidence behind each chapter's narration, for checking what the host said.
+
+    Source domain and title only (no full URLs, queries, prompts or raw responses), and only
+    for the episode's owner.  An episode with no stored plan has none.
+    """
+
+    owned(episode_id, principal(request))
+    current = orchestrator.get(episode_id)
+    session = current.progressive_session
+    if session is None:
+        return {"episode_id": current.id, "chapters": [], "evidence": []}
+    narration_by_chapter: dict[str, list[str]] = {}
+    for segment in current.ordered_segments:
+        if segment.kind is SegmentKind.NARRATION and segment.state is not SegmentState.SKIPPED:
+            narration_by_chapter.setdefault(segment.chapter_id, []).append(segment.id)
+    chapters = [
+        {
+            "chapter_id": item.chapter_id,
+            "evidence_ids": list(item.chapter.evidence_ids),
+            "narration_segment_ids": narration_by_chapter.get(item.chapter_id, []),
+        }
+        for item in session.chapters
+    ]
+    cited = {evidence_id for item in chapters for evidence_id in item["evidence_ids"]}
+    evidence = [
+        {
+            "id": item.id,
+            "claim": item.claim_or_excerpt[:400],
+            "source_domain": item.source_domain,
+            "source_title": item.source_title[:160],
+            "source_provider": item.source_provider,
+            "confidence": item.confidence,
+        }
+        for item in session.research.evidence
+        if item.id in cited
+    ]
+    return {"episode_id": current.id, "chapters": chapters, "evidence": evidence}
 
 
 def canonical_mix_plan_for_episode(episode_id: str, actor: AuthPrincipal) -> MixPlan:
@@ -2189,9 +2533,11 @@ async def program_stream_playlist(episode_id: str) -> Response:
 async def episode_mixdown(episode_id: str, request: Request) -> MixdownArtifact:
     """Render the current canonical plan from already-owned local audio assets."""
     actor = principal(request)
-    owned(episode_id, actor)
+    # The repository facade is synchronous (asyncio.run() under Postgres), so it must not run
+    # on the request loop.
+    await to_thread.run_sync(owned, episode_id, actor)
     try:
-        plan = canonical_mix_plan_for_episode(episode_id, actor)
+        plan = await to_thread.run_sync(canonical_mix_plan_for_episode, episode_id, actor)
         with TemporaryDirectory(prefix="wavecast-mixdown-") as temporary:
             sources = await resolve_mix_sources(plan, audio_storage, Path(temporary) / "inputs")
             output_path = Path(temporary) / "mixdown.mp3"

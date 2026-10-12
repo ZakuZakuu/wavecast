@@ -185,3 +185,23 @@ describe("cover source alias", () => {
     expect(coverIdFor("other")).toBe("other");
   });
 });
+
+describe("backend cover label", () => {
+  it("is used when it fits, instead of cutting the title", () => {
+    const wideHead = "从城市夜色里的律动出发听见爵士";
+    expect(programmeCover({ id: "x", title: wideHead, stationId: "portrait" }).titleBelow).toBe(true);
+    const withLabel = programmeCover({ id: "x", title: wideHead, stationId: "portrait", coverTitle: "夜色爵士" });
+    expect(withLabel.titleBelow).toBe(false);
+    expect(withLabel.params.heading).toBe("夜色爵士");
+  });
+
+  it("falls back to the title when the label is missing, blank or too wide", () => {
+    const base = programmeCover({ id: "x", title: "睡前半小时", stationId: "night" });
+    for (const coverTitle of [undefined, null, "  ", "这是一个远远超过封面宽度的标签文字"]) {
+      expect(programmeCover({ id: "x", title: "睡前半小时", stationId: "night", coverTitle }).params.heading).toBe(
+        base.params.heading,
+      );
+    }
+  });
+});
+

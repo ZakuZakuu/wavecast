@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
@@ -55,6 +56,12 @@ class PlaybackSnapshotFetcher(Protocol):
     ) -> SnapshotBytes: ...
 
 
+logger = logging.getLogger(__name__)
+
+# A refused, throttled or briefly failing CDN answer; a 404 or 410 will not change on retry.
+_RETRYABLE_STATUSES = frozenset({403, 408, 425, 429, 500, 502, 503, 504})
+
+
 class MusicSnapshotError(ValueError):
     def __init__(self, reason_code: str) -> None:
         self.reason_code = reason_code
@@ -80,7 +87,9 @@ class ProviderPlaybackSnapshotFetcher:
         max_bytes: int = 64 * 1024 * 1024,
         timeout_seconds: float = 30.0,
         client_factory: Callable[[float], httpx.AsyncClient] | None = None,
+        attempts: int = 2,
     ) -> None:
+        self.attempts = max(1, attempts)
         self.resolver = resolver
         self.max_bytes = max_bytes
         self.timeout_seconds = timeout_seconds
@@ -89,6 +98,58 @@ class ProviderPlaybackSnapshotFetcher:
     async def fetch(
         self, source: MusicSourceClassification, *, duration_seconds: int
     ) -> SnapshotBytes:
+        client = self.client_factory(self.timeout_seconds)
+        try:
+            for attempt in range(1, self.attempts + 1):
+                request = await self._resolve(source)
+                async with client.stream(
+                    "GET",
+                    request.url,
+                    headers={"Accept": "audio/*", **request.headers},
+                    params=request.params,
+                ) as response:
+                    if not 200 <= response.status_code < 300:
+                        status = response.status_code
+                        # Only the status is logged: the URL carries signed credentials.
+                        logger.warning(
+                            "music_snapshot_upstream_status status=%d attempt=%d", status, attempt
+                        )
+                        if attempt < self.attempts and status in _RETRYABLE_STATUSES:
+                            continue  # re-resolve: a refused or expired URL is often a fresh one
+                        raise MusicSnapshotError("snapshot_upstream_status")
+                    content_type = (
+                        response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                    )
+                    if content_type not in MusicSnapshotStore._SUPPORTED_CONTENT_TYPES:
+                        raise MusicSnapshotError("unsupported_snapshot_content_type")
+                    content_length = response.headers.get("content-length")
+                    if content_length and _is_over_limit(content_length, self.max_bytes):
+                        raise MusicSnapshotError("snapshot_size_limit_exceeded")
+                    chunks: list[bytes] = []
+                    size = 0
+                    async for chunk in response.aiter_bytes():
+                        size += len(chunk)
+                        if size > self.max_bytes:
+                            raise MusicSnapshotError("snapshot_size_limit_exceeded")
+                        chunks.append(chunk)
+                    if not chunks:
+                        raise MusicSnapshotError("snapshot_empty_response")
+                    return SnapshotBytes(
+                        content=b"".join(chunks),
+                        content_type=content_type,
+                        duration_seconds=duration_seconds,
+                    )
+            raise MusicSnapshotError("snapshot_upstream_status")
+        except MusicSnapshotError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise MusicSnapshotError("snapshot_timeout") from exc
+        except Exception as exc:
+            raise MusicSnapshotError("snapshot_upstream_unavailable") from exc
+        finally:
+            await client.aclose()
+
+    async def _resolve(self, source: MusicSourceClassification) -> ResolvedPlaybackRequest:
         from wavecast.providers.playback import ResolvedPlaybackRequest
 
         try:
@@ -99,45 +160,7 @@ class ProviderPlaybackSnapshotFetcher:
             raise MusicSnapshotError("snapshot_provider_unavailable") from exc
         if not isinstance(request, ResolvedPlaybackRequest):
             raise MusicSnapshotError("snapshot_provider_unavailable")
-
-        client = self.client_factory(self.timeout_seconds)
-        try:
-            async with client.stream(
-                "GET",
-                request.url,
-                headers={"Accept": "audio/*", **request.headers},
-                params=request.params,
-            ) as response:
-                if not 200 <= response.status_code < 300:
-                    raise MusicSnapshotError("snapshot_upstream_status")
-                content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-                if content_type not in MusicSnapshotStore._SUPPORTED_CONTENT_TYPES:
-                    raise MusicSnapshotError("unsupported_snapshot_content_type")
-                content_length = response.headers.get("content-length")
-                if content_length and _is_over_limit(content_length, self.max_bytes):
-                    raise MusicSnapshotError("snapshot_size_limit_exceeded")
-                chunks: list[bytes] = []
-                size = 0
-                async for chunk in response.aiter_bytes():
-                    size += len(chunk)
-                    if size > self.max_bytes:
-                        raise MusicSnapshotError("snapshot_size_limit_exceeded")
-                    chunks.append(chunk)
-                if not chunks:
-                    raise MusicSnapshotError("snapshot_empty_response")
-                return SnapshotBytes(
-                    content=b"".join(chunks),
-                    content_type=content_type,
-                    duration_seconds=duration_seconds,
-                )
-        except MusicSnapshotError:
-            raise
-        except httpx.TimeoutException as exc:
-            raise MusicSnapshotError("snapshot_timeout") from exc
-        except Exception as exc:
-            raise MusicSnapshotError("snapshot_upstream_unavailable") from exc
-        finally:
-            await client.aclose()
+        return request
 
 
 def _default_snapshot_client(timeout_seconds: float) -> httpx.AsyncClient:

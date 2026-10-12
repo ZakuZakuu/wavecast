@@ -16,6 +16,8 @@ export type Seed = {
   title: string;
   topic: string;
   short_description: string;
+  /** Short cover label from the backend; absent on programmes made before it existed. */
+  cover_title?: string | null;
   estimated_duration_seconds: number;
   opening_track_ref: string;
   opening_track_title: string;
@@ -34,6 +36,22 @@ export type ProgramProposal = Seed & {
   created_at: string;
 };
 
+/** What a programme link shows anyone who opens it (never the listener's prompt). */
+export type PublicProgramme = {
+  id: string;
+  title: string;
+  cover_title: string | null;
+  description: string;
+  estimated_duration_seconds: number;
+  station: "casual" | "crate" | "portrait" | "lineage" | "night" | null;
+  /** Empty for built-in programmes, which have no real outline. */
+  route: string[];
+  tags: string[];
+  opening_track_title: string;
+  opening_track_artist: string;
+  is_owner: boolean;
+};
+
 export type ProgramProposalBatch = {
   proposals: ProgramProposal[];
 };
@@ -44,6 +62,10 @@ export type ProposalGenerationRequest = {
   count?: number;
   /** Optional listener taste summary; accepted by the backend (≤1000 chars). */
   taste_context?: string;
+  /** Spoken language of the programme; omitted lets the backend guess from the request text. */
+  output_language?: "zh-CN" | "en-US" | "ja-JP";
+  /** The station the listener tuned: sets the default hosting (夜里 means no host). */
+  station?: "casual" | "crate" | "portrait" | "lineage" | "night";
 };
 
 type SegmentBase = {
@@ -98,10 +120,13 @@ export type ProgramRenderManifest = {
   streamUrl: string;
 };
 
+export type SourceNotice = { kind: "UNPLAYABLE_ARTISTS"; artists: string[] };
+
 export type LiveEpisode = {
   id: string;
   seed_id: string;
   title?: string | null;
+  cover_title?: string | null;
   topic?: string | null;
   listener_id: string;
   version: number;
@@ -124,6 +149,8 @@ export type LiveEpisode = {
   buffer_ahead_seconds: number;
   committed_frontier_seconds: number;
   timeline_duration_seconds: number;
+  /** Present when the route cannot play artists the listener asked for. */
+  source_notice?: SourceNotice | null;
 };
 
 export type UserGenre =
@@ -145,15 +172,18 @@ export type UserPreferences = {
   contexts: string[];
   discovery_level: DiscoveryLevel;
   onboarding_completed: boolean;
+  /** Artists the listener pressed 少放这类 on, newest first; not part of the onboarding form. */
+  avoid_artists?: string[];
   updated_at: string;
 };
 
-export type UserPreferencesUpdate = Omit<UserPreferences, "user_id" | "updated_at">;
+export type UserPreferencesUpdate = Omit<UserPreferences, "user_id" | "updated_at" | "avoid_artists">;
 export type UserEventType = "PLAY_START" | "PLAY_COMPLETE" | "LIKE" | "FAVORITE" | "SAVE" | "SKIP";
 export type UserEventInput = { event_type: UserEventType; program_id?: string; episode_id?: string };
 export type ProgramIdea = {
   id: string;
   title: string;
+  cover_title?: string | null;
   description: string;
   reason: string;
   tags: string[];

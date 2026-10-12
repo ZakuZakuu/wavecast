@@ -234,9 +234,15 @@
 
 /* ---------- Tuning-in ---------- */
 .tuning-in {
-  position: absolute;
+  position: fixed;
   inset: 0;
+  bottom: var(--fixed-bottom);
+  height: var(--fixed-h);
+  /* Keep to the app column on wide screens, as the sheets do. */
+  left: max(0px, calc(50% - var(--frame-max) / 2));
+  right: max(0px, calc(50% - var(--frame-max) / 2));
   z-index: 50;
+  overscroll-behavior: contain;
   background: var(--bg);
   overflow: hidden;
   animation: fade-in-plain var(--t-sheet) var(--ease) both;

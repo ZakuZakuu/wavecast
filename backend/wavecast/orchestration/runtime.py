@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from wavecast.intelligence.models import OutputLanguage, ResolvedTrack
+from wavecast.intelligence.models import ResolvedTrack
 from wavecast.models.episode import (
     GenerationMode,
     LiveEpisode,
@@ -12,6 +12,7 @@ from wavecast.models.episode import (
 )
 from wavecast.models.progressive import ProgressiveAssemblySession
 from wavecast.orchestration.generation import GeneratedChapter, ProgressiveChapterGenerator
+from wavecast.providers.usage import scoped_to_episode
 
 if TYPE_CHECKING:
     from wavecast.assembly import LiveEpisodeAssemblyService, StagedProgressiveChapterGenerator
@@ -41,12 +42,20 @@ class StagedProgressiveRuntime(Protocol):
     ) -> NarrationSegment: ...
 
 
+def _known_seconds(segment: object) -> int | None:
+    """The playable length a music segment already carries, if it has one."""
+
+    seconds = int(getattr(segment, "duration_seconds", 0) or 0)
+    return seconds if seconds >= 1 else None
+
+
 class StagedProgressiveRuntimeAdapter:
     """Rebuild staged preparation and chapter generation from durable episode state."""
 
     def __init__(self, assembly: LiveEpisodeAssemblyService) -> None:
         self.assembly = assembly
 
+    @scoped_to_episode
     async def prepare_fast_successor(
         self, episode: LiveEpisode
     ) -> GeneratedChapter | None:
@@ -74,23 +83,30 @@ class StagedProgressiveRuntimeAdapter:
             track_ref=opening_track_ref,
             canonical_artist=opening_artist,
             canonical_title=opening_title,
+            duration_seconds=_known_seconds(opening),
         )
-        from wavecast.assembly import LiveEpisodeAssemblyRequest
+        from wavecast.assembly import LiveEpisodeAssemblyRequest, route_limits_for_duration
 
+        max_tracks, max_chapters = route_limits_for_duration(
+            episode.program_estimated_duration_seconds, scaled=self.assembly.duration_scaling
+        )
         request = LiveEpisodeAssemblyRequest(
             topic=episode.topic,
             anchor_tracks=[opening.title],
             desired_duration_seconds=episode.program_estimated_duration_seconds,
-            max_tracks=5,
-            max_chapters=8,
+            max_tracks=max_tracks,
+            max_chapters=max_chapters,
             presentation_intent=episode.presentation_intent,
-            output_language=OutputLanguage.AUTO,
+            output_language=episode.output_language,
+            station=episode.station,
+            required_artists=list(episode.required_artists),
         )
         return await self.assembly.prepare_fast_successor(
             request,
             opening_track=opening_track,
         )
 
+    @scoped_to_episode
     async def author_fast_successor_narration(
         self, episode: LiveEpisode
     ) -> GeneratedChapter | None:
@@ -171,11 +187,13 @@ class StagedProgressiveRuntimeAdapter:
             track_ref=opening_track_ref,
             canonical_artist=opening_artist,
             canonical_title=opening_title,
+            duration_seconds=_known_seconds(opening),
         )
         successor_track = ResolvedTrack(
             track_ref=successor_track_ref,
             canonical_artist=successor_artist,
             canonical_title=successor_title,
+            duration_seconds=_known_seconds(successor),
         )
         chapter = ChapterPlan(
             index=1,
@@ -216,7 +234,9 @@ class StagedProgressiveRuntimeAdapter:
                 ),
                 host_mode=episode.presentation_intent.host_mode,
                 target_duration_seconds=target_seconds,
-                output_language=OutputLanguage.AUTO,
+                output_language=episode.output_language,
+                station=episode.station,
+                voice_seed=episode.seed_id,
                 topic=episode.topic,
                 slot_contexts=[slot],
                 inference_profile=InferenceProfile.FAST,
@@ -274,6 +294,7 @@ class StagedProgressiveRuntimeAdapter:
             ),
         )
 
+    @scoped_to_episode
     async def prepare_session(self, episode: LiveEpisode) -> ProgressiveAssemblySession:
         if not episode.topic:
             raise ValueError("progressive session requires episode topic")
@@ -298,17 +319,24 @@ class StagedProgressiveRuntimeAdapter:
             track_ref=track_ref,
             canonical_artist=artist,
             canonical_title=title,
+            duration_seconds=_known_seconds(opening),
         )
-        from wavecast.assembly import LiveEpisodeAssemblyRequest
+        from wavecast.assembly import LiveEpisodeAssemblyRequest, route_limits_for_duration
 
+        max_tracks, max_chapters = route_limits_for_duration(
+            episode.program_estimated_duration_seconds, scaled=self.assembly.duration_scaling
+        )
         request = LiveEpisodeAssemblyRequest(
             topic=episode.topic,
             anchor_tracks=[opening.title],
             desired_duration_seconds=episode.program_estimated_duration_seconds,
-            max_tracks=5,
-            max_chapters=8,
+            max_tracks=max_tracks,
+            max_chapters=max_chapters,
             presentation_intent=episode.presentation_intent,
-            output_language=OutputLanguage.AUTO,
+            output_language=episode.output_language,
+            station=episode.station,
+            required_artists=list(episode.required_artists),
+            variety_seed=episode.seed_id,
         )
         locked_segment = next(
             (
@@ -333,6 +361,7 @@ class StagedProgressiveRuntimeAdapter:
                 track_ref=locked_track_ref,
                 canonical_artist=locked_artist,
                 canonical_title=locked_title,
+                duration_seconds=_known_seconds(locked_segment),
             )
         # Local import avoids a module-load cycle while keeping the
         # degradable boundary typed: programmer errors must still escape.
@@ -364,6 +393,7 @@ class StagedProgressiveRuntimeAdapter:
     ) -> StagedProgressiveChapterGenerator:
         return self.assembly.create_progressive_chapter_generator(session)
 
+    @scoped_to_episode
     async def author_narration(
         self, episode: LiveEpisode, chapter_id: str
     ) -> GeneratedChapter | None:

@@ -1,6 +1,7 @@
 "use client";
 
 import { formatClock, routeChapters } from "../../lib/now-playing";
+import { sourceNoticeText } from "../../lib/source-notice";
 import { BottomSheet } from "../bottom-sheet";
 import { CloseIcon } from "../icons";
 import type { NowPlaying } from "./playback-provider";
@@ -25,6 +26,7 @@ export function RouteSheet({
   const chapters = open
     ? routeChapters(episode, playback.mixPlan, currentMusicId, playback.maxSeekPosition)
     : [];
+  const notice = sourceNoticeText(episode.source_notice);
 
   return (
     <BottomSheet open={open} onClose={onClose} label="节目路线" tone="dark" height="min(640px, calc(100dvh - 60px))">
@@ -37,6 +39,7 @@ export function RouteSheet({
           <CloseIcon size={16} strokeWidth={2.4} />
         </button>
       </header>
+      {notice ? <p className="route-notice">{notice}</p> : null}
 
       <ol className="route-list">
         {chapters.map((chapter) => (

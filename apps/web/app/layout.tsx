@@ -12,6 +12,7 @@ import "./styles/base.css";
 import "./styles/player.css";
 import "./styles/tune.css";
 import "./styles/home.css";
+import "./styles/programme.css";
 import "./styles/overlays.css";
 import "./styles/account.css";
 import "./styles/desktop.css";

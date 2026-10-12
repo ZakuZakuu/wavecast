@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import re
-import unicodedata
 from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
+
+from wavecast.text_identity import canonical_name
 
 from .contracts import MusicProvider, TrackMetadata
 from .errors import ProviderError
@@ -109,6 +110,8 @@ class RetrievalFailure(BaseModel):
     provider: str
     kind: str
     message: str
+    # Exception class for provider failures (e.g. ProviderAuthenticationError), for logs.
+    error_type: str | None = None
 
 
 class RetrievalReport(BaseModel):
@@ -242,7 +245,12 @@ class MusicRetrievalService:
             return (
                 provider_name,
                 [],
-                RetrievalFailure(provider=provider_name, kind="provider_error", message=str(error)),
+                RetrievalFailure(
+                    provider=provider_name,
+                    kind="provider_error",
+                    message=str(error),
+                    error_type=type(error).__name__,
+                ),
             )
         except Exception:
             return (
@@ -345,7 +353,7 @@ def _group_candidates(candidates: list[RetrievedTrack]) -> list[RetrievedTrackGr
 
 
 def _normalize_text(value: str) -> str:
-    normalized = unicodedata.normalize("NFKC", value).casefold()
+    normalized = canonical_name(value)
     return " ".join(re.sub(r"[^\w]+", " ", normalized, flags=re.UNICODE).split())
 
 

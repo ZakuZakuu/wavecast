@@ -1,4 +1,4 @@
-"""Credential-free music-chain preflight for opt-in live probes.
+"""AI-credential-free music-chain preflight for opt-in live probes.
 
 This module is intentionally a probe boundary.  It verifies the local catalog
 sidecar before any live research/LLM/TTS provider is constructed and resolves
@@ -75,6 +75,7 @@ async def preflight_music(
                 settings.netease_music_api_base_url,
                 settings.timeout_seconds,
                 readiness_client=readiness_client,
+                bearer_token=settings.netease_music_api_bearer_token,
             )
         elif not configured_registry.ordered():
             raise MusicPreflightError("music preflight has no configured catalog provider")
@@ -105,6 +106,7 @@ async def _check_sidecar_readiness(
     timeout_seconds: float,
     *,
     readiness_client: httpx.AsyncClient | None,
+    bearer_token: str | None = None,
 ) -> None:
     owns_client = readiness_client is None
     client = readiness_client or httpx.AsyncClient(
@@ -113,7 +115,8 @@ async def _check_sidecar_readiness(
     )
     try:
         try:
-            response = await client.get(f"{base_url.rstrip('/')}/ready")
+            headers = {"Authorization": f"Bearer {bearer_token}"} if bearer_token else {}
+            response = await client.get(f"{base_url.rstrip('/')}/ready", headers=headers)
         except httpx.TimeoutException as error:
             raise MusicPreflightError("music sidecar readiness timed out") from error
         except httpx.RequestError as error:

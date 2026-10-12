@@ -54,3 +54,34 @@ def test_generated_proposal_survives_repository_reconstruction() -> None:
     finally:
         recovered.close()
         asyncio.run(remove_test_row())
+
+
+def test_a_short_prefix_finds_exactly_one_proposal() -> None:
+    assert DATABASE_URL is not None
+    base = asyncio.run(
+        DeterministicMockProgramProposalGenerator().generate(
+            ProposalGenerationRequest(prompt="短链接回归测试", count=1)
+        )
+    )[0]
+    token = uuid4().hex
+    ids = [f"proposal-{token}", f"proposal-{token[:-1]}z"]
+    repository = PostgresProgramProposalRepository(DATABASE_URL)
+    try:
+        repository.save_many([base.model_copy(update={"id": ids[0]})], owner_listener_id="short-listener")
+        assert repository.find_id_by_prefix(f"proposal-{token[:12]}") == ids[0]
+        # Pattern characters are data, not wildcards.
+        assert repository.find_id_by_prefix("proposal-%") is None
+        assert repository.find_id_by_prefix("proposal-_") is None
+        repository.save_many([base.model_copy(update={"id": ids[1]})], owner_listener_id="short-listener")
+        assert repository.find_id_by_prefix(f"proposal-{token[:12]}") is None
+    finally:
+        async def cleanup() -> None:
+            engine = create_async_engine(DATABASE_URL)
+            async with engine.begin() as connection:
+                await connection.execute(
+                    delete(program_proposals_table).where(program_proposals_table.c.id.in_(ids))
+                )
+            await engine.dispose()
+
+        asyncio.run(cleanup())
+        repository.close()
