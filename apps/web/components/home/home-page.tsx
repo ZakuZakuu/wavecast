@@ -8,7 +8,7 @@ import { api } from "../../lib/api";
 import { openPlayer } from "../../lib/player-nav";
 import { authClient } from "../../lib/auth-client";
 import { programmeCover, rememberCoverSource } from "../../lib/cover/programme-cover";
-import { dedupeByTitle, pickMeta, RECOMMENDATION_MINUTES } from "../../lib/home-picks";
+import { dedupeByTitle, ideaStation, pickMeta, RECOMMENDATION_MINUTES } from "../../lib/home-picks";
 import { FEATURED_PROGRAMMES, featuredDurationIntent, type FeaturedProgramme } from "../../lib/featured";
 import {
   formatFreq,
@@ -133,7 +133,10 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
       const batch = await api.materializeRecommendation(idea.id, user.id);
       const proposal = batch.proposals[0];
       if (!proposal) throw new Error();
-      rememberProgrammeStation(proposal.id, stationForProgramme(idea.id, idea.title).id);
+      rememberProgrammeStation(
+        proposal.id,
+        ideaStation(idea) ?? stationForProgramme(idea.id, idea.title).id,
+      );
       rememberCoverSource(proposal.id, idea.id);
       openPlayer(`/episode/${proposal.id}`);
     } catch {
@@ -164,6 +167,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
       return dedupeByTitle(ideas).map((idea) => ({
         key: "idea:" + idea.id,
         id: idea.id,
+        stationId: ideaStation(idea),
         title: idea.title,
         coverTitle: idea.cover_title ?? undefined,
         description: idea.description,
