@@ -376,7 +376,7 @@ def test_concurrent_refreshes_share_one_cooldown_window() -> None:
     assert all([idea.id for idea in result] == [idea.id for idea in results[0]] for result in results)
 
 
-def test_program_idea_repository_retains_only_latest_thirty_per_user() -> None:
+def test_program_idea_repository_retains_latest_thirty_and_the_last_day_per_user() -> None:
     ideas = InMemoryProgramIdeaRepository()
     created = [
         ProgramIdea(
@@ -385,7 +385,7 @@ def test_program_idea_repository_retains_only_latest_thirty_per_user() -> None:
             title=f"Idea {index}",
             description="Description",
             reason="Reason",
-            created_at=datetime(2026, 9, 1, tzinfo=UTC) + timedelta(minutes=index),
+            created_at=datetime(2026, 9, 1, tzinfo=UTC) + timedelta(days=index),
         )
         for index in range(35)
     ]

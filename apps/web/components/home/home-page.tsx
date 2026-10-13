@@ -263,7 +263,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
           <div className="pick-grid">
             {picks.map((pick) => <PickCard key={pick.key} pick={pick} onSelect={selectPick} />)}
             {loading && !picks.length
-              ? Array.from({ length: 4 }).map((_, index) => <span key={index} className="pick-skeleton" aria-hidden="true" />)
+              ? Array.from({ length: 6 }).map((_, index) => <span key={index} className="pick-skeleton" aria-hidden="true" />)
               : null}
           </div>
           {!loading && !picks.length ? (

@@ -57,6 +57,49 @@ def test_program_ideas_are_durable_and_scoped_to_the_owner() -> None:
         reopened.close()
 
 
+def test_pruning_keeps_the_newest_thirty_and_every_idea_of_the_last_day() -> None:
+    assert DATABASE_URL is not None
+    now = datetime.now(UTC)
+
+    def ideas_for(user_id: str, count: int, spacing: timedelta) -> list[ProgramIdea]:
+        return [
+            ProgramIdea(
+                id=uuid4().hex,
+                user_id=user_id,
+                title=f"保留测试 {index}",
+                description="d",
+                reason="r",
+                created_at=now - spacing * index,
+            )
+            for index in range(count)
+        ]
+
+    sparse_user = f"recommendation-prune-sparse-{uuid4().hex}"
+    busy_user = f"recommendation-prune-busy-{uuid4().hex}"
+
+    async def cleanup() -> None:
+        engine = create_async_engine(DATABASE_URL)
+        async with engine.begin() as connection:
+            await connection.execute(
+                delete(program_ideas_table).where(
+                    program_ideas_table.c.user_id.in_([sparse_user, busy_user])
+                )
+            )
+        await engine.dispose()
+
+    asyncio.run(cleanup())
+    repository = PostgresProgramIdeaRepository(DATABASE_URL)
+    try:
+        repository.save_many(ideas_for(sparse_user, 40, timedelta(days=1)))
+        repository.save_many(ideas_for(busy_user, 60, timedelta(minutes=10)))
+
+        assert len(repository.list_for_user(sparse_user, limit=200)) == 30
+        assert len(repository.list_for_user(busy_user, limit=200)) == 60
+    finally:
+        asyncio.run(cleanup())
+        repository.close()
+
+
 def test_concurrent_refreshes_use_database_cooldown_lock() -> None:
     assert DATABASE_URL is not None
     user_id = f"recommendation-lock-test-{uuid4().hex}"
