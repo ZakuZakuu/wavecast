@@ -393,13 +393,18 @@ def _music_automation(
         offsets.add(max(0.0, duration - fade_out))
 
     for narration_start, narration_end in narration_intervals:
-        if narration_end > start and narration_start < end:
+        # A narration that sits right against the clip (its attack or release window reaches
+        # into the clip without the voice itself overlapping it) still needs its own points.
+        # Without them the gain is interpolated from the last point (a hold of 1.0) straight to
+        # the ducked value at the clip's edge, which slowly ducks the whole track (or slowly
+        # swells the next one) and rewrites audio that was already published.
+        if narration_end + duck_release > start and narration_start - duck_attack < end:
             offsets.update(
                 {
-                    max(0.0, narration_start - duck_attack - start),
-                    max(0.0, narration_start - start),
-                    min(duration, narration_end - start),
-                    min(duration, narration_end + duck_release - start),
+                    min(duration, max(0.0, narration_start - duck_attack - start)),
+                    min(duration, max(0.0, narration_start - start)),
+                    min(duration, max(0.0, narration_end - start)),
+                    min(duration, max(0.0, narration_end + duck_release - start)),
                 }
             )
 

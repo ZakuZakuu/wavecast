@@ -537,3 +537,88 @@ def test_opening_host_does_not_wait_for_a_late_instrumental_window() -> None:
 
     voice = next(clip for clip in plan.clips if clip.segment_id == "segment-opening-host")
     assert voice.timeline_start_seconds == pytest.approx(6.0)
+
+
+def _opening_with_bridge(*, with_bridge_voice: bool) -> PlayableEpisode:
+    """An opening song with its host on top, then (optionally) a host bridge before the next song."""
+
+    segments: list[MusicSegment | NarrationSegment] = [
+        MusicSegment(
+            id="segment-opening", chapter_id="chapter-1", order=0, track_ref="track:a",
+            state=SegmentState.AUDIO_READY, planned_duration_seconds=122,
+            actual_duration_seconds=122, audio_source_url="/a.mp3", title="A", artist="A",
+        ),
+        NarrationSegment(
+            id="segment-opening-host", chapter_id="chapter-1", order=1,
+            state=SegmentState.AUDIO_READY, planned_duration_seconds=8,
+            actual_duration_seconds=8, audio_source_url="/host.mp3", title="Host",
+        ),
+    ]
+    if with_bridge_voice:
+        segments.append(
+            NarrationSegment(
+                id="chapter-2:narration:0", chapter_id="chapter-2", order=2,
+                state=SegmentState.AUDIO_READY, planned_duration_seconds=5,
+                actual_duration_seconds=5, audio_source_url="/bridge.mp3", title="Bridge",
+            )
+        )
+    segments.append(
+        MusicSegment(
+            id="chapter-2:music:0", chapter_id="chapter-2", order=3, track_ref="track:b",
+            state=SegmentState.AUDIO_READY, planned_duration_seconds=318,
+            actual_duration_seconds=318, audio_source_url="/b.mp3", title="B", artist="B",
+        )
+    )
+    return PlayableEpisode(id="episode-bridge", segments=segments)
+
+
+def test_a_host_bridge_only_changes_the_music_next_to_it() -> None:
+    """The gain around a bridge is a short duck, not a slow ramp across the whole song.
+
+    Linear interpolation between gain points turned "hold 1.0, then duck at the song's edge" into
+    a ramp from the last point to the edge, which rewrote audio that had already been published.
+    """
+
+    plan = plan_episode_mix(_opening_with_bridge(with_bridge_voice=True))
+    outgoing = next(clip for clip in plan.clips if clip.segment_id == "segment-opening")
+    incoming = next(clip for clip in plan.clips if clip.segment_id == "chapter-2:music:0")
+    voice = next(clip for clip in plan.clips if clip.segment_id == "chapter-2:narration:0")
+
+    # Everything before the duck is a plain hold at full volume: no point may sit between a
+    # full-volume point and the duck start with a lower value.
+    gains = {round(point.offset_seconds, 2): point.gain for point in outgoing.gain_automation}
+    duck_start = voice.timeline_start_seconds - 1.5 - outgoing.timeline_start_seconds
+    assert gains[round(duck_start, 2)] == pytest.approx(1.0)
+    assert outgoing.gain_automation[-1].gain == pytest.approx(0.30)
+    before_duck = [p for p in outgoing.gain_automation if p.offset_seconds <= duck_start]
+    assert all(
+        point.gain == pytest.approx(1.0)
+        for point in before_duck
+        if point.offset_seconds > 15.5 + 1e-6
+    )
+
+    # The next song starts under the voice and is back at full volume within the release.
+    assert incoming.gain_automation[0].gain == pytest.approx(0.30)
+    assert incoming.gain_automation[1].offset_seconds == pytest.approx(1.5)
+    assert incoming.gain_automation[1].gain == pytest.approx(1.0)
+
+
+def test_a_host_bridge_does_not_rewrite_the_already_published_part_of_the_song_before_it() -> None:
+    from wavecast.rendering.fingerprint import mix_plan_fingerprint
+    from wavecast.rendering.programme import slice_mix_plan
+
+    published = plan_episode_mix(
+        PlayableEpisode(
+            id="episode-bridge",
+            segments=_opening_with_bridge(with_bridge_voice=False).segments[:2],
+        )
+    )
+    without_voice = plan_episode_mix(_opening_with_bridge(with_bridge_voice=False))
+    with_voice = plan_episode_mix(_opening_with_bridge(with_bridge_voice=True))
+
+    # The opening alone was published up to 90 s (its duration minus the holdback, in whole chunks).
+    def fingerprint(plan, end: float) -> str:  # type: ignore[no-untyped-def]
+        return mix_plan_fingerprint(slice_mix_plan(plan, 0, end))
+
+    assert fingerprint(without_voice, 90) == fingerprint(published, 90)
+    assert fingerprint(with_voice, 90) == fingerprint(published, 90)
