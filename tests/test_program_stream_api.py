@@ -672,6 +672,105 @@ def test_program_render_continuity_deadline_skips_pending_host_before_ready_musi
     assert repository.get(episode.id).segment("host-b").state is SegmentState.SKIPPED
 
 
+def test_program_render_continuity_waits_while_published_runway_remains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = InMemoryEpisodeRepository()
+    orchestrator = EpisodeOrchestrator(repository)
+    monkeypatch.setattr(api_module, "repository", repository)
+    monkeypatch.setattr(api_module, "orchestrator", orchestrator)
+
+    def segments() -> list[MusicSegment | NarrationSegment]:
+        return [
+            MusicSegment(
+                id="music-a",
+                chapter_id="chapter-a",
+                order=0,
+                state=SegmentState.AUDIO_READY,
+                planned_duration_seconds=300,
+                actual_duration_seconds=300,
+                track_ref="track-a",
+                audio_source_url="/api/assets/audio/music-a.wav",
+                title="A",
+                artist="Artist A",
+            ),
+            NarrationSegment(
+                id="host-b",
+                chapter_id="chapter-b",
+                order=1,
+                state=SegmentState.AUDIO_GENERATING,
+                planned_duration_seconds=12,
+                title="Pending host",
+                narration_text="A bridge still being voiced.",
+                narration_role=NarrationRole.TRACK_INTRO,
+            ),
+            MusicSegment(
+                id="music-b",
+                chapter_id="chapter-b",
+                order=2,
+                state=SegmentState.AUDIO_READY,
+                planned_duration_seconds=120,
+                actual_duration_seconds=120,
+                track_ref="track-b",
+                audio_source_url="/api/assets/audio/music-b.wav",
+                title="B",
+                artist="Artist B",
+            ),
+        ]
+
+    manifest = ProgramRenderManifest(
+        episode_id="program-render-runway",
+        chunk_duration_seconds=120,
+        holdback_seconds=30,
+        rendered_frontier_seconds=270,
+        chunks=(
+            ProgramRenderChunk(
+                index=0,
+                start_seconds=0,
+                duration_seconds=270,
+                plan_fingerprint="previous-plan",
+                content_sha256="0" * 64,
+                asset_key="program-renders/test/chunk.ts",
+                audio_url="/api/assets/audio/program-renders/test/chunk.ts",
+            ),
+        ),
+        stream_url="/api/program-streams/program-render-runway.m3u8",
+    )
+
+    def episode_at(position: float) -> LiveEpisode:
+        return LiveEpisode(
+            id="program-render-runway",
+            seed_id="seed",
+            title="Runway",
+            topic="The host gets time to arrive",
+            listener_id="listener-a",
+            state=EpisodeState.STREAMING,
+            generation_mode=GenerationMode.PROGRESSIVE,
+            program_estimated_duration_seconds=420,
+            program_transport_active=True,
+            program_playback_position_seconds=position,
+            segments=segments(),
+            current_segment_id="music-a",
+        )
+
+    # 90 s of published audio still ahead: the host is given time to arrive.
+    repository.save(episode_at(180))
+    assert api_module._skip_blocking_optional_narration_for_continuity(
+        "program-render-runway", manifest
+    ) == []
+    assert repository.get("program-render-runway").segment("host-b").state is (
+        SegmentState.AUDIO_GENERATING
+    )
+
+    # 30 s left: music must carry on without the host.
+    saved = repository.get("program-render-runway")
+    saved.program_playback_position_seconds = 240
+    repository.save(saved)
+    assert api_module._skip_blocking_optional_narration_for_continuity(
+        "program-render-runway", manifest
+    ) == ["host-b"]
+
+
 def test_program_render_recovers_only_when_late_narration_removal_restores_prefix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
