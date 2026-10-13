@@ -13,9 +13,10 @@ from wavecast.recommendations import (
     ProviderBackedRecommendationPlanner,
     UserContext,
 )
+from wavecast.stations import StationId
 from wavecast.title_style import (
     MAX_COVER_WIDTH,
-    TITLE_GUIDANCE,
+    RECOMMENDATION_TITLE_GUIDANCE,
     count_colon_titles,
     cover_title,
     uses_colon_subtitle,
@@ -80,7 +81,14 @@ class _Sequenced:
 def _batch(*titles: str) -> ProgramIdeaDraftBatch:
     return ProgramIdeaDraftBatch(
         ideas=[
-            ProgramIdeaDraft(title=title, description=f"说明{i}", reason=f"理由{i}", tags=["Jazz"])
+            ProgramIdeaDraft(
+                station=StationId.CASUAL,
+                subject=f"主题{i}",
+                title=title,
+                description=f"说明{i}",
+                reason=f"理由{i}",
+                tags=["Jazz"],
+            )
             for i, title in enumerate(titles)
         ]
     )
@@ -98,17 +106,17 @@ def test_ideas_with_colon_titles_are_asked_for_again_once_and_the_better_batch_i
     ideas = ProviderBackedRecommendationPlanner(lambda: llm).generate_program_ideas(CONTEXT)  # type: ignore[arg-type, return-value]
 
     assert len(llm.prompts) == 2
-    assert "forbidden 'A：B' title pattern" in llm.prompts[1] and "星野源：创作脉络小径" in llm.prompts[1]
+    assert "forbidden 'A：B' form" in llm.prompts[1] and "星野源：创作脉络小径" in llm.prompts[1]
     assert [idea.title for idea in ideas] == ["星野源写歌的三个房间", "爵士是怎么变得好听的", "睡前半小时"]
 
 
 def test_a_batch_without_colon_titles_costs_one_call_and_the_title_guidance_is_in_the_prompt() -> None:
-    llm = _Sequenced(_batch("睡前半小时，不要歌词", "写给下班路上的轻音乐", "一首 Autumn Leaves，五种秋天"))
+    llm = _Sequenced(_batch("爵士里的松弛感", "写给轻音乐的一封信", "一首歌的五种唱法"))
 
     ProviderBackedRecommendationPlanner(lambda: llm).generate_program_ideas(CONTEXT)  # type: ignore[arg-type]
 
     assert len(llm.prompts) == 1
-    assert TITLE_GUIDANCE in llm.prompts[0]
+    assert RECOMMENDATION_TITLE_GUIDANCE in llm.prompts[0]
 
 
 def test_a_retry_that_is_no_better_keeps_the_first_batch() -> None:
@@ -118,7 +126,9 @@ def test_a_retry_that_is_no_better_keeps_the_first_batch() -> None:
 
     ideas = ProviderBackedRecommendationPlanner(lambda: llm).generate_program_ideas(CONTEXT)  # type: ignore[arg-type]
 
-    assert [idea.title for idea in ideas] == [idea.title for idea in first.ideas]
+    # the first batch is kept; its one colon title that survived loses the colon (the form is
+    # what reads as a catalogue)
+    assert [idea.title for idea in ideas] == ["星野源 创作脉络小径", "爵士是怎么变得好听的", "睡前半小时"]
 
 
 def test_the_heuristic_planner_no_longer_writes_colon_titles() -> None:

@@ -187,6 +187,8 @@ export type ProgramIdea = {
   description: string;
   reason: string;
   tags: string[];
+  /** The station the backend chose for this idea; absent on ideas made before stations were chosen. */
+  station?: string | null;
   source: string;
   status: "AVAILABLE" | "DISMISSED" | "USED";
   created_at: string;
