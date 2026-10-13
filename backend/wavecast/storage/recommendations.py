@@ -16,11 +16,11 @@ from sqlalchemy.pool import NullPool
 from wavecast.deployment import normalize_database_url
 from wavecast.recommendations import (
     MAX_LISTED_IDEAS_PER_USER,
-    MAX_STORED_IDEAS_PER_USER,
     MIN_AVAILABLE_IDEAS_PER_USER,
     ProgramIdea,
     ProgramIdeaRepository,
     ProgramIdeaStatus,
+    ideas_to_retain,
 )
 from wavecast.storage.schema import metadata
 
@@ -207,18 +207,22 @@ class PostgresProgramIdeaRepository(ProgramIdeaRepository):
 
     @staticmethod
     async def _prune_user(connection: Any, *, user_id: str) -> None:
-        retained_ids = (
-            select(program_ideas_table.c.id)
-            .where(program_ideas_table.c.user_id == user_id)
-            .order_by(desc(program_ideas_table.c.created_at), desc(program_ideas_table.c.id))
-            .limit(MAX_STORED_IDEAS_PER_USER)
-        )
-        await connection.execute(
-            delete(program_ideas_table).where(
-                program_ideas_table.c.user_id == user_id,
-                program_ideas_table.c.id.not_in(retained_ids),
+        rows = (
+            await connection.execute(
+                select(program_ideas_table.c.id, program_ideas_table.c.created_at)
+                .where(program_ideas_table.c.user_id == user_id)
+                .order_by(desc(program_ideas_table.c.created_at), desc(program_ideas_table.c.id))
             )
-        )
+        ).all()
+        keep = ideas_to_retain([(row.id, row.created_at) for row in rows])
+        doomed = [row.id for row in rows if row.id not in keep]
+        if doomed:
+            await connection.execute(
+                delete(program_ideas_table).where(
+                    program_ideas_table.c.user_id == user_id,
+                    program_ideas_table.c.id.in_(doomed),
+                )
+            )
 
     async def _list_for_user(self, user_id: str, limit: int) -> list[ProgramIdea]:
         async with self.engine.connect() as connection:
