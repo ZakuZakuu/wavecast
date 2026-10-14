@@ -19,6 +19,15 @@ class StoryUseState(StrEnum):
     PUBLISHED = "published"
 
 
+class Reservation(StrEnum):
+    """What asking for a story came to."""
+
+    ACQUIRED = "acquired"  # it was free; this passage holds it now
+    HELD = "held"  # this same passage already holds it and is still being made
+    TOLD = "told"  # this same passage was already published: the story is told
+    TAKEN = "taken"  # another passage holds it or has told it
+
+
 class StoryUseEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -42,15 +51,21 @@ class StoryUsageLedger(BaseModel):
         entry = self.entries.get(story_id)
         return entry.state if entry else None
 
-    def reserve(self, story_id: str, block_id: str) -> bool:
-        """Take the story for ``block_id``.  False when another passage holds or has told it."""
+    def reserve(self, story_id: str, block_id: str) -> Reservation:
+        """Ask for the story on behalf of ``block_id``.
+
+        Asking again with the same passage never starts a second telling: it reports that the
+        passage is still being made (``HELD``) or already published (``TOLD``).
+        """
         entry = self.entries.get(story_id)
-        if entry is not None:
-            return entry.block_id == block_id  # the same passage asking again is fine
-        self.entries[story_id] = StoryUseEntry(
-            story_id=story_id, state=StoryUseState.RESERVED, block_id=block_id
-        )
-        return True
+        if entry is None:
+            self.entries[story_id] = StoryUseEntry(
+                story_id=story_id, state=StoryUseState.RESERVED, block_id=block_id
+            )
+            return Reservation.ACQUIRED
+        if entry.block_id != block_id:
+            return Reservation.TAKEN
+        return Reservation.HELD if entry.state is StoryUseState.RESERVED else Reservation.TOLD
 
     def publish(self, story_id: str, block_id: str) -> None:
         """The passage reached the listener: the story is told.  Idempotent."""

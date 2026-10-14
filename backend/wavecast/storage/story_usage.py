@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterable
 from pydantic import ValidationError
 
 from wavecast.models.episode import MusicSegment, NarrationSegment, SegmentState
-from wavecast.models.story_usage import StoryUsageLedger, StoryUseState
+from wavecast.models.story_usage import Reservation, StoryUsageLedger, StoryUseState
 from wavecast.providers.contracts import ObjectStorageProvider
 
 _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$")
@@ -72,7 +72,7 @@ class StoryUsageStore:
             )
             return result
 
-    async def reserve(self, episode_id: str, story_id: str, block_id: str) -> bool:
+    async def reserve(self, episode_id: str, story_id: str, block_id: str) -> Reservation:
         return await self._update(episode_id, lambda ledger: ledger.reserve(story_id, block_id))
 
     async def release(self, episode_id: str, story_id: str, block_id: str) -> bool:

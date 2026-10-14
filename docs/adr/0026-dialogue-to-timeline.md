@@ -12,7 +12,7 @@
 
 ### 一、对话作为片段的内容（解除限制）
 
-`NarrationSegment` 新增可选字段 `dialogue`（完整的 `DialogueBlock`：轮次、说话人、`fact_refs`、块/槽位 ID、`story_id`）和 `dialogue_voices`（本段音频实际使用的“说话人→声音”快照）。有 `dialogue` 时，`narration_text` 由它派生，给出不同的值被拒绝；`tts_text` 和 cues 属于单人路径，与对话并存被拒绝。对话随片段一起经过 JSON 往返（仓库就是这样存片段的），不再需要另找地方放轮次。
+`NarrationSegment` 新增可选字段 `dialogue`（完整的 `DialogueBlock`：轮次、说话人、`fact_refs`、块/槽位 ID、`story_id`）和 `dialogue_audio`（合成请求的快照，见第三节；`dialogue_voices` 是从它派生的只读视图）。有 `dialogue` 时，`narration_text` 由它派生，给出不同的值被拒绝；`tts_text` 和 cues 属于单人路径，与对话并存被拒绝。对话随片段一起经过 JSON 往返（仓库就是这样存片段的），不再需要另找地方放轮次。
 
 `composer._narration_segment` 不再拒绝对话块，而是把它带进片段。`assembly._merge_writer_blocks` **仍然拒绝**对话块：把对话和别的文字合并成一段没有定义。
 
@@ -23,9 +23,15 @@
 - 缓存键覆盖：有序的（说话人，文字）、每个说话人的声音、供应商与模型、语速、格式、协议版本。换声音或改一个字不会复用旧音频；同一段、同一映射重复请求不会再合成。
 - `NarrationMaterializer` 可选地接受对话配音提供方和声音映射；**没有配置时对话片段抛配置错误**，不会退化成用单人声音把对话读出来。单人路径的代码和行为没有改。
 
-### 三、保存后恢复：不重写、不重新核对、不重新合成
+### 三、恢复不是重新生成：保存的请求快照与资产优先
 
-核对后的稿件（ADR 0025 的 `CheckedDialogueRecord`）是权威存档；`restore_narration_segment()` 从存档重建片段，再交给物化：音频已在存储里就是缓存命中，**零次模型调用、零次合成**。已经 `AUDIO_READY` 的片段本来就不会再物化。
+核对后的稿件（ADR 0025 的 `CheckedDialogueRecord`）是权威存档。配音时**同时保存合成请求的快照**（`DialogueAudioSnapshot`，必填 `schema_version`）：声音映射、语速、供应商、模型、格式、协议版本，以及资产的缓存键（即资产 ID）和时长。它随片段（`dialogue_audio`）一起持久化，也单独存在存档旁（`…/{block}.audio.json`，只在第一次保存，恢复不会覆盖）。
+
+- **恢复**（`restore_narration_segment` + `voice_segment`）：片段带着快照，物化时**用快照里的请求和资产**，不看当前配置。资产还在 → 零次合成，声音、语速、时长不变。资产没了 → 只有当前提供方的（供应商、模型、协议版本）和请求的缓存键都与快照完全一致时，才用快照的声音和语速原样重做；否则抛配置错误并要求显式重新生成，不会悄悄换声音。读回的快照必须显式带 `schema_version`，且声音要覆盖稿件里的所有说话人。
+- **主动重新生成**（`regenerate_segment` / `NarrationMaterializer.regenerate_dialogue`）：用**当前**配置做新音频并写入新快照——这是唯一会替换快照的地方。已发布（已到达听众）的音频不可重新生成；失败时旧音频和旧快照原样保留。
+- 没有快照的新片段按当前配置配音，并记录第一份快照。
+
+两种情况下都是**零次模型调用**（不重写、不重新核对）。已经 `AUDIO_READY` 的片段本来就不会再物化。
 
 ### 四、取消、迟到、失败不动已发布前缀
 
@@ -38,7 +44,7 @@
 
 ### 五、素材的预约/发布/取消（避免重复讲述）
 
-`StoryUsageLedger`（每集一份带必填 `schema_version` 的 JSON）：故事**可用 → 预约（RESERVED，由一个块持有）→ 已讲（PUBLISHED，不可逆）**，取消/跳过/失败时预约退回可用。`DialogueSeamService.author()` 先预约，再跑流水线并保存存档；流水线拒绝、保存失败或被取消（包括取消）都会释放预约；已被占用或已讲过的故事不花任何模型调用，直接 `story_already_used`。`reconcile()` 按片段状态更新：进入 `COMMITTED/PLAYED` 记为已讲，`SKIPPED` 的预约退回；`release_orphans()` 处理崩溃留下的孤儿预约（只在没有进行中的 authoring 时调用）。
+`StoryUsageLedger`（每集一份带必填 `schema_version` 的 JSON）：故事**可用 → 预约（RESERVED，由一个块持有）→ 已讲（PUBLISHED，不可逆）**，取消/跳过/失败时预约退回可用。`DialogueSeamService.author()` 先预约，再跑流水线并保存存档；流水线拒绝、保存失败或被取消（包括取消）都会释放预约。预约返回四种结果：`ACQUIRED`（新取得，才会运行流水线）、`HELD`（同一个块的上一次还在做）、`TOLD`（同一个块已发布）、`TAKEN`（别的块占用或已讲，直接 `story_already_used`）。**同一个块再次 author 不会重新运行 Writer 或核对**：已有存档就原样交还（`restored=True`，`already_told` 或 `in_progress`；已发布时时间线里的同 ID 片段才是权威），没有存档就报告 `in_progress`。`reconcile()` 按片段状态更新：进入 `COMMITTED/PLAYED` 记为已讲，`SKIPPED` 的预约退回；`release_orphans()` 处理崩溃留下的孤儿预约（只在没有进行中的 authoring 时调用）。
 
 ## 验收对照
 

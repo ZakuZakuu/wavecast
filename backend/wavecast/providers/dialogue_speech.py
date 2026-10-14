@@ -25,6 +25,8 @@ FAKE_CHARS_PER_SECOND = 6.0
 class DialogueSpeechProvider(Protocol):
     provider_name: str
     model: str
+    # What the request protocol is called; part of the cache key and of the recorded snapshot.
+    protocol_version: str
 
     def cache_key(self, request: SpeechRequest) -> str: ...
 
@@ -64,6 +66,7 @@ class MockDialogueSpeechProvider:
 
     provider_name = "mock-dialogue-speech"
     model = "mock-dialogue"
+    protocol_version = DIALOGUE_PROTOCOL_VERSION
 
     def __init__(
         self,
@@ -81,7 +84,11 @@ class MockDialogueSpeechProvider:
 
     def cache_key(self, request: SpeechRequest) -> str:
         return build_dialogue_cache_key(
-            provider=self.provider_name, model=self.model, request=request, extension="wav"
+            provider=self.provider_name,
+            model=self.model,
+            request=request,
+            protocol_version=self.protocol_version,
+            extension="wav",
         )
 
     async def synthesize_dialogue(self, request: SpeechRequest) -> AudioAsset:

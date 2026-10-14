@@ -28,11 +28,13 @@ from wavecast.models.episode import (
     PlayableEpisode,
     SegmentState,
 )
-from wavecast.models.story_usage import StoryUsageLedger, StoryUseState
+from wavecast.models.story_usage import Reservation, StoryUsageLedger, StoryUseState
 from wavecast.orchestration.dialogue_timeline import (
     DialogueSeamService,
     narration_segment_from_record,
+    regenerate_segment,
     restore_narration_segment,
+    voice_segment,
 )
 from wavecast.orchestration.episode import InMemoryEpisodeRepository
 from wavecast.orchestration.generation import GeneratedChapter
@@ -47,7 +49,7 @@ from wavecast.providers.fakes import MockTTSProvider
 from wavecast.rendering.fingerprint import mix_plan_fingerprint
 from wavecast.rendering.programme import slice_mix_plan
 from wavecast.storage import LocalObjectStorageProvider
-from wavecast.storage.dialogue_artifacts import DialogueArtifactStore
+from wavecast.storage.dialogue_artifacts import DialogueArtifactError, DialogueArtifactStore
 from wavecast.storage.episodes import EpisodeConcurrencyError
 from wavecast.storage.story_usage import StoryUsageError, StoryUsageStore, usage_key
 
@@ -56,6 +58,17 @@ from tests.test_dialogue_pipeline import SLOT, build, material
 from tests.test_narration_authoring import _authored_chapter, _episode, _Host
 
 EPISODE = "episode-1"
+
+
+def _snapshot(**changes):  # type: ignore[no-untyped-def]
+    from wavecast.models.dialogue import DialogueAudioSnapshot
+
+    base = dict(
+        schema_version=1, provider="doubao_podcast", model="podcast-v1", protocol_version="dialogue-audio-v1",
+        audio_format="mp3", speed=0, voices=list(VOICE_COMBINATION_B), cache_key="dialogue-abc.mp3",
+        duration_seconds=88,
+    )  # fmt: skip
+    return DialogueAudioSnapshot(**{**base, **changes})
 
 
 def record():  # type: ignore[no-untyped-def]
@@ -106,16 +119,17 @@ def test_a_dialogue_segment_cannot_drift_from_its_dialogue() -> None:
         NarrationSegment(**base, narration_text="另一段话")
     with pytest.raises(ValidationError, match="voiced from its dialogue"):
         NarrationSegment(**base, tts_text="朗读")
-    with pytest.raises(ValidationError, match="belong to a dialogue"):
+    with pytest.raises(ValidationError, match="belongs to a dialogue"):
         NarrationSegment(
             id="s", chapter_id="c", order=0, planned_duration_seconds=5, title="t",
-            narration_text="x", dialogue_voices=list(VOICE_COMBINATION_B),
+            narration_text="x", dialogue_audio=_snapshot(),
         )  # fmt: skip
     # The one-voice segment is exactly as before.
     plain = NarrationSegment(
         id="s", chapter_id="c", order=0, planned_duration_seconds=5, title="t", narration_text="接下来。"
     )
-    assert plain.dialogue is None and plain.dialogue_voices == [] and plain.tts_text is None
+    assert plain.dialogue is None and plain.dialogue_audio is None and plain.tts_text is None
+    assert plain.dialogue_voices == []
 
 
 def test_the_composer_now_builds_a_segment_from_a_dialogue_block_without_flattening_it() -> None:
@@ -130,14 +144,15 @@ def test_the_composer_now_builds_a_segment_from_a_dialogue_block_without_flatten
 def test_the_segment_survives_the_json_round_trip_the_repository_uses() -> None:
     episode = _episode()
     segment = narration_segment_from_record(record(), chapter_id="chapter-2", order=1)
-    segment.dialogue_voices = list(VOICE_COMBINATION_B)
+    segment.dialogue_audio = _snapshot()
     episode.segments.append(segment)
 
     restored = LiveEpisode.model_validate_json(episode.model_dump_json())
 
     again = restored.segment(segment.id)
     assert isinstance(again, NarrationSegment)
-    assert again.dialogue == segment.dialogue and again.dialogue_voices == segment.dialogue_voices
+    assert again.dialogue == segment.dialogue and again.dialogue_audio == segment.dialogue_audio
+    assert again.dialogue_voices == list(VOICE_COMBINATION_B)
 
 
 # --- voicing: turns and the B voices ----------------------------------------------------------------------
@@ -460,7 +475,7 @@ def test_a_rejected_passage_gives_the_story_back(storage: LocalObjectStorageProv
     assert result.reason == "provider_failed:ProviderTimeoutError"
     assert asyncio.run(usage.load(EPISODE)).entries == {}
     # Available again: another passage may take it.
-    assert asyncio.run(usage.reserve(EPISODE, STORY_ID, "block-9")) is True
+    assert asyncio.run(usage.reserve(EPISODE, STORY_ID, "block-9")) is Reservation.ACQUIRED
 
 
 def test_cancellation_while_making_a_passage_releases_the_story(
@@ -513,12 +528,12 @@ def test_reconcile_publishes_what_reached_the_listener_and_releases_what_was_ski
     ledger = asyncio.run(usage.reconcile(EPISODE, [segment]))
     assert ledger.state_of(STORY_ID) is StoryUseState.PUBLISHED
     # Told for good: cannot be reserved by another passage, nor released, even if later skipped.
-    assert asyncio.run(usage.reserve(EPISODE, STORY_ID, "block-2")) is False
+    assert asyncio.run(usage.reserve(EPISODE, STORY_ID, "block-2")) is Reservation.TAKEN
     segment.state = SegmentState.SKIPPED
     assert asyncio.run(usage.reconcile(EPISODE, [segment])).state_of(STORY_ID) is StoryUseState.PUBLISHED
 
     # A different story, reserved and then skipped before it reached anyone, is given back.
-    assert asyncio.run(usage.reserve(EPISODE, "other-story", "block-x")) is True
+    assert asyncio.run(usage.reserve(EPISODE, "other-story", "block-x")) is Reservation.ACQUIRED
     skipped = segment.model_copy(
         update={
             "state": SegmentState.SKIPPED,
@@ -548,10 +563,13 @@ def test_the_ledger_survives_a_restart_and_will_not_guess_a_missing_version(
 def test_ledger_rules() -> None:
     ledger = StoryUsageLedger.empty()
 
-    assert ledger.reserve("s", "b1") and ledger.reserve("s", "b1")  # the same passage may ask again
-    assert not ledger.reserve("s", "b2")
+    assert ledger.reserve("s", "b1") is Reservation.ACQUIRED
+    assert ledger.reserve("s", "b1") is Reservation.HELD  # the same passage asks again: not a new one
+    assert ledger.reserve("s", "b2") is Reservation.TAKEN
     assert not ledger.release("s", "b2")  # not its holder
     ledger.publish("s", "b1")
+    assert ledger.reserve("s", "b1") is Reservation.TOLD  # published: asking again does not re-enter
+    assert ledger.reserve("s", "b2") is Reservation.TAKEN
     with pytest.raises(ValueError, match="already told"):
         ledger.release("s", "b1")
     with pytest.raises(ValueError, match="another passage"):
@@ -575,3 +593,243 @@ def test_a_reservation_whose_passage_never_arrived_can_be_given_back(
     after = asyncio.run(usage.load(EPISODE))
     assert set(after.entries) == {"inserted-story", "told-story"}
     assert after.state_of("told-story") is StoryUseState.PUBLISHED  # told stories are never touched
+
+
+# --- the same passage asked for again -------------------------------------------------------------------------------------
+
+
+def test_a_published_passage_never_re_enters_generation_even_with_the_same_block_id(
+    storage: LocalObjectStorageProvider,
+) -> None:
+    service, usage, writer = seam_service(storage)
+    first = asyncio.run(service.author(EPISODE, material(), SLOT, chapter_id="chapter-2", order=1))
+    assert first.segment is not None
+    first.segment.state = SegmentState.COMMITTED
+    asyncio.run(usage.reconcile(EPISODE, [first.segment]))  # the listener reached it: the story is told
+    calls_before = list(writer.calls)
+
+    again = asyncio.run(service.author(EPISODE, material(), SLOT, chapter_id="chapter-2", order=1))
+
+    assert list(writer.calls) == calls_before  # no Writer run, no check
+    assert again.restored and again.reason == "already_told"
+    assert again.segment is not None and again.segment.dialogue == first.segment.dialogue
+    assert again.segment.id == first.segment.id  # the timeline's own segment is the authority
+    assert again.outcome.status is DialogueStatus.READY and again.outcome.calls == 0
+    assert asyncio.run(usage.load(EPISODE)).state_of(STORY_ID) is StoryUseState.PUBLISHED
+
+
+def test_asking_again_while_the_passage_is_being_made_reports_it_without_starting_another(
+    storage: LocalObjectStorageProvider,
+) -> None:
+    service, usage, writer = seam_service(storage)
+    asyncio.run(usage.reserve(EPISODE, STORY_ID, SLOT.block_id))  # an authoring run holds it, nothing saved yet
+
+    again = asyncio.run(service.author(EPISODE, material(), SLOT, chapter_id="chapter-2", order=1))
+
+    assert again.segment is None and again.reason == "in_progress" and not again.restored
+    assert again.outcome.status is DialogueStatus.SKIPPED
+    assert writer.calls == []
+    assert asyncio.run(usage.load(EPISODE)).state_of(STORY_ID) is StoryUseState.RESERVED  # still held
+
+
+def test_a_passage_that_was_saved_but_never_inserted_is_handed_back_not_remade(
+    storage: LocalObjectStorageProvider,
+) -> None:
+    service, _, writer = seam_service(storage)
+    first = asyncio.run(service.author(EPISODE, material(), SLOT, chapter_id="chapter-2", order=1))
+    calls_before = list(writer.calls)
+
+    again = asyncio.run(service.author(EPISODE, material(), SLOT, chapter_id="chapter-2", order=1))  # a retry after a crash
+
+    assert again.restored and again.reason == "in_progress" and list(writer.calls) == calls_before
+    assert again.segment is not None and first.segment is not None
+    assert again.segment.dialogue == first.segment.dialogue
+
+
+# --- restoring is not regenerating: the recorded request and asset win ------------------------------------------------
+
+
+def voiced(storage, speech, *, episode=EPISODE):  # type: ignore[no-untyped-def]
+    """Make and voice the passage once, keeping the snapshot (the original programme)."""
+    pipeline, _, _ = build(clean_draft())
+    outcome = asyncio.run(pipeline.produce(material(), SLOT))
+    artifacts = DialogueArtifactStore(storage)
+    asyncio.run(artifacts.save(episode, outcome.to_record()))
+    segment = narration_segment_from_record(outcome.to_record(), chapter_id="chapter-2", order=1)
+    asyncio.run(voice_segment(materializer(storage, speech), artifacts, episode, segment))
+    return artifacts, segment
+
+
+class OtherDialogueProvider(MockDialogueSpeechProvider):
+    """The same fake, but a different vendor/model: what a configuration change to another voice service looks like."""
+
+    provider_name = "another-dialogue-speech"
+    model = "another-model"
+
+
+def test_the_snapshot_records_the_whole_request_and_is_saved_with_the_passage(
+    storage: LocalObjectStorageProvider,
+) -> None:
+    speech = MockDialogueSpeechProvider(storage)
+    artifacts, segment = voiced(storage, speech)
+
+    saved = asyncio.run(artifacts.load_audio(EPISODE, SLOT.block_id))
+
+    assert saved is not None and saved == segment.dialogue_audio
+    assert (saved.provider, saved.model, saved.protocol_version) == (
+        speech.provider_name, speech.model, speech.protocol_version,
+    )  # fmt: skip
+    assert saved.speed == 0 and saved.voices == list(VOICE_COMBINATION_B)
+    assert saved.cache_key == segment.asset_ref and saved.duration_seconds == segment.actual_duration_seconds
+
+
+def test_restoring_an_old_programme_after_the_configuration_changed_uses_the_old_asset_and_synthesizes_nothing(
+    storage: LocalObjectStorageProvider,
+) -> None:
+    original_speech = MockDialogueSpeechProvider(storage)
+    artifacts, original = voiced(storage, original_speech)
+    assert original_speech.calls == 1
+
+    # Configuration moves on: other voices, another speed, another vendor and model.
+    other_voices = (
+        VoiceRoleSnapshot(speaker=DialogueSpeaker.A, voice_id="a-brand-new-voice"),
+        VoiceRoleSnapshot(speaker=DialogueSpeaker.B, voice_id="another-new-voice"),
+    )
+    new_speech = OtherDialogueProvider(storage)
+    restored = asyncio.run(
+        restore_narration_segment(
+            DialogueArtifactStore(storage), EPISODE, SLOT.block_id, chapter_id="chapter-2", order=1
+        )
+    )
+    assert restored is not None and restored.dialogue_audio == original.dialogue_audio
+    asyncio.run(
+        voice_segment(
+            materializer(storage, new_speech, voices=other_voices, speed=1.3),
+            DialogueArtifactStore(storage),
+            EPISODE,
+            restored,
+        )
+    )
+
+    assert new_speech.calls == 0 and original_speech.calls == 1  # zero synthesis
+    assert restored.asset_ref == original.asset_ref and restored.audio_source_url == original.audio_source_url
+    assert restored.actual_duration_seconds == original.actual_duration_seconds
+    assert restored.state is SegmentState.AUDIO_READY
+    assert restored.dialogue_voices == list(VOICE_COMBINATION_B)  # the old voices, not the new ones
+    assert asyncio.run(artifacts.load_audio(EPISODE, SLOT.block_id)) == original.dialogue_audio  # not overwritten
+
+
+def test_when_the_old_audio_is_gone_it_is_remade_only_exactly_as_before_or_not_at_all(
+    storage: LocalObjectStorageProvider, tmp_path: Path
+) -> None:
+    speech = MockDialogueSpeechProvider(storage)
+    artifacts, original = voiced(storage, speech)
+    snapshot = original.dialogue_audio
+    assert snapshot is not None
+    empty = LocalObjectStorageProvider(tmp_path / "audio-evicted")  # the audio asset is no longer there
+
+    def fresh_segment():  # type: ignore[no-untyped-def]
+        record = asyncio.run(artifacts.load(EPISODE, SLOT.block_id))
+        assert record is not None
+        segment = narration_segment_from_record(record, chapter_id="chapter-2", order=1)
+        segment.dialogue_audio = snapshot
+        return segment
+
+    # A different vendor cannot reproduce it: refuse, synthesize nothing, change nothing.
+    other = OtherDialogueProvider(empty)
+    segment = fresh_segment()
+    with pytest.raises(ProviderConfigurationError, match="regenerate explicitly"):
+        asyncio.run(materializer(empty, other, voices=VOICE_COMBINATION_B).materialize(segment))
+    assert other.calls == 0 and segment.state is SegmentState.SCRIPT_READY
+    assert segment.dialogue_audio == snapshot
+
+    # The same vendor/model/protocol remakes it with the recorded voices and speed - even though
+    # the materializer is configured with others - and lands on the very same asset.
+    same = MockDialogueSpeechProvider(empty)
+    other_config = (
+        VoiceRoleSnapshot(speaker=DialogueSpeaker.A, voice_id="drifted-a"),
+        VoiceRoleSnapshot(speaker=DialogueSpeaker.B, voice_id="drifted-b"),
+    )
+    remade = fresh_segment()
+    asyncio.run(materializer(empty, same, voices=other_config, speed=2.0).materialize(remade))
+    assert same.calls == 1 and remade.asset_ref == snapshot.cache_key
+    assert same.requests[0].roles == list(VOICE_COMBINATION_B) and same.requests[0].speed == 0
+    assert remade.dialogue_audio == snapshot and remade.state is SegmentState.AUDIO_READY
+
+
+def test_regenerating_is_the_explicit_way_to_make_new_audio_and_records_a_new_snapshot(
+    storage: LocalObjectStorageProvider,
+) -> None:
+    speech = MockDialogueSpeechProvider(storage)
+    artifacts, segment = voiced(storage, speech)
+    before = segment.dialogue_audio
+    new_voices = (
+        VoiceRoleSnapshot(speaker=DialogueSpeaker.A, voice_id="regenerated-a"),
+        VoiceRoleSnapshot(speaker=DialogueSpeaker.B, voice_id="regenerated-b"),
+    )
+
+    asyncio.run(
+        regenerate_segment(materializer(storage, speech, voices=new_voices), artifacts, EPISODE, segment)
+    )
+
+    after = segment.dialogue_audio
+    assert after is not None and before is not None
+    assert after != before and after.cache_key != before.cache_key
+    assert after.voices == list(new_voices) and speech.calls == 2
+    assert asyncio.run(artifacts.load_audio(EPISODE, SLOT.block_id)) == after
+    assert segment.asset_ref == after.cache_key and segment.state is SegmentState.AUDIO_READY
+
+
+def test_regenerating_never_touches_published_audio_and_a_failure_keeps_the_previous_audio(
+    storage: LocalObjectStorageProvider,
+) -> None:
+    speech = MockDialogueSpeechProvider(storage)
+    artifacts, segment = voiced(storage, speech)
+    previous = (segment.asset_ref, segment.dialogue_audio, segment.actual_duration_seconds, segment.state)
+    new_voices = (
+        VoiceRoleSnapshot(speaker=DialogueSpeaker.A, voice_id="x-a"),
+        VoiceRoleSnapshot(speaker=DialogueSpeaker.B, voice_id="x-b"),
+    )
+    materialize = materializer(storage, speech, voices=new_voices)
+
+    speech.fail_with = ProviderTimeoutError("slow")
+    with pytest.raises(ProviderTimeoutError):
+        asyncio.run(regenerate_segment(materialize, artifacts, EPISODE, segment))
+    assert (segment.asset_ref, segment.dialogue_audio, segment.actual_duration_seconds, segment.state) == previous
+    assert asyncio.run(artifacts.load_audio(EPISODE, SLOT.block_id)) == previous[1]
+
+    speech.fail_with = None
+    segment.state = SegmentState.COMMITTED  # the listener has it
+    calls = speech.calls
+    with pytest.raises(ValueError, match="immutable"):
+        asyncio.run(regenerate_segment(materialize, artifacts, EPISODE, segment))
+    assert speech.calls == calls and segment.dialogue_audio == previous[1]
+
+
+def test_a_snapshot_must_declare_its_version_and_cover_the_speakers(
+    storage: LocalObjectStorageProvider,
+) -> None:
+    speech = MockDialogueSpeechProvider(storage)
+    artifacts, original = voiced(storage, speech)
+    snapshot = original.dialogue_audio
+    assert snapshot is not None
+    key = "dialogue-artifacts/episode-1/block-1.audio.json"
+
+    def put(payload: dict) -> None:
+        asyncio.run(storage.put(key, json.dumps(payload).encode(), "application/json"))
+
+    raw = snapshot.model_dump(mode="json")
+    put({k: v for k, v in raw.items() if k != "schema_version"})
+    with pytest.raises(DialogueArtifactError, match="does not declare a schema_version"):
+        asyncio.run(artifacts.load_audio(EPISODE, SLOT.block_id))
+    put({**raw, "schema_version": 2})
+    with pytest.raises(DialogueArtifactError, match="schema_version 2"):
+        asyncio.run(artifacts.load_audio(EPISODE, SLOT.block_id))
+    put({**raw, "schema_version": True})
+    with pytest.raises(DialogueArtifactError):
+        asyncio.run(artifacts.load_audio(EPISODE, SLOT.block_id))
+    put({**raw, "voices": raw["voices"][:1]})  # only the first host has a voice
+    with pytest.raises(DialogueArtifactError, match="does not cover the speakers"):
+        asyncio.run(
+            restore_narration_segment(artifacts, EPISODE, SLOT.block_id, chapter_id="c", order=1)
+        )

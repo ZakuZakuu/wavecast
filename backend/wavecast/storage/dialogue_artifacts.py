@@ -20,7 +20,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
-from wavecast.models.dialogue import DialogueBlock, DialogueIssue
+from wavecast.models.dialogue import DialogueAudioSnapshot, DialogueBlock, DialogueIssue
 from wavecast.models.story_material import StoryMaterial
 from wavecast.providers.contracts import ObjectStorageProvider
 from wavecast.stations import StationId
@@ -58,6 +58,10 @@ class CheckedDialogueRecord(BaseModel):
         return self
 
 
+def audio_snapshot_key(episode_id: str, block_id: str) -> str:
+    return artifact_key(episode_id, block_id).removesuffix(".json") + ".audio.json"
+
+
 def artifact_key(episode_id: str, block_id: str) -> str:
     for part in (episode_id, block_id):
         if not _SAFE_SEGMENT.fullmatch(part):
@@ -78,6 +82,36 @@ class DialogueArtifactStore:
             {"schema_version": record.schema_version, "slot_id": record.block.slot_id},
         )
         return key
+
+    async def save_audio(
+        self, episode_id: str, block_id: str, snapshot: DialogueAudioSnapshot
+    ) -> str:
+        """Keep the request a passage was voiced with and the asset it produced."""
+        key = audio_snapshot_key(episode_id, block_id)
+        await self._storage.put(
+            key,
+            snapshot.model_dump_json().encode("utf-8"),
+            "application/json",
+            {"schema_version": snapshot.schema_version, "cache_key": snapshot.cache_key},
+        )
+        return key
+
+    async def load_audio(self, episode_id: str, block_id: str) -> DialogueAudioSnapshot | None:
+        stored = await self._storage.get(audio_snapshot_key(episode_id, block_id))
+        if stored is None:
+            return None
+        content = getattr(stored, "content", None)
+        if not isinstance(content, bytes):
+            raise DialogueArtifactError("stored audio snapshot has no readable content")
+        version = _declared_version(content)
+        if version is _MISSING:
+            raise DialogueArtifactError("stored audio snapshot does not declare a schema_version")
+        if type(version) is not int or version != 1:
+            raise DialogueArtifactError(f"unsupported audio snapshot schema_version {version!r}")
+        try:
+            return DialogueAudioSnapshot.model_validate_json(content)
+        except ValidationError as error:
+            raise DialogueArtifactError("stored audio snapshot is damaged or inconsistent") from error
 
     async def load(self, episode_id: str, block_id: str) -> CheckedDialogueRecord | None:
         stored = await self._storage.get(artifact_key(episode_id, block_id))

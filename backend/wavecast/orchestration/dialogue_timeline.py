@@ -22,13 +22,16 @@ from wavecast.intelligence.dialogue_pipeline import (
     DialogueStatus,
 )
 from wavecast.intelligence.dialogue_writer import DialogueSlot
+from wavecast.materialization.narration import NarrationMaterializer
 from wavecast.models.dialogue import DialoguePurpose
 from wavecast.models.episode import NarrationRole, NarrationSegment, SegmentState
 from wavecast.models.story_material import StoryMaterial
+from wavecast.models.story_usage import Reservation
 from wavecast.storage.dialogue_artifacts import (
     CheckedDialogueRecord,
     DialogueArtifactError,
     DialogueArtifactStore,
+    artifact_key,
 )
 from wavecast.storage.story_usage import StoryUsageStore
 
@@ -68,11 +71,63 @@ async def restore_narration_segment(
     chapter_id: str,
     order: int,
 ) -> NarrationSegment | None:
-    """Rebuild the segment from the saved record: no model call, no new check, no new audio."""
+    """Rebuild the segment from the saved record: no model call, no new check, no new audio.
+
+    If the passage was voiced, the segment carries the snapshot of that request, so voicing it
+    again *restores* the original audio with its original voices - whatever the configuration
+    says today.  Making new audio is :func:`regenerate_segment`, an explicit act.
+    """
     record = await artifacts.load(episode_id, block_id)
     if record is None:
         return None
-    return narration_segment_from_record(record, chapter_id=chapter_id, order=order)
+    segment = narration_segment_from_record(record, chapter_id=chapter_id, order=order)
+    snapshot = await artifacts.load_audio(episode_id, block_id)
+    if snapshot is not None:
+        covered = {voice.speaker for voice in snapshot.voices}
+        if not {turn.speaker for turn in record.block.turns} <= covered:
+            raise DialogueArtifactError("the saved audio snapshot does not cover the speakers")
+        segment.dialogue_audio = snapshot
+    return segment
+
+
+async def voice_segment(
+    materializer: NarrationMaterializer,
+    artifacts: DialogueArtifactStore,
+    episode_id: str,
+    segment: NarrationSegment,
+) -> NarrationSegment:
+    """Voice a dialogue segment (restoring it if it was voiced before) and keep its snapshot.
+
+    The snapshot is saved the first time only: it is the record of what the audio was made with,
+    and a later restore must not overwrite it with whatever is configured now.
+    """
+    block = segment.dialogue
+    if block is None:
+        raise ValueError("only a dialogue segment is voiced here")
+    await materializer.materialize(segment)
+    if segment.dialogue_audio is not None and await artifacts.load_audio(episode_id, block.block_id) is None:
+        await artifacts.save_audio(episode_id, block.block_id, segment.dialogue_audio)
+    return segment
+
+
+async def regenerate_segment(
+    materializer: NarrationMaterializer,
+    artifacts: DialogueArtifactStore,
+    episode_id: str,
+    segment: NarrationSegment,
+) -> NarrationSegment:
+    """Make *new* audio for a dialogue under the current configuration, and record it.
+
+    This is the one place a saved snapshot is replaced.  It refuses audio the listener has
+    reached, and leaves the previous audio and snapshot untouched if making the new audio fails.
+    """
+    block = segment.dialogue
+    if block is None:
+        raise ValueError("only a dialogue segment can be regenerated")
+    await materializer.regenerate_dialogue(segment)
+    assert segment.dialogue_audio is not None
+    await artifacts.save_audio(episode_id, block.block_id, segment.dialogue_audio)
+    return segment
 
 
 @dataclass
@@ -81,6 +136,9 @@ class DialogueSeamResult:
     segment: NarrationSegment | None = None
     artifact_key: str | None = None
     reason: str | None = None
+    # True when this is the passage that was already made (saved), handed back instead of a new
+    # one: asking again for the same passage never writes or checks anything a second time.
+    restored: bool = False
 
 
 class DialogueSeamService:
@@ -106,7 +164,8 @@ class DialogueSeamService:
     ) -> DialogueSeamResult:
         """Make, check, save and package one passage - or give the story back and say why not."""
         story_id, block_id = material.story_id, slot.block_id
-        if not await self._usage.reserve(episode_id, story_id, block_id):
+        reservation = await self._usage.reserve(episode_id, story_id, block_id)
+        if reservation is Reservation.TAKEN:
             skipped = DialogueOutcome(
                 status=DialogueStatus.SKIPPED,
                 reason="story_already_used",
@@ -114,6 +173,17 @@ class DialogueSeamService:
                 station_value=slot.station.value,
             )
             return DialogueSeamResult(outcome=skipped, reason="story_already_used")
+        if reservation is not Reservation.ACQUIRED:
+            # The same passage again: either it is still being made, or it is made (and perhaps
+            # already published).  Neither starts another Writer run or another check.
+            return await self._existing(
+                episode_id,
+                material,
+                slot,
+                chapter_id=chapter_id,
+                order=order,
+                told=reservation is Reservation.TOLD,
+            )
         try:
             outcome = await self._pipeline.produce(material, slot)
             if not outcome.speakable:
@@ -127,11 +197,46 @@ class DialogueSeamService:
         segment = narration_segment_from_record(record, chapter_id=chapter_id, order=order)
         return DialogueSeamResult(outcome=outcome, segment=segment, artifact_key=key)
 
+    async def _existing(
+        self,
+        episode_id: str,
+        material: StoryMaterial,
+        slot: DialogueSlot,
+        *,
+        chapter_id: str,
+        order: int,
+        told: bool,
+    ) -> DialogueSeamResult:
+        reason = "already_told" if told else "in_progress"
+        record = await self._artifacts.load(episode_id, slot.block_id)
+        if record is None:
+            # Reserved but not saved yet: somebody else is making it (or it was interrupted;
+            # ``release_orphans`` frees a reservation that never arrived).
+            pending = DialogueOutcome(
+                status=DialogueStatus.SKIPPED,
+                reason=reason,
+                material=material,
+                station_value=slot.station.value,
+            )
+            return DialogueSeamResult(outcome=pending, reason=reason)
+        segment = await restore_narration_segment(
+            self._artifacts, episode_id, slot.block_id, chapter_id=chapter_id, order=order
+        )
+        return DialogueSeamResult(
+            outcome=DialogueOutcome.from_record(record),
+            segment=segment,
+            artifact_key=artifact_key(episode_id, slot.block_id),
+            reason=reason,
+            restored=True,
+        )
+
 
 __all__ = [
     "DialogueArtifactError",
     "DialogueSeamResult",
     "DialogueSeamService",
     "narration_segment_from_record",
+    "regenerate_segment",
     "restore_narration_segment",
+    "voice_segment",
 ]

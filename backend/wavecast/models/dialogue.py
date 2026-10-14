@@ -7,6 +7,7 @@ per-request snapshot (``wavecast.providers.speech``).
 """
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -156,3 +157,27 @@ class DialogueIssue(BaseModel):
     sentence: int = Field(ge=0)
     code: str = Field(min_length=1, max_length=60)
     message: str = Field(min_length=1, max_length=600)
+
+
+class DialogueAudioSnapshot(BaseModel):
+    """The exact request a passage was voiced with, and the audio that came of it.
+
+    Taken when the audio is made and kept with the passage.  Restoring a programme uses *this*
+    - the voices, speed, vendor, model, format and protocol version it was voiced with - and the
+    asset it names, never whatever the configuration says today.  Making new audio under the
+    current configuration is a different, explicit act (a regeneration).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Required on purpose: a snapshot that does not say its version is not assumed to be version 1.
+    schema_version: Literal[1]
+    provider: str = Field(min_length=1, max_length=80)
+    model: str = Field(min_length=1, max_length=120)
+    protocol_version: str = Field(min_length=1, max_length=80)
+    audio_format: str | None = Field(default=None, max_length=40)
+    speed: float | None = Field(default=None, allow_inf_nan=False)
+    voices: list[VoiceRoleSnapshot] = Field(min_length=1, max_length=2)
+    # The content-addressed key of the audio; also the asset's id in storage.
+    cache_key: str = Field(min_length=1, max_length=200)
+    duration_seconds: int = Field(gt=0, le=3600)
