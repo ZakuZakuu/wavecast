@@ -109,3 +109,14 @@ class DialogueBlock(BaseModel):
             for ref in turn.fact_refs:
                 seen.setdefault(ref)
         return list(seen)
+
+
+class DialogueIssue(BaseModel):
+    """One problem the fact check found in a turn (kept with the saved passage for inspection)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    turn: int = Field(ge=0)
+    sentence: int = Field(ge=0)
+    code: str = Field(min_length=1, max_length=60)
+    message: str = Field(min_length=1, max_length=600)
