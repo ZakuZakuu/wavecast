@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from typing import Any
 
+from pydantic import ValidationError
+
+from wavecast.models.dialogue import VoiceRoleSnapshot
 from wavecast.models.episode import NarrationSegment, SegmentKind, SegmentState
 from wavecast.narration import render_narration
 from wavecast.providers.contracts import (
@@ -14,7 +18,13 @@ from wavecast.providers.contracts import (
     ObjectStorageProvider,
     TTSProvider,
 )
-from wavecast.providers.errors import ProviderError, ProviderInvalidResponseError
+from wavecast.providers.dialogue_speech import DialogueSpeechProvider
+from wavecast.providers.errors import (
+    ProviderConfigurationError,
+    ProviderError,
+    ProviderInvalidResponseError,
+)
+from wavecast.providers.speech import SpeechRequest
 from wavecast.speech import SpeechDirector, SpeechProfile
 from wavecast.spoken_form import has_unspeakable_script
 
@@ -28,9 +38,19 @@ class NarrationMaterializer:
         self,
         tts_provider: TTSProvider,
         storage: ObjectStorageProvider,
+        *,
+        dialogue_speech: DialogueSpeechProvider | None = None,
+        dialogue_voices: Sequence[VoiceRoleSnapshot] = (),
+        dialogue_speed: float | None = None,
     ) -> None:
         self.tts_provider = tts_provider
         self.storage = storage
+        # Two-host passages are voiced by their own provider with a fixed voice-per-host
+        # mapping; without them a dialogue segment cannot be materialized (it is not read out
+        # by the one-voice TTS).
+        self.dialogue_speech = dialogue_speech
+        self.dialogue_voices = tuple(dialogue_voices)
+        self.dialogue_speed = dialogue_speed
         self._locks: dict[str, asyncio.Lock] = {}
 
     async def materialize(self, segment: NarrationSegment) -> NarrationSegment:
@@ -44,6 +64,8 @@ class NarrationMaterializer:
             raise ProviderInvalidResponseError(
                 f"narration materialization requires SCRIPT_READY, got {segment.state.value}"
             )
+        if segment.dialogue is not None:
+            return await self._materialize_dialogue(segment)
         synthesis_text = segment.tts_text or segment.narration_text
         if not synthesis_text:
             raise ProviderInvalidResponseError("narration segment has no script text")
@@ -114,6 +136,70 @@ class NarrationMaterializer:
             except Exception as error:
                 segment.state = SegmentState.SCRIPT_READY
                 raise ProviderInvalidResponseError("narration materialization failed") from error
+
+    async def _materialize_dialogue(self, segment: NarrationSegment) -> NarrationSegment:
+        block = segment.dialogue
+        assert block is not None
+        provider = self.dialogue_speech
+        if provider is None or not self.dialogue_voices:
+            raise ProviderConfigurationError("no dialogue voices are configured")
+        if any(has_unspeakable_script(turn.tts_text or turn.text) for turn in block.turns):
+            logger.warning("narration_skipped segment_id=%s reason=unspeakable_script", segment.id)
+            segment.state = SegmentState.SKIPPED
+            return segment
+        try:
+            request = SpeechRequest.dialogue(
+                block, list(self.dialogue_voices), speed=self.dialogue_speed
+            )
+        except ValidationError as error:
+            raise ProviderConfigurationError("dialogue voices do not cover the speakers") from error
+        cache_key = provider.cache_key(request)
+        lock = self._locks.setdefault(cache_key, asyncio.Lock())
+        async with lock:
+            cached = await self.storage.get(cache_key)
+            cached_duration = _stored_duration(cached.metadata) if cached else None
+            if cached is not None and cached_duration is not None:
+                # Restored or repeated: the audio already exists, so nothing is synthesized.
+                self._apply_dialogue_asset(
+                    segment,
+                    AudioAsset(
+                        asset_id=cache_key,
+                        asset_type=AudioAssetType.NARRATION,
+                        provider=provider.provider_name,
+                        playback_url=self.storage.url_for(cache_key),
+                        duration=cached_duration,
+                        metadata={"cache_key": cache_key, "cache_hit": True},
+                    ),
+                    request,
+                )
+                return segment
+
+            segment.state = SegmentState.AUDIO_GENERATING
+            try:
+                asset = await provider.synthesize_dialogue(request)
+                if asset.asset_type is not AudioAssetType.NARRATION:
+                    raise ProviderInvalidResponseError("dialogue speech returned a non-narration asset")
+                if not asset.playback_url or asset.duration <= 0:
+                    raise ProviderInvalidResponseError("dialogue speech returned an invalid audio asset")
+            except asyncio.CancelledError:
+                # Cancelled or superseded mid-synthesis: back to a clean, unpublished state.
+                segment.state = SegmentState.SCRIPT_READY
+                raise
+            except ProviderError:
+                segment.state = SegmentState.SCRIPT_READY
+                raise
+            except Exception as error:
+                segment.state = SegmentState.SCRIPT_READY
+                raise ProviderInvalidResponseError("dialogue materialization failed") from error
+            self._apply_dialogue_asset(segment, asset, request)
+            return segment
+
+    def _apply_dialogue_asset(
+        self, segment: NarrationSegment, asset: AudioAsset, request: SpeechRequest
+    ) -> None:
+        # The actual audio length (not the estimate) is what the timeline plans with.
+        self._apply_asset(segment, asset)
+        segment.dialogue_voices = list(request.roles)
 
     @staticmethod
     def _apply_asset(segment: NarrationSegment, asset: AudioAsset) -> None:

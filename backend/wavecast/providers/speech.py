@@ -8,7 +8,7 @@ protocol still takes a plain string.
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from wavecast.models.dialogue import DialogueBlock, DialogueSpeaker
+from wavecast.models.dialogue import DialogueBlock, DialogueSpeaker, VoiceRoleSnapshot
 
 
 class SpeechTurn(BaseModel):
@@ -16,13 +16,6 @@ class SpeechTurn(BaseModel):
 
     speaker: DialogueSpeaker
     text: str = Field(min_length=1)
-
-
-class VoiceRoleSnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    speaker: DialogueSpeaker
-    voice_id: str = Field(min_length=1, max_length=200)
 
 
 class SpeechRequest(BaseModel):
@@ -82,3 +75,6 @@ class SpeechRequest(BaseModel):
             speed=speed,
             audio_format=audio_format,
         )
+
+
+__all__ = ["SpeechRequest", "SpeechTurn", "VoiceRoleSnapshot"]

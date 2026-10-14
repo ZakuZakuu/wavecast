@@ -239,6 +239,7 @@ class DialoguePipeline:
                 purpose=slot.purpose,
                 duration_seconds=estimate_dialogue_seconds(characters),
                 allowed_fact_refs=material.fact_ids,
+                story_id=material.story_id,
             )
         except DialogueValidationError as error:
             outcome.reason = "invalid_draft"

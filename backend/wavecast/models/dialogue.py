@@ -78,11 +78,27 @@ class DialogueDraft(BaseModel):
     turns: list[DraftTurn] = Field(min_length=1, max_length=MAX_DIALOGUE_TURNS)
 
 
+class VoiceRoleSnapshot(BaseModel):
+    """Which voice spoke which logical host, taken when audio was requested.
+
+    ``voice_id`` is opaque here: it names a voice in whatever vendor the audio came from.  The
+    dialogue itself never contains one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    speaker: DialogueSpeaker
+    voice_id: str = Field(min_length=1, max_length=200)
+
+
 class DialogueBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     block_id: str = Field(min_length=1, max_length=120)
     slot_id: str = Field(min_length=1, max_length=120)
+    # The story the passage tells (``StoryMaterial.story_id``), so that using a story can be
+    # tracked and a story is not told twice.  Absent only on blocks that tell no shared story.
+    story_id: str | None = Field(default=None, min_length=1, max_length=80)
     purpose: DialoguePurpose
     turns: list[DialogueTurn] = Field(min_length=1, max_length=MAX_DIALOGUE_TURNS)
     duration_seconds: int = Field(ge=1, le=300)
@@ -96,10 +112,12 @@ class DialogueBlock(BaseModel):
         slot_id: str,
         purpose: DialoguePurpose,
         duration_seconds: int,
+        story_id: str | None = None,
     ) -> "DialogueBlock":
         return cls(
             block_id=block_id,
             slot_id=slot_id,
+            story_id=story_id,
             purpose=purpose,
             turns=[
                 DialogueTurn(speaker=turn.speaker, text=turn.text, tts_text=None, fact_refs=turn.fact_refs)

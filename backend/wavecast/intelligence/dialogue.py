@@ -63,6 +63,7 @@ def block_from_draft(
     purpose: DialoguePurpose,
     duration_seconds: int,
     allowed_fact_refs: Collection[str],
+    story_id: str | None = None,
 ) -> DialogueBlock:
     block = DialogueBlock.from_draft(
         draft,
@@ -70,5 +71,6 @@ def block_from_draft(
         slot_id=slot_id,
         purpose=purpose,
         duration_seconds=duration_seconds,
+        story_id=story_id,
     )
     return validate_dialogue_block(block, allowed_fact_refs=allowed_fact_refs, expected_slot_id=slot_id)

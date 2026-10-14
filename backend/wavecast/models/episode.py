@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 
 from wavecast.audio_timing import TrackTimingProfile
 from wavecast.language import OutputLanguage
+from wavecast.models.dialogue import DialogueBlock, VoiceRoleSnapshot
 from wavecast.presentation import PresentationIntent
 from wavecast.stations import StationId
 
@@ -153,6 +154,26 @@ class NarrationSegment(Segment):
     tts_text: str | None = Field(default=None, min_length=1)
     tts_cues: list[str] = Field(default_factory=list)
     narration_role: NarrationRole = NarrationRole.GENERAL
+    # A fact-checked two-host passage.  When present it is the source of ``narration_text`` (the
+    # visible copy is derived from it and may not differ) and of what is voiced; ``tts_text`` and
+    # cues belong to the one-voice path and are refused beside it.  ``dialogue_voices`` is the
+    # snapshot of which voice spoke which host, recorded when the audio is made.
+    dialogue: DialogueBlock | None = None
+    dialogue_voices: list[VoiceRoleSnapshot] = Field(default_factory=list, max_length=2)
+
+    @model_validator(mode="after")
+    def _text_comes_from_dialogue(self) -> NarrationSegment:
+        if self.dialogue is None:
+            if self.dialogue_voices:
+                raise ValueError("dialogue voices belong to a dialogue segment")
+            return self
+        if self.tts_text is not None or self.tts_cues:
+            raise ValueError("a dialogue segment is voiced from its dialogue, not tts_text or cues")
+        if self.narration_text is None:
+            self.narration_text = self.dialogue.text
+        elif self.narration_text != self.dialogue.text:
+            raise ValueError("narration_text is derived from the dialogue and cannot differ from it")
+        return self
 
 
 class PlayableEpisode(BaseModel):
