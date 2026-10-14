@@ -1,5 +1,6 @@
 """Explicit, secret-safe provider configuration."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from math import isfinite
 from os import getenv
@@ -8,7 +9,30 @@ from typing import Literal, cast
 from .errors import ProviderConfigurationError
 
 ProviderMode = Literal["mock", "live"]
-LLMCapabilitySelector = Literal["inherit", "mock", "deepseek"]
+LLMCapabilitySelector = Literal["inherit", "mock", "deepseek", "ark"]
+LLMChoice = Literal["mock", "deepseek", "ark"]
+# Every text-model role.  Each can be bound to a model on its own; the pipeline never reaches
+# for "the" LLM.  ``material`` (the shared story material) has no consumer yet.
+LLMRole = Literal[
+    "proposal",
+    "fast_start",
+    "research_plan",
+    "material",
+    "curator",
+    "writer",
+    "fact_check",
+    "track_research",
+]
+LLM_ROLES: tuple[LLMRole, ...] = (
+    "proposal",
+    "fast_start",
+    "research_plan",
+    "material",
+    "curator",
+    "writer",
+    "fact_check",
+    "track_research",
+)
 ResearchCapabilitySelector = Literal["inherit", "mock", "live"]
 MusicCapabilitySelector = Literal["inherit", "mock", "auto", "netease", "qqmusic", "audius"]
 TTSCapabilitySelector = Literal["inherit", "mock", "minimax"]
@@ -23,6 +47,7 @@ class ProviderSettings:
     # Optional discovery signal (ranking/candidates only); absent = Last.fm is simply not used.
     lastfm_api_key: str | None = None
     minimax_api_key: str | None = None
+    ark_api_key: str | None = field(default=None, repr=False)
     audius_api_key: str | None = None
     # Audius API keys identify the application and may be used in client-safe
     # requests. Bearer tokens authorize backend actions and must never reach
@@ -34,6 +59,10 @@ class ProviderSettings:
     qq_music_api_base_url: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-flash"
+    ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    # Ark model id per role (ARK_<ROLE>_MODEL).  There is deliberately no default: model ids are
+    # dated, and a role only needs one when it is bound to Ark.
+    ark_models: Mapping[str, str] = field(default_factory=dict, hash=False)
 
     # Capability selectors default to "inherit": global mock keeps the capability
     # credential-free, while global live selects the established live provider.
@@ -44,6 +73,12 @@ class ProviderSettings:
     research_provider: ResearchCapabilitySelector = "inherit"
     curator_provider: LLMCapabilitySelector = "inherit"
     writer_provider: LLMCapabilitySelector = "inherit"
+    # Roles that used to share another role's model.  "inherit" keeps exactly that old sharing
+    # (see ``resolved_llm``); an Ark Writer never drags these along.
+    research_plan_provider: LLMCapabilitySelector = "inherit"
+    material_provider: LLMCapabilitySelector = "inherit"
+    fact_check_provider: LLMCapabilitySelector = "inherit"
+    track_research_provider: LLMCapabilitySelector = "inherit"
     tts_provider: TTSCapabilitySelector = "inherit"
     # ADR 0022: build a verified-playable catalog pool before the Curator chooses tracks.
     catalog_pool: bool = True
@@ -57,6 +92,11 @@ class ProviderSettings:
     deepseek_deep_timeout_seconds: float = 60.0
     deepseek_max_output_tokens: int = 4096
     deepseek_deep_max_output_tokens: int = 12288
+    # Ark answers measured proposal/writer calls in 22 to 55 s, hence the longer defaults.
+    ark_timeout_seconds: float = 60.0
+    ark_deep_timeout_seconds: float = 100.0
+    ark_max_output_tokens: int = 4096
+    ark_deep_max_output_tokens: int = 12288
     max_attempts: int = 2
 
     minimax_tts_base_url: str = "https://api.minimax.cn"
@@ -79,6 +119,7 @@ class ProviderSettings:
             tavily_api_key=getenv("TAVILY_API_KEY"),
             lastfm_api_key=getenv("LASTFM_API_KEY") or None,
             minimax_api_key=getenv("MINIMAX_API_KEY"),
+            ark_api_key=getenv("ARK_API_KEY") or None,
             audius_api_key=getenv("AUDIUS_API_KEY"),
             audius_bearer_token=getenv("AUDIUS_BEARER_TOKEN"),
             audius_base_url=getenv("AUDIUS_BASE_URL", "https://api.audius.co/v1"),
@@ -87,11 +128,17 @@ class ProviderSettings:
             qq_music_api_base_url=getenv("QQ_MUSIC_API_BASE_URL"),
             deepseek_base_url=getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             deepseek_model=getenv("DEEPSEEK_MODEL", "deepseek-flash"),
+            ark_base_url=getenv("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
+            ark_models={
+                role: model
+                for role in LLM_ROLES
+                if (model := (getenv(f"ARK_{role.upper()}_MODEL") or "").strip())
+            },
             proposal_planner=cast(
                 LLMCapabilitySelector,
                 _selector_from_env(
                     "WAVECAST_PROPOSAL_PLANNER",
-                    {"inherit", "mock", "deepseek"},
+                    _LLM_SELECTORS,
                 ),
             ),
             music_provider=cast(
@@ -105,7 +152,7 @@ class ProviderSettings:
                 LLMCapabilitySelector,
                 _selector_from_env(
                     "WAVECAST_FAST_START_PROVIDER",
-                    {"inherit", "mock", "deepseek"},
+                    _LLM_SELECTORS,
                 ),
             ),
             research_provider=cast(
@@ -119,15 +166,31 @@ class ProviderSettings:
                 LLMCapabilitySelector,
                 _selector_from_env(
                     "WAVECAST_CURATOR_PROVIDER",
-                    {"inherit", "mock", "deepseek"},
+                    _LLM_SELECTORS,
                 ),
             ),
             writer_provider=cast(
                 LLMCapabilitySelector,
                 _selector_from_env(
                     "WAVECAST_WRITER_PROVIDER",
-                    {"inherit", "mock", "deepseek"},
+                    _LLM_SELECTORS,
                 ),
+            ),
+            research_plan_provider=cast(
+                LLMCapabilitySelector,
+                _selector_from_env("WAVECAST_RESEARCH_PLAN_PROVIDER", _LLM_SELECTORS),
+            ),
+            material_provider=cast(
+                LLMCapabilitySelector,
+                _selector_from_env("WAVECAST_MATERIAL_PROVIDER", _LLM_SELECTORS),
+            ),
+            fact_check_provider=cast(
+                LLMCapabilitySelector,
+                _selector_from_env("WAVECAST_FACT_CHECK_PROVIDER", _LLM_SELECTORS),
+            ),
+            track_research_provider=cast(
+                LLMCapabilitySelector,
+                _selector_from_env("WAVECAST_TRACK_RESEARCH_PROVIDER", _LLM_SELECTORS),
             ),
             tts_provider=cast(
                 TTSCapabilitySelector,
@@ -151,6 +214,14 @@ class ProviderSettings:
             deepseek_deep_max_output_tokens=_positive_int_from_env(
                 "DEEPSEEK_DEEP_MAX_OUTPUT_TOKENS", default=12288
             ),
+            ark_timeout_seconds=_positive_float_from_env("ARK_TIMEOUT_SECONDS", default=60.0),
+            ark_deep_timeout_seconds=_positive_float_from_env(
+                "ARK_DEEP_TIMEOUT_SECONDS", default=100.0
+            ),
+            ark_max_output_tokens=_positive_int_from_env("ARK_MAX_OUTPUT_TOKENS", default=4096),
+            ark_deep_max_output_tokens=_positive_int_from_env(
+                "ARK_DEEP_MAX_OUTPUT_TOKENS", default=12288
+            ),
             minimax_tts_base_url=getenv("MINIMAX_TTS_BASE_URL", "https://api.minimax.cn"),
             minimax_tts_model=getenv("MINIMAX_TTS_MODEL", "speech-2.8-turbo"),
             minimax_tts_voice_id=getenv("MINIMAX_TTS_VOICE_ID"),
@@ -160,7 +231,7 @@ class ProviderSettings:
         )
 
     @property
-    def resolved_proposal_planner(self) -> Literal["mock", "deepseek"]:
+    def resolved_proposal_planner(self) -> LLMChoice:
         if self.proposal_planner == "inherit":
             return "mock" if self.mode == "mock" else "deepseek"
         return self.proposal_planner
@@ -172,7 +243,7 @@ class ProviderSettings:
         return self.music_provider
 
     @property
-    def resolved_fast_start_provider(self) -> Literal["mock", "deepseek"]:
+    def resolved_fast_start_provider(self) -> LLMChoice:
         if self.fast_start_provider == "inherit":
             return "mock" if self.mode == "mock" else "deepseek"
         return self.fast_start_provider
@@ -184,16 +255,72 @@ class ProviderSettings:
         return self.research_provider
 
     @property
-    def resolved_curator_provider(self) -> Literal["mock", "deepseek"]:
+    def resolved_curator_provider(self) -> LLMChoice:
         if self.curator_provider == "inherit":
             return "mock" if self.mode == "mock" else "deepseek"
         return self.curator_provider
 
     @property
-    def resolved_writer_provider(self) -> Literal["mock", "deepseek"]:
+    def resolved_writer_provider(self) -> LLMChoice:
         if self.writer_provider == "inherit":
             return "mock" if self.mode == "mock" else "deepseek"
         return self.writer_provider
+
+    @property
+    def resolved_research_plan_provider(self) -> LLMChoice:
+        if self.research_plan_provider == "inherit":
+            # The planner used to share the research capability's model.
+            return "mock" if self.resolved_research_provider == "mock" else "deepseek"
+        return self.research_plan_provider
+
+    @property
+    def resolved_material_provider(self) -> LLMChoice:
+        if self.material_provider == "inherit":
+            return "mock" if self.mode == "mock" else "deepseek"
+        return self.material_provider
+
+    def _legacy_writer_choice(self) -> LLMChoice:
+        """What the Writer's model was before roles were separate: the base configuration.
+
+        An explicit ``mock`` or ``deepseek`` Writer keeps carrying the roles that used to share
+        it; an Ark Writer does not, so switching the Writer cannot switch them too.
+        """
+
+        if self.writer_provider in ("mock", "deepseek"):
+            return self.writer_provider
+        return "mock" if self.mode == "mock" else "deepseek"
+
+    @property
+    def resolved_fact_check_provider(self) -> LLMChoice:
+        if self.fact_check_provider == "inherit":
+            return self._legacy_writer_choice()
+        return self.fact_check_provider
+
+    @property
+    def resolved_track_research_provider(self) -> LLMChoice:
+        if self.track_research_provider == "inherit":
+            return self._legacy_writer_choice()
+        return self.track_research_provider
+
+    def resolved_llm(self, role: LLMRole) -> LLMChoice:
+        return {
+            "proposal": self.resolved_proposal_planner,
+            "fast_start": self.resolved_fast_start_provider,
+            "research_plan": self.resolved_research_plan_provider,
+            "material": self.resolved_material_provider,
+            "curator": self.resolved_curator_provider,
+            "writer": self.resolved_writer_provider,
+            "fact_check": self.resolved_fact_check_provider,
+            "track_research": self.resolved_track_research_provider,
+        }[role]
+
+    def ark_model_for(self, role: LLMRole) -> str:
+        model = self.ark_models.get(role)
+        if not model:
+            raise ProviderConfigurationError(
+                f"the {role} role is bound to ark and requires ARK_{role.upper()}_MODEL"
+            )
+        return model
 
     @property
     def resolved_tts_provider(self) -> Literal["mock", "minimax"]:
@@ -230,7 +357,9 @@ class ProviderSettings:
         """Allow one explicitly gated live adapter without flipping sibling capabilities."""
         return replace(self, mode="live")
 
-    def credential_for(self, provider: Literal["deepseek", "exa", "tavily", "minimax"]) -> str:
+    def credential_for(
+        self, provider: Literal["deepseek", "exa", "tavily", "minimax", "ark"]
+    ) -> str:
         if self.mode != "live":
             raise ProviderConfigurationError(
                 f"{provider} live adapter requires live-capability settings"
@@ -240,10 +369,14 @@ class ProviderSettings:
             "exa": self.exa_api_key,
             "tavily": self.tavily_api_key,
             "minimax": self.minimax_api_key,
+            "ark": self.ark_api_key,
         }[provider]
         if not key:
             raise ProviderConfigurationError(f"{provider} requires its API key in live mode")
         return key
+
+
+_LLM_SELECTORS = {"inherit", "mock", "deepseek", "ark"}
 
 
 def _selector_from_env(name: str, allowed: set[str]) -> str:

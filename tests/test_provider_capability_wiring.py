@@ -32,7 +32,7 @@ def test_writer_override_does_not_enable_sibling_capabilities(
         pass
 
     monkeypatch.setattr(
-        "wavecast.assembly.DeepSeekLLMProvider",
+        "wavecast.providers.llm_factory.DeepSeekLLMProvider",
         lambda *_args, **_kwargs: LiveLLM(),
     )
     service = create_episode_assembly_service(
@@ -65,7 +65,7 @@ def test_research_override_enables_only_research_boundary(
         pass
 
     monkeypatch.setattr(
-        "wavecast.assembly.DeepSeekLLMProvider",
+        "wavecast.providers.llm_factory.DeepSeekLLMProvider",
         lambda *_args, **_kwargs: LiveLLM(),
     )
     monkeypatch.setattr(

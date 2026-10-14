@@ -14,8 +14,10 @@ from pydantic import (
     PrivateAttr,
     model_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 from wavecast.language import OutputLanguage as OutputLanguage  # re-exported for callers
+from wavecast.models.dialogue import DialogueBlock
 
 
 class NoveltyDistance(StrEnum):
@@ -339,6 +341,27 @@ class RadioScriptBlock(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
     claim_support: list[ClaimSupport] = Field(default_factory=list, max_length=8)
     track_index: int | None = Field(default=None, ge=0)
+    # A two-host dialogue.  When present it is the source of ``text`` / ``tts_text`` (they are
+    # derived from it and may not be given differently).  Kept out of the JSON schema so the
+    # single-voice Writer prompt is unchanged; paths that cannot carry it refuse it explicitly.
+    dialogue: SkipJsonSchema[DialogueBlock | None] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _text_from_dialogue(cls, data: Any) -> Any:
+        if not isinstance(data, dict) or data.get("dialogue") is None:
+            return data
+        dialogue = data["dialogue"]
+        if not isinstance(dialogue, DialogueBlock):
+            dialogue = DialogueBlock.model_validate(dialogue)
+        derived = {"text": dialogue.text, "tts_text": dialogue.tts_text}
+        for name, value in derived.items():
+            if data.get(name) is not None and data[name] != value:
+                raise ValueError(f"{name} is derived from the dialogue and cannot differ from it")
+        merged = {**data, **derived, "dialogue": dialogue}
+        if "duration_seconds" not in data and "intended_duration_seconds" not in data:
+            merged["duration_seconds"] = dialogue.duration_seconds
+        return merged
 
     @property
     def intended_duration_seconds(self) -> int:

@@ -74,6 +74,7 @@ from wavecast.intelligence.trace import GenerationTrace
 from wavecast.intelligence.track_research import TrackResearchService
 from wavecast.intelligence.writer import WriterService, fallback_closing
 from wavecast.materialization import NarrationMaterializer
+from wavecast.models.dialogue import DialogueNotSupportedError
 from wavecast.models.episode import (
     LiveEpisode,
     MusicSegment,
@@ -104,7 +105,6 @@ from wavecast.providers.contracts import (
     SearchProvider,
     TTSProvider,
 )
-from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.errors import (
     ProviderConfigurationError,
     ProviderError,
@@ -116,6 +116,7 @@ from wavecast.providers.fakes import (
     MockTTSProvider,
 )
 from wavecast.providers.lastfm import LastFmArtistHints
+from wavecast.providers.llm_factory import build_llm
 from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
@@ -3371,6 +3372,10 @@ def _merge_writer_blocks(
 
     if not blocks:
         return None
+    if any(block.dialogue is not None for block in blocks):
+        raise DialogueNotSupportedError(
+            "Writer blocks carrying a dialogue cannot be merged into one narration text"
+        )
     text = " ".join(block.text.strip() for block in blocks)
     if len(text) > 4000:
         raise NarrationPlacementError("merged Writer narration exceeds block text limit")
@@ -4463,26 +4468,14 @@ def create_episode_assembly_service(
     live_settings = settings.for_live_capability()
     mock_llm = MockEpisodeAssemblyLLM()
 
-    fast_llm: ProgressiveLLMProvider = (
-        mock_llm
-        if settings.resolved_fast_start_provider == "mock"
-        else DeepSeekLLMProvider(live_settings, ledger=ledger)
-    )
-    research_llm: ProgressiveLLMProvider = (
-        mock_llm
-        if settings.resolved_research_provider == "mock"
-        else DeepSeekLLMProvider(live_settings, ledger=ledger)
-    )
-    curator_llm: ProgressiveLLMProvider = (
-        mock_llm
-        if settings.resolved_curator_provider == "mock"
-        else DeepSeekLLMProvider(live_settings, ledger=ledger)
-    )
-    writer_llm: ProgressiveLLMProvider = (
-        mock_llm
-        if settings.resolved_writer_provider == "mock"
-        else DeepSeekLLMProvider(live_settings, ledger=ledger)
-    )
+    # One model per role.  Unconfigured roles keep the model they always had (see
+    # ``ProviderSettings.resolved_llm``); an Ark Writer does not change the fact checker or the
+    # per-track research.
+    fast_llm = build_llm(settings, "fast_start", ledger=ledger, mock=mock_llm)
+    research_llm = build_llm(settings, "research_plan", ledger=ledger, mock=mock_llm)
+    curator_llm = build_llm(settings, "curator", ledger=ledger, mock=mock_llm)
+    writer_llm = build_llm(settings, "writer", ledger=ledger, mock=mock_llm)
+    fact_check_llm = build_llm(settings, "fact_check", ledger=ledger, mock=mock_llm)
 
     if settings.resolved_research_provider == "mock":
         discovery: SearchProvider = FakeSearchProvider()
@@ -4518,7 +4511,7 @@ def create_episode_assembly_service(
     background_pipeline = BackgroundIntelligencePipeline(
         research=background_research,
         curator=CuratorService(curator_llm),
-        writer=WriterService(writer_llm, fact_checker=FactChecker(writer_llm)),
+        writer=WriterService(writer_llm, fact_checker=FactChecker(fact_check_llm)),
     )
     retrieval = MusicRetrievalService(music_registry)
     return LiveEpisodeAssemblyService(
@@ -4539,7 +4532,11 @@ def create_episode_assembly_service(
         ),
         duration_scaling=settings.duration_scaling,
         track_research=(
-            TrackResearchService(search=research, llm=writer_llm, deep_search=deep_research)
+            TrackResearchService(
+                search=research,
+                llm=build_llm(settings, "track_research", ledger=ledger, mock=mock_llm),
+                deep_search=deep_research,
+            )
             if settings.track_research and settings.resolved_research_provider != "mock"
             else None
         ),
