@@ -16,6 +16,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from time import perf_counter
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
@@ -74,6 +75,7 @@ from wavecast.intelligence.trace import GenerationTrace
 from wavecast.intelligence.track_research import TrackResearchService
 from wavecast.intelligence.writer import WriterService, fallback_closing
 from wavecast.materialization import NarrationMaterializer
+from wavecast.models.dialogue import DialogueNotSupportedError
 from wavecast.models.episode import (
     LiveEpisode,
     MusicSegment,
@@ -104,7 +106,6 @@ from wavecast.providers.contracts import (
     SearchProvider,
     TTSProvider,
 )
-from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.errors import (
     ProviderConfigurationError,
     ProviderError,
@@ -116,6 +117,7 @@ from wavecast.providers.fakes import (
     MockTTSProvider,
 )
 from wavecast.providers.lastfm import LastFmArtistHints
+from wavecast.providers.llm_factory import build_llm
 from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
@@ -596,7 +598,12 @@ class LiveEpisodeAssemblyService:
         catalog_pool_builder: CatalogPoolBuilder | None = None,
         track_research: TrackResearchService | None = None,
         duration_scaling: bool = False,
+        owned_clients: Sequence[Any] = (),
     ) -> None:
+        # Provider clients this service created (one per text-model role, the deep search
+        # variant, ...) and must close.  The wiring below also reaches some structurally;
+        # ``aclose`` closes each distinct object once.
+        self._owned_clients = tuple(owned_clients)
         self.catalog_pool_builder = catalog_pool_builder
         self.track_research = track_research
         self.duration_scaling = duration_scaling
@@ -2155,7 +2162,11 @@ class LiveEpisodeAssemblyService:
         return await self.assemble(request, request_id=request_id)
 
     async def aclose(self) -> None:
-        """Close owned provider clients when a probe or worker is finished."""
+        """Close owned provider clients when a probe or worker is finished.
+
+        Every distinct client is closed once, however many roles share it.  One failing close
+        does not leave the others open; the first error is raised after all were attempted.
+        """
         candidates = [
             self.fast_path.research.discovery,
             self.fast_path.research.research,
@@ -2165,16 +2176,23 @@ class LiveEpisodeAssemblyService:
             self.background_pipeline.writer.llm,
             self.composer.music_provider,
             self.materializer.tts_provider,
+            *self._owned_clients,
         ]
         closed: set[int] = set()
+        first_error: Exception | None = None
         for candidate in candidates:
             close = getattr(candidate, "aclose", None)
             if not callable(close) or id(candidate) in closed:
                 continue
             closed.add(id(candidate))
-            result = close()
-            if hasattr(result, "__await__"):
-                await result
+            try:
+                result = close()
+                if hasattr(result, "__await__"):
+                    await result
+            except Exception as error:  # noqa: BLE001 - keep closing the rest
+                first_error = first_error or error
+        if first_error is not None:
+            raise first_error
 
 
 def _elapsed_ms(started: float) -> int:
@@ -3371,6 +3389,10 @@ def _merge_writer_blocks(
 
     if not blocks:
         return None
+    if any(block.dialogue is not None for block in blocks):
+        raise DialogueNotSupportedError(
+            "Writer blocks carrying a dialogue cannot be merged into one narration text"
+        )
     text = " ".join(block.text.strip() for block in blocks)
     if len(text) > 4000:
         raise NarrationPlacementError("merged Writer narration exceeds block text limit")
@@ -4463,25 +4485,18 @@ def create_episode_assembly_service(
     live_settings = settings.for_live_capability()
     mock_llm = MockEpisodeAssemblyLLM()
 
-    fast_llm: ProgressiveLLMProvider = (
-        mock_llm
-        if settings.resolved_fast_start_provider == "mock"
-        else DeepSeekLLMProvider(live_settings, ledger=ledger)
-    )
-    research_llm: ProgressiveLLMProvider = (
-        mock_llm
-        if settings.resolved_research_provider == "mock"
-        else DeepSeekLLMProvider(live_settings, ledger=ledger)
-    )
-    curator_llm: ProgressiveLLMProvider = (
-        mock_llm
-        if settings.resolved_curator_provider == "mock"
-        else DeepSeekLLMProvider(live_settings, ledger=ledger)
-    )
-    writer_llm: ProgressiveLLMProvider = (
-        mock_llm
-        if settings.resolved_writer_provider == "mock"
-        else DeepSeekLLMProvider(live_settings, ledger=ledger)
+    # One model per role.  Unconfigured roles keep the model they always had (see
+    # ``ProviderSettings.resolved_llm``); an Ark Writer does not change the fact checker or the
+    # per-track research.
+    fast_llm = build_llm(settings, "fast_start", ledger=ledger, mock=mock_llm)
+    research_llm = build_llm(settings, "research_plan", ledger=ledger, mock=mock_llm)
+    curator_llm = build_llm(settings, "curator", ledger=ledger, mock=mock_llm)
+    writer_llm = build_llm(settings, "writer", ledger=ledger, mock=mock_llm)
+    fact_check_llm = build_llm(settings, "fact_check", ledger=ledger, mock=mock_llm)
+    track_research_llm = (
+        build_llm(settings, "track_research", ledger=ledger, mock=mock_llm)
+        if settings.track_research and settings.resolved_research_provider != "mock"
+        else None
     )
 
     if settings.resolved_research_provider == "mock":
@@ -4518,7 +4533,7 @@ def create_episode_assembly_service(
     background_pipeline = BackgroundIntelligencePipeline(
         research=background_research,
         curator=CuratorService(curator_llm),
-        writer=WriterService(writer_llm, fact_checker=FactChecker(writer_llm)),
+        writer=WriterService(writer_llm, fact_checker=FactChecker(fact_check_llm)),
     )
     retrieval = MusicRetrievalService(music_registry)
     return LiveEpisodeAssemblyService(
@@ -4539,8 +4554,21 @@ def create_episode_assembly_service(
         ),
         duration_scaling=settings.duration_scaling,
         track_research=(
-            TrackResearchService(search=research, llm=writer_llm, deep_search=deep_research)
-            if settings.track_research and settings.resolved_research_provider != "mock"
+            TrackResearchService(
+                search=research, llm=track_research_llm, deep_search=deep_research
+            )
+            if track_research_llm is not None
             else None
         ),
+        owned_clients=[
+            fast_llm,
+            research_llm,
+            curator_llm,
+            writer_llm,
+            fact_check_llm,
+            track_research_llm,
+            discovery,
+            research,
+            deep_research,
+        ],
     )

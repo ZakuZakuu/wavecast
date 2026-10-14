@@ -76,9 +76,15 @@ from wavecast.proposals import (
     ProposalPersistenceConflict,
     shared_copy,
 )
+from wavecast.providers.ark import ArkLLMProvider
 from wavecast.providers.audius import AudiusMusicProvider
 from wavecast.providers.config import ProviderSettings
-from wavecast.providers.contracts import AudioProvider, AudioSource, ObjectStorageProvider
+from wavecast.providers.contracts import (
+    AudioProvider,
+    AudioSource,
+    ObjectStorageProvider,
+    ProgressiveLLMProvider,
+)
 from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
 from wavecast.providers.factory import build_music_registry
@@ -371,18 +377,28 @@ def _build_recommendation_planner(settings: ProviderSettings) -> RecommendationP
     mode = os.getenv("WAVECAST_RECOMMENDATION_PLANNER", "deterministic").strip().lower()
     if mode == "deterministic":
         return DeterministicRecommendationPlanner()
-    if mode != "deepseek":
+    if mode not in {"deepseek", "ark"}:
         raise ProviderConfigurationError(
-            "WAVECAST_RECOMMENDATION_PLANNER must be deterministic or deepseek"
+            "WAVECAST_RECOMMENDATION_PLANNER must be deterministic, deepseek or ark"
         )
 
     # Recommendation inference is an independently gated capability.  It may use
-    # DeepSeek while episode assembly, TTS, and music providers remain in mock
+    # a live model while episode assembly, TTS, and music providers remain in mock
     # mode, so enabling personalized ideas does not implicitly enable paid
-    # generation elsewhere.
+    # generation elsewhere.  Ark shares the proposal role's model (ARK_PROPOSAL_MODEL)
+    # with the on-demand proposal generator; the two keep their own prompts and modes.
     recommendation_settings = settings.for_live_capability()
-    recommendation_settings.credential_for("deepseek")
     ledger = UsageLedger()
+    if mode == "ark":
+        recommendation_settings.credential_for("ark")
+        ark_model = recommendation_settings.ark_model_for("proposal")
+        return ProviderBackedRecommendationPlanner(
+            lambda: ArkLLMProvider(
+                recommendation_settings, model=ark_model, role="proposal", ledger=ledger
+            ),
+            source="ark_planner",
+        )
+    recommendation_settings.credential_for("deepseek")
     return ProviderBackedRecommendationPlanner(
         lambda: DeepSeekLLMProvider(recommendation_settings, ledger=ledger)
     )
@@ -410,11 +426,20 @@ def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGene
     if settings.resolved_proposal_planner == "mock":
         return DeterministicMockProgramProposalGenerator()
     live_settings = settings.for_live_capability()
-    live_settings.credential_for("deepseek")
     ledger = UsageLedger()
+    if settings.resolved_proposal_planner == "ark":
+        proposal_llm: ProgressiveLLMProvider = ArkLLMProvider(
+            live_settings,
+            model=live_settings.ark_model_for("proposal"),
+            role="proposal",
+            ledger=ledger,
+        )
+    else:
+        live_settings.credential_for("deepseek")
+        proposal_llm = DeepSeekLLMProvider(live_settings, ledger=ledger)
     retrieval = MusicRetrievalService(build_music_registry(settings))
     return LLMProgramProposalGenerator(
-        DeepSeekLLMProvider(live_settings, ledger=ledger),
+        proposal_llm,
         retrieval,
         pool_builder=(
             CatalogPoolBuilder(

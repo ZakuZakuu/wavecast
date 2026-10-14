@@ -1,6 +1,15 @@
 # WaveCast Project State
 
-Updated: 2026-10-09（第 8 项）；其余 2026-10-08。**唯一的当前状态入口**；记录现状、下一步和已知问题，不累积会话日志。
+Updated: 2026-10-14（下一轮接入准备）；下方旧分支/部署条目保留为历史，非实时部署事实。**唯一的当前状态入口**。
+
+## 本轮执行入口：有内容的讲述与双人配音（尚未接入）
+
+2026-10-14核对main/integration均为29c6383（#297）。用户认可两份实验样本，选B音色（刘飞→潇磊），并决定Claude实施、GPT审查验收；下一步先完成离线模型配置/Ark适配/稿件契约，当前不发布、不调用付费API。用户明确要求随便听比来龙去脉短，保留电台时长与密度差异。
+
+实施范围、兼容性、验收与后续批次见[接入设计§10](design/researched-dialogue-radio.md)；先读该任务，再按需看[最后文本实验](research/dialogue-radio-2026-10/final-text-experiments.md)、[已认可样本边界](research/dialogue-radio-2026-10/accepted-samples.md)。Lite strict样本结构通过但仍须事实检查；提案Pro是候选，不是已确认的全面替换。下面旧初赛工作顺序不覆盖本轮已授权范围。
+
+**第一批（离线基础）已实现，待审查**：Ark 文本适配器（Chat strict、单次发送、无重试，CNY 估价与未知费用标记）、按角色配置模型（Writer 换 Ark 不带走事实核对和曲目调研）、供应商 schema 规整、双人稿件契约与 `SpeechRequest`。未接入整档生成、TTS、播放器，默认仍是 mock/DeepSeek，未做任何付费调用。对话进入播放片段的路径会显式拒绝，持久化与恢复属于后续批次。详见 [ADR 0024](adr/0024-ark-text-models-and-dialogue-contract.md)。
+
 
 ## 当前阶段与产品
 

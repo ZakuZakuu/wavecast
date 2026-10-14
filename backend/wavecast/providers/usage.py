@@ -99,6 +99,14 @@ class UsageTotals(BaseModel):
     search_credits: float
     actual_cost_usd: float
     estimated_cost_usd: float
+    # The USD totals above never include Ark: its cost is estimated in CNY and nothing is
+    # converted.  These sum the CNY figures that providers put in event metadata.  The point
+    # estimate counts only calls with one; low/high bracket calls priced by a range; calls with
+    # a currency basis but no figure at all are counted, not treated as free.
+    estimated_cost_cny: float = 0.0
+    estimated_cost_cny_low: float = 0.0
+    estimated_cost_cny_high: float = 0.0
+    cost_unknown_calls: int = 0
 
 
 class UsageDiagnostics(TypedDict):
@@ -174,7 +182,39 @@ class UsageLedger:
             search_credits=sum(event.search_credits or 0 for event in events),
             actual_cost_usd=sum(event.actual_cost_usd or 0 for event in events),
             estimated_cost_usd=sum(event.estimated_cost_usd or 0 for event in events),
+            estimated_cost_cny=sum(_cny(event, "estimated_cost_cny") or 0 for event in events),
+            estimated_cost_cny_low=sum(_cny(event, "estimated_cost_cny_low") or 0 for event in events),
+            estimated_cost_cny_high=sum(
+                _cny(event, "estimated_cost_cny_high") or 0 for event in events
+            ),
+            cost_unknown_calls=sum(
+                1
+                for event in events
+                if "cost_basis" in event.metadata and _cny(event, "estimated_cost_cny_low") is None
+            ),
         )
+
+
+def _cny(event: UsageEvent, name: str) -> float | None:
+    value = event.metadata.get(name)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None
+    return float(value)
+
+
+_CALL_OUTCOME_FIELDS = (
+    "role",
+    "outcome",
+    "request_dispatched",
+    "response_received",
+    "usage_known",
+    "http_status",
+    "estimated_cost_cny",
+    "estimated_cost_cny_low",
+    "estimated_cost_cny_high",
+    "cost_basis",
+    "price_version",
+)
 
 
 def safe_usage_event(event: UsageEvent) -> dict[str, object]:
@@ -187,7 +227,7 @@ def safe_usage_event(event: UsageEvent) -> dict[str, object]:
         return value if value is None or isinstance(value, (bool, int, float, str)) else None
 
     stage = metadata.get("stage")
-    return {
+    projected: dict[str, object] = {
         "provider": event.provider,
         "operation": event.operation,
         "stage": stage if isinstance(stage, str) else None,
@@ -208,6 +248,12 @@ def safe_usage_event(event: UsageEvent) -> dict[str, object]:
         "finish_reason": metadata_value("finish_reason"),
         "reasoning_tokens": metadata_value("reasoning_tokens"),
     }
+    # Providers that price in CNY and report how a call ended (Ark) add these.  Unknown stays
+    # null; it is never reported as zero.  Other providers' events keep their exact shape.
+    for name in _CALL_OUTCOME_FIELDS:
+        if name in metadata:
+            projected[name] = metadata_value(name)
+    return projected
 
 
 def usage_diagnostics(ledger: UsageLedger, scope: str | None = None) -> UsageDiagnostics:
