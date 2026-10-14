@@ -27,8 +27,14 @@ def validate_dialogue_block(
     *,
     allowed_fact_refs: Collection[str],
     expected_slot_id: str | None = None,
+    allow_tts_text: bool = False,
 ) -> DialogueBlock:
-    """Return ``block`` unchanged if it is consistent with the caller's context, else raise."""
+    """Return ``block`` unchanged if it is consistent with the caller's context, else raise.
+
+    A turn's ``tts_text`` is what would be *spoken*, and the fact check reads only ``text``.  So
+    a block that carries one is refused unless the caller says it came from a deterministic
+    conversion of the checked text (``allow_tts_text=True``); a model never supplies it.
+    """
 
     allowed = set(allowed_fact_refs)
     problems: list[str] = []
@@ -38,6 +44,10 @@ def validate_dialogue_block(
         unknown = [ref for ref in turn.fact_refs if ref not in allowed]
         if unknown:
             problems.append(f"turn {index} cites unknown fact_refs: {', '.join(unknown[:5])}")
+    if not allow_tts_text:
+        for index, turn in enumerate(block.turns):
+            if turn.tts_text is not None:
+                problems.append(f"turn {index} carries tts_text that was never fact-checked")
     if block.purpose in PURPOSES_REQUIRING_FACTS and not block.fact_refs:
         problems.append(f"a {block.purpose.value} block must cite at least one fact_ref")
     if problems:

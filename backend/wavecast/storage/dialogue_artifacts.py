@@ -14,6 +14,7 @@ programme from it.  Those belong to the batch that lets a dialogue enter the tim
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Literal
 
@@ -35,7 +36,8 @@ class DialogueArtifactError(ValueError):
 class CheckedDialogueRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1] = 1
+    # Required on purpose: a record that does not say its version is not assumed to be version 1.
+    schema_version: Literal[1]
     station: StationId
     status: Literal["ready", "repaired"]
     block: DialogueBlock
@@ -84,23 +86,28 @@ class DialogueArtifactStore:
         content = getattr(stored, "content", None)
         if not isinstance(content, bytes):
             raise DialogueArtifactError("stored passage has no readable content")
+        version = _declared_version(content)
+        if version is _MISSING:
+            raise DialogueArtifactError("stored passage does not declare a schema_version")
+        if type(version) is not int or version != 1:  # True == 1 must not pass
+            raise DialogueArtifactError(f"unsupported passage schema_version {version!r}")
         try:
             record = CheckedDialogueRecord.model_validate_json(content)
         except ValidationError as error:
-            version = _declared_version(content)
-            if version is not None and version != 1:
-                raise DialogueArtifactError(f"unsupported passage schema_version {version}") from error
             raise DialogueArtifactError("stored passage is damaged or inconsistent") from error
         if record.block.block_id != block_id:
             raise DialogueArtifactError("stored passage belongs to another block")
         return record
 
 
-def _declared_version(content: bytes) -> object:
-    import json
+_MISSING = object()
 
+
+def _declared_version(content: bytes) -> object:
     try:
         payload = json.loads(content)
-    except ValueError:
-        return None
-    return payload.get("schema_version") if isinstance(payload, dict) else None
+    except ValueError as error:
+        raise DialogueArtifactError("stored passage is damaged or inconsistent") from error
+    if not isinstance(payload, dict) or "schema_version" not in payload:
+        return _MISSING
+    return payload["schema_version"]

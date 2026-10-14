@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from wavecast.models.dialogue import (
+    PURPOSES_REQUIRING_FACTS,
     DialogueBlock,
     DialogueDraft,
     DialogueIssue,
@@ -73,6 +74,7 @@ class DialogueOutcome:
         if not self.speakable or self.block is None or self.material is None:
             raise ValueError(f"a {self.status.value} passage cannot be saved as checked")
         return CheckedDialogueRecord(
+            schema_version=1,
             station=StationId(self.station_value),
             status="ready" if self.status is DialogueStatus.READY else "repaired",
             block=self.block,
@@ -160,6 +162,13 @@ class DialoguePipeline:
         first = await self._checker.review(block, material)
         outcome.first_check_issues = list(first.issues)
         outcome.model_checked = first.model_checked
+        if not first.model_checked and block.purpose in PURPOSES_REQUIRING_FACTS:
+            # No judgement was obtained.  Keywords decide what a degraded check looks at, and a
+            # plain objective statement carries none, so a story is never passed on that basis.
+            outcome.reason = "checker_unavailable"
+            outcome.final_issues = list(first.issues)
+            outcome.calls = calls.used
+            return outcome
         if not first.issues:
             return self._accept(outcome, block, DialogueStatus.READY, first, calls)
 
@@ -179,9 +188,21 @@ class DialoguePipeline:
             outcome.calls = calls.used
             return outcome
 
+        if repaired.duration_seconds > hard_max_seconds:
+            # The repair can lengthen a passage as well as shorten it: same ceiling as the draft.
+            outcome.reason = "too_long_after_repair"
+            outcome.final_issues = list(first.issues)
+            outcome.calls = calls.used
+            return outcome
+
         calls.take()
         second = await self._checker.review(repaired, material)
         outcome.model_checked = outcome.model_checked and second.model_checked
+        if not second.model_checked and repaired.purpose in PURPOSES_REQUIRING_FACTS:
+            outcome.reason = "checker_unavailable"
+            outcome.final_issues = list(second.issues)
+            outcome.calls = calls.used
+            return outcome
         if second.issues:
             outcome.reason = "unresolved_after_repair"
             outcome.final_issues = list(second.issues)

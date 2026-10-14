@@ -37,7 +37,10 @@ def turn(speaker: str, text: str, refs: list[str] | None = None, tts: str | None
 
 
 def draft(*turns: dict) -> DialogueDraft:
-    return DialogueDraft.model_validate({"turns": list(turns)})
+    # A model-written turn has no tts_text.
+    return DialogueDraft.model_validate(
+        {"turns": [{k: v for k, v in item.items() if k != "tts_text"} for item in turns]}
+    )
 
 
 def story_block(**overrides: object) -> DialogueBlock:
@@ -82,8 +85,9 @@ def test_a_draft_needs_turns_and_stays_within_the_turn_limit() -> None:
 
 def test_the_draft_schema_asks_the_model_for_exactly_the_experiment_shape() -> None:
     strict = to_strict_schema(DialogueDraft.model_json_schema())
-    item = strict["$defs"]["DialogueTurn"]
-    assert item["required"] == ["speaker", "text", "tts_text", "fact_refs"]
+    item = strict["$defs"]["DraftTurn"]
+    # No tts_text: a model never supplies what is spoken beyond the checked text.
+    assert item["required"] == ["speaker", "text", "fact_refs"]
     assert strict["$defs"]["DialogueSpeaker"]["enum"] == ["A", "B"]
 
 

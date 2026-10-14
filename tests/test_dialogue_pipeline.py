@@ -25,7 +25,7 @@ from wavecast.intelligence.dialogue_writer import (
     TurnFix,
 )
 from wavecast.intelligence.story_material import StoryMaterialService
-from wavecast.models.dialogue import DialogueDraft, DialoguePurpose, DialogueTurn
+from wavecast.models.dialogue import DialogueDraft, DialoguePurpose, DraftTurn
 from wavecast.models.story_material import StoryMaterial
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.errors import ProviderTimeoutError
@@ -112,7 +112,9 @@ def test_a_passage_that_passes_the_first_check_is_returned_untouched() -> None:
 
     assert outcome.status is DialogueStatus.READY and outcome.speakable
     assert outcome.calls == 2  # draft + check; no repair, no re-check
-    assert [t.model_dump() for t in outcome.block.turns] == [t.model_dump() for t in draft.turns]  # type: ignore[union-attr]
+    assert [(t.speaker, t.text, t.fact_refs, t.tts_text) for t in outcome.block.turns] == [  # type: ignore[union-attr]
+        (t.speaker, t.text, t.fact_refs, None) for t in draft.turns
+    ]
     assert writer.calls == [("DialogueDraft", "dialogue_writer")]
     assert judge.calls == [("DialogueCheck", "dialogue_fact_check")]
     assert outcome.first_check_issues == [] and outcome.repaired_turns == []
@@ -135,7 +137,11 @@ def test_the_two_problems_in_the_accepted_style_draft_are_found_and_only_those_t
     assert [t.speaker for t in block.turns] == [t.speaker for t in draft.turns]
     assert (block.block_id, block.slot_id) == ("block-1", "slot-1")
     for index in (0, 2, 3, 5, 6):
-        assert block.turns[index] == draft.turns[index]
+        assert (block.turns[index].speaker, block.turns[index].text, block.turns[index].fact_refs) == (
+            draft.turns[index].speaker,
+            draft.turns[index].text,
+            draft.turns[index].fact_refs,
+        )
     assert "一直" not in block.text and "更成熟" not in block.text
     assert all(t.tts_text is None for t in block.turns)
     assert [name for name, _ in writer.calls] == ["DialogueDraft", "DialogueRepair"]
@@ -170,7 +176,7 @@ def test_a_repair_that_does_not_clear_the_check_rejects_the_passage() -> None:
 
 
 def test_unknown_fact_refs_reject_the_draft_before_any_check() -> None:
-    bad = DialogueDraft(turns=[DialogueTurn(speaker="A", text="一句话。", tts_text=None, fact_refs=["nope-F9"])])  # type: ignore[arg-type]
+    bad = DialogueDraft(turns=[DraftTurn(speaker="A", text="一句话。", fact_refs=["nope-F9"])])  # type: ignore[arg-type]
     pipeline, _, judge = build(bad)
 
     outcome = run(pipeline)
@@ -180,7 +186,7 @@ def test_unknown_fact_refs_reject_the_draft_before_any_check() -> None:
 
 
 def test_a_story_without_any_reference_is_rejected_and_never_filled_in() -> None:
-    bare = DialogueDraft(turns=[DialogueTurn(speaker="A", text="一段没有出处的话。", tts_text=None, fact_refs=[])])  # type: ignore[arg-type]
+    bare = DialogueDraft(turns=[DraftTurn(speaker="A", text="一段没有出处的话。", fact_refs=[])])  # type: ignore[arg-type]
     pipeline, _, _ = build(bare)
 
     outcome = run(pipeline)
@@ -189,7 +195,7 @@ def test_a_story_without_any_reference_is_rejected_and_never_filled_in() -> None
 
 
 def test_a_short_passage_is_fine_there_is_no_minimum() -> None:
-    short = DialogueDraft(turns=[DialogueTurn(speaker="A", text="方大同说，他理解的爱不只是男女之间的爱情。", tts_text=None, fact_refs=[f(4)])])  # type: ignore[arg-type]
+    short = DialogueDraft(turns=[DraftTurn(speaker="A", text="方大同说，他理解的爱不只是男女之间的爱情。", fact_refs=[f(4)])])  # type: ignore[arg-type]
     pipeline, _, _ = build(short)
 
     outcome = run(pipeline)
@@ -200,7 +206,7 @@ def test_a_short_passage_is_fine_there_is_no_minimum() -> None:
 def test_a_runaway_draft_over_the_stations_hard_ceiling_is_rejected() -> None:
     long = DialogueDraft(
         turns=[
-            DialogueTurn(speaker="A" if i % 2 == 0 else "B", text="方大同说，他理解的爱不只是男女之间的爱情。" * 6, tts_text=None, fact_refs=[f(4)])  # type: ignore[arg-type]
+            DraftTurn(speaker="A" if i % 2 == 0 else "B", text="方大同说，他理解的爱不只是男女之间的爱情。" * 6, fact_refs=[f(4)])  # type: ignore[arg-type]
             for i in range(10)
         ]
     )
@@ -417,3 +423,147 @@ def test_the_stack_closes_each_client_once(monkeypatch: pytest.MonkeyPatch) -> N
     asyncio.run(stack.aclose())
 
     assert closes == [1]
+
+
+# --- review fixes: what is spoken is what was checked; ceilings after repair; no degraded story ----
+
+
+def test_the_writer_cannot_supply_what_is_spoken() -> None:
+    # A model-written turn has no tts_text field at all, and extra fields are refused.
+    assert "tts_text" not in DraftTurn.model_fields
+    with pytest.raises(ValueError):
+        DraftTurn.model_validate({"speaker": "A", "text": "好。", "fact_refs": [], "tts_text": "不同的朗读"})
+    pipeline, _, _ = build(clean_draft())
+
+    outcome = run(pipeline)
+
+    assert outcome.block is not None and all(t.tts_text is None for t in outcome.block.turns)
+
+
+def test_a_block_that_carries_unchecked_spoken_text_is_refused_by_validation() -> None:
+    from wavecast.intelligence.dialogue import DialogueValidationError, validate_dialogue_block
+    from wavecast.models.dialogue import DialogueBlock, DialogueTurn
+
+    block = DialogueBlock(
+        block_id="b",
+        slot_id="s",
+        purpose=DialoguePurpose.TRANSITION,
+        turns=[DialogueTurn(speaker="A", text="三号海岸。", tts_text="完全不同的话", fact_refs=[])],  # type: ignore[arg-type]
+        duration_seconds=5,
+    )
+
+    with pytest.raises(DialogueValidationError, match="never fact-checked"):
+        validate_dialogue_block(block, allowed_fact_refs=[])
+    # Only a deterministic conversion of the checked text may opt in.
+    assert validate_dialogue_block(block, allowed_fact_refs=[], allow_tts_text=True) is block
+
+
+def test_a_repair_that_lengthens_the_passage_past_the_ceiling_is_rejected_without_a_recheck() -> None:
+    long_fix = DialogueRepair(
+        fixes=[
+            TurnFix(turn=1, text="方大同说，他理解的爱不只是男女之间的爱情。" * 40, fact_refs=[f(4)]),
+            TurnFix(turn=4, text=clean_draft().turns[4].text, fact_refs=[f(5)]),
+        ]
+    )
+    pipeline, _, judge = build(draft_with_two_problems(), repair=long_fix)
+
+    outcome = run(pipeline)
+
+    assert outcome.status is DialogueStatus.REJECTED and outcome.reason == "too_long_after_repair"
+    assert outcome.calls == 3  # draft, check, repair - no spend on re-checking a passage that cannot stand
+    assert len(judge.calls) == 1 and outcome.block is None
+
+
+def _bare_fact_material() -> StoryMaterial:
+    """Facts with none of the words (years, creation, roles...) that make code demand a source."""
+    return StoryMaterial.model_validate(
+        {
+            "story_id": "plain",
+            "subject": "方大同",
+            "scope": "background",
+            "central_question": "他在哪里长大？",
+            "facts": [
+                {
+                    "fact_id": "plain-F1",
+                    "statement": "方大同在上海长大。",
+                    "evidence_id": "E9",
+                    "quote": "方大同在上海长大",
+                    "scope": "background",
+                    "subject": "方大同",
+                    "version_scope": None,
+                }
+            ],
+        }
+    )
+
+
+def test_a_story_is_rejected_when_the_checker_is_down_even_if_no_keyword_marks_it_factual() -> None:
+    mat = _bare_fact_material()
+    draft = DialogueDraft(turns=[DraftTurn(speaker="A", text="方大同在上海长大。", fact_refs=["plain-F1"])])  # type: ignore[arg-type]
+    from wavecast.intelligence.fact_support import must_be_supported
+
+    assert not must_be_supported("方大同在上海长大。")  # nothing in the sentence trips a keyword
+
+    writer = ScriptedLLM(draft)
+    judge = JudgingLLM(mat, [draft])
+    judge.fail = unavailable()
+    pipeline = DialoguePipeline(
+        writer=DialogueWriter(writer),
+        checker=DialogueFactChecker(judge),
+        repairer=DialogueRepairer(writer),
+    )
+
+    outcome = asyncio.run(pipeline.produce(mat, SLOT))
+
+    assert outcome.status is DialogueStatus.REJECTED and outcome.reason == "checker_unavailable"
+    assert outcome.calls == 2 and outcome.block is None and not outcome.speakable
+    assert ("DialogueRepair", "dialogue_repair") not in writer.calls  # no repair spent either
+
+
+def test_a_non_story_passage_may_pass_without_a_judgement_when_nothing_in_it_needs_a_source() -> None:
+    mat = _bare_fact_material()
+    draft = DialogueDraft(turns=[DraftTurn(speaker="A", text="接下来是下一首。", fact_refs=[])])  # type: ignore[arg-type]
+    writer = ScriptedLLM(draft)
+    judge = JudgingLLM(mat, [draft])
+    judge.fail = unavailable()
+    pipeline = DialoguePipeline(
+        writer=DialogueWriter(writer),
+        checker=DialogueFactChecker(judge),
+        repairer=DialogueRepairer(writer),
+    )
+    slot = DialogueSlot(
+        slot_id="s", block_id="b", purpose=DialoguePurpose.TRANSITION, station=StationId.PORTRAIT
+    )
+
+    outcome = asyncio.run(pipeline.produce(mat, slot))
+
+    assert outcome.status is DialogueStatus.READY and not outcome.model_checked
+
+
+def test_a_record_without_a_declared_version_is_refused_not_assumed_to_be_version_one(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    pipeline, _, _ = build(clean_draft())
+    record = run(pipeline).to_record()
+    storage = LocalObjectStorageProvider(tmp_path / "store")
+    store = DialogueArtifactStore(storage)
+    raw = record.model_dump(mode="json")
+    del raw["schema_version"]
+    asyncio.run(storage.put(artifact_key("ep-1", "block-1"), json.dumps(raw).encode(), "application/json"))
+
+    with pytest.raises(DialogueArtifactError, match="does not declare a schema_version"):
+        asyncio.run(store.load("ep-1", "block-1"))
+    with pytest.raises(ValueError):
+        CheckedDialogueRecord.model_validate(raw)  # the model itself does not default it either
+    for odd in ("1", None, 1.5, True):
+        asyncio.run(
+            storage.put(
+                artifact_key("ep-1", "block-1"),
+                json.dumps({**raw, "schema_version": odd}).encode(),
+                "application/json",
+            )
+        )
+        with pytest.raises(DialogueArtifactError):
+            asyncio.run(store.load("ep-1", "block-1"))

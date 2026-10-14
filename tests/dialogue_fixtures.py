@@ -17,7 +17,7 @@ from wavecast.intelligence.dialogue_writer import DialogueRepair, TurnFix
 from wavecast.intelligence.fact_support import split_sentences
 from wavecast.intelligence.models import Evidence
 from wavecast.intelligence.story_material import DraftFact, StoryMaterialDraft
-from wavecast.models.dialogue import DialogueDraft, DialogueTurn
+from wavecast.models.dialogue import DialogueDraft, DraftTurn
 from wavecast.models.story_material import StoryMaterial
 from wavecast.providers.errors import ProviderError
 
@@ -116,8 +116,8 @@ def f(n: int) -> str:
     return f"{STORY_ID}-F{n}"
 
 
-def _turn(speaker: str, text: str, refs: list[str]) -> DialogueTurn:
-    return DialogueTurn(speaker=speaker, text=text, tts_text=None, fact_refs=refs)  # type: ignore[arg-type]
+def _turn(speaker: str, text: str, refs: list[str]) -> DraftTurn:
+    return DraftTurn(speaker=speaker, text=text, fact_refs=refs)  # type: ignore[arg-type]
 
 
 def draft_with_two_problems() -> DialogueDraft:

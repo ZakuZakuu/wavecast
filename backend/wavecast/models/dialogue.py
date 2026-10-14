@@ -55,12 +55,27 @@ class DialogueTurn(BaseModel):
     fact_refs: list[str]
 
 
+class DraftTurn(BaseModel):
+    """One turn as a model writes it.
+
+    There is deliberately no ``tts_text``: what is *spoken* has to be what was fact-checked, and
+    only ``text`` is.  A pronunciation rendering will come from a deterministic conversion of the
+    checked text (a later batch), never from the Writer.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    speaker: DialogueSpeaker
+    text: str = Field(min_length=1, max_length=MAX_TURN_CHARS)
+    fact_refs: list[str]
+
+
 class DialogueDraft(BaseModel):
     """What a model returns: turns only.  Identity and timing are the application's."""
 
     model_config = ConfigDict(extra="forbid")
 
-    turns: list[DialogueTurn] = Field(min_length=1, max_length=MAX_DIALOGUE_TURNS)
+    turns: list[DraftTurn] = Field(min_length=1, max_length=MAX_DIALOGUE_TURNS)
 
 
 class DialogueBlock(BaseModel):
@@ -86,7 +101,10 @@ class DialogueBlock(BaseModel):
             block_id=block_id,
             slot_id=slot_id,
             purpose=purpose,
-            turns=list(draft.turns),
+            turns=[
+                DialogueTurn(speaker=turn.speaker, text=turn.text, tts_text=None, fact_refs=turn.fact_refs)
+                for turn in draft.turns
+            ],
             duration_seconds=duration_seconds,
         )
 
