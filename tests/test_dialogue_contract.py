@@ -324,3 +324,18 @@ def test_the_dialogue_types_name_no_vendor_voice() -> None:
     fields = set(DialogueTurn.model_fields) | set(DialogueBlock.model_fields)
 
     assert not {f for f in fields if "voice" in f}
+
+
+def test_speed_zero_is_a_valid_neutral_setting_for_a_dialogue_request() -> None:
+    # Doubao's chosen speech rate is 0; the neutral contract must not reject it.
+    request = SpeechRequest.dialogue(story_block(), ROLES, speed=0, audio_format="mp3")
+
+    assert request.speed == 0 and request.is_dialogue
+    assert SpeechRequest.single("你好。", speed=0).speed == 0
+    assert SpeechRequest.single("你好。", speed=-1.5).speed == -1.5  # the adapter checks its range
+
+
+def test_speed_must_still_be_a_finite_number() -> None:
+    for bad in (float("nan"), float("inf")):
+        with pytest.raises(ValidationError):
+            SpeechRequest.single("你好。", speed=bad)

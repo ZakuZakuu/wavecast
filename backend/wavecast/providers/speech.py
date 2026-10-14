@@ -34,9 +34,10 @@ class SpeechRequest(BaseModel):
     turns: list[SpeechTurn] = Field(default_factory=list)
     roles: list[VoiceRoleSnapshot] = Field(default_factory=list)
     cues: list[str] = Field(default_factory=list)
-    # Vendor scales differ (MiniMax 0.9 is not Doubao 0): the number is only meaningful to the
-    # adapter that the request is for.
-    speed: float | None = Field(default=None, gt=0)
+    # Vendor scales differ (MiniMax 0.9 is not Doubao 0, which is a valid setting): the number is
+    # only meaningful to the adapter the request is for, and that adapter checks its range.
+    # Here it only has to be a finite number.
+    speed: float | None = Field(default=None, allow_inf_nan=False)
     audio_format: str | None = None
 
     @property
