@@ -66,6 +66,7 @@ from wavecast.intelligence.models import (
     resolve_output_language,
 )
 from wavecast.intelligence.research import (
+    BACKGROUND_RESEARCH_PLANNER_DEADLINE_SECONDS,
     BackgroundResearchPlanner,
     BackgroundResearchService,
     FastResearchService,
@@ -4548,6 +4549,19 @@ class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
 
 
 
+def _planner_deadline_seconds(settings: ProviderSettings) -> float:
+    """How long the background research planner may take before the generic plan is used.
+
+    20 s fits a fast model.  An Ark planner answers in 22 to 55 s (a real run cancelled a Pro
+    planner at exactly 20 s and fell back), so it gets Ark's own timeout plus a margin.  The
+    planner runs behind the opening track, so waiting longer is not heard.
+    """
+
+    if settings.resolved_llm("research_plan") == "ark":
+        return max(BACKGROUND_RESEARCH_PLANNER_DEADLINE_SECONDS, settings.ark_timeout_seconds + 5.0)
+    return BACKGROUND_RESEARCH_PLANNER_DEADLINE_SECONDS
+
+
 def create_episode_assembly_service(
     settings: ProviderSettings | None = None,
     *,
@@ -4611,6 +4625,7 @@ def create_episode_assembly_service(
         planner=BackgroundResearchPlanner(research_llm, exa_only=settings.search_backend == "exa"),
         deep_research=deep_research,
         research_label=research_label,
+        planner_deadline_seconds=_planner_deadline_seconds(settings),
     )
     fast_path = FastPathCoordinator(
         research=fast_research,
