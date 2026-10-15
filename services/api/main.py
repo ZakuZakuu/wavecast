@@ -1998,8 +1998,10 @@ async def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
     listed apart.  It is meant for reviewing a generation, not as a billing record.
     """
 
-    owned(episode_id, principal(request))
-    current = orchestrator.get(episode_id)
+    # The episode repository is synchronous (Postgres runs it with asyncio.run), so it is read
+    # off the event loop like everywhere else.
+    await to_thread.run_sync(owned, episode_id, principal(request))
+    current = await to_thread.run_sync(orchestrator.get, episode_id)
     ledger = _usage_ledger()
     await ledger.flush()
     try:

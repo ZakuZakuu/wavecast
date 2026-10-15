@@ -258,3 +258,26 @@ def test_the_usage_endpoint_still_answers_after_a_restart_and_counts_each_call_o
     assert body["costs"]["cny"]["estimated"] == 0.5 and body["costs"]["usd"]["charged_or_estimated"] == 0.007
     assert {e["event_id"] for e in body["providers"]["provider_events"]} == {live.event_id, gone.event_id}
     assert diagnostics_of([live, gone])["usage"]["event_count"] == 2
+
+
+def test_the_usage_endpoint_reads_the_episode_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    # PostgresEpisodeRepository answers synchronously with asyncio.run(), which fails on a running loop.
+    client = TestClient(api_module.app)
+    owner = {"X-Wavecast-Listener": "usage-thread-owner"}
+    created = client.post("/api/episodes/from-seed/synthpop-return", headers=owner).json()
+    original = api_module.orchestrator.get
+    on_loop: list[str] = []
+
+    def get(episode_id: str):  # type: ignore[no-untyped-def]
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return original(episode_id)
+        on_loop.append(episode_id)
+        raise RuntimeError("asyncio.run() cannot be called from a running event loop")
+
+    monkeypatch.setattr(api_module.orchestrator, "get", get)
+
+    response = client.get(f"/api/episodes/{created['id']}/usage", headers=owner)
+
+    assert response.status_code == 200 and on_loop == []
