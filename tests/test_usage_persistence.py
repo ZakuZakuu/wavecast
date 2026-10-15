@@ -281,3 +281,14 @@ def test_the_usage_endpoint_reads_the_episode_off_the_event_loop(monkeypatch: py
     response = client.get(f"/api/episodes/{created['id']}/usage", headers=owner)
 
     assert response.status_code == 200 and on_loop == []
+
+
+def test_the_usual_projection_keeps_its_shape_and_the_episode_report_adds_ids() -> None:
+    one = event()
+
+    plain = diagnostics_of([one])["provider_events"][0]
+    with_ids = diagnostics_of([one], with_ids=True)["provider_events"][0]
+
+    assert "event_id" not in plain and "recorded_at" not in plain
+    assert with_ids["event_id"] == one.event_id and with_ids["recorded_at"] == one.recorded_at.isoformat()
+    assert {k: v for k, v in with_ids.items() if k not in {"event_id", "recorded_at"}} == plain
