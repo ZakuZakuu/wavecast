@@ -6,17 +6,19 @@ Updated: 2026-10-15（双人讲述单段验收后；#303 核对改为轻量兜�
 
 第一至四批已通过审查与 CI，并以普通 merge 合入 integration：#299（Ark 适配、角色配置和对话契约）、#300（素材→双人稿→核对/局部修复→版本化存档）、#301（对话→音频缓存/请求快照→NarrationSegment→时间线、故事预约账本）、#302（完整接线，合入为 `b53edd5`）。未推进 main，未修改生产变量，未部署。
 
-接线把检索证据→素材→双人稿→核对→配音接进 `author_narration` 和装配，**默认关闭**（`WAVECAST_DIALOGUE_RADIO=off`）：真实豆包传输层（API Key 认证、PCM 24 kHz 接收、本地 WAV 封装、零重试）、每次尝试恰好一条最终用量事件（含音频 token，未知为 null）、恢复前先查账本与存档（0 次模型调用，保留原音频快照，并校验 story/slot/station 身份）、对话放置失败时的 Writer 兜底（一次，且仅当章节仍可插入）、渐进 HLS 下迟到稿不改动已发布前缀、按节目计的用量归属。
+接线把检索证据→素材→双人稿→基础校验→配音接进 `author_narration` 和装配，**默认关闭**（`WAVECAST_DIALOGUE_RADIO=off`）：真实豆包传输层（API Key 认证、PCM 24 kHz 接收、本地 WAV 封装、零重试）、每次尝试恰好一条最终用量事件（含音频 token，未知为 null）、恢复前先查账本与存档（0 次模型调用，保留原音频快照，并校验 story/slot/station 身份）、对话放置失败时的 Writer 兜底（一次，且仅当章节仍可插入）、渐进 HLS 下迟到稿不改动已发布前缀、按节目计的用量归属。
 
-用户已选择 B 音色：A=刘飞、B=潇磊，豆包语速 0。保留不同电台的时长和密度差异；首曲尽快开始、音乐连续性优先。模型：Pro 素材与核对、Lite Writer，角色独立配置。当前默认行为保持不变。
+用户已选择 B 音色：A=刘飞、B=潇磊，豆包语速 0。保留不同电台的时长和密度差异；首曲尽快开始、音乐连续性优先。模型：Pro 素材、Lite Writer，角色独立配置。当前默认行为保持不变。
 
-**边界（如实）：** 已做过的真实验收是**人物志单段**（Pro 素材→Lite 写稿→Pro 核对→一次局部修复→豆包 B 音色→本地 HLS），用户试听认可。**完整的自动调研节目（多段、真实检索、整档编排）尚未验收**，不能宣称真实节目已经支持双人主持；随便听的 25–45 秒控长仍未通过、未重测。
+**边界（如实）：** 已做过的真实验收是**人物志单段**（当时的路线：Pro 素材→Lite 写稿→Pro 核对→一次局部修复→豆包 B 音色→本地 HLS，其中核对与修复已移除），用户试听认可。**完整的自动调研节目（多段、真实检索、整档编排）尚未验收**，不能宣称真实节目已经支持双人主持；随便听的 25–45 秒控长仍未通过、未重测。
 
-下一步：#303（核对改为轻量事实兜底、失败修复统计）等 GPT 复审与 CI，通过后普通 merge 到 integration；之后是否做新提示的真实验证、完整节目验收，由用户决定。不要再扩模型名单或拆无消费者的基础模块。main 留到完整验收。
+**默认链路已简化（ADR 0029，待 GPT 审查与 CI）：** 实时检索 → Pro 素材提炼 → Lite 写稿 → 基础校验（素材范围内的事实 ID、结构、时长硬上限）→ 豆包配音。事后 Pro 核对、局部修复、复核已从默认路径移除（取代 ADR 0025 的核对与 ADR 0028）；存档如实记 `model_checked=false`，旧存档照常恢复。原因：两次真实验收里该核对都没抓到真正的事实错误，却阻塞了产出；demo 阶段接受小的措辞偏差。默认开关仍关闭。
 
-验收记录（2026-10-15）：人物志单段经过一次局部修复后通过，用户试听认可（首次核对未通过；随便听控长仍未通过，未重测）。样本与统计口径见 [ADR 0028](adr/0028-light-fact-check-and-repair-statistics.md) 和 `tests/fixtures/dialogue_portrait_20261015/`；单一样本不足以证明兜底低频。后续离线批次：核对定位为轻量事实兜底（语义归属交给同一次 Pro 核对并附来源上下文，正则只做提示、不单独否决或触发修复）、修复提示改为保留已支持内容、分别记录首次通过率/修复触发率/修复成功率；新提示在真实模型上的表现尚未验证。动态等待策略暂不改，等产品讨论。
+下一步：该 PR 审查通过且最新 CI 通过后普通 merge 到 integration；用上一轮保存的真实素材与候选稿做一次配音验收（不重做检索、提炼、写稿）。不要再扩模型名单、不要围绕核对扩功能。main 留到完整验收。
 
-设计和样本入口：[接入设计](design/researched-dialogue-radio.md)、[实验报告](research/dialogue-radio-2026-10/final-text-experiments.md)、[已认可样本边界](research/dialogue-radio-2026-10/accepted-samples.md)。实施边界：[ADR 0024](adr/0024-ark-text-models-and-dialogue-contract.md)、[ADR 0025](adr/0025-story-material-and-checked-dialogue-path.md)、[ADR 0026](adr/0026-dialogue-to-timeline.md)、[ADR 0027](adr/0027-dialogue-runtime-wiring.md)、[ADR 0028](adr/0028-light-fact-check-and-repair-statistics.md)。
+验收记录（2026-10-15）：人物志单段经过一次局部修复后通过，用户试听认可（首次核对未通过；随便听控长仍未通过，未重测）。样本见 `tests/fixtures/dialogue_portrait_20261015/`（历史存档，保持原样），当时的核对/修复路线与结论见 [ADR 0028](adr/0028-light-fact-check-and-repair-statistics.md)，已被 [ADR 0029](adr/0029-drop-post-hoc-check-from-default-dialogue-path.md) 取代。同日第二次真实验收（实时检索，Tavily 额度耗尽、仅 Exa 有结果）停在核对阶段（`unresolved_after_repair`），未产出音频，促成了 ADR 0029。动态等待策略暂不改，等产品讨论。
+
+设计和样本入口：[接入设计](design/researched-dialogue-radio.md)、[实验报告](research/dialogue-radio-2026-10/final-text-experiments.md)、[已认可样本边界](research/dialogue-radio-2026-10/accepted-samples.md)。实施边界：[ADR 0024](adr/0024-ark-text-models-and-dialogue-contract.md)、[ADR 0025](adr/0025-story-material-and-checked-dialogue-path.md)、[ADR 0026](adr/0026-dialogue-to-timeline.md)、[ADR 0027](adr/0027-dialogue-runtime-wiring.md)、[ADR 0028](adr/0028-light-fact-check-and-repair-statistics.md)（已被 0029 取代）、[ADR 0029](adr/0029-drop-post-hoc-check-from-default-dialogue-path.md)。
 
 ## 当前阶段与产品
 

@@ -2,10 +2,10 @@
 
 The Writer path stays the way a chapter's narration is made.  This is an *offer* made before it:
 if the slot may carry a story passage, the researched evidence for the chapter's song is turned
-into shared material, written as a two-host passage, fact-checked and saved; the caller then
-puts the checked passage into the chapter like any other narration block.  Every way this can
+into shared material, written as a two-host passage, validated and saved; the caller then
+puts the saved passage into the chapter like any other narration block.  Every way this can
 fail - no budget for the station, a slot the station gave to the Writer, too little evidence,
-a provider error, a passage that did not survive the check - returns ``None`` and the chapter is
+a provider error, a passage that failed validation - returns ``None`` and the chapter is
 authored exactly as it was before, so the feature can only ever add a passage, never remove one.
 
 Cancellation is never swallowed.  The story the passage tells is reserved while it is made;
@@ -104,7 +104,7 @@ class DialogueRuntime:
         track_ref: str | None,
         track_label: str,
     ) -> DialogueOffer | None:
-        """A checked, saved passage for this slot, or ``None`` (the Writer path then runs).
+        """A validated, saved passage for this slot, or ``None`` (the Writer path then runs).
 
         What the ledger and the store already know is consulted *before* any model is asked: a
         saved passage is handed back (with its audio snapshot) at no cost, and a story held by

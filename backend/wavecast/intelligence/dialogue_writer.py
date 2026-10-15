@@ -1,9 +1,9 @@
-"""The Writer for two-host passages (and the bounded repair of single turns).
+"""The Writer for two-host passages.
 
 The Writer receives shared story material and chooses the telling and the turn-taking itself;
 the material contains no lines.  It returns a ``DialogueDraft``; identity, duration and
-reference validation happen in code afterwards.  Repair rewrites only the turns it is told to,
-keeping every speaker and the number of turns.
+reference validation happen in code afterwards.  What it may say is bounded by the material and
+this prompt; there is no after-the-fact model check (ADR 0029).
 """
 
 from __future__ import annotations
@@ -11,9 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from pydantic import BaseModel, ConfigDict
-
-from wavecast.models.dialogue import DialogueBlock, DialogueDraft, DialoguePurpose
+from wavecast.models.dialogue import DialogueDraft, DialoguePurpose
 from wavecast.models.story_material import StoryMaterial
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
@@ -53,42 +51,10 @@ do_not_infer 里的内容不能说。backstage 里的内容绝对不要念出来
 素材（JSON）：
 {material}"""
 
-_REPAIR_PROMPT = """下面是一段两位主持人的对话，核对发现有几轮里的个别说法素材不支持。只改下面列出的轮，\
-其他轮保持不变。
-
-怎么改：优先改写有问题的那个说法，保留这一轮里已经有素材支持的内容。比如去掉素材没有说过的\
-限定、归属或评价，改成素材确实说过的表达；不要为了通过核对而把整句话删掉。只有某句话完全找不到\
-任何素材依据、无法改写时，才可以删掉那一句。仍然口语、自然，能和前后轮接上，说话人不变。不要新增轮次，\
-不要加入素材之外的内容。每个改过的轮给出新的 text 和它用到的事实 id 列表 fact_refs（可以为空）。
-
-素材（JSON）：
-{material}
-
-整段对话（轮次从 0 开始）：
-{dialogue}
-
-需要改的轮和原因：
-{problems}"""
-
-
-class TurnFix(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    turn: int
-    text: str
-    fact_refs: list[str]
-
-
-class DialogueRepair(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    fixes: list[TurnFix]
-
-
 def _material_json(material: StoryMaterial) -> str:
     """What the Writer sees: facts with their ids and statements, the angle, the limits.
 
-    Quotes and evidence ids stay out of the Writer's view; they are the checker's business.
+    Quotes and evidence ids stay out of the Writer's view; code has verified them already.
     """
 
     return json.dumps(
@@ -145,36 +111,4 @@ class DialogueWriter:
         )
         if not isinstance(result, DialogueDraft):
             raise ProviderInvalidResponseError("dialogue writer returned invalid output")
-        return result
-
-
-class DialogueRepairer:
-    """Rewrites only the flagged turns.  Uses the Writer's model; never the whole passage."""
-
-    def __init__(
-        self, llm: FastStructuredProvider, *, profile: InferenceProfile = InferenceProfile.BALANCED
-    ) -> None:
-        self._llm = llm
-        self._profile = profile
-
-    async def repair(
-        self, block: DialogueBlock, material: StoryMaterial, problems: dict[int, str]
-    ) -> DialogueRepair:
-        prompt = _REPAIR_PROMPT.format(
-            material=_material_json(material),
-            dialogue="\n".join(
-                f"{index}. {turn.speaker.value}: {turn.text}"
-                for index, turn in enumerate(block.turns)
-            ),
-            problems="\n".join(f"- 第 {index} 轮：{reason}" for index, reason in sorted(problems.items())),
-        )
-        result = await self._llm.structured(
-            prompt,
-            DialogueRepair,
-            transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
-            profile=self._profile,
-            stage="dialogue_repair",
-        )
-        if not isinstance(result, DialogueRepair):
-            raise ProviderInvalidResponseError("dialogue repair returned invalid output")
         return result

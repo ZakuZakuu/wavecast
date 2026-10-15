@@ -149,7 +149,8 @@ class DialogueBlock(BaseModel):
 
 
 class DialogueIssue(BaseModel):
-    """One problem the fact check found in a turn (kept with the saved passage for inspection)."""
+    """One problem found in a turn (kept with a saved passage for inspection).  Since ADR 0029 only
+    rejected drafts and records from before it carry any."""
 
     model_config = ConfigDict(extra="forbid")
 

@@ -9,16 +9,11 @@ model produced any of it here.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
-from wavecast.intelligence.dialogue_check import DialogueCheck, SentenceFinding
-from wavecast.intelligence.dialogue_writer import DialogueRepair, TurnFix
-from wavecast.intelligence.fact_support import split_sentences
 from wavecast.intelligence.models import Evidence
 from wavecast.intelligence.story_material import DraftFact, StoryMaterialDraft
 from wavecast.models.dialogue import DialogueDraft, DraftTurn
-from wavecast.models.story_material import StoryMaterial
 from wavecast.providers.errors import ProviderError
 
 STORY_ID = "fdt"
@@ -143,16 +138,6 @@ def clean_draft() -> DialogueDraft:
     return DialogueDraft(turns=turns)
 
 
-def good_repair() -> DialogueRepair:
-    clean = clean_draft()
-    return DialogueRepair(
-        fixes=[
-            TurnFix(turn=1, text=clean.turns[1].text, fact_refs=clean.turns[1].fact_refs),
-            TurnFix(turn=4, text=clean.turns[4].text, fact_refs=clean.turns[4].fact_refs),
-        ]
-    )
-
-
 class ScriptedLLM:
     """Returns queued responses per output type; an exception in the queue is raised."""
 
@@ -175,54 +160,6 @@ class ScriptedLLM:
         if isinstance(response, BaseException):
             raise response
         return response
-
-
-class JudgingLLM(ScriptedLLM):
-    """A fact-check model that judges from the prompt: it says 'supported' for any sentence
-    that sits in a turn with fact references, citing the first one with that fact's own quote,
-    unless an override says otherwise.  (It is deliberately over-agreeable: code must still
-    catch what a lax model lets through.)"""
-
-    def __init__(
-        self,
-        material: StoryMaterial,
-        known: list[DialogueDraft | DialogueRepair],
-        insufficient: tuple[str, ...] = (),
-        not_factual: tuple[str, ...] = ("这个角度去听",),
-    ) -> None:
-        super().__init__()
-        self.material = material
-        self.refs_for: dict[str, list[str]] = {}
-        for item in known:
-            turns = item.turns if isinstance(item, DialogueDraft) else []
-            for turn in turns:
-                for sentence in split_sentences(turn.text):
-                    self.refs_for[sentence.strip()] = turn.fact_refs
-            if isinstance(item, DialogueRepair):
-                for fix in item.fixes:
-                    for sentence in split_sentences(fix.text):
-                        self.refs_for[sentence.strip()] = fix.fact_refs
-        self.insufficient = insufficient
-        self.not_factual = not_factual
-        self.fail: BaseException | None = None
-
-    async def structured(self, prompt: str, output_type: type, *, transport: Any, profile: Any, stage: str | None = None) -> Any:
-        self.calls.append((output_type.__name__, stage))
-        if self.fail is not None:
-            raise self.fail
-        findings = []
-        for number, text in re.findall(r"^\s+(\d+)\. (.*)$", prompt.split("Dialogue:")[1], re.MULTILINE):
-            refs = self.refs_for.get(text.strip(), [])
-            facts = [fact for ref in refs if (fact := self.material.fact(ref)) is not None]
-            # Cite the declared fact whose text overlaps the sentence most.
-            fact = max(facts, key=lambda item: len(set(text) & set(item.quote)), default=None)
-            if fact is None or any(marker in text for marker in self.not_factual):
-                findings.append(SentenceFinding(sentence=int(number), verdict="not_factual", fact_ids=[], quote=""))
-            elif any(marker in text for marker in self.insufficient):
-                findings.append(SentenceFinding(sentence=int(number), verdict="insufficient", fact_ids=[], quote=""))
-            else:
-                findings.append(SentenceFinding(sentence=int(number), verdict="supported", fact_ids=[fact.fact_id], quote=fact.quote[:60]))
-        return DialogueCheck(findings=findings)
 
 
 def unavailable() -> ProviderError:

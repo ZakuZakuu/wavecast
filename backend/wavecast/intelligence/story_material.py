@@ -29,7 +29,6 @@ from .fact_support import (
     quote_backs_roles,
     quote_in_source,
     roles_in,
-    source_context,
 )
 from .fast_start import FastStructuredProvider
 from .models import Evidence
@@ -196,8 +195,6 @@ def verify_material(
                     "scope": StoryScope(item.scope),
                     "subject": (item.subject.strip() or draft.subject.strip())[:120],
                     "version_scope": version[:200] if version else None,
-                    "source_title": source.source_title.strip()[:200] or None,
-                    "context": (source_context(source.claim_or_excerpt, quote) or "")[:700] or None,
                 }
             )
     if dropped:

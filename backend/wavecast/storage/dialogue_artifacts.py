@@ -1,10 +1,11 @@
-"""Where a fact-checked two-host passage is saved, and how it is read back.
+"""Where a validated two-host passage is saved, and how it is read back.
 
-A checked passage is saved as one versioned JSON document in object storage, beside (not inside)
+A passage is saved as one versioned JSON document in object storage, beside (not inside)
 the playable episode: ``NarrationSegment`` cannot carry a dialogue yet (ADR 0024), and this
 record does not change that.  It holds what a later stage needs to voice the passage without
-writing or checking it again: the block (turns, speakers, fact references, block and slot ids),
-the material snapshot the references resolve against, and the outcome of the check.  Reading it
+writing it again: the block (turns, speakers, fact references, block and slot ids),
+the material snapshot the references resolve against, and, for records made while a model check
+still existed (ADR 0028), its outcome.  Reading it
 back re-validates the whole document, including that every cited fact exists in the snapshot, so
 a damaged or hand-edited record is refused instead of being voiced.
 
@@ -46,6 +47,7 @@ class CheckedDialogueRecord(BaseModel):
     # What the first check found, kept for inspection when a repair changed the passage.
     first_check_issues: list[DialogueIssue]
     calls_used: int
+    # False for every passage made since ADR 0029: validated by code, never model-checked.
     model_checked: bool
 
     @model_validator(mode="after")

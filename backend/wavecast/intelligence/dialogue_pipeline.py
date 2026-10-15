@@ -1,12 +1,11 @@
-"""Shared story material → two-host draft → fact check (→ bounded repair) → a checked passage.
+"""Shared story material → two-host draft → basic validation → a passage ready to voice.
 
-One passage costs at most ``max_calls`` model calls after the material exists (default 4: the
-draft, the check, one repair of the flagged turns, one re-check).  The material is shared across
-a programme's passages and is made once, outside this budget.  Nothing here rewrites a passage
-as a whole: when the check finds a problem only the flagged turns are rewritten, with the
-speakers and the number of turns kept; if that does not clear the check the passage is
-*rejected* and the music simply carries on.  A passage that passes the first check is returned
-untouched.  A short passage is never padded; there is no minimum length.
+One passage costs one model call after the material exists: the Writer's draft.  There is no
+after-the-fact model check, repair or re-check (ADR 0029): what the hosts may say is bounded by
+the verified material and the Writer's prompt, and code validates only the structure - speakers,
+turn count, that every cited fact id belongs to this material, and the station's hard length
+ceiling.  A draft that fails that validation is *rejected* and the music simply carries on.
+Nothing is padded; there is no minimum length.
 
 Cancellation is never swallowed.  A provider failure does not raise: it ends the passage as
 rejected, with the reason, so the caller can keep the music going.
@@ -16,17 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from wavecast.models.dialogue import (
-    PURPOSES_REQUIRING_FACTS,
-    DialogueBlock,
-    DialogueDraft,
-    DialogueIssue,
-    DialogueTurn,
-)
+from wavecast.models.dialogue import DialogueBlock, DialogueDraft, DialogueIssue
 from wavecast.models.story_material import StoryMaterial
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import ProgressiveLLMProvider
@@ -36,21 +28,17 @@ from wavecast.providers.usage import UsageLedger
 from wavecast.stations import StationId
 from wavecast.storage.dialogue_artifacts import CheckedDialogueRecord
 
-from .dialogue import DialogueValidationError, block_from_draft, validate_dialogue_block
+from .dialogue import DialogueValidationError, block_from_draft
 from .dialogue_budget import dialogue_budget_for, estimate_dialogue_seconds
-from .dialogue_check import DialogueCheckReport, DialogueFactChecker
-from .dialogue_metrics import DialogueMetrics, LedgerMark, PassageAttempt, sentences_lost
-from .dialogue_writer import DialogueRepair, DialogueRepairer, DialogueSlot, DialogueWriter
+from .dialogue_writer import DialogueSlot, DialogueWriter
 from .story_material import StoryMaterialService
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_CALLS = 4
-
 
 class DialogueStatus(StrEnum):
-    READY = "ready"  # passed the first check unchanged
-    REPAIRED = "repaired"  # flagged turns were rewritten and the re-check passed
+    READY = "ready"  # validated; may be voiced (not model-checked: see ``model_checked``)
+    REPAIRED = "repaired"  # only in records saved while a model check and repair still existed
     REJECTED = "rejected"  # not to be voiced; ``reason`` says why
     SKIPPED = "skipped"  # nothing was attempted (no budget for this station)
 
@@ -61,22 +49,18 @@ class DialogueOutcome:
     reason: str | None = None
     block: DialogueBlock | None = None
     material: StoryMaterial | None = None
+    # The next three are filled only from records saved while a model check still existed.
     first_check_issues: list[DialogueIssue] = field(default_factory=list)
-    final_issues: list[DialogueIssue] = field(default_factory=list)
     repaired_turns: list[int] = field(default_factory=list)
+    final_issues: list[DialogueIssue] = field(default_factory=list)
     calls: int = 0
+    # Honest by construction: no passage made now has been through a model check.
     model_checked: bool = False
     station_value: str = ""
-    # What happened on the way, for the repair statistics (see ``dialogue_metrics``).
-    reached_first_check: bool = False
-    repair_started: bool = False
-    repair_seconds: float | None = None
-    repair_cost_cny: float | None = None
-    information_loss_sentences: int = 0
 
     @classmethod
     def from_record(cls, record: CheckedDialogueRecord) -> DialogueOutcome:
-        """The outcome of a passage that was already made and checked (nothing is called)."""
+        """The outcome of a passage that was already made and saved (nothing is called)."""
         return cls(
             status=DialogueStatus.READY if record.status == "ready" else DialogueStatus.REPAIRED,
             block=record.block,
@@ -95,7 +79,7 @@ class DialogueOutcome:
     def to_record(self) -> CheckedDialogueRecord:
         """The savable form.  Only a passage that may be voiced has one."""
         if not self.speakable or self.block is None or self.material is None:
-            raise ValueError(f"a {self.status.value} passage cannot be saved as checked")
+            raise ValueError(f"a {self.status.value} passage cannot be saved")
         return CheckedDialogueRecord(
             schema_version=1,
             station=StationId(self.station_value),
@@ -109,40 +93,9 @@ class DialogueOutcome:
         )
 
 
-class _BudgetExhausted(Exception):
-    pass
-
-
-class _Calls:
-    def __init__(self, limit: int) -> None:
-        self.limit = limit
-        self.used = 0
-
-    def take(self) -> None:
-        if self.used >= self.limit:
-            raise _BudgetExhausted
-        self.used += 1
-
-
 class DialoguePipeline:
-    def __init__(
-        self,
-        *,
-        writer: DialogueWriter,
-        checker: DialogueFactChecker,
-        repairer: DialogueRepairer,
-        max_calls: int = DEFAULT_MAX_CALLS,
-        metrics: DialogueMetrics | None = None,
-        ledger: UsageLedger | None = None,
-    ) -> None:
-        if max_calls < 1:
-            raise ValueError("max_calls must be at least one")
-        self._metrics = metrics
-        self._ledger = ledger
+    def __init__(self, *, writer: DialogueWriter) -> None:
         self._writer = writer
-        self._checker = checker
-        self._repairer = repairer
-        self._max_calls = max_calls
 
     async def produce(self, material: StoryMaterial, slot: DialogueSlot) -> DialogueOutcome:
         budget = dialogue_budget_for(slot.station)
@@ -153,171 +106,28 @@ class DialoguePipeline:
             outcome.status = DialogueStatus.SKIPPED
             outcome.reason = "station_has_no_dialogue"
             return outcome
-        calls = _Calls(self._max_calls)
+        outcome.calls = 1
         try:
-            return self._noted(await self._run(material, slot, budget.hard_max_seconds, calls, outcome))
+            draft = await self._writer.write(material, slot, budget)
         except asyncio.CancelledError:
-            # Not a result, but what a started repair cost is still counted - then it propagates.
-            outcome.calls = calls.used
-            self._noted(outcome, cancelled=True)
             raise
-        except _BudgetExhausted:
-            outcome.reason = "budget_exhausted"
         except ProviderError as error:
             outcome.reason = f"provider_failed:{type(error).__name__}"
-        outcome.status = DialogueStatus.REJECTED
-        outcome.calls = calls.used
-        return self._noted(outcome)
-
-    def _noted(self, outcome: DialogueOutcome, *, cancelled: bool = False) -> DialogueOutcome:
-        """Count the passage in the repair statistics (when asked to) and say so in the log."""
-
-        repaired = outcome.status is DialogueStatus.REPAIRED
-        attempt = PassageAttempt(
-            reached_first_check=outcome.reached_first_check,
-            first_check_passed=(
-                outcome.reached_first_check
-                and outcome.model_checked
-                and not outcome.first_check_issues
-            ),
-            repair_triggered=outcome.repair_started,
-            repair_succeeded=repaired,
-            cancelled=cancelled,
-            rejected_before_check=(
-                None if outcome.reached_first_check or cancelled else (outcome.reason or "rejected")
-            ),
-            extra_seconds=outcome.repair_seconds,
-            extra_cost_cny=outcome.repair_cost_cny,
-            information_loss_sentences=outcome.information_loss_sentences,
-        )
-        if self._metrics is not None:
-            self._metrics.add(attempt)
-        logger.info(
-            "dialogue_passage status=%s cancelled=%s first_pass=%s repair_triggered=%s "
-            "repair_succeeded=%s extra_seconds=%s lost_sentences=%s",
-            outcome.status.value,
-            cancelled,
-            attempt.first_check_passed,
-            attempt.repair_triggered,
-            attempt.repair_succeeded,
-            None if outcome.repair_seconds is None else round(outcome.repair_seconds, 2),
-            outcome.information_loss_sentences,
-        )
-        return outcome
-
-    async def _run(
-        self,
-        material: StoryMaterial,
-        slot: DialogueSlot,
-        hard_max_seconds: int,
-        calls: _Calls,
-        outcome: DialogueOutcome,
-    ) -> DialogueOutcome:
-        budget = dialogue_budget_for(slot.station)
-        assert budget is not None
-        calls.take()
-        draft = await self._writer.write(material, slot, budget)
+            return outcome
         block = self._to_block(draft, material, slot, outcome)
         if block is None:
-            outcome.calls = calls.used
             return outcome
-        if block.duration_seconds > hard_max_seconds:
+        if block.duration_seconds > budget.hard_max_seconds:
             outcome.reason = "too_long"
-            outcome.calls = calls.used
             return outcome
-
-        calls.take()
-        first = await self._checker.review(block, material)
-        outcome.reached_first_check = True
-        outcome.first_check_issues = list(first.issues)
-        outcome.model_checked = first.model_checked
-        if not first.model_checked and block.purpose in PURPOSES_REQUIRING_FACTS:
-            # No judgement was obtained.  Keywords decide what a degraded check looks at, and a
-            # plain objective statement carries none, so a story is never passed on that basis.
-            outcome.reason = "checker_unavailable"
-            outcome.final_issues = list(first.issues)
-            outcome.calls = calls.used
-            return outcome
-        if not first.issues:
-            return self._accept(outcome, block, DialogueStatus.READY, first, calls)
-
-        flagged = first.flagged_turns()
-        if len(flagged) > (len(block.turns) + 1) // 2:
-            outcome.reason = "too_many_flagged_turns"
-            outcome.final_issues = list(first.issues)
-            outcome.calls = calls.used
-            return outcome
-
-        calls.take()  # no budget left for a repair: it never started, and is not counted as one
-        outcome.repair_started = True
-        mark, started = LedgerMark(self._ledger), time.monotonic()
-        try:
-            return await self._repair_phase(
-                block, material, flagged, first, hard_max_seconds, calls, outcome
-            )
-        finally:
-            # However the repair ends - rejected, timed out, over budget, cancelled - what it
-            # cost so far is settled: the price of the calls the ledger knows, and the time.
-            outcome.repair_seconds = time.monotonic() - started
-            outcome.repair_cost_cny = mark.repair_cost_cny()
-
-    async def _repair_phase(
-        self,
-        block: DialogueBlock,
-        material: StoryMaterial,
-        flagged: dict[int, str],
-        first: DialogueCheckReport,
-        hard_max_seconds: int,
-        calls: _Calls,
-        outcome: DialogueOutcome,
-    ) -> DialogueOutcome:
-        repair = await self._repairer.repair(block, material, flagged)
-        repaired = self._apply(block, repair, set(flagged), material)
-        if repaired is None:
-            outcome.reason = "invalid_repair"
-            outcome.final_issues = list(first.issues)
-            outcome.calls = calls.used
-            return outcome
-        outcome.information_loss_sentences = sum(
-            sentences_lost(block.turns[index].text, repaired.turns[index].text) for index in flagged
-        )
-
-        if repaired.duration_seconds > hard_max_seconds:
-            # The repair can lengthen a passage as well as shorten it: same ceiling as the draft.
-            outcome.reason = "too_long_after_repair"
-            outcome.final_issues = list(first.issues)
-            outcome.calls = calls.used
-            return outcome
-
-        calls.take()
-        second = await self._checker.review(repaired, material)
-        outcome.model_checked = outcome.model_checked and second.model_checked
-        if not second.model_checked and repaired.purpose in PURPOSES_REQUIRING_FACTS:
-            outcome.reason = "checker_unavailable"
-            outcome.final_issues = list(second.issues)
-            outcome.calls = calls.used
-            return outcome
-        if second.issues:
-            outcome.reason = "unresolved_after_repair"
-            outcome.final_issues = list(second.issues)
-            outcome.calls = calls.used
-            return outcome
-        outcome.repaired_turns = sorted(flagged)
-        return self._accept(outcome, repaired, DialogueStatus.REPAIRED, second, calls)
-
-    @staticmethod
-    def _accept(
-        outcome: DialogueOutcome,
-        block: DialogueBlock,
-        status: DialogueStatus,
-        report: DialogueCheckReport,
-        calls: _Calls,
-    ) -> DialogueOutcome:
-        outcome.status = status
+        outcome.status = DialogueStatus.READY
         outcome.block = block
         outcome.reason = None
-        outcome.final_issues = []
-        outcome.calls = calls.used
+        logger.info(
+            "dialogue_passage status=ready turns=%d estimated_seconds=%d model_checked=false",
+            len(block.turns),
+            block.duration_seconds,
+        )
         return outcome
 
     @staticmethod
@@ -343,56 +153,17 @@ class DialoguePipeline:
             ]
             return None
 
-    @staticmethod
-    def _apply(
-        block: DialogueBlock,
-        repair: DialogueRepair,
-        flagged: set[int],
-        material: StoryMaterial,
-    ) -> DialogueBlock | None:
-        """Replace the flagged turns' text and references; speakers and turn count are kept."""
-        fixes = {fix.turn: fix for fix in repair.fixes}
-        if len(fixes) != len(repair.fixes) or not fixes or not set(fixes) <= flagged:
-            return None
-        turns: list[DialogueTurn] = []
-        try:
-            for index, turn in enumerate(block.turns):
-                fix = fixes.get(index)
-                turns.append(
-                    turn
-                    if fix is None
-                    # The text changed, so a pronunciation rendering of the old text is dropped.
-                    else DialogueTurn(
-                        speaker=turn.speaker, text=fix.text.strip(), tts_text=None, fact_refs=fix.fact_refs
-                    )
-                )
-            repaired = block.model_copy(
-                update={
-                    "turns": turns,
-                    "duration_seconds": estimate_dialogue_seconds(sum(len(t.text) for t in turns)),
-                }
-            )
-            repaired = DialogueBlock.model_validate(repaired.model_dump())
-            return validate_dialogue_block(
-                repaired, allowed_fact_refs=material.fact_ids, expected_slot_id=block.slot_id
-            )
-        except (ValueError, DialogueValidationError):
-            return None
-
 
 @dataclass
 class DialogueStack:
-    """The three model roles of the dialogue path, built from the role configuration.
+    """The two model roles of the dialogue path, built from the role configuration.
 
-    ``material``, ``writer`` and ``fact_check`` are bound independently (the repair step uses
-    the Writer's model).  Not wired into episode assembly yet.
+    ``material`` and ``writer`` are bound independently.
     """
 
     material: StoryMaterialService
     pipeline: DialoguePipeline
     owned_clients: list[object]
-    # Repair statistics of the passages this stack produced (see ``dialogue_metrics``).
-    metrics: DialogueMetrics = field(default_factory=DialogueMetrics)
 
     async def aclose(self) -> None:
         """Close every distinct client once, even when one close fails."""
@@ -418,22 +189,11 @@ def create_dialogue_stack(
     *,
     ledger: UsageLedger,
     mock: ProgressiveLLMProvider,
-    max_calls: int = DEFAULT_MAX_CALLS,
 ) -> DialogueStack:
     material_llm = build_llm(settings, "material", ledger=ledger, mock=mock)
     writer_llm = build_llm(settings, "writer", ledger=ledger, mock=mock)
-    fact_check_llm = build_llm(settings, "fact_check", ledger=ledger, mock=mock)
-    metrics = DialogueMetrics()
     return DialogueStack(
         material=StoryMaterialService(material_llm),
-        pipeline=DialoguePipeline(
-            writer=DialogueWriter(writer_llm),
-            checker=DialogueFactChecker(fact_check_llm),
-            repairer=DialogueRepairer(writer_llm),
-            max_calls=max_calls,
-            metrics=metrics,
-            ledger=ledger,
-        ),
-        owned_clients=[material_llm, writer_llm, fact_check_llm],
-        metrics=metrics,
+        pipeline=DialoguePipeline(writer=DialogueWriter(writer_llm)),
+        owned_clients=[material_llm, writer_llm],
     )
