@@ -1,0 +1,9 @@
+{
+  "algorithm": "sha256",
+  "source": "historical local experiment, before handoff sanitization",
+  "files": {
+    "call_podcast.py": "f305bb351b32b09fa2c2e8f0db7d3df8a057592af51010ceedbef4773f4fd1e9",
+    "protocols/protocols.py": "cb170af19b3fba3bdc0a1eddca2135e4da6e9d15452634c363fd2d2a9024d76c",
+    "protocols/__init__.py": "5cd088feba04993581dc54affdac29473afdc36e0be9721f0f24213a1b9bedab"
+  }
+}

@@ -1,5 +1,7 @@
 # WaveCast Project State
 
+> 2026-10-15 接线审查补充：#302（`2505f75`）尚未批准合并。三个离线复现问题与豆包固定稿成功协议参考已整理到 [交接目录](research/dialogue-radio-2026-10/doubao-fixed-script-handoff/README.md)、[修改清单](research/dialogue-radio-2026-10/doubao-fixed-script-handoff/REVIEW-302.md)。仅归档参考，不代表真实 transport 已实现；本次未发付费调用，未部署。
+
 Updated: 2026-10-15（双人讲述离线接入审查）；下方旧部署条目为历史，非实时部署事实。**唯一的当前状态入口**。
 
 ## 本轮执行入口：有内容的讲述与双人配音（尚未启用于真实生成）

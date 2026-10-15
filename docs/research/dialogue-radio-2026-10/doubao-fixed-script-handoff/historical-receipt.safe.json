@@ -1,0 +1,23 @@
+{
+  "status": "completed",
+  "audio_seconds": 28.491625,
+  "elapsed_seconds": 17.829214485999955,
+  "retries": 0,
+  "usage_events": [
+    {
+      "input_text_tokens": 0,
+      "output_audio_tokens": 403
+    },
+    {
+      "input_text_tokens": 0,
+      "output_audio_tokens": 308
+    }
+  ],
+  "round_duration_seconds": [
+    16.152166666666666,
+    12.339458333333333
+  ],
+  "input_text_tokens_total": 0,
+  "output_audio_tokens_total": 711,
+  "provenance": "Safe projection of historical voice-B receipt, 2026-10-14; not produced by dialogue.json in this directory."
+}
