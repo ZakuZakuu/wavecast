@@ -83,3 +83,9 @@ episode 记录里的 `dialogue_audio` 是权威；存档旁的快照（`…audio
 - **并发**：同一集的 authoring 必须是单写者；故事账本在多进程下没有比较并设置。
 - **API 手动物化端点**（`/segments/{id}/materialize`）能为对话片段配音（同一份设置、记入同一个共享账本、归属该节目），但不写存档旁的快照副本。
 - 朗读转换（读音/专名）、播放器展示、对话放在歌曲之间之外的位置。
+
+## 豆包语音播客大模型定价（用户提供，2026-10-15）
+
+- 推理服务-输入-文本：**¥120 / 百万 token**；推理服务-输出-音频：**¥100 / 百万 token**。
+- 用量事件现在自动估价（[ADR 0030](0030-exa-only-search-doubao-pricing-usage-persistence.md)）：费用 = 回执里的 `input_text_tokens` × 120 ＋ `output_audio_tokens` × 100（÷10⁶），记录 `price_version=doubao-podcast-2026-10-15`、`cost_basis=reported_token_counts`。服务端报告的 0 保持 0；两项计数缺失、或会话未完成（`usage_status` 不是 `complete`）时费用为**未知**（`None`，`cost_basis=usage_incomplete`），不是更小的数；汉字数不当作 token 数，也不用作费用上限。
+- 至今每张回执的 `input_text_tokens` 都是 0（实验与验收），所以实际费用基本等于输出音频部分。

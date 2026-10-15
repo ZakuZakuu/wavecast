@@ -34,6 +34,9 @@ LLM_ROLES: tuple[LLMRole, ...] = (
     "track_research",
 )
 ResearchCapabilitySelector = Literal["inherit", "mock", "live"]
+# Which web-search services research uses: Exa for discovery and Tavily for exact lookups (the
+# default), or Exa alone - then Tavily is never asked and its key is not required.
+SearchBackend = Literal["exa_tavily", "exa"]
 MusicCapabilitySelector = Literal["inherit", "mock", "auto", "netease", "qqmusic", "audius"]
 TTSCapabilitySelector = Literal["inherit", "mock", "minimax"]
 
@@ -94,6 +97,7 @@ class ProviderSettings:
     # Size the route (tracks and chapters) from the requested duration instead of a fixed cap.
     duration_scaling: bool = True
     track_research: bool = True
+    search_backend: SearchBackend = "exa_tavily"
 
     # Search remains deliberately short. Structured synthesis can be materially larger.
     timeout_seconds: float = 20.0
@@ -222,6 +226,12 @@ class ProviderSettings:
             catalog_pool=_flag_from_env("WAVECAST_CATALOG_POOL", default="on"),
             duration_scaling=_flag_from_env("WAVECAST_DURATION_SCALING", default="on"),
             track_research=_flag_from_env("WAVECAST_TRACK_RESEARCH", default="on"),
+            search_backend=cast(
+                SearchBackend,
+                _selector_from_env(
+                    "WAVECAST_SEARCH_BACKEND", {"exa_tavily", "exa"}, default="exa_tavily"
+                ),
+            ),
             deepseek_timeout_seconds=_positive_float_from_env(
                 "DEEPSEEK_TIMEOUT_SECONDS", default=20.0
             ),

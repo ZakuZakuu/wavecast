@@ -98,7 +98,13 @@ from wavecast.providers.netease import NeteaseMusicProvider
 from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
 from wavecast.providers.retrieval import MusicRetrievalService
-from wavecast.providers.usage import UsageLedger, usage_diagnostics, usage_scope
+from wavecast.providers.usage import (
+    UsageLedger,
+    cost_summary,
+    diagnostics_of,
+    merge_events,
+    usage_scope,
+)
 from wavecast.recommendations import (
     DeterministicRecommendationPlanner,
     InMemoryProgramIdeaRepository,
@@ -145,6 +151,7 @@ from wavecast.storage import (
 )
 from wavecast.storage.episodes import EpisodeRepository
 from wavecast.storage.recommendations import PostgresProgramIdeaRepository
+from wavecast.storage.usage_events import UsageEventStore
 from wavecast.storage.user_context import (
     PostgresUserEventRepository,
     PostgresUserPreferencesRepository,
@@ -567,6 +574,9 @@ def _usage_ledger() -> UsageLedger:
     return progressive_runtime.assembly.ledger if progressive_runtime is not None else _api_usage_ledger
 
 
+# Every scoped usage event is also kept in storage, so the per-episode report survives a restart.
+_usage_event_store = UsageEventStore(audio_storage)
+_usage_ledger().attach_sink(_usage_event_store)
 narration_materializer = _build_narration_materializer(
     _provider_settings, _tts_provider, audio_storage, _usage_ledger()
 )
@@ -1980,16 +1990,27 @@ def episode(episode_id: str, request: Request) -> LiveEpisode:
 
 
 @app.get("/api/episodes/{episode_id}/usage")
-def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
+async def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
     """Provider usage and a programme summary for one episode, without prompts or URLs.
 
-    Usage is held in memory by the running API process, so it covers calls made since the
-    last restart; it is meant for reviewing one generation, not as a billing record.
+    The events come from the running process and from storage (so a restart does not empty the
+    report), each call once.  Costs are per currency, with the calls whose cost is unknown
+    listed apart.  It is meant for reviewing a generation, not as a billing record.
     """
 
-    owned(episode_id, principal(request))
-    current = orchestrator.get(episode_id)
-    ledger = _usage_ledger() if progressive_runtime is not None or _api_usage_ledger.events else None
+    # The episode repository is synchronous (Postgres runs it with asyncio.run), so it is read
+    # off the event loop like everywhere else.
+    await to_thread.run_sync(owned, episode_id, principal(request))
+    current = await to_thread.run_sync(orchestrator.get, episode_id)
+    ledger = _usage_ledger()
+    await ledger.flush()
+    try:
+        stored = await _usage_event_store.load(episode_id)
+    except ValueError:
+        logger.warning("usage_events_unreadable episode_id=%s", episode_id)
+        stored = []
+    events = merge_events(ledger.for_scope(episode_id), stored)
+    reporting = progressive_runtime is not None or bool(_api_usage_ledger.events) or bool(stored)
     segments = current.timeline_segments
     return {
         "episode_id": current.id,
@@ -2005,7 +2026,9 @@ def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
                 if item.kind is SegmentKind.NARRATION and item.state is SegmentState.SKIPPED
             ),
         },
-        "providers": usage_diagnostics(ledger, scope=episode_id) if ledger is not None else None,
+        "providers": diagnostics_of(events, with_ids=True) if reporting else None,
+        "costs": cost_summary(events) if reporting else None,
+        "stored_events": len(stored),
     }
 
 
