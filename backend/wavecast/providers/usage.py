@@ -107,6 +107,12 @@ class UsageTotals(BaseModel):
     estimated_cost_cny_low: float = 0.0
     estimated_cost_cny_high: float = 0.0
     cost_unknown_calls: int = 0
+    # Speech services bill audio, not text: the counts the service reported, summed over the
+    # attempts that carried them (an attempt without a count adds nothing - it is not a zero).
+    # ``usage_incomplete_calls`` counts attempts whose counts are partial or unknown.
+    input_text_tokens: int = 0
+    output_audio_tokens: int = 0
+    usage_incomplete_calls: int = 0
 
 
 class UsageDiagnostics(TypedDict):
@@ -192,6 +198,13 @@ class UsageLedger:
                 for event in events
                 if "cost_basis" in event.metadata and _cny(event, "estimated_cost_cny_low") is None
             ),
+            input_text_tokens=sum(_count(event, "input_text_tokens") or 0 for event in events),
+            output_audio_tokens=sum(_count(event, "output_audio_tokens") or 0 for event in events),
+            usage_incomplete_calls=sum(
+                1
+                for event in events
+                if event.metadata.get("usage_status") in ("partial", "unknown")
+            ),
         )
 
 
@@ -200,6 +213,13 @@ def _cny(event: UsageEvent, name: str) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         return None
     return float(value)
+
+
+def _count(event: UsageEvent, name: str) -> int | None:
+    value = event.metadata.get(name)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 _CALL_OUTCOME_FIELDS = (
@@ -214,6 +234,15 @@ _CALL_OUTCOME_FIELDS = (
     "estimated_cost_cny_high",
     "cost_basis",
     "price_version",
+    # Speech: the service's own counts (null = unknown), how complete they are, and how far the
+    # attempt got.
+    "input_text_tokens",
+    "output_audio_tokens",
+    "usage_status",
+    "rounds_completed",
+    "audio_seconds",
+    "sent_characters",
+    "failed_stage",
 )
 
 

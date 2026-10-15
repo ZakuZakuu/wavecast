@@ -80,6 +80,15 @@ class ProviderSettings:
     fact_check_provider: LLMCapabilitySelector = "inherit"
     track_research_provider: LLMCapabilitySelector = "inherit"
     tts_provider: TTSCapabilitySelector = "inherit"
+    # Researched two-host passages (ADR 0027).  Off by default: when off, nothing about
+    # authoring or voicing changes.  "mock" voices a passage with credential-free silent audio
+    # (tests and local runs); "doubao" needs the credentials below and a podcast transport.
+    dialogue_radio: bool = False
+    dialogue_speech_provider: Literal["mock", "doubao"] = "mock"
+    # The podcast service takes its own API key (not an App ID / Access Token, and not the Ark
+    # text key) and a resource id; the resource id below is the one the verified run used.
+    doubao_podcast_api_key: str | None = field(default=None, repr=False)
+    doubao_podcast_resource_id: str = "volc.service_type.10050"
     # ADR 0022: build a verified-playable catalog pool before the Curator chooses tracks.
     catalog_pool: bool = True
     # Size the route (tracks and chapters) from the requested duration instead of a fixed cap.
@@ -198,6 +207,17 @@ class ProviderSettings:
                     "WAVECAST_TTS_PROVIDER",
                     {"inherit", "mock", "minimax"},
                 ),
+            ),
+            dialogue_radio=_flag_from_env("WAVECAST_DIALOGUE_RADIO", default="off"),
+            dialogue_speech_provider=cast(
+                Literal["mock", "doubao"],
+                _selector_from_env(
+                    "WAVECAST_DIALOGUE_SPEECH_PROVIDER", {"mock", "doubao"}, default="mock"
+                ),
+            ),
+            doubao_podcast_api_key=getenv("DOUBAO_PODCAST_API_KEY") or None,
+            doubao_podcast_resource_id=(
+                getenv("DOUBAO_PODCAST_RESOURCE_ID") or "volc.service_type.10050"
             ),
             catalog_pool=_flag_from_env("WAVECAST_CATALOG_POOL", default="on"),
             duration_scaling=_flag_from_env("WAVECAST_DURATION_SCALING", default="on"),
@@ -379,8 +399,8 @@ class ProviderSettings:
 _LLM_SELECTORS = {"inherit", "mock", "deepseek", "ark"}
 
 
-def _selector_from_env(name: str, allowed: set[str]) -> str:
-    value = getenv(name, "inherit").strip().lower()
+def _selector_from_env(name: str, allowed: set[str], default: str = "inherit") -> str:
+    value = getenv(name, default).strip().lower()
     if value not in allowed:
         choices = ", ".join(sorted(allowed))
         raise ProviderConfigurationError(f"{name} must be one of: {choices}")

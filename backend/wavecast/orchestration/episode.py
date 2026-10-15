@@ -26,6 +26,7 @@ from wavecast.models.episode import (
 )
 from wavecast.presentation import HostMode
 from wavecast.providers import AudioProvider, MockAudioProvider
+from wavecast.providers.usage import usage_scope
 from wavecast.storage.episodes import (
     EpisodeConcurrencyError,
     EpisodeNotFoundError,
@@ -1028,7 +1029,9 @@ class EpisodeOrchestrator:
             candidate_id = candidate.id
             detached = candidate.model_copy(deep=True)
             try:
-                materialized = await materialize(detached)
+                # Whatever voicing costs belongs to this programme's usage, however it ends.
+                with usage_scope(episode_id):
+                    materialized = await materialize(detached)
             except Exception as error:
                 # TTS is optional enrichment. Any non-cancellation failure must
                 # release the speculative seam so music continuity wins.
@@ -1046,6 +1049,7 @@ class EpisodeOrchestrator:
                     None,
                 )
             else:
+                await self._record_dialogue_audio(runtime, episode_id, materialized)
                 await asyncio.to_thread(
                     self._finish_narration_enrichment,
                     episode_id,
@@ -1054,6 +1058,23 @@ class EpisodeOrchestrator:
                 )
             processed += 1
         return await asyncio.to_thread(self.repository.get, episode_id)
+
+    @staticmethod
+    async def _record_dialogue_audio(
+        runtime: object, episode_id: str, materialized: NarrationSegment
+    ) -> None:
+        """Keep the snapshot of a voiced two-host passage beside its saved record; best effort."""
+        record = getattr(runtime, "record_dialogue_audio", None)
+        if not callable(record) or materialized.dialogue_audio is None:
+            return
+        try:
+            await record(episode_id, materialized)
+        except Exception as error:  # noqa: BLE001 - the episode record is the authority
+            logger.warning(
+                "dialogue_audio_record_failed episode_id=%s error_type=%s",
+                episode_id,
+                type(error).__name__,
+            )
 
     def _finish_narration_enrichment(
         self,
@@ -1078,12 +1099,14 @@ class EpisodeOrchestrator:
             if segment.is_committed or segment.state is not SegmentState.SCRIPT_READY:
                 return episode
 
-            if materialized is None:
+            if materialized is None or materialized.state is SegmentState.SKIPPED:
                 segment.state = SegmentState.SKIPPED
             else:
                 segment.asset_ref = materialized.asset_ref
                 segment.audio_source_url = materialized.audio_source_url
                 segment.actual_duration_seconds = materialized.actual_duration_seconds
+                # The record of what a two-host passage was voiced with travels with its audio.
+                segment.dialogue_audio = materialized.dialogue_audio
                 segment.state = SegmentState.AUDIO_READY
             episode.last_activity_at = self.now()
             try:
