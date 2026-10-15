@@ -1,0 +1,20 @@
+{
+  "status": "repair output of the model; unchecked",
+  "fixes": [
+    {
+      "turn": 5,
+      "text": "这张专辑的风格以Soul和R&B为主导，而且所有歌曲的作曲、编曲、制作还有和声，都是方大同一手包办，歌词部分是他和林夕、周耀辉一起写的。",
+      "fact_refs": [
+        "live-fdt-F10",
+        "live-fdt-F11"
+      ]
+    },
+    {
+      "turn": 7,
+      "text": "他希望自己的歌曲能够唤起大家爱的共鸣。接下来我们就来听这张专辑里的歌。",
+      "fact_refs": [
+        "live-fdt-F6"
+      ]
+    }
+  ]
+}

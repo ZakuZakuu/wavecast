@@ -39,6 +39,7 @@ from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.spoken_form import KnownTrack, to_spoken_form
 from wavecast.text_identity import base_title_key, canonical_name
 
+from .attribution import says_only_what_the_speaker_said
 from .fast_start import FastStructuredProvider
 from .models import ClaimSupport, ClaimType, Evidence, RadioScript
 
@@ -148,18 +149,29 @@ _INSTRUMENTS: tuple[tuple[str, tuple[str, ...]], ...] = (
 _INSTRUMENT_PATTERNS = tuple((word, _alternatives(quote_words)) for word, quote_words in _INSTRUMENTS)
 
 
-def qualifiers_missing(sentence: str, quote: str) -> list[str]:
+def qualifiers_missing(sentence: str, quote: str, *, own_words_of: str | None = None) -> list[str]:
     """Qualifiers the sentence adds to its claim that the quote does not carry.
 
     A quote that states a different, narrower or plainer thing than the sentence does not
     support the sentence, even when both name the same work or person.
+
+    ``own_words_of`` is the person the *source* shows to be speaking in the quote (an interview
+    answer, decided from the source's structure - see ``attribution``).  It settles one thing
+    only: that a "he said ..." sentence is about that person's own words, so the short quote need
+    not contain the word "said".  Every other qualifier still has to be in the quote.
     """
 
     folded = canonical_name(quote)
     missing = [
         name
         for name, in_sentence, in_quote in _QUALIFIER_PATTERNS
-        if in_sentence.search(sentence) and not in_quote.search(folded)
+        if in_sentence.search(sentence)
+        and not in_quote.search(folded)
+        and not (
+            name == "self-said"
+            and own_words_of is not None
+            and says_only_what_the_speaker_said(sentence, own_words_of)
+        )
     ]
     missing += [
         word

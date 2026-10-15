@@ -12,7 +12,9 @@ Updated: 2026-10-15（双人讲述离线接入审查）；下方旧部署条目�
 
 下一步：GPT 复审 #302；通过后另行安排一次最小真实豆包调用与试听，再做有范围与预算的完整验收。不要再扩模型名单或拆无消费者的基础模块。普通 merge 到 integration 由审查通过且最新 CI 通过后执行；main 留到完整验收。
 
-设计和样本入口：[接入设计](design/researched-dialogue-radio.md)、[实验报告](research/dialogue-radio-2026-10/final-text-experiments.md)、[已认可样本边界](research/dialogue-radio-2026-10/accepted-samples.md)。实施边界：[ADR 0024](adr/0024-ark-text-models-and-dialogue-contract.md)、[ADR 0025](adr/0025-story-material-and-checked-dialogue-path.md)、[ADR 0026](adr/0026-dialogue-to-timeline.md)、[ADR 0027](adr/0027-dialogue-runtime-wiring.md)。
+验收记录（2026-10-15）：人物志单段经过一次局部修复后通过，用户试听认可（首次核对未通过；随便听控长仍未通过，未重测）。样本与统计口径见 [ADR 0028](adr/0028-interview-attribution-and-repair-statistics.md) 和 `tests/fixtures/dialogue_portrait_20261015/`；单一样本不足以证明兜底低频。后续离线批次：按来源结构修正“本人采访的归属句”被误拦、修复提示改为保留已支持内容、分别记录首次通过率/修复触发率/修复成功率。动态等待策略暂不改，等产品讨论。
+
+设计和样本入口：[接入设计](design/researched-dialogue-radio.md)、[实验报告](research/dialogue-radio-2026-10/final-text-experiments.md)、[已认可样本边界](research/dialogue-radio-2026-10/accepted-samples.md)。实施边界：[ADR 0024](adr/0024-ark-text-models-and-dialogue-contract.md)、[ADR 0025](adr/0025-story-material-and-checked-dialogue-path.md)、[ADR 0026](adr/0026-dialogue-to-timeline.md)、[ADR 0027](adr/0027-dialogue-runtime-wiring.md)、[ADR 0028](adr/0028-interview-attribution-and-repair-statistics.md)。
 
 ## 当前阶段与产品
 

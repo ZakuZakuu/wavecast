@@ -24,6 +24,7 @@ from wavecast.models.story_material import (
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 
+from .attribution import own_words_of
 from .fact_support import qualifiers_missing, quote_backs_roles, quote_in_source, roles_in
 from .fast_start import FastStructuredProvider
 from .models import Evidence
@@ -190,6 +191,12 @@ def verify_material(
                     "scope": StoryScope(item.scope),
                     "subject": (item.subject.strip() or draft.subject.strip())[:120],
                     "version_scope": version[:200] if version else None,
+                    "own_words_of": own_words_of(
+                        source.claim_or_excerpt,
+                        quote,
+                        (item.subject.strip() or draft.subject.strip())[:120],
+                        title=source.source_title,
+                    ),
                 }
             )
     if dropped:

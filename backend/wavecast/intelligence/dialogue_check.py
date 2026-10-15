@@ -180,7 +180,15 @@ class DialogueFactChecker:
         roles = roles_in(text)
         if roles and not quote_backs_roles(finding.quote, roles):
             return "role_not_in_quote"
-        if qualifiers_missing(text, finding.quote):
+        # Whose own words the cited source is, when the source itself shows it (an interview
+        # answer): only then may "he said ..." rest on a quote that lacks the saying word.
+        speakers = {
+            fact.own_words_of
+            for fact in facts
+            if fact is not None and quote_in_source(finding.quote, fact.quote)
+        }
+        own = speakers.pop() if len(speakers) == 1 else None
+        if qualifiers_missing(text, finding.quote, own_words_of=own):
             return "qualifier_not_in_quote"
         return None
 

@@ -39,6 +39,10 @@ class MaterialFact(BaseModel):
     # holds for.  ``None`` means it is not tied to one version.
     subject: str = Field(min_length=1, max_length=120)
     version_scope: str | None = Field(default=None, min_length=1, max_length=200)
+    # Set by code (never by a model) when the source's own structure shows the quote is this
+    # person's answer in an interview of them; ``None`` otherwise, including every material saved
+    # before this field existed.  It only lets a "he said ..." sentence rest on the quote.
+    own_words_of: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class StoryMaterial(BaseModel):
