@@ -75,7 +75,7 @@ def build(
     draft: DialogueDraft,
     *,
     repair: DialogueRepair | None = None,
-    insufficient: tuple[str, ...] = ("更成熟",),
+    insufficient: tuple[str, ...] = ("更成熟", "一直坚持"),
     max_calls: int = 4,
     checker_llm: JudgingLLM | None = None,
     writer_llm: ScriptedLLM | None = None,
@@ -128,9 +128,9 @@ def test_the_two_problems_in_the_accepted_style_draft_are_found_and_only_those_t
 
     assert outcome.status is DialogueStatus.REPAIRED and outcome.calls == 4
     assert outcome.repaired_turns == [1, 4]
-    # What was wrong: 一直坚持 (caught by code even though the model agreed) and 更成熟 (the model).
+    # What was wrong - 一直坚持 and 更成熟 - is what the Pro check says; code only structures it.
     codes = {(i.turn, i.code) for i in outcome.first_check_issues}
-    assert codes == {(1, "qualifier_not_in_quote"), (4, "insufficient")}
+    assert codes == {(1, "insufficient"), (4, "insufficient")}
     block = outcome.block
     assert block is not None
     # Roles, turn count and ids are kept; untouched turns are exactly as written.
@@ -145,6 +145,17 @@ def test_the_two_problems_in_the_accepted_style_draft_are_found_and_only_those_t
     assert "一直" not in block.text and "更成熟" not in block.text
     assert all(t.tts_text is None for t in block.turns)
     assert [name for name, _ in writer.calls] == ["DialogueDraft", "DialogueRepair"]
+
+
+def test_pattern_hints_alone_never_send_a_passage_to_repair() -> None:
+    # The draft says 一直坚持 / 更成熟; the Pro check, which decides meaning, finds them supported.
+    pipeline, writer, _ = build(draft_with_two_problems(), insufficient=())
+
+    outcome = run(pipeline)
+
+    assert outcome.status is DialogueStatus.READY and outcome.calls == 2
+    assert outcome.first_check_issues == [] and outcome.repaired_turns == []
+    assert [name for name, _ in writer.calls] == ["DialogueDraft"]  # no repair call was made
 
 
 def test_the_first_telling_is_the_writers_the_material_holds_no_lines() -> None:
@@ -261,7 +272,7 @@ def test_an_unavailable_checker_never_lets_factual_sentences_through() -> None:
     outcome = run(pipeline)
 
     assert outcome.status is DialogueStatus.REJECTED and not outcome.model_checked
-    assert {i.code for i in outcome.first_check_issues} == {"unchecked"}
+    assert outcome.reason == "checker_unavailable" and outcome.calls == 2  # no repair for "unknown"
 
 
 def test_cancellation_is_not_swallowed() -> None:

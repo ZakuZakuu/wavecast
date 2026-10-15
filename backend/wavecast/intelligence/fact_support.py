@@ -39,7 +39,6 @@ from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.spoken_form import KnownTrack, to_spoken_form
 from wavecast.text_identity import base_title_key, canonical_name
 
-from .attribution import says_only_what_the_speaker_said
 from .fast_start import FastStructuredProvider
 from .models import ClaimSupport, ClaimType, Evidence, RadioScript
 
@@ -149,29 +148,18 @@ _INSTRUMENTS: tuple[tuple[str, tuple[str, ...]], ...] = (
 _INSTRUMENT_PATTERNS = tuple((word, _alternatives(quote_words)) for word, quote_words in _INSTRUMENTS)
 
 
-def qualifiers_missing(sentence: str, quote: str, *, own_words_of: str | None = None) -> list[str]:
+def qualifiers_missing(sentence: str, quote: str) -> list[str]:
     """Qualifiers the sentence adds to its claim that the quote does not carry.
 
     A quote that states a different, narrower or plainer thing than the sentence does not
     support the sentence, even when both name the same work or person.
-
-    ``own_words_of`` is the person the *source* shows to be speaking in the quote (an interview
-    answer, decided from the source's structure - see ``attribution``).  It settles one thing
-    only: that a "he said ..." sentence is about that person's own words, so the short quote need
-    not contain the word "said".  Every other qualifier still has to be in the quote.
     """
 
     folded = canonical_name(quote)
     missing = [
         name
         for name, in_sentence, in_quote in _QUALIFIER_PATTERNS
-        if in_sentence.search(sentence)
-        and not in_quote.search(folded)
-        and not (
-            name == "self-said"
-            and own_words_of is not None
-            and says_only_what_the_speaker_said(sentence, own_words_of)
-        )
+        if in_sentence.search(sentence) and not in_quote.search(folded)
     ]
     missing += [
         word
@@ -233,6 +221,56 @@ def split_sentences(text: str) -> list[str]:
 
 def _squash(text: str) -> str:
     return _IGNORED.sub("", canonical_name(text))
+
+
+def locate_quote(source: str, quote: str) -> tuple[int, int] | None:
+    """Where the quote sits in the source (original character offsets), or ``None``.
+
+    Script variants, spacing and punctuation are ignored, exactly as in ``quote_in_source``.
+    """
+
+    needle = _squash(quote)
+    if len(needle) < _MIN_QUOTE_CHARS:
+        return None
+    squashed: list[str] = []
+    origin: list[int] = []
+    for index, char in enumerate(source):
+        for piece in _squash(char):
+            squashed.append(piece)
+            origin.append(index)
+    at = "".join(squashed).find(needle)
+    if at < 0:
+        return None
+    return origin[at], origin[at + len(needle) - 1] + 1
+
+
+def source_context(source: str, quote: str, *, before: int = 280, after: int = 100) -> str | None:
+    """The stretch of the source around the quote, for a judge who must see who said it and why.
+
+    It is context for a model to read, not evidence in itself: nothing here decides anything.
+    """
+
+    span = locate_quote(source, quote)
+    if span is None:
+        return None
+    start, end = span
+    return source[max(0, start - before) : min(len(source), end + after)].strip() or None
+
+
+def watch_notes(sentence: str) -> list[str]:
+    """Words in a sentence that often need a closer look against the source: a pointer only.
+
+    The patterns are heuristics.  What they find is shown to the judge as a hint, and a miss
+    means nothing - neither a hit nor a miss can reject a passage on its own.
+    """
+
+    notes = [
+        match.group(0)
+        for _name, in_sentence, _in_quote in _QUALIFIER_PATTERNS
+        if (match := in_sentence.search(canonical_name(sentence)))
+    ]
+    roles = sorted(roles_in(sentence))
+    return notes + roles
 
 
 def quote_in_source(quote: str, source: str) -> bool:

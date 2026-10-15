@@ -304,7 +304,7 @@ def priced_pipeline(
     writer_inner.queue(DialogueRepair, repair)
     prices: dict[str, float | None] = {"dialogue_repair": repair_price, "dialogue_fact_check": CHECK_PRICE}
     writer = PricedLLM(writer_inner, ledger, prices)
-    judge = PricedLLM(JudgingLLM(material(), known, insufficient=("更成熟",)), ledger, prices)
+    judge = PricedLLM(JudgingLLM(material(), known, insufficient=("更成熟", "一直坚持")), ledger, prices)
     pipeline = DialoguePipeline(
         writer=DialogueWriter(writer),  # type: ignore[arg-type]
         checker=DialogueFactChecker(judge),  # type: ignore[arg-type]

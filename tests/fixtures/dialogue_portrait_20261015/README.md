@@ -8,5 +8,7 @@
 - 流程文件的顺序和含义见 `MANIFEST.json`；每个文件的 sha256 也在其中。
 - 第 5 轮的修复删去了整句话，记为信息损失，**不追回重做**，样本保留原样。
 - 试听音频（WAV，66.6 秒）不在仓库里，位置和哈希见清单。
-- `evidence.frozen.json` 是 2026-10-14 冻结的检索证据投影（出处、摘录、query），用于重算“本人采访”判断。
-- 用法见 `tests/test_dialogue_attribution.py`、`tests/test_dialogue_metrics.py`。
+- `evidence.frozen.json` 是 2026-10-14 冻结的检索证据投影（出处、摘录、query），用于重算提供给核对模型的来源标题与上下文。
+- 用法见 `tests/test_dialogue_check.py`、`tests/test_dialogue_metrics.py`。
+
+`check.result.json` 是当时的真实核对结果：其中两条 `qualifier_not_in_quote` 来自程序正则，现在这类命中只是提示，不再否决或触发修复（见 ADR 0028）。该文件保持原样。

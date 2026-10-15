@@ -43,7 +43,7 @@
     "turn_5": "修复删去了整句“自己没学过创作……”（原 2 句 → 1 句）；记为信息损失，不追回重做",
     "turn_7": "句数不变，措辞略改（“关于爱的共鸣”→“爱的共鸣”）"
   },
-  "open_issue_at_recording": "第一人称采访的归属句（“他说过……”）被短引文规则误拦；本批在代码里按来源结构修正（见 ADR 0028），样本保留当时的原始结果",
+  "open_issue_at_recording": "第一人称采访的归属句（“他说过……”）被短引文规则误拦；本批改为：语义归属交给同一次 Pro 核对（附来源标题与上下文），正则命中只作提示、不再否决或触发修复（见 ADR 0028），样本保留当时的原始结果",
   "usage_is_kept_apart": {
     "first_attempt": "run1-first-attempt.summary.safe.json（素材 + 写稿 + 核对，3 次付费文本调用）",
     "increment": "run2-local-repair.summary.safe.json（修复 + 复核 + 配音，3 次付费调用）",
