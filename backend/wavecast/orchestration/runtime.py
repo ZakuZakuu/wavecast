@@ -408,6 +408,12 @@ class StagedProgressiveRuntimeAdapter:
     ) -> NarrationSegment:
         return await self.assembly.materializer.materialize(segment)
 
+    async def record_dialogue_audio(self, episode_id: str, segment: NarrationSegment) -> None:
+        """Keep a voiced passage's request snapshot beside its saved record (feature off: no-op)."""
+        runtime = getattr(self.assembly, "dialogue_runtime", None)
+        if runtime is not None:
+            await runtime.record_audio(episode_id, segment)
+
     async def settle_dialogue(
         self, episode_id: str, segments: Sequence[MusicSegment | NarrationSegment]
     ) -> None:

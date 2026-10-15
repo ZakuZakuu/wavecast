@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from datetime import datetime
+from functools import partial
 from typing import Protocol
 
 from wavecast.models.episode import (
@@ -16,6 +17,7 @@ from wavecast.models.episode import (
     SegmentState,
 )
 from wavecast.models.progressive import ProgressiveAssemblySession
+from wavecast.orchestration.authoring_gate import authoring_gate
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.runtime import StagedProgressiveRuntime
 from wavecast.presentation import HostMode
@@ -120,10 +122,11 @@ async def author_pending_narration(
             )
         else:
             try:
-                generated = await runtime.author_narration(
-                    episode.model_copy(deep=True),
-                    chapter_id,
-                )
+                with authoring_gate(partial(_chapter_still_open, host, episode_id, chapter_id)):
+                    generated = await runtime.author_narration(
+                        episode.model_copy(deep=True),
+                        chapter_id,
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as error:
@@ -199,6 +202,30 @@ async def _settle_dialogue(runtime: StagedProgressiveRuntime, episode: LiveEpiso
         logger.warning(
             "dialogue_settle_failed episode_id=%s error_type=%s", episode.id, type(error).__name__
         )
+
+
+def _chapter_still_open(host: NarrationAuthoringHost, episode_id: str, chapter_id: str) -> bool:
+    """Whether inserting narration into this chapter would still be allowed right now."""
+
+    episode = host.repository.get(episode_id)
+    session = episode.progressive_session
+    if session is None or chapter_id in session.narration_authored_chapter_ids:
+        return False
+    if not episode.is_listener_active and episode.generation_mode is not GenerationMode.FULL:
+        return False
+    existing = [segment for segment in episode.segments if segment.chapter_id == chapter_id]
+    if not existing:
+        return False
+    last_order = max(segment.order for segment in existing)
+    exposed = (
+        episode.current_segment_id in {segment.id for segment in existing}
+        or any(segment.is_committed for segment in existing)
+        or any(
+            segment.order > last_order and segment.is_committed
+            for segment in episode.timeline_segments
+        )
+    )
+    return not (exposed or _has_skipped_narration(existing))
 
 
 def _with_chapter_research(

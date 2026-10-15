@@ -1046,6 +1046,7 @@ class EpisodeOrchestrator:
                     None,
                 )
             else:
+                await self._record_dialogue_audio(runtime, episode_id, materialized)
                 await asyncio.to_thread(
                     self._finish_narration_enrichment,
                     episode_id,
@@ -1054,6 +1055,23 @@ class EpisodeOrchestrator:
                 )
             processed += 1
         return await asyncio.to_thread(self.repository.get, episode_id)
+
+    @staticmethod
+    async def _record_dialogue_audio(
+        runtime: object, episode_id: str, materialized: NarrationSegment
+    ) -> None:
+        """Keep the snapshot of a voiced two-host passage beside its saved record; best effort."""
+        record = getattr(runtime, "record_dialogue_audio", None)
+        if not callable(record) or materialized.dialogue_audio is None:
+            return
+        try:
+            await record(episode_id, materialized)
+        except Exception as error:  # noqa: BLE001 - the episode record is the authority
+            logger.warning(
+                "dialogue_audio_record_failed episode_id=%s error_type=%s",
+                episode_id,
+                type(error).__name__,
+            )
 
     def _finish_narration_enrichment(
         self,

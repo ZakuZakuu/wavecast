@@ -85,9 +85,10 @@ class ProviderSettings:
     # (tests and local runs); "doubao" needs the credentials below and a podcast transport.
     dialogue_radio: bool = False
     dialogue_speech_provider: Literal["mock", "doubao"] = "mock"
-    doubao_app_id: str | None = None
-    doubao_access_token: str | None = field(default=None, repr=False)
-    doubao_resource_id: str | None = None
+    # The podcast service takes its own API key (not an App ID / Access Token, and not the Ark
+    # text key) and a resource id; the resource id below is the one the verified run used.
+    doubao_podcast_api_key: str | None = field(default=None, repr=False)
+    doubao_podcast_resource_id: str = "volc.service_type.10050"
     # ADR 0022: build a verified-playable catalog pool before the Curator chooses tracks.
     catalog_pool: bool = True
     # Size the route (tracks and chapters) from the requested duration instead of a fixed cap.
@@ -214,9 +215,10 @@ class ProviderSettings:
                     "WAVECAST_DIALOGUE_SPEECH_PROVIDER", {"mock", "doubao"}, default="mock"
                 ),
             ),
-            doubao_app_id=getenv("DOUBAO_APP_ID") or None,
-            doubao_access_token=getenv("DOUBAO_ACCESS_TOKEN") or None,
-            doubao_resource_id=getenv("DOUBAO_RESOURCE_ID") or None,
+            doubao_podcast_api_key=getenv("DOUBAO_PODCAST_API_KEY") or None,
+            doubao_podcast_resource_id=(
+                getenv("DOUBAO_PODCAST_RESOURCE_ID") or "volc.service_type.10050"
+            ),
             catalog_pool=_flag_from_env("WAVECAST_CATALOG_POOL", default="on"),
             duration_scaling=_flag_from_env("WAVECAST_DURATION_SCALING", default="on"),
             track_research=_flag_from_env("WAVECAST_TRACK_RESEARCH", default="on"),

@@ -2,9 +2,8 @@
 
 ``None`` means the feature is off: no dialogue speech provider exists, so a dialogue segment
 cannot be voiced and the programme stays on the one-voice path.  ``mock`` is the credential-free
-silent audio used by tests and local runs.  ``doubao`` needs its credentials *and* a podcast
-transport; none ships yet (see ``doubao_podcast``), so it is refused at startup instead of
-failing on the first passage.
+silent audio used by tests and local runs.  ``doubao`` needs ``DOUBAO_PODCAST_API_KEY`` and is
+refused at startup without it, instead of failing on the first passage.
 """
 
 from __future__ import annotations
@@ -18,6 +17,7 @@ from wavecast.providers.dialogue_speech import DialogueSpeechProvider, MockDialo
 from wavecast.providers.doubao_podcast import (
     DEFAULT_AUDIO_FORMAT,
     DoubaoPodcastSpeechProvider,
+    DoubaoPodcastWebSocketTransport,
     PodcastTransport,
 )
 from wavecast.providers.doubao_voices import SPEECH_RATE_B, VOICE_COMBINATION_B
@@ -49,24 +49,17 @@ def build_dialogue_voicing(
             speed=float(SPEECH_RATE_B),
             audio_format=None,
         )
-    missing = [
-        name
-        for name, value in (
-            ("DOUBAO_APP_ID", settings.doubao_app_id),
-            ("DOUBAO_ACCESS_TOKEN", settings.doubao_access_token),
-            ("DOUBAO_RESOURCE_ID", settings.doubao_resource_id),
-        )
-        if not value
-    ]
-    if missing:
-        raise ProviderConfigurationError("doubao dialogue speech requires " + ", ".join(missing))
-    if transport is None:
-        raise ProviderConfigurationError(
-            "doubao dialogue speech has no podcast transport in this build; "
-            "use WAVECAST_DIALOGUE_SPEECH_PROVIDER=mock until it is added"
-        )
+    if not settings.doubao_podcast_api_key:
+        raise ProviderConfigurationError("doubao dialogue speech requires DOUBAO_PODCAST_API_KEY")
     return DialogueVoicing(
-        speech=DoubaoPodcastSpeechProvider(transport, storage, ledger=ledger),
+        speech=DoubaoPodcastSpeechProvider(
+            transport
+            or DoubaoPodcastWebSocketTransport(
+                settings.doubao_podcast_api_key, settings.doubao_podcast_resource_id
+            ),
+            storage,
+            ledger=ledger,
+        ),
         voices=VOICE_COMBINATION_B,
         speed=float(SPEECH_RATE_B),
         audio_format=DEFAULT_AUDIO_FORMAT,

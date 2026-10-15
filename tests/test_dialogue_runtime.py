@@ -51,6 +51,7 @@ from wavecast.models.story_usage import StoryUseState
 from wavecast.orchestration import EpisodeOrchestrator, InlineGenerationScheduler
 from wavecast.orchestration.dialogue_runtime import DialogueRuntime, block_id_for, story_id_for
 from wavecast.orchestration.dialogue_timeline import DialogueSeamService
+from wavecast.orchestration.episode import InMemoryEpisodeRepository
 from wavecast.orchestration.runtime import StagedProgressiveRuntimeAdapter
 from wavecast.orchestration.staged import ProgressiveAssemblyChapter, ProgressiveAssemblySession
 from wavecast.providers.config import ProviderSettings
@@ -142,8 +143,7 @@ def _session(station: StationId | None = StationId.PORTRAIT, first_slot: Narrati
     )
 
 
-def _episode(session: ProgressiveAssemblySession, *, seed: str, music_dir: bool = True) -> LiveEpisode:
-    del music_dir
+def _episode(session: ProgressiveAssemblySession, *, seed: str, music_seconds: int = 2) -> LiveEpisode:
     return LiveEpisode(
         id=EPISODE_ID,
         seed_id=seed,
@@ -163,8 +163,8 @@ def _episode(session: ProgressiveAssemblySession, *, seed: str, music_dir: bool 
                 chapter_id="chapter-1",
                 order=0,
                 state=SegmentState.AUDIO_READY,
-                planned_duration_seconds=2,
-                actual_duration_seconds=2,
+                planned_duration_seconds=music_seconds,
+                actual_duration_seconds=music_seconds,
                 track_ref="mock:opening",
                 audio_source_url="/api/assets/audio/music-a.wav",
                 title="Opening Track",
@@ -183,8 +183,8 @@ def _episode(session: ProgressiveAssemblySession, *, seed: str, music_dir: bool 
                 chapter_id="chapter-2",
                 order=2,
                 state=SegmentState.AUDIO_READY,
-                planned_duration_seconds=2,
-                actual_duration_seconds=2,
+                planned_duration_seconds=music_seconds,
+                actual_duration_seconds=music_seconds,
                 track_ref=TRACK_REF,
                 audio_source_url="/api/assets/audio/music-b.wav",
                 title="爱爱爱",
@@ -227,6 +227,20 @@ def _retag(draft: Any) -> Any:
     return type(draft).model_validate_json(text)
 
 
+class _HookedLLM(ScriptedLLM):
+    """A model whose answer arrives only after something else happened (a late passage)."""
+
+    def __init__(self, *responses: Any) -> None:
+        super().__init__(*responses)
+        self.before_answer: Any = None
+
+    async def structured(self, prompt: str, output_type: type, **kwargs: Any) -> Any:
+        if self.before_answer is not None:
+            hook, self.before_answer = self.before_answer, None
+            await hook()
+        return await super().structured(prompt, output_type, **kwargs)
+
+
 class Rig:
     def __init__(
         self,
@@ -236,11 +250,15 @@ class Rig:
         first_slot: NarrationSlotContext | None = None,
         fail_check: BaseException | None = None,
         seed: str | None = None,
+        voices: Any = VOICE_COMBINATION_B,
+        scripted: bool = True,
+        music_seconds: int = 2,
+        plain_repository: bool = False,
     ) -> None:
         self.storage = LocalObjectStorageProvider(tmp_path / "audio")
         draft = _retag(clean_draft())
-        self.material_llm = ScriptedLLM(material_draft())
-        self.writer_llm = ScriptedLLM(draft)
+        self.material_llm = ScriptedLLM(material_draft()) if scripted else ScriptedLLM()
+        self.writer_llm = _HookedLLM(draft) if scripted else _HookedLLM()
         self.check_llm = JudgingLLM(_material_for_runtime(), [draft], insufficient=())
         self.check_llm.fail = fail_check
         pipeline = DialoguePipeline(
@@ -254,13 +272,14 @@ class Rig:
             material=StoryMaterialService(self.material_llm),  # type: ignore[arg-type]
             seam=DialogueSeamService(pipeline=pipeline, artifacts=self.artifacts, usage=self.usage),
             usage=self.usage,
+            artifacts=self.artifacts,
         )
         self.speech = MockDialogueSpeechProvider(self.storage, fixed_duration_seconds=3)
         self.materializer = NarrationMaterializer(
             MockTTSProvider(self.storage),
             self.storage,
             dialogue_speech=self.speech,
-            dialogue_voices=VOICE_COMBINATION_B,
+            dialogue_voices=voices,
             dialogue_speed=float(SPEECH_RATE_B),
         )
         self.session = _session(station, first_slot)
@@ -283,12 +302,14 @@ class Rig:
             materializer=self.materializer,
             dialogue_runtime=self.runtime,
         )
-        self.repository = EventLoopRejectingEpisodeRepository()
+        self.repository: InMemoryEpisodeRepository = (
+            InMemoryEpisodeRepository() if plain_repository else EventLoopRejectingEpisodeRepository()
+        )
         self.orchestrator = EpisodeOrchestrator(
             self.repository,
             progressive_runtime=StagedProgressiveRuntimeAdapter(assembly),  # type: ignore[arg-type]
         )
-        self.repository.save(_episode(self.session, seed=self.seed))
+        self.repository.save(_episode(self.session, seed=self.seed, music_seconds=music_seconds))
 
     def author(self) -> LiveEpisode:
         return asyncio.run(self.orchestrator.author_pending_narration_async(EPISODE_ID, max_chapters=1))
@@ -525,23 +546,31 @@ def test_the_mock_voicing_is_wired_when_the_feature_is_on(tmp_path) -> None:
     assert generator.dialogue is service.dialogue_runtime
 
 
-def test_doubao_selection_fails_at_startup_until_it_has_credentials_and_a_transport(tmp_path) -> None:
+def test_doubao_selection_needs_its_own_api_key_and_wires_the_real_transport(tmp_path) -> None:
+    from wavecast.providers.doubao_podcast import (
+        DoubaoPodcastSpeechProvider,
+        DoubaoPodcastWebSocketTransport,
+    )
+
     storage = LocalObjectStorageProvider(tmp_path / "audio")
     base = ProviderSettings(dialogue_radio=True, dialogue_speech_provider="doubao")
 
-    with pytest.raises(ProviderConfigurationError, match="DOUBAO_APP_ID"):
+    with pytest.raises(ProviderConfigurationError, match="DOUBAO_PODCAST_API_KEY"):
         build_dialogue_voicing(base, storage)
-    complete = ProviderSettings(
-        dialogue_radio=True,
-        dialogue_speech_provider="doubao",
-        doubao_app_id="app",
-        doubao_access_token="token",
-        doubao_resource_id="resource",
+    with pytest.raises(ProviderConfigurationError, match="DOUBAO_PODCAST_API_KEY"):
+        create_episode_assembly_service(base, storage=storage)
+
+    keyed = ProviderSettings(
+        dialogue_radio=True, dialogue_speech_provider="doubao", doubao_podcast_api_key="k-secret"
     )
-    with pytest.raises(ProviderConfigurationError, match="no podcast transport"):
-        build_dialogue_voicing(complete, storage)
-    with pytest.raises(ProviderConfigurationError, match="no podcast transport"):
-        create_episode_assembly_service(complete, storage=storage)
+    voicing = build_dialogue_voicing(keyed, storage)
+    assert voicing is not None and isinstance(voicing.speech, DoubaoPodcastSpeechProvider)
+    assert voicing.audio_format == "wav" and voicing.speed == 0.0
+    assert isinstance(voicing.speech._transport, DoubaoPodcastWebSocketTransport)  # type: ignore[attr-defined]
+    assert "k-secret" not in repr(voicing.speech._transport) and "k-secret" not in repr(keyed)  # type: ignore[attr-defined]
+    service = create_episode_assembly_service(keyed, storage=storage)
+    assert service.materializer.dialogue_speech is not None
+    assert service.materializer.dialogue_format == "wav"
 
 
 def test_settings_read_the_dialogue_switches_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -552,9 +581,11 @@ def test_settings_read_the_dialogue_switches_from_the_environment(monkeypatch: p
 
     monkeypatch.setenv("WAVECAST_DIALOGUE_RADIO", "on")
     monkeypatch.setenv("WAVECAST_DIALOGUE_SPEECH_PROVIDER", "doubao")
-    monkeypatch.setenv("DOUBAO_ACCESS_TOKEN", "secret-token")
+    monkeypatch.setenv("DOUBAO_PODCAST_API_KEY", "secret-token")
     settings = ProviderSettings.from_env()
     assert settings.dialogue_radio is True and settings.dialogue_speech_provider == "doubao"
+    assert settings.doubao_podcast_api_key == "secret-token"
+    assert settings.doubao_podcast_resource_id == "volc.service_type.10050"
     assert "secret-token" not in repr(settings)
 
     monkeypatch.setenv("WAVECAST_DIALOGUE_SPEECH_PROVIDER", "minimax")
@@ -603,3 +634,280 @@ def test_a_checked_passage_is_placed_as_it_is_in_either_kind_of_gap() -> None:
         )
         (only,) = placed.blocks
         assert only.kind is expected and only.dialogue == block and only.track_index == 0
+
+
+# --- a dialogue that cannot be placed: the Writer gets one try, unless it is too late ---------
+
+
+def _break_dialogue_placement(rig: Rig, *, before: Any = None, failure: BaseException | None = None) -> None:
+    from wavecast.assembly import NarrationPlacementError
+
+    original = rig.generator.composer.compose_prepared
+
+    def compose(tracks: Any, script: Any) -> Any:
+        if any(block.dialogue is not None for block in getattr(script, "blocks", [])):
+            if before is not None:
+                before()
+            raise failure or NarrationPlacementError("this passage cannot be placed")
+        return original(tracks, script)
+
+    rig.generator.composer.compose_prepared = compose  # type: ignore[method-assign]
+
+
+def _chapter_two_music_reached(rig: Rig) -> None:
+    episode = rig.repository.get(EPISODE_ID)
+    for segment in episode.segments:
+        if segment.chapter_id == "chapter-2" and isinstance(segment, MusicSegment):
+            segment.state = SegmentState.COMMITTED
+    rig.repository.save(episode)
+
+
+def _chapter_two_seam_skipped(rig: Rig) -> None:
+    episode = rig.repository.get(EPISODE_ID)
+    for segment in episode.segments:
+        if segment.chapter_id == "chapter-2" and isinstance(segment, NarrationSegment):
+            segment.state = SegmentState.SKIPPED
+    rig.repository.save(episode)
+
+
+def test_a_passage_that_cannot_be_placed_falls_back_to_the_writer_once(tmp_path) -> None:
+    rig = Rig(tmp_path)
+    _break_dialogue_placement(rig)
+
+    rig.author()
+
+    (segment,) = rig.narration()
+    assert segment.dialogue is None and segment.narration_text == "一个人说的下一首。"
+    assert segment.state is SegmentState.SCRIPT_READY
+    assert rig.writer.calls == 1  # once; the passage is neither retried nor redrawn
+    assert [name for name, _ in rig.writer_llm.calls].count("DialogueDraft") == 1
+    assert story_id_for(TRACK_REF) not in rig.ledger().entries  # given back before the Writer ran
+
+
+@pytest.mark.parametrize(
+    "happens",
+    [_chapter_two_music_reached, _chapter_two_seam_skipped],
+    ids=["playback-reached-the-chapter", "seam-skipped-for-continuity"],
+)
+def test_no_writer_fallback_once_the_chapter_is_exposed_or_its_seam_given_up(tmp_path, happens) -> None:  # type: ignore[no-untyped-def]
+    rig = Rig(tmp_path, plain_repository=True)
+    _break_dialogue_placement(rig, before=lambda: happens(rig))
+
+    rig.author()
+
+    assert rig.writer.calls == 0  # no money spent on a chapter nobody will hear
+    assert all(segment.dialogue is None and segment.state is not SegmentState.SCRIPT_READY for segment in rig.narration())
+    assert story_id_for(TRACK_REF) not in rig.ledger().entries
+
+
+def test_cancellation_never_reaches_the_writer(tmp_path) -> None:
+    rig = Rig(tmp_path)
+    _break_dialogue_placement(rig, failure=asyncio.CancelledError())
+
+    with pytest.raises(asyncio.CancelledError):
+        rig.author()
+
+    assert rig.writer.calls == 0
+
+
+def test_when_the_writer_fails_too_the_music_carries_on(tmp_path) -> None:
+    from wavecast.providers.errors import ProviderTimeoutError
+
+    rig = Rig(tmp_path)
+    _break_dialogue_placement(rig)
+
+    async def broken(*args: object, **kwargs: object) -> RadioScript:
+        raise ProviderTimeoutError("writer timeout")
+
+    rig.writer.write = broken  # type: ignore[method-assign]
+
+    rig.author()
+
+    (segment,) = rig.narration()
+    assert segment.state is SegmentState.SKIPPED and segment.dialogue is None
+    assert story_id_for(TRACK_REF) not in rig.ledger().entries
+
+
+# --- coming back to a passage: the ledger and the store are asked before any model ------------
+
+
+def _offer_args(rig: Rig) -> dict[str, Any]:
+    return dict(
+        episode_id=EPISODE_ID,
+        station=StationId.PORTRAIT,
+        context=_slot(FIRST_SLOT, 1),
+        chosen_slot_ids={FIRST_SLOT},
+        chapter_id="chapter-2",
+        order=1,
+        evidence=evidence(),
+        subject="方大同",
+        track_ref=TRACK_REF,
+        track_label="方大同 - 爱爱爱",
+    )
+
+
+def _quiet(rig: Rig) -> bool:
+    return rig.material_llm.calls == [] and rig.writer_llm.calls == [] and rig.check_llm.calls == []
+
+
+def test_asking_again_for_a_saved_passage_costs_no_model_call(tmp_path) -> None:
+    rig = Rig(tmp_path)
+    rig.author()
+    before = (len(rig.material_llm.calls), len(rig.writer_llm.calls), len(rig.check_llm.calls))
+    assert before == (1, 1, 1)
+
+    again = asyncio.run(rig.runtime.offer(**_offer_args(rig)))
+
+    assert again is not None and again.restored
+    assert again.block == rig.narration()[0].dialogue
+    assert (len(rig.material_llm.calls), len(rig.writer_llm.calls), len(rig.check_llm.calls)) == before
+
+
+def test_a_fresh_process_resumes_the_saved_passage_with_no_model_at_all(tmp_path) -> None:
+    first = Rig(tmp_path)
+    first.author()
+    saved = first.narration()[0].dialogue
+
+    second = Rig(tmp_path, scripted=False)  # any model call would fail
+    second.author()
+
+    (segment,) = second.narration()
+    assert segment.dialogue == saved and segment.state is SegmentState.SCRIPT_READY
+    assert _quiet(second) and second.writer.calls == 0
+
+
+def test_the_audio_it_was_voiced_with_survives_resuming_whatever_is_configured_now(tmp_path) -> None:
+    first = Rig(tmp_path)
+    first.author()
+    first.voice()
+    voiced = first.narration()[0]
+    assert voiced.dialogue_audio is not None
+    assert asyncio.run(first.artifacts.load_audio(EPISODE_ID, voiced.dialogue.block_id)) == voiced.dialogue_audio  # type: ignore[union-attr]
+
+    other_voices = [
+        VOICE_COMBINATION_B[0].model_copy(update={"voice_id": "some_other_voice_a"}),
+        VOICE_COMBINATION_B[1].model_copy(update={"voice_id": "some_other_voice_b"}),
+    ]
+    second = Rig(tmp_path, scripted=False, voices=other_voices)
+    second.author()
+
+    (resumed,) = second.narration()
+    assert resumed.state is SegmentState.SCRIPT_READY
+    assert resumed.dialogue_audio == voiced.dialogue_audio  # the old request travels with it
+
+    second.voice()
+
+    (restored,) = second.narration()
+    assert restored.state is SegmentState.AUDIO_READY
+    assert second.speech.calls == 0  # nothing synthesized
+    assert restored.asset_ref == voiced.asset_ref and restored.actual_duration_seconds == 3
+    assert [v.voice_id for v in restored.dialogue_audio.voices] == [v.voice_id for v in VOICE_COMBINATION_B]  # type: ignore[union-attr]
+    assert _quiet(second)
+
+
+def test_a_story_held_by_another_passage_is_skipped_without_a_request(tmp_path) -> None:
+    rig = Rig(tmp_path, scripted=False)
+    asyncio.run(rig.usage.reserve(EPISODE_ID, story_id_for(TRACK_REF), "dlg-somewhere-else"))
+
+    rig.author()
+
+    (segment,) = rig.narration()
+    assert segment.dialogue is None and rig.writer.calls == 1  # the Writer path, as before
+    assert _quiet(rig)
+
+
+def test_a_passage_being_made_elsewhere_is_not_started_twice(tmp_path) -> None:
+    rig = Rig(tmp_path, scripted=False)
+    asyncio.run(rig.usage.reserve(EPISODE_ID, story_id_for(TRACK_REF), block_id_for(FIRST_SLOT)))
+
+    rig.author()  # reserved by this very block, nothing saved yet: someone is on it
+
+    assert rig.narration()[0].dialogue is None and _quiet(rig)
+
+
+def test_a_told_passage_is_never_entered_again(tmp_path) -> None:
+    first = Rig(tmp_path)
+    first.author()
+    episode = first.repository.get(EPISODE_ID)
+    for segment in episode.segments:
+        if isinstance(segment, NarrationSegment) and segment.dialogue is not None:
+            segment.state = SegmentState.COMMITTED
+    asyncio.run(first.runtime.settle(EPISODE_ID, episode.segments))
+    assert first.ledger().entries[story_id_for(TRACK_REF)].state is StoryUseState.PUBLISHED
+
+    second = Rig(tmp_path, scripted=False)
+    second.author()
+
+    assert second.narration()[0].dialogue is None and _quiet(second)
+    assert first.ledger().entries[story_id_for(TRACK_REF)].state is StoryUseState.PUBLISHED
+
+
+def test_a_saved_passage_whose_story_went_back_to_the_pool_is_taken_again_not_rewritten(tmp_path) -> None:
+    first = Rig(tmp_path)
+    first.author()
+    asyncio.run(first.usage.release(EPISODE_ID, story_id_for(TRACK_REF), block_id_for(FIRST_SLOT)))
+    assert story_id_for(TRACK_REF) not in first.ledger().entries
+
+    second = Rig(tmp_path, scripted=False)
+    second.author()
+
+    assert second.narration()[0].dialogue is not None and _quiet(second)
+    assert second.ledger().entries[story_id_for(TRACK_REF)].state is StoryUseState.RESERVED
+
+
+# --- the progressive path: a prefix is published first, the passage arrives late -----------------
+
+
+def _long_music(tmp_path: Any, seconds: int = 70) -> LocalObjectStorageProvider:
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+
+    async def put() -> None:
+        await storage.put("music-a.wav", _wav_bytes(seconds, 220), "audio/wav")
+        await storage.put("music-b.wav", _wav_bytes(seconds, 330), "audio/wav")
+
+    asyncio.run(put())
+    return storage
+
+
+def test_a_passage_that_arrives_after_the_prefix_was_published_changes_nothing_that_was_published(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = Rig(tmp_path, music_seconds=70, plain_repository=True)
+    rig.storage = _long_music(tmp_path)
+    monkeypatch.setattr(api_module, "repository", rig.repository)
+    monkeypatch.setattr(api_module, "orchestrator", rig.orchestrator)
+    monkeypatch.setattr(api_module, "scheduler", InlineGenerationScheduler(rig.orchestrator))
+    monkeypatch.setattr(api_module, "audio_storage", rig.storage)
+    client = TestClient(api_module.app)
+    published: dict[str, Any] = {}
+
+    async def while_the_passage_is_being_written() -> None:
+        def publish() -> None:
+            # Continuity gives the pending seam up, and the programme prefix goes out past it.
+            _chapter_two_seam_skipped(rig)
+            manifest = _render(client)
+            published["manifest"] = manifest
+            published["bytes"] = {chunk["audioUrl"]: client.get(chunk["audioUrl"]).content for chunk in manifest["chunks"]}
+
+        await asyncio.to_thread(publish)
+
+    rig.writer_llm.before_answer = while_the_passage_is_being_written
+
+    rig.author()  # the passage is written, checked and saved - and then finds the seam gone
+
+    manifest = published["manifest"]
+    assert manifest["renderedFrontierSeconds"] > 70, "the published prefix must reach past the host seam"
+    # the late passage was not inserted anywhere, and its story went back
+    assert all(segment.dialogue is None for segment in rig.narration())
+    assert [segment.state for segment in rig.narration()] == [SegmentState.SKIPPED]
+    assert story_id_for(TRACK_REF) not in rig.ledger().entries
+    assert asyncio.run(rig.artifacts.load(EPISODE_ID, block_id_for(FIRST_SLOT))) is not None  # made, not used
+    rig.voice()
+    assert rig.speech.calls == 0  # and never voiced
+
+    # Everything already published is byte-for-byte what it was; the feed only ever grows.
+    again = _render(client)
+    assert again["chunks"][: len(manifest["chunks"])] == manifest["chunks"]
+    for chunk in manifest["chunks"]:
+        content = client.get(chunk["audioUrl"]).content
+        assert content == published["bytes"][chunk["audioUrl"]] and len(content) == len(published["bytes"][chunk["audioUrl"]])

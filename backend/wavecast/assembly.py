@@ -76,7 +76,7 @@ from wavecast.intelligence.trace import GenerationTrace
 from wavecast.intelligence.track_research import TrackResearchService
 from wavecast.intelligence.writer import WriterService, fallback_closing
 from wavecast.materialization import NarrationMaterializer
-from wavecast.models.dialogue import DialogueBlock, DialogueNotSupportedError
+from wavecast.models.dialogue import DialogueNotSupportedError
 from wavecast.models.episode import (
     LiveEpisode,
     MusicSegment,
@@ -87,7 +87,8 @@ from wavecast.models.episode import (
 )
 from wavecast.music_discovery import catalog_queries, community_tags
 from wavecast.narration_quality import opener_of
-from wavecast.orchestration.dialogue_runtime import DialogueRuntime
+from wavecast.orchestration.authoring_gate import authoring_still_open
+from wavecast.orchestration.dialogue_runtime import DialogueOffer, DialogueRuntime
 from wavecast.orchestration.dialogue_timeline import DialogueSeamService
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.staged import (
@@ -3941,10 +3942,10 @@ class StagedProgressiveChapterGenerator:
 
         # A researched two-host passage is offered first; whenever it is not made, the chapter is
         # authored by the Writer exactly as before.
-        dialogue_block: DialogueBlock | None = None
+        dialogue_offer: DialogueOffer | None = None
         if self.dialogue is not None and research_track is not None and len(chapter.slot_contexts) == 1:
             scoped_evidence_ids = set(writer_chapter.evidence_ids)
-            dialogue_block = await self.dialogue.offer(
+            dialogue_offer = await self.dialogue.offer(
                 episode_id=episode.id,
                 station=self.session.station,
                 context=chapter.slot_contexts[0],
@@ -3960,67 +3961,51 @@ class StagedProgressiveChapterGenerator:
                 track_ref=research_track.track_ref,
                 track_label=f"{research_track.canonical_artist} - {research_track.canonical_title}",
             )
-        dialogue_script: RadioScript | None = (
-            RadioScript(
-                blocks=[
-                    RadioScriptBlock(
-                        kind=RadioScriptBlockKind.TRANSITION,
-                        text=dialogue_block.text,
-                        tts_text=dialogue_block.tts_text,
-                        duration_seconds=dialogue_block.duration_seconds,
-                        dialogue=dialogue_block,
-                    )
-                ],
-                intended_duration_seconds=dialogue_block.duration_seconds,
-            )
-            if dialogue_block is not None
-            else None
-        )
 
         playable: PlayableEpisode | None = None
         authoring_errors = (ProviderError, NarrationPlacementError, EpisodeAssemblyError, ValueError)
-        try:
-            script = dialogue_script if dialogue_script is not None else await self.writer.write(
-                writer_chapter,
-                writer_evidence,
-                previous_committed_context=previous_context,
-                next_track_metadata=next_track_metadata,
-                host_mode=self.session.presentation_intent.host_mode,
-                target_duration_seconds=chapter.target_narration_seconds,
-                output_language=self.session.output_language,
-                station=self.session.station,
-                voice_seed=episode.seed_id,
-                used_openers=_used_openers(episode),
-                route_tracks=route_tracks,
-                unplayed_artists=unplayed_artists,
-                unfulfilled_artists=self.session.unfulfilled_artists,
-                topic=self.session.topic,
-                slot_contexts=chapter.slot_contexts,
-                track_points=track_points,
-            )
-            if (
-                isinstance(script, RadioScript)
-                and not script.blocks
-                and not is_final_chapter
-                and self.track_research is not None
-                and (story := await self.track_research.background_story(
-                    episode_id=episode.id,
-                    station=self.session.station,
-                    subject=self.session.topic,
-                    subject_names=self.session.required_artists,
-                    evidence=self.session.research.evidence,
-                ))
-                is not None
-            ):
-                # What was written about this song did not survive the checks; tell one of the
-                # programme's background stories instead of leaving the slot silent.
-                logger.info("narration_background_retry chapter_id=%s", chapter.chapter_id)
-                scoped = list(writer_chapter.evidence_ids)
-                if story.evidence_id not in scoped:
-                    scoped.append(story.evidence_id)
-                    track_evidence_ids = [*track_evidence_ids, story.evidence_id]
+        writer_allowed = True
+        if dialogue_offer is not None and self.dialogue is not None:
+            offered = dialogue_offer.block
+            try:
+                playable = assemble(
+                    RadioScript(
+                        blocks=[
+                            RadioScriptBlock(
+                                kind=RadioScriptBlockKind.TRANSITION,
+                                text=offered.text,
+                                tts_text=offered.tts_text,
+                                duration_seconds=offered.duration_seconds,
+                                dialogue=offered,
+                            )
+                        ],
+                        intended_duration_seconds=offered.duration_seconds,
+                    )
+                )
+                if dialogue_offer.audio is not None:
+                    # The passage was voiced before: keep that request with the segment, so the
+                    # saved audio and its voices are restored, not made again.
+                    for segment in playable.segments:
+                        if isinstance(segment, NarrationSegment) and segment.dialogue is not None:
+                            segment.dialogue_audio = dialogue_offer.audio
+            except authoring_errors as error:
+                logger.warning(
+                    "dialogue_placement_failed chapter_id=%s error_type=%s",
+                    chapter.chapter_id,
+                    type(error).__name__,
+                )
+                playable = None
+                await self.dialogue.release(episode.id, offered)
+                # The Writer gets one try in the time that is left - not when the listener has
+                # reached the chapter, the seam was skipped for continuity, or it was cancelled
+                # (cancellation never gets here).  The passage is not retried.
+                writer_allowed = await authoring_still_open()
+                if not writer_allowed:
+                    logger.info("dialogue_fallback_skipped chapter_id=%s", chapter.chapter_id)
+        if playable is None and writer_allowed:
+            try:
                 script = await self.writer.write(
-                    writer_chapter.model_copy(update={"evidence_ids": scoped}),
+                    writer_chapter,
                     writer_evidence,
                     previous_committed_context=previous_context,
                     next_track_metadata=next_track_metadata,
@@ -4035,23 +4020,59 @@ class StagedProgressiveChapterGenerator:
                     unfulfilled_artists=self.session.unfulfilled_artists,
                     topic=self.session.topic,
                     slot_contexts=chapter.slot_contexts,
-                    track_points=[story],
+                    track_points=track_points,
                 )
-            playable = assemble(script)
-        except authoring_errors as error:
-            # Writer is the quality layer, not the existence guarantee. P0
-            # deliberately prefers a clean music-only gap over canned catalog
-            # copy when Writer cannot produce a trustworthy bridge.
-            logger.warning(
-                "narration_authoring_failed chapter_id=%s error_type=%s host_mode=%s reason=%s",
-                chapter.chapter_id,
-                type(error).__name__,
-                self.session.presentation_intent.host_mode.value,
-                str(error)[:120],
-            )
-        if playable is None and dialogue_block is not None and self.dialogue is not None:
-            # Made but not placed: give the story back so another slot can tell it.
-            await self.dialogue.release(episode.id, dialogue_block)
+                if (
+                    isinstance(script, RadioScript)
+                    and not script.blocks
+                    and not is_final_chapter
+                    and self.track_research is not None
+                    and (story := await self.track_research.background_story(
+                        episode_id=episode.id,
+                        station=self.session.station,
+                        subject=self.session.topic,
+                        subject_names=self.session.required_artists,
+                        evidence=self.session.research.evidence,
+                    ))
+                    is not None
+                ):
+                    # What was written about this song did not survive the checks; tell one of the
+                    # programme's background stories instead of leaving the slot silent.
+                    logger.info("narration_background_retry chapter_id=%s", chapter.chapter_id)
+                    scoped = list(writer_chapter.evidence_ids)
+                    if story.evidence_id not in scoped:
+                        scoped.append(story.evidence_id)
+                        track_evidence_ids = [*track_evidence_ids, story.evidence_id]
+                    script = await self.writer.write(
+                        writer_chapter.model_copy(update={"evidence_ids": scoped}),
+                        writer_evidence,
+                        previous_committed_context=previous_context,
+                        next_track_metadata=next_track_metadata,
+                        host_mode=self.session.presentation_intent.host_mode,
+                        target_duration_seconds=chapter.target_narration_seconds,
+                        output_language=self.session.output_language,
+                        station=self.session.station,
+                        voice_seed=episode.seed_id,
+                        used_openers=_used_openers(episode),
+                        route_tracks=route_tracks,
+                        unplayed_artists=unplayed_artists,
+                        unfulfilled_artists=self.session.unfulfilled_artists,
+                        topic=self.session.topic,
+                        slot_contexts=chapter.slot_contexts,
+                        track_points=[story],
+                    )
+                playable = assemble(script)
+            except authoring_errors as error:
+                # Writer is the quality layer, not the existence guarantee. P0
+                # deliberately prefers a clean music-only gap over canned catalog
+                # copy when Writer cannot produce a trustworthy bridge.
+                logger.warning(
+                    "narration_authoring_failed chapter_id=%s error_type=%s host_mode=%s reason=%s",
+                    chapter.chapter_id,
+                    type(error).__name__,
+                    self.session.presentation_intent.host_mode.value,
+                    str(error)[:120],
+                )
         if playable is None and is_final_chapter and self.session.output_language is OutputLanguage.ZH_CN:
             # A programme always ends: without the Writer's closing the application says where
             # the route ended and signs off.
@@ -4599,14 +4620,16 @@ def create_episode_assembly_service(
     if dialogue_voicing is not None:
         dialogue_stack = create_dialogue_stack(settings, ledger=ledger, mock=mock_llm)
         story_usage = StoryUsageStore(storage)
+        dialogue_artifacts = DialogueArtifactStore(storage)
         dialogue_runtime = DialogueRuntime(
             material=dialogue_stack.material,
             seam=DialogueSeamService(
                 pipeline=dialogue_stack.pipeline,
-                artifacts=DialogueArtifactStore(storage),
+                artifacts=dialogue_artifacts,
                 usage=story_usage,
             ),
             usage=story_usage,
+            artifacts=dialogue_artifacts,
         )
         dialogue_clients = dialogue_stack.owned_clients
     return LiveEpisodeAssemblyService(

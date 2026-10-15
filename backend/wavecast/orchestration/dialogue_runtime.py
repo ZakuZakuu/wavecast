@@ -18,15 +18,17 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 
 from wavecast.intelligence.dialogue_budget import dialogue_budget_for, story_slot_ids
 from wavecast.intelligence.dialogue_writer import DialogueSlot
 from wavecast.intelligence.models import Evidence, NarrationSlotContext
 from wavecast.intelligence.story_material import StoryMaterialService
-from wavecast.models.dialogue import DialogueBlock, DialoguePurpose
+from wavecast.models.dialogue import DialogueAudioSnapshot, DialogueBlock, DialoguePurpose
 from wavecast.models.episode import MusicSegment, NarrationSegment
 from wavecast.orchestration.dialogue_timeline import DialogueSeamService
 from wavecast.stations import StationId
+from wavecast.storage.dialogue_artifacts import DialogueArtifactStore
 from wavecast.storage.story_usage import StoryUsageStore
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,17 @@ def block_id_for(slot_id: str) -> str:
     return f"dlg-{slot_id}"
 
 
+@dataclass(frozen=True)
+class DialogueOffer:
+    """A passage to place in the chapter, and - when it was voiced before - how."""
+
+    block: DialogueBlock
+    # The request snapshot the saved audio was made with.  Carried onto the segment so that
+    # voicing it again restores that audio with those voices, whatever is configured now.
+    audio: DialogueAudioSnapshot | None = None
+    restored: bool = False
+
+
 class DialogueRuntime:
     def __init__(
         self,
@@ -58,10 +71,12 @@ class DialogueRuntime:
         material: StoryMaterialService,
         seam: DialogueSeamService,
         usage: StoryUsageStore,
+        artifacts: DialogueArtifactStore,
     ) -> None:
         self._material = material
         self._seam = seam
         self._usage = usage
+        self._artifacts = artifacts
 
     def eligible_slot_ids(
         self, station: StationId | None, groups: Iterable[Sequence[NarrationSlotContext]], seed: str
@@ -88,8 +103,13 @@ class DialogueRuntime:
         subject: str,
         track_ref: str | None,
         track_label: str,
-    ) -> DialogueBlock | None:
-        """A checked, saved passage for this slot, or ``None`` (the Writer path then runs)."""
+    ) -> DialogueOffer | None:
+        """A checked, saved passage for this slot, or ``None`` (the Writer path then runs).
+
+        What the ledger and the store already know is consulted *before* any model is asked: a
+        saved passage is handed back (with its audio snapshot) at no cost, and a story held by
+        another passage, told, or being made elsewhere is skipped without a request.
+        """
 
         if (
             station is None
@@ -99,38 +119,39 @@ class DialogueRuntime:
         ):
             return None
         story_id = story_id_for(track_ref)
+        slot = DialogueSlot(
+            slot_id=context.slot_id,
+            block_id=block_id_for(context.slot_id),
+            purpose=DialoguePurpose.STORY,
+            station=station,
+            just_played=(
+                context.just_played_track.canonical_title
+                if context.just_played_track is not None
+                else None
+            ),
+            upcoming=(
+                context.upcoming_track.canonical_title
+                if context.upcoming_track is not None
+                else None
+            ),
+        )
         try:
-            material = await self._material.extract(
-                evidence,
-                story_id=story_id,
-                subject=track_label or subject,
-                recording_refs=[track_ref],
+            result = await self._seam.resume(
+                episode_id, story_id, slot, chapter_id=chapter_id, order=order
             )
-            if material is None:
-                logger.info("dialogue_skipped slot_id=%s reason=thin_material", context.slot_id)
-                return None
-            result = await self._seam.author(
-                episode_id,
-                material,
-                DialogueSlot(
-                    slot_id=context.slot_id,
-                    block_id=block_id_for(context.slot_id),
-                    purpose=DialoguePurpose.STORY,
-                    station=station,
-                    just_played=(
-                        context.just_played_track.canonical_title
-                        if context.just_played_track is not None
-                        else None
-                    ),
-                    upcoming=(
-                        context.upcoming_track.canonical_title
-                        if context.upcoming_track is not None
-                        else None
-                    ),
-                ),
-                chapter_id=chapter_id,
-                order=order,
-            )
+            if result is None:
+                material = await self._material.extract(
+                    evidence,
+                    story_id=story_id,
+                    subject=track_label or subject,
+                    recording_refs=[track_ref],
+                )
+                if material is None:
+                    logger.info("dialogue_skipped slot_id=%s reason=thin_material", context.slot_id)
+                    return None
+                result = await self._seam.author(
+                    episode_id, material, slot, chapter_id=chapter_id, order=order
+                )
         except Exception as error:  # noqa: BLE001 - the Writer path must always remain available
             logger.warning(
                 "dialogue_skipped slot_id=%s reason=error error_type=%s",
@@ -138,16 +159,32 @@ class DialogueRuntime:
                 type(error).__name__,
             )
             return None
-        if result.segment is None or result.segment.dialogue is None:
+        segment = result.segment
+        if segment is None or segment.dialogue is None:
             logger.info("dialogue_skipped slot_id=%s reason=%s", context.slot_id, result.reason)
             return None
-        return result.segment.dialogue
+        return DialogueOffer(
+            block=segment.dialogue, audio=segment.dialogue_audio, restored=result.restored
+        )
 
     async def release(self, episode_id: str, block: DialogueBlock) -> None:
         """Give the story back: the passage was made but never became part of the programme."""
 
-        if block.story_id is not None:
+        if block.story_id is None:
+            return
+        try:
             await self._usage.release(episode_id, block.story_id, block.block_id)
+        except ValueError:
+            pass  # already told: a told story stays told
+
+    async def record_audio(self, episode_id: str, segment: NarrationSegment) -> None:
+        """Keep, beside the saved passage, the request its audio was made with (first time only)."""
+
+        block, snapshot = segment.dialogue, segment.dialogue_audio
+        if block is None or snapshot is None:
+            return
+        if await self._artifacts.load_audio(episode_id, block.block_id) is None:
+            await self._artifacts.save_audio(episode_id, block.block_id, snapshot)
 
     async def settle(
         self, episode_id: str, segments: Sequence[MusicSegment | NarrationSegment]

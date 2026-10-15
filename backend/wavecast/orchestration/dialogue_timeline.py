@@ -26,7 +26,7 @@ from wavecast.materialization.narration import NarrationMaterializer
 from wavecast.models.dialogue import DialoguePurpose
 from wavecast.models.episode import NarrationRole, NarrationSegment, SegmentState
 from wavecast.models.story_material import StoryMaterial
-from wavecast.models.story_usage import Reservation
+from wavecast.models.story_usage import Reservation, StoryUseState
 from wavecast.storage.dialogue_artifacts import (
     CheckedDialogueRecord,
     DialogueArtifactError,
@@ -205,6 +205,56 @@ class DialogueSeamService:
             raise
         segment = narration_segment_from_record(record, chapter_id=chapter_id, order=order)
         return DialogueSeamResult(outcome=outcome, segment=segment, artifact_key=key)
+
+    async def resume(
+        self,
+        episode_id: str,
+        story_id: str,
+        slot: DialogueSlot,
+        *,
+        chapter_id: str,
+        order: int,
+    ) -> DialogueSeamResult | None:
+        """What is already known about this passage, learned *before* any model is asked.
+
+        ``None`` means nothing is known and the caller should extract material and ``author``.
+        Otherwise the answer needs no model call: the story belongs to another passage or is
+        told (skip it), this passage is being made elsewhere (skip), or it was saved already and
+        is handed back with the audio snapshot it was voiced with, if any.  This only reads;
+        taking a story still goes through ``author``'s reservation, which stays the authority
+        when two callers race.
+        """
+        block_id = slot.block_id
+        entry = (await self._usage.load(episode_id)).entries.get(story_id)
+
+        def skipped(reason: str) -> DialogueSeamResult:
+            outcome = DialogueOutcome(
+                status=DialogueStatus.SKIPPED, reason=reason, station_value=slot.station.value
+            )
+            return DialogueSeamResult(outcome=outcome, reason=reason)
+
+        if entry is not None and entry.block_id != block_id:
+            return skipped("story_already_used")
+        if entry is not None and entry.state is StoryUseState.PUBLISHED:
+            return skipped("already_told")  # a told passage is never re-entered
+        record = await self._artifacts.load(episode_id, block_id)
+        if record is None:
+            return skipped("in_progress") if entry is not None else None
+        if entry is None:
+            # Saved, but its story went back to the pool (e.g. a reconcile of a lost segment):
+            # take it again through the ledger rather than writing the passage a second time.
+            if await self._usage.reserve(episode_id, story_id, block_id) is Reservation.TAKEN:
+                return skipped("story_already_used")
+        segment = await restore_narration_segment(
+            self._artifacts, episode_id, block_id, chapter_id=chapter_id, order=order
+        )
+        return DialogueSeamResult(
+            outcome=DialogueOutcome.from_record(record),
+            segment=segment,
+            artifact_key=artifact_key(episode_id, block_id),
+            reason="resumed",
+            restored=True,
+        )
 
     async def _existing(
         self,

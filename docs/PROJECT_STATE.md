@@ -6,11 +6,11 @@ Updated: 2026-10-15（双人讲述离线接入审查）；下方旧部署条目�
 
 第一至三批已通过审查与 CI，并以普通 merge 合入 integration：#299（Ark 适配、角色配置和对话契约）、#300（素材→双人稿→核对/局部修复→版本化存档）、#301（对话→音频缓存/请求快照→NarrationSegment→时间线、故事预约账本；integration 基线 8b98167）。未推进 main，未修改生产变量。
 
-第四批（完整接线，PR 审查中）把检索证据→素材→双人稿→核对→配音接进 `author_narration` 和装配，**默认关闭**（`WAVECAST_DIALOGUE_RADIO=off`）；开启后用固定响应和假音频走通了真实 program-render 的 HLS 路径、恢复和故事对账。**真实豆包传输层尚未实现**（缺可依据的线协议），所以 `doubao` 配音在启动时被拒绝，不能宣称真实节目已经支持双人主持。
+第四批（完整接线，PR #302 审查中）把检索证据→素材→双人稿→核对→配音接进 `author_narration` 和装配，**默认关闭**（`WAVECAST_DIALOGUE_RADIO=off`）。按 GPT 对 `2505f75` 的审查已补：真实豆包传输层（按成功实验的协议：API Key 认证、PCM 24 kHz 接收、本地 WAV 封装、零重试）、每次尝试恰好一条最终用量事件（含音频 token，未知为 null）、恢复前先查账本与存档（0 次模型调用，并保留原音频快照）、对话放置失败时的 Writer 兜底（一次，且仅当章节仍可插入）、渐进 HLS 下迟到稿不改动已发布前缀。全部为固定响应、假 WebSocket 和假音频验证；**尚未做过真实豆包调用**，不能宣称真实节目已经支持双人主持。
 
 用户已选择 B 音色：A=刘飞、B=潇磊，豆包语速 0。保留不同电台的时长和密度差异；首曲尽快开始、音乐连续性优先。模型候选为 Pro 素材、Lite Writer，角色独立配置；Pro 提案仍是候选。当前默认行为保持不变。
 
-下一步：凭一次带录制的实验写真实豆包传输层（需要固定稿件模式的请求/响应样本、音频格式、时间戳与用量字段），再安排有明确范围与预算的真实调用与完整验收。不要再扩模型名单或拆无消费者的基础模块。普通 merge 到 integration 由审查通过且最新 CI 通过后执行；main 留到完整验收。
+下一步：GPT 复审 #302；通过后另行安排一次最小真实豆包调用与试听，再做有范围与预算的完整验收。不要再扩模型名单或拆无消费者的基础模块。普通 merge 到 integration 由审查通过且最新 CI 通过后执行；main 留到完整验收。
 
 设计和样本入口：[接入设计](design/researched-dialogue-radio.md)、[实验报告](research/dialogue-radio-2026-10/final-text-experiments.md)、[已认可样本边界](research/dialogue-radio-2026-10/accepted-samples.md)。实施边界：[ADR 0024](adr/0024-ark-text-models-and-dialogue-contract.md)、[ADR 0025](adr/0025-story-material-and-checked-dialogue-path.md)、[ADR 0026](adr/0026-dialogue-to-timeline.md)、[ADR 0027](adr/0027-dialogue-runtime-wiring.md)。
 
