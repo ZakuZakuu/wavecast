@@ -1,0 +1,26 @@
+{
+  "model_checked": true,
+  "passed": true,
+  "issues": [],
+  "supported_by_turn": {
+    "1": [
+      "live-fdt-F1",
+      "live-fdt-F2",
+      "live-fdt-F3"
+    ],
+    "3": [
+      "live-fdt-F4",
+      "live-fdt-F5"
+    ],
+    "4": [
+      "live-fdt-F9"
+    ],
+    "5": [
+      "live-fdt-F10",
+      "live-fdt-F11"
+    ],
+    "7": [
+      "live-fdt-F6"
+    ]
+  }
+}

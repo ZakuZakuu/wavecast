@@ -1,19 +1,29 @@
-"""Fact check for a two-host passage, against the story material it was written from.
+"""A light fact safety net for a two-host passage, against the story material it came from.
 
-The unit is the sentence, judged *in the dialogue*: the checker sees every turn in order, so a
-question's factual premise ("why did he stay with Mandarin so long?") and an answer that only
-completes the claim of the turn before are judged with their context, not as stray fragments.
-Every sentence must come back with a judgement; one left out is treated as unchecked, never as
-harmless.  The checker names the facts it relies on and copies a quote; code verifies all of it:
+What decides, and what only helps:
 
-* the cited fact ids exist in this material, and the turn declared them in its ``fact_refs``;
-* the quote is a verbatim stretch of a cited fact's source text;
-* the quote carries the role the sentence claims (composed ≠ arranged ≠ sang) and every
-  qualifier it adds (first time, only, always, who said it, why, instruments).
+* **The model (one Pro call) decides the semantics.**  It sees every sentence in the dialogue,
+  the facts, the source title and the stretch of source text around each quote, and says per
+  sentence whether the facts support it - including who said it, the qualifiers it adds
+  ("first", "only", "always", "why") and whether a paraphrase is faithful.  A sentence is an
+  *issue* only if it is "contradicted" or "insufficient": a substantive factual problem.
+  Naturalness, impressions of the music and style are never a reason to send a passage back.
+* **Code decides the structure, and nothing else.**  The cited fact ids exist in this material,
+  the turn declared them in its ``fact_refs``, and the quote is a verbatim stretch of a cited
+  fact's source text.  A supported verdict that fails one of these is an issue.
+* **Pattern matching only points.**  Words that often need a closer look (said-by, first, only,
+  roles, years) are shown to the model as a hint, and afterwards recorded as ``hints`` when the
+  model's own quote does not carry them.  A hint is *unknown*, not a verdict: it never rejects
+  a passage and never triggers a repair by itself.
+* **The answer must be complete to count.**  One finding for every numbered sentence, none
+  missing, repeated or out of range.  Otherwise there is no judgement at all (``model_checked``
+  is false, exactly as if the call had failed): the caller refuses to voice a story on trust,
+  and nothing is retried or repaired.  Inside a complete answer, ``not_factual`` is a valid
+  judgement that a pattern match cannot overrule.
 
-It makes one call and never retries: the passage's call budget is spent by the caller.  If the
-call fails, sentences that must be supported are reported as unchecked (the passage will not
-be voiced on trust).  It changes no text.
+It makes one call and never retries; the passage's call budget is spent by the caller.  If the
+call fails the passage has no judgement (``model_checked`` is false) and the caller decides -
+a story is never voiced on trust.  It changes no text.
 """
 
 from __future__ import annotations
@@ -25,7 +35,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from wavecast.models.dialogue import DialogueBlock, DialogueIssue
-from wavecast.models.story_material import StoryMaterial
+from wavecast.models.story_material import MaterialFact, StoryMaterial
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 
 from .fact_support import (
@@ -35,6 +45,7 @@ from .fact_support import (
     quote_in_source,
     roles_in,
     split_sentences,
+    watch_notes,
 )
 from .fast_start import FastStructuredProvider
 
@@ -58,7 +69,10 @@ class DialogueCheck(BaseModel):
 
 @dataclass
 class DialogueCheckReport:
+    # Substantive problems: the only thing that can send a turn to repair.
     issues: list[DialogueIssue] = field(default_factory=list)
+    # Pattern-based pointers and gaps (see the module docstring): unknown, never a verdict.
+    hints: list[DialogueIssue] = field(default_factory=list)
     # Per turn: the facts its supported sentences were found in.
     supported: dict[int, list[str]] = field(default_factory=dict)
     model_checked: bool = False
@@ -90,17 +104,25 @@ as..."), which is a view and not a claim about the world. A sentence that mixes 
 is a fact.
 
 verdict for a fact:
-- "supported": the cited facts' source text states the WHOLE sentence. Give the ids of the facts \
-relied on and a quote copied word for word from one of their source texts, in its own script, \
-without translating (at most 60 characters). The quote itself must say who or what, the relation, \
-and every qualifier the sentence adds (first time, only, always, who said it, why, which version). \
-If the sentence says more than the quote does, even one adjective of degree ("more mature") or one \
-connecting reason, it is "insufficient".
+- "supported": the facts say what the sentence says. A faithful paraphrase is supported; the \
+wording does not have to match. Judge who and what: if the sentence says someone said, thinks, \
+did or was first at something, the source (use its title and the surrounding text, which show who \
+is speaking - for instance an interview answer is the interviewee's own words) must show that \
+person, and any "first", "only", "always" or reason the sentence adds must be in the source too. \
+Give the ids of the facts relied on and a quote copied word for word from one of their SOURCE \
+TEXTS, in its own script, without translating (at most 60 characters); it only has to be a real \
+stretch of that source text.
 - "contradicted": a fact states something different. Give its id and quote.
-- "insufficient": no fact states it as the sentence does.
+- "insufficient": the facts do NOT state something the sentence asserts - another person, a \
+degree, a reason, a date, a role. Use it only for a real factual gap; never for style, natural \
+phrasing, an impression, or a harmless reordering of facts the source does state.
 For everything else: "not_factual" (fact_ids [] and quote "").
 
-Facts (id, a gist for orientation only - quote the source text, not the gist):
+A line marked "note" below a sentence points at words that often need a closer look; it is only a \
+pointer, not a finding.
+
+Facts (id, a gist for orientation only - quote the SOURCE TEXT, not the gist; "context" is the \
+text around the source text, to see who is speaking):
 {facts}
 
 Dialogue:
@@ -127,30 +149,31 @@ class DialogueFactChecker:
             return report
 
         findings = await self._ask(block, material, sentences)
+        if findings is not None and not _covers_exactly(findings, len(sentences)):
+            # An empty, short, repeated or out-of-range answer is not a judgement of this
+            # dialogue: treat it like an unavailable check (no verdicts, nothing voiced on trust).
+            logger.warning(
+                "dialogue_fact_check_incomplete expected=%d returned=%d", len(sentences), len(findings)
+            )
+            findings = None
         report.model_checked = findings is not None
         by_sentence = {finding.sentence: finding for finding in findings or ()}
 
         for number, (turn, index, text) in enumerate(sentences):
-            needs_source = must_be_supported(text)
-            if findings is None:
-                if needs_source:
-                    report.issues.append(_issue(turn, index, text, "unchecked"))
-                continue
             finding = by_sentence.get(number)
             if finding is None:
-                # Left out: never assumed harmless.
-                report.issues.append(_issue(turn, index, text, "unchecked"))
+                # No judgement at all (the call failed, or its answer was incomplete): unknown.
+                if must_be_supported(text):
+                    report.hints.append(_hint(turn, index, text, "unchecked"))
                 continue
             if finding.verdict == "not_factual":
-                if needs_source:
-                    report.issues.append(_issue(turn, index, text, "unchecked"))
-                continue
+                continue  # a complete answer's judgement: a pattern match cannot overrule it
             if finding.verdict == "contradicted":
                 report.issues.append(
                     _issue(turn, index, text, "contradicted", f' (“{finding.quote.strip()}”)')
                 )
                 continue
-            code = self._why_not_supported(text, finding, material)
+            code = self._structural_problem(finding, material)
             if code is None and not set(finding.fact_ids) <= set(block.turns[turn].fact_refs):
                 code = "undeclared_fact_ref"
             if code is not None:
@@ -158,18 +181,25 @@ class DialogueFactChecker:
                 continue
             relied = report.supported.setdefault(turn, [])
             relied.extend(f for f in finding.fact_ids if f not in relied)
+            # Pattern checks against the model's own quote: pointers for whoever reads the report.
+            roles = roles_in(text)
+            if roles and not quote_backs_roles(finding.quote, roles):
+                report.hints.append(_hint(turn, index, text, "role_not_in_quote"))
+            if qualifiers_missing(text, finding.quote):
+                report.hints.append(_hint(turn, index, text, "qualifier_not_in_quote"))
         logger.info(
-            "dialogue_fact_check sentences=%d issues=%s model_checked=%s",
+            "dialogue_fact_check sentences=%d issues=%s hints=%s model_checked=%s",
             len(sentences),
             ",".join(issue.code for issue in report.issues) or "-",
+            ",".join(hint.code for hint in report.hints) or "-",
             report.model_checked,
         )
         return report
 
     @staticmethod
-    def _why_not_supported(
-        text: str, finding: SentenceFinding, material: StoryMaterial
-    ) -> str | None:
+    def _structural_problem(finding: SentenceFinding, material: StoryMaterial) -> str | None:
+        """Only what code can know for certain: the ids and the quote are real."""
+
         if finding.verdict != "supported":
             return "insufficient"
         facts = [material.fact(fact_id) for fact_id in finding.fact_ids]
@@ -177,11 +207,6 @@ class DialogueFactChecker:
             return "unknown_fact_id"
         if not any(fact is not None and quote_in_source(finding.quote, fact.quote) for fact in facts):
             return "quote_not_in_source"
-        roles = roles_in(text)
-        if roles and not quote_backs_roles(finding.quote, roles):
-            return "role_not_in_quote"
-        if qualifiers_missing(text, finding.quote):
-            return "qualifier_not_in_quote"
         return None
 
     async def _ask(
@@ -192,15 +217,16 @@ class DialogueFactChecker:
     ) -> list[SentenceFinding] | None:
         numbering: dict[int, list[str]] = {}
         for number, (turn, _index, text) in enumerate(sentences):
-            numbering.setdefault(turn, []).append(f"  {number}. {text}")
+            lines = numbering.setdefault(turn, [])
+            lines.append(f"  {number}. {text}")
+            if notes := watch_notes(text):
+                lines.append("     note: check against the source - " + " / ".join(notes[:4]))
         dialogue = "\n".join(
             f"Turn {turn_index} ({turn.speaker.value}):\n" + "\n".join(numbering.get(turn_index, []))
             for turn_index, turn in enumerate(block.turns)
         )
-        facts = "\n".join(
-            f"[{fact.fact_id}] gist: {fact.statement}\n    source text: {fact.quote}"
-            for fact in material.facts
-        )
+        cited = {ref for turn in block.turns for ref in turn.fact_refs}
+        facts = "\n".join(_fact_block(fact, with_context=fact.fact_id in cited) for fact in material.facts)
         try:
             result = await self._llm.structured(
                 _PROMPT.format(facts=facts, dialogue=dialogue),
@@ -218,15 +244,34 @@ class DialogueFactChecker:
         return result.findings
 
 
+def _covers_exactly(findings: list[SentenceFinding], expected: int) -> bool:
+    """One finding for every numbered sentence: none left out, none repeated, none out of range."""
+
+    numbers = [finding.sentence for finding in findings]
+    return len(numbers) == expected and set(numbers) == set(range(expected))
+
+
+def _fact_block(fact: MaterialFact, *, with_context: bool) -> str:
+    lines = [f"[{fact.fact_id}] gist: {fact.statement}"]
+    if fact.source_title:
+        lines.append(f"    source title: {fact.source_title}")
+    lines.append(f"    source text: {fact.quote}")
+    if with_context and fact.context:
+        lines.append(f"    context: {fact.context}")
+    return "\n".join(lines)
+
+
 _MESSAGES = {
-    "unchecked": "has not been shown to be supported by the facts",
     "contradicted": "is contradicted by the facts",
-    "insufficient": "is not stated by the facts as it is said",
+    "insufficient": "asserts something the facts do not state",
     "unknown_fact_id": "relies on a fact id that is not in the material",
     "quote_not_in_source": "has a supporting quote that is not in the fact's source text",
-    "role_not_in_quote": "claims a role (composer, arranger, singer...) the quote does not state",
-    "qualifier_not_in_quote": "adds a qualifier (first time, only, why, who said it...) the quote does not carry",
     "undeclared_fact_ref": "rests on facts that the turn's fact_refs do not list",
+}
+_HINTS = {
+    "unchecked": "was not judged against the facts",
+    "role_not_in_quote": "names a role (composer, arranger, singer...) the model's quote does not state",
+    "qualifier_not_in_quote": "adds a qualifier (first time, only, who said it, why...) the model's quote does not carry",
 }
 
 
@@ -235,5 +280,17 @@ def _issue(turn: int, sentence: int, text: str, code: str, extra: str = "") -> D
         turn=turn,
         sentence=sentence,
         code=code,
-        message=f"“{text[:120]}” {_MESSAGES[code]}{extra}. Say only what the facts state, or leave it out.",
+        message=(
+            f"“{text[:120]}” {_MESSAGES[code]}{extra}. "
+            "Keep what the facts support; reword only the part they do not state."
+        ),
+    )
+
+
+def _hint(turn: int, sentence: int, text: str, code: str) -> DialogueIssue:
+    return DialogueIssue(
+        turn=turn,
+        sentence=sentence,
+        code=code,
+        message=f"“{text[:120]}” {_HINTS[code]} (a pointer, not a finding).",
     )

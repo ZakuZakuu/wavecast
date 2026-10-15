@@ -75,7 +75,7 @@ def build(
     draft: DialogueDraft,
     *,
     repair: DialogueRepair | None = None,
-    insufficient: tuple[str, ...] = ("更成熟",),
+    insufficient: tuple[str, ...] = ("更成熟", "一直坚持"),
     max_calls: int = 4,
     checker_llm: JudgingLLM | None = None,
     writer_llm: ScriptedLLM | None = None,
@@ -128,9 +128,9 @@ def test_the_two_problems_in_the_accepted_style_draft_are_found_and_only_those_t
 
     assert outcome.status is DialogueStatus.REPAIRED and outcome.calls == 4
     assert outcome.repaired_turns == [1, 4]
-    # What was wrong: 一直坚持 (caught by code even though the model agreed) and 更成熟 (the model).
+    # What was wrong - 一直坚持 and 更成熟 - is what the Pro check says; code only structures it.
     codes = {(i.turn, i.code) for i in outcome.first_check_issues}
-    assert codes == {(1, "qualifier_not_in_quote"), (4, "insufficient")}
+    assert codes == {(1, "insufficient"), (4, "insufficient")}
     block = outcome.block
     assert block is not None
     # Roles, turn count and ids are kept; untouched turns are exactly as written.
@@ -145,6 +145,17 @@ def test_the_two_problems_in_the_accepted_style_draft_are_found_and_only_those_t
     assert "一直" not in block.text and "更成熟" not in block.text
     assert all(t.tts_text is None for t in block.turns)
     assert [name for name, _ in writer.calls] == ["DialogueDraft", "DialogueRepair"]
+
+
+def test_pattern_hints_alone_never_send_a_passage_to_repair() -> None:
+    # The draft says 一直坚持 / 更成熟; the Pro check, which decides meaning, finds them supported.
+    pipeline, writer, _ = build(draft_with_two_problems(), insufficient=())
+
+    outcome = run(pipeline)
+
+    assert outcome.status is DialogueStatus.READY and outcome.calls == 2
+    assert outcome.first_check_issues == [] and outcome.repaired_turns == []
+    assert [name for name, _ in writer.calls] == ["DialogueDraft"]  # no repair call was made
 
 
 def test_the_first_telling_is_the_writers_the_material_holds_no_lines() -> None:
@@ -261,7 +272,50 @@ def test_an_unavailable_checker_never_lets_factual_sentences_through() -> None:
     outcome = run(pipeline)
 
     assert outcome.status is DialogueStatus.REJECTED and not outcome.model_checked
-    assert {i.code for i in outcome.first_check_issues} == {"unchecked"}
+    assert outcome.reason == "checker_unavailable" and outcome.calls == 2  # no repair for "unknown"
+
+
+class IncompleteJudge(JudgingLLM):
+    """A check model whose answer does not cover the numbered sentences exactly once."""
+
+    def __init__(self, *args, answer: str, **kwargs) -> None:  # noqa: ANN002, ANN003
+        super().__init__(*args, **kwargs)
+        self.answer = answer
+
+    async def structured(self, prompt: str, output_type: type, **kwargs):  # noqa: ANN003, ANN201
+        complete = await super().structured(prompt, output_type, **kwargs)
+        findings = list(complete.findings)
+        if self.answer == "empty":
+            findings = []
+        elif self.answer == "out_of_range":
+            findings = [findings[0].model_copy(update={"sentence": 999})]
+        elif self.answer == "left_out":
+            findings = findings[:-1]
+        elif self.answer == "duplicate":
+            findings = findings[:-1] + [findings[0]]
+        return type(complete)(findings=findings)
+
+
+@pytest.mark.parametrize("answer", ["empty", "out_of_range", "left_out", "duplicate"])
+def test_an_incomplete_check_answer_never_lets_a_story_be_voiced_or_repaired(answer: str) -> None:
+    from wavecast.intelligence.dialogue_metrics import DialogueMetrics
+
+    for draft in (clean_draft(), draft_with_two_problems()):
+        mat = material()
+        judge = IncompleteJudge(mat, [draft, clean_draft(), good_repair()], answer=answer)
+        pipeline, writer, _ = build(draft, checker_llm=judge, repair=good_repair())
+        metrics = DialogueMetrics()
+        pipeline._metrics = metrics  # noqa: SLF001 - observe the statistics without rewiring build()
+
+        outcome = run(pipeline)
+
+        assert outcome.status is DialogueStatus.REJECTED and not outcome.speakable
+        assert outcome.reason == "checker_unavailable" and not outcome.model_checked
+        assert outcome.calls == 2 and outcome.repaired_turns == [] and not outcome.repair_started
+        assert [name for name, _ in writer.calls] == ["DialogueDraft"]  # no repair call
+        assert [name for name, _ in judge.calls] == ["DialogueCheck"]  # no retry
+        summary = metrics.summary()
+        assert summary["first_pass"]["count"] == 0 and summary["repair_triggered"]["count"] == 0
 
 
 def test_cancellation_is_not_swallowed() -> None:
