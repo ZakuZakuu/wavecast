@@ -14,8 +14,12 @@ What decides, and what only helps:
 * **Pattern matching only points.**  Words that often need a closer look (said-by, first, only,
   roles, years) are shown to the model as a hint, and afterwards recorded as ``hints`` when the
   model's own quote does not carry them.  A hint is *unknown*, not a verdict: it never rejects
-  a passage and never triggers a repair by itself.  A sentence the model left out is likewise
-  unknown (a hint), not an accusation.
+  a passage and never triggers a repair by itself.
+* **The answer must be complete to count.**  One finding for every numbered sentence, none
+  missing, repeated or out of range.  Otherwise there is no judgement at all (``model_checked``
+  is false, exactly as if the call had failed): the caller refuses to voice a story on trust,
+  and nothing is retried or repaired.  Inside a complete answer, ``not_factual`` is a valid
+  judgement that a pattern match cannot overrule.
 
 It makes one call and never retries; the passage's call budget is spent by the caller.  If the
 call fails the passage has no judgement (``model_checked`` is false) and the caller decides -
@@ -145,20 +149,25 @@ class DialogueFactChecker:
             return report
 
         findings = await self._ask(block, material, sentences)
+        if findings is not None and not _covers_exactly(findings, len(sentences)):
+            # An empty, short, repeated or out-of-range answer is not a judgement of this
+            # dialogue: treat it like an unavailable check (no verdicts, nothing voiced on trust).
+            logger.warning(
+                "dialogue_fact_check_incomplete expected=%d returned=%d", len(sentences), len(findings)
+            )
+            findings = None
         report.model_checked = findings is not None
         by_sentence = {finding.sentence: finding for finding in findings or ()}
 
         for number, (turn, index, text) in enumerate(sentences):
             finding = by_sentence.get(number)
             if finding is None:
-                # No judgement for this sentence (the call failed, or it was left out): unknown.
+                # No judgement at all (the call failed, or its answer was incomplete): unknown.
                 if must_be_supported(text):
                     report.hints.append(_hint(turn, index, text, "unchecked"))
                 continue
             if finding.verdict == "not_factual":
-                if must_be_supported(text):
-                    report.hints.append(_hint(turn, index, text, "unchecked"))
-                continue
+                continue  # a complete answer's judgement: a pattern match cannot overrule it
             if finding.verdict == "contradicted":
                 report.issues.append(
                     _issue(turn, index, text, "contradicted", f' (“{finding.quote.strip()}”)')
@@ -233,6 +242,13 @@ class DialogueFactChecker:
             logger.warning("dialogue_fact_check_unavailable error_type=unexpected_output")
             return None
         return result.findings
+
+
+def _covers_exactly(findings: list[SentenceFinding], expected: int) -> bool:
+    """One finding for every numbered sentence: none left out, none repeated, none out of range."""
+
+    numbers = [finding.sentence for finding in findings]
+    return len(numbers) == expected and set(numbers) == set(range(expected))
 
 
 def _fact_block(fact: MaterialFact, *, with_context: bool) -> str:

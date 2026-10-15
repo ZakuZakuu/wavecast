@@ -126,13 +126,55 @@ def test_a_sentence_the_model_calls_not_factual_is_never_an_accusation() -> None
     assert report.issues == [] and report.hints == []  # impression, style: not a reason to send it back
 
 
-def test_a_sentence_the_model_left_out_is_unknown_not_an_issue() -> None:
-    llm = ScriptedLLM(DialogueCheck(findings=[]))
+def test_a_complete_not_factual_answer_is_a_judgement_a_pattern_match_cannot_overrule() -> None:
+    free = SentenceFinding(sentence=0, verdict="not_factual", fact_ids=[], quote="")
 
-    report = review("他说过，这首歌由他作曲。", supported(), llm=llm)
+    report = review("他说过，这首歌由他作曲。", free)  # words that often need a look, but the model judged
 
-    assert report.issues == [] and [h.code for h in report.hints] == ["unchecked"]
-    assert report.model_checked  # the call worked; this one sentence has no verdict
+    assert report.model_checked and report.issues == [] and report.hints == []
+
+
+TWO = ("他说过，这首歌由他作曲。", "旋律听起来很温柔。")
+
+
+def two_sentence_block() -> DialogueBlock:
+    return block_saying(*TWO)
+
+
+def finding(number: int, verdict: str = "not_factual") -> SentenceFinding:
+    return SentenceFinding(sentence=number, verdict=verdict, fact_ids=[], quote="")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "findings",
+    [
+        [],  # nothing returned
+        [finding(999)],  # only an out-of-range number
+        [finding(0)],  # a sentence left out
+        [finding(1)],  # the other one left out
+        [finding(0), finding(0)],  # right count, but one number repeated and one missing
+        [finding(0), finding(1), finding(1)],  # a repeat
+        [finding(0), finding(1), finding(2)],  # one too many (out of range)
+        [finding(-1), finding(0)],  # negative
+        [finding(0), finding(999)],  # right count, wrong number
+    ],
+)
+def test_an_incomplete_answer_is_no_judgement_at_all(findings: list[SentenceFinding]) -> None:
+    llm = ScriptedLLM(DialogueCheck(findings=findings))
+
+    report = asyncio.run(DialogueFactChecker(llm).review(two_sentence_block(), material_with()))  # type: ignore[arg-type]
+
+    assert not report.model_checked  # exactly as if the call had failed
+    assert report.issues == [] and report.flagged_turns() == {} and report.supported == {}  # no repair target
+    assert [h.code for h in report.hints] == ["unchecked"]  # only the sentence that needs support
+
+
+def test_an_answer_that_covers_every_sentence_once_is_accepted_in_any_order() -> None:
+    llm = ScriptedLLM(DialogueCheck(findings=[finding(1), supported()]))
+
+    report = asyncio.run(DialogueFactChecker(llm).review(two_sentence_block(), material_with()))  # type: ignore[arg-type]
+
+    assert report.model_checked and report.issues == []
 
 
 def test_an_unavailable_check_gives_no_issues_and_says_it_judged_nothing() -> None:
