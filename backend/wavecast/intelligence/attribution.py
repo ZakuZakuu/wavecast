@@ -51,14 +51,25 @@ def _locate(source: str, quote: str) -> tuple[int, int] | None:
     return origin[at], origin[at + len(needle) - 1] + 1
 
 
+# A name in a title counts only as a whole name: what comes right after (or before) it must be a
+# boundary, so "专访方大同的制作人" (an interview of the producer) and "专访方大同和周杰伦" (a joint
+# interview) are not the person's own interview.
+_BOUNDARY_CHARS = r"\s:：，,、；;。.!！?？_|｜\-－—–（()）【】\[\]“”\"'‘’《》「」『』/"
+_AFTER_NAME = rf"(?=$|[{_BOUNDARY_CHARS}])"
+_BEFORE_NAME = rf"(?:^|(?<=[{_BOUNDARY_CHARS}]))"
+
+
 def _interviewee_in_title(title: str, name: str) -> bool:
-    """The title puts ``name`` in the interviewee's place (not merely mentions them)."""
+    """The title puts ``name`` - the whole name - in the interviewee's place."""
 
     folded_title, who = canonical_name(title), re.escape(canonical_name(name))
     words = _INTERVIEW_WORDS
     patterns = (
-        rf"{who}\s*(?:{words})",
-        rf"(?:{words})\s*[:：]?\s*{who}",
+        # "Name专访 ..." - the interview word is followed by a boundary, not by another person
+        rf"{_BEFORE_NAME}{who}\s*(?:{words}){_AFTER_NAME}",
+        # "专访Name ..." - the name is whole
+        rf"(?:{words})\s*[:：]?\s*{who}{_AFTER_NAME}",
+        # "... － Name" - the name closes the title
         rf"[－\-—–|｜:：]\s*{who}\s*(?:[_|｜].*)?$",
     )
     return any(re.search(pattern, folded_title) for pattern in patterns)
@@ -103,7 +114,8 @@ def own_words_of(source: str, quote: str, name: str, *, title: str = "") -> str 
 # --- the sentence side ---------------------------------------------------------------------
 
 _SELF_SAID = re.compile("|".join(re.escape(w) for w in ("自己说", "自己讲", "曾说", "说过", "曾表示", "坦言", "自述", "亲口", "他说", "她说")))
-_CLAUSE_END = re.compile(r"[，。！？；、,.!?;:：“”\"']")
+# "、" is not here: in "周杰伦、方大同说过" the enumeration continues one subject.
+_CLAUSE_END = re.compile(r"[，。！？；,.!?;:：“”\"']")
 # Words that may stand between the clause start and "说过" without naming anybody else.
 # (Qualifiers such as "first" or "always" are checked on their own by the fact check.)
 _FILLER = re.compile(
@@ -132,7 +144,9 @@ def says_only_what_the_speaker_said(sentence: str, speaker: str) -> bool:
         clause_start = max((m.end() for m in _CLAUSE_END.finditer(sentence[: match.start()])), default=0)
         prefix = sentence[clause_start : match.start()]
         # "自己说" / "他说" carry their own subject inside the matched word.
-        remaining = _FILLER.sub("", prefix).strip()
-        if remaining and canonical_name(remaining) != who and not canonical_name(remaining).endswith(who):
+        remaining = canonical_name(_FILLER.sub("", prefix))
+        # Nobody else may share the saying: "周杰伦和方大同说过" is not "方大同说过".  The name must
+        # be the whole subject, not merely the end of it.
+        if remaining and remaining != who:
             return False
     return found

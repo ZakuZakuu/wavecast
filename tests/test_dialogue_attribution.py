@@ -47,6 +47,24 @@ def test_an_interview_answer_is_the_interviewees_own_words() -> None:
     assert own_words_of(INTERVIEW, HOPE, NAME, title="獨家專訪方大同") == NAME
 
 
+@pytest.mark.parametrize(
+    "title",
+    [
+        "\"玩乐男孩\"方大同专访：玩转灵魂音乐的稀有动物_网易娱乐",
+        "專訪方大同：關於愛",
+        "方大同專訪_某某雜誌",
+        "音樂人訪談－方大同",
+    ],
+)
+def test_a_title_that_names_him_as_the_interviewee_still_counts(title: str) -> None:
+    assert own_words_of(INTERVIEW, HOPE, NAME, title=title) == NAME
+
+
+def test_the_whole_name_is_needed_not_a_suffix_or_a_prefix_of_somebody_else() -> None:
+    assert own_words_of(INTERVIEW, HOPE, "方大", title="專訪方大同") is None
+    assert own_words_of(INTERVIEW, HOPE, "大同", title="方大同專訪") is None
+
+
 def test_script_variants_are_located_like_everywhere_else() -> None:
     assert own_words_of(INTERVIEW, "所以我希望自己的歌曲能够唤起大家爱的共鸣", NAME, title="专访方大同") == NAME
 
@@ -54,6 +72,12 @@ def test_script_variants_are_located_like_everywhere_else() -> None:
 @pytest.mark.parametrize(
     "title",
     [
+        "專訪方大同的製作人",  # the producer is the interviewee, he is only mentioned
+        "專訪方大同的朋友周耀輝",
+        "方大同的朋友專訪",
+        "專訪方大同和周杰倫",  # a joint interview: not his alone
+        "方大同專訪周杰倫",  # he is the interviewer
+        "歌手方大同專訪",  # not a whole name: something runs into it
         "周耀輝談方大同",  # an interview about him, not of him
         "周耀輝專訪",  # somebody else is the interviewee
         "音樂的平凡時刻",  # nobody is named
@@ -101,6 +125,12 @@ def test_a_quote_that_is_not_in_the_source_is_nobodys_words() -> None:
         ("方大同曾说，写歌靠摸索。", True),
         ("周杰伦说过，他喜欢这首歌。", False),  # the saying is given to somebody else
         ("乐评人说过，他的歌很好。", False),
+        ("周杰伦和方大同说过，写歌靠摸索。", False),  # the saying is shared: not his alone
+        ("周杰伦、方大同说过，写歌靠摸索。", False),
+        ("他和方大同说过，写歌靠摸索。", False),
+        ("方大同和周杰伦都说过，写歌靠摸索。", False),
+        ("音乐人方大同说过，写歌靠摸索。", False),  # a title run into the name: not the whole name
+        ("接着，方大同说过，写歌靠摸索。", True),
         ("这首歌很好听。", False),  # nothing is attributed: this rule has nothing to say
     ],
 )
@@ -167,6 +197,12 @@ def test_verifying_material_records_whose_words_a_fact_is() -> None:
     assert about is not None and [fact.own_words_of for fact in about.facts] == [None, None]
 
 
+def test_an_interview_of_somebody_around_him_is_not_his_own_words_in_the_material() -> None:
+    for title in ("專訪方大同的製作人", "專訪方大同和周杰倫"):
+        material = verify_material(draft_for(HOPE), [evidence(INTERVIEW, title)], story_id="s")
+        assert material is not None and [fact.own_words_of for fact in material.facts] == [None, None]
+
+
 def test_material_saved_before_the_field_existed_still_loads_and_stays_strict() -> None:
     saved = load("material.normalized.json")["material"]
     assert all("own_words_of" not in fact for fact in saved["facts"])
@@ -205,6 +241,10 @@ def test_an_interview_fact_lets_he_said_pass_but_a_third_party_comment_cannot_po
     assert check(SAID, own=NAME) == []  # own interview, traced from its source
     # A quote of somebody else's remark (no proof it is his): still refused.
     assert check("周杰伦说过，希望自己的歌曲能够唤起大家爱的共鸣。", own=NAME) == ["qualifier_not_in_quote"]
+
+
+def test_a_shared_saying_is_not_covered_by_his_own_words() -> None:
+    assert check("周杰伦和方大同说过，希望自己的歌曲能够唤起大家爱的共鸣。", own=NAME) == ["qualifier_not_in_quote"]
 
 
 def test_other_rules_are_untouched_for_an_interview_fact() -> None:

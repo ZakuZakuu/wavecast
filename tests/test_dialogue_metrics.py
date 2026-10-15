@@ -80,7 +80,7 @@ def test_extra_cost_time_and_loss_are_those_of_the_repairs_only() -> None:
     result = summary(clean=6, fixed=2, failed=1)
 
     assert result["extra_cost_cny"] == {"total": 0.07, "mean_per_repair": 0.023333, "repairs_with_known_cost": 3, "repairs": 3}
-    assert result["extra_seconds"] == {"total": 34.0, "mean_per_repair": 11.33}
+    assert result["extra_seconds"] == {"total": 34.0, "mean_per_repair": 11.33, "repairs_with_known_time": 3}
     assert result["information_loss_sentences"] == 2 and result["repairs_with_information_loss"] == 2
 
 
@@ -251,3 +251,174 @@ def test_the_archived_repair_changed_only_the_flagged_turns() -> None:
     for index, turn in enumerate(after["turns"]):
         assert turn["speaker"] == before[index]["speaker"]
         assert (turn["text"] != before[index]["text"]) == (index in flagged)
+
+
+# --- a repair that started is settled however it ends --------------------------------------------
+
+from wavecast.intelligence.dialogue_check import DialogueFactChecker  # noqa: E402
+from wavecast.intelligence.dialogue_pipeline import DialoguePipeline  # noqa: E402
+from wavecast.intelligence.dialogue_writer import (  # noqa: E402
+    DialogueRepair,
+    DialogueRepairer,
+    DialogueWriter,
+    TurnFix,
+)
+from wavecast.providers.errors import ProviderTimeoutError  # noqa: E402
+from wavecast.providers.usage import current_usage_scope  # noqa: E402
+
+from tests.dialogue_fixtures import JudgingLLM, ScriptedLLM  # noqa: E402
+
+REPAIR_PRICE, CHECK_PRICE = 0.002, 0.02
+
+
+class PricedLLM:
+    """Wraps a scripted model and records a priced usage event for every call, even a failing one."""
+
+    def __init__(self, inner: Any, ledger: UsageLedger, prices: dict[str, float | None]) -> None:
+        self.inner, self.ledger, self.prices = inner, ledger, prices
+
+    async def structured(self, prompt: str, output_type: type, **kwargs: Any) -> Any:
+        stage = kwargs.get("stage")
+        try:
+            return await self.inner.structured(prompt, output_type, **kwargs)
+        finally:
+            metadata: dict[str, Any] = {"stage": stage}
+            if self.prices.get(stage) is not None:
+                metadata["estimated_cost_cny"] = self.prices[stage]
+            self.ledger.record(
+                UsageEvent(
+                    provider="ark", operation="structured", elapsed_ms=1,
+                    scope=current_usage_scope(), metadata=metadata,
+                )  # fmt: skip
+            )
+
+
+def priced_pipeline(
+    repair: Any, *, max_calls: int = 4, repair_price: float | None = REPAIR_PRICE
+) -> tuple[DialoguePipeline, DialogueMetrics, UsageLedger]:
+    draft, ledger, metrics = draft_with_two_problems(), UsageLedger(), DialogueMetrics()
+    known: list[Any] = [draft, clean_draft(), good_repair()]
+    if isinstance(repair, DialogueRepair):
+        known.append(repair)  # the judge reads each sentence's declared facts from what it has seen
+    writer_inner = ScriptedLLM(draft)
+    writer_inner.queue(DialogueRepair, repair)
+    prices: dict[str, float | None] = {"dialogue_repair": repair_price, "dialogue_fact_check": CHECK_PRICE}
+    writer = PricedLLM(writer_inner, ledger, prices)
+    judge = PricedLLM(JudgingLLM(material(), known, insufficient=("更成熟",)), ledger, prices)
+    pipeline = DialoguePipeline(
+        writer=DialogueWriter(writer),  # type: ignore[arg-type]
+        checker=DialogueFactChecker(judge),  # type: ignore[arg-type]
+        repairer=DialogueRepairer(writer),  # type: ignore[arg-type]
+        max_calls=max_calls, metrics=metrics, ledger=ledger,
+    )  # fmt: skip
+    return pipeline, metrics, ledger
+
+
+def produce(pipeline: DialoguePipeline) -> Any:
+    async def go() -> Any:
+        with usage_scope("ep"):
+            return await pipeline.produce(material(), SLOT)
+
+    return asyncio.run(go())
+
+
+def only_attempt(metrics: DialogueMetrics) -> PassageAttempt:
+    (attempt,) = metrics.attempts
+    return attempt
+
+
+def test_a_repair_the_budget_could_not_pay_for_never_started_and_is_not_counted() -> None:
+    pipeline, metrics, _ = priced_pipeline(good_repair(), max_calls=2)  # the draft and the first check only
+
+    outcome = produce(pipeline)
+
+    assert outcome.reason == "budget_exhausted" and outcome.status is DialogueStatus.REJECTED
+    attempt = only_attempt(metrics)
+    assert attempt.reached_first_check and not attempt.first_check_passed
+    assert not attempt.repair_triggered and attempt.extra_cost_cny is None and attempt.extra_seconds is None
+    result = metrics.summary()
+    assert result["repair_triggered"] == {"count": 0, "of": 1, "rate": 0.0}
+    assert result["first_check_not_passed_without_repair"] == 1
+    assert result["extra_cost_cny"]["repairs"] == 0
+
+
+def test_an_invalid_repair_still_settles_its_price_and_time() -> None:
+    bad = DialogueRepair(fixes=[TurnFix(turn=0, text="没被标出的轮", fact_refs=[])])  # turn 0 was not flagged
+    pipeline, metrics, _ = priced_pipeline(bad)
+
+    outcome = produce(pipeline)
+
+    assert outcome.reason == "invalid_repair"
+    attempt = only_attempt(metrics)
+    assert attempt.repair_triggered and not attempt.repair_succeeded
+    assert attempt.extra_cost_cny == pytest.approx(REPAIR_PRICE)  # the repair call; no re-check was made
+    assert attempt.extra_seconds is not None and attempt.extra_seconds >= 0
+
+
+def test_a_repair_that_makes_the_passage_too_long_settles_too() -> None:
+    long_fix = DialogueRepair(
+        fixes=[TurnFix(turn=1, text="很长的话。" * 140, fact_refs=[]), TurnFix(turn=4, text="短。", fact_refs=[])]
+    )  # fmt: skip
+    pipeline, metrics, _ = priced_pipeline(long_fix)
+
+    outcome = produce(pipeline)
+
+    assert outcome.reason in {"too_long_after_repair", "invalid_repair"}
+    attempt = only_attempt(metrics)
+    assert attempt.repair_triggered and attempt.extra_cost_cny == pytest.approx(REPAIR_PRICE)
+    assert attempt.extra_seconds is not None
+
+
+def test_an_unresolved_repair_settles_the_repair_and_the_recheck() -> None:
+    same = DialogueRepair(fixes=[TurnFix(turn=1, text="他一直坚持用国语唱歌。", fact_refs=["fdt-F2"]),
+                                 TurnFix(turn=4, text="这种摸索更成熟了。", fact_refs=["fdt-F5"])])  # fmt: skip
+    pipeline, metrics, _ = priced_pipeline(same)
+
+    outcome = produce(pipeline)
+
+    assert outcome.reason == "unresolved_after_repair"
+    attempt = only_attempt(metrics)
+    assert attempt.repair_triggered and not attempt.repair_succeeded
+    assert attempt.extra_cost_cny == pytest.approx(REPAIR_PRICE + CHECK_PRICE)
+    assert attempt.information_loss_sentences >= 0
+
+
+def test_a_repair_that_times_out_keeps_the_time_and_the_price_if_one_was_reported() -> None:
+    timeout = ProviderTimeoutError("slow")
+    priced, metrics, _ = priced_pipeline(timeout)  # type: ignore[arg-type]
+    outcome = produce(priced)
+    assert outcome.reason == "provider_failed:ProviderTimeoutError"
+    attempt = only_attempt(metrics)
+    assert attempt.repair_triggered and attempt.extra_cost_cny == pytest.approx(REPAIR_PRICE)
+    assert attempt.extra_seconds is not None
+
+
+def test_an_unpriced_repair_call_leaves_the_cost_unknown_but_not_the_time() -> None:
+    pipeline, metrics, _ = priced_pipeline(ProviderTimeoutError("slow"), repair_price=None)  # type: ignore[arg-type]
+    produce(pipeline)
+    attempt = only_attempt(metrics)
+    assert attempt.repair_triggered and attempt.extra_cost_cny is None  # unknown, not zero
+    assert attempt.extra_seconds is not None
+    summary_ = metrics.summary()
+    assert summary_["extra_cost_cny"]["total"] is None and summary_["extra_seconds"]["total"] is not None
+
+
+def test_cancellation_propagates_and_what_the_started_repair_cost_is_still_counted() -> None:
+    pipeline, metrics, _ = priced_pipeline(asyncio.CancelledError())  # type: ignore[arg-type]
+
+    with pytest.raises(asyncio.CancelledError):
+        produce(pipeline)
+
+    attempt = only_attempt(metrics)
+    assert attempt.cancelled and attempt.repair_triggered
+    assert attempt.extra_cost_cny == pytest.approx(REPAIR_PRICE) and attempt.extra_seconds is not None
+    result = metrics.summary()
+    assert result["cancelled"] == 1
+    # No result, so no rate: but the money is counted.
+    assert result["reached_first_check"] == 0 and result["repair_triggered"]["of"] == 0
+    assert result["extra_cost_cny"]["total"] == pytest.approx(REPAIR_PRICE)
+
+
+def test_a_cancelled_passage_is_not_a_rejected_one() -> None:
+    metrics = DialogueMetrics([PassageAttempt(False, cancelled=True), PassageAttempt(False, rejected_before_check="too_long")])
+    assert metrics.summary()["rejected_before_check"] == {"too_long": 1}

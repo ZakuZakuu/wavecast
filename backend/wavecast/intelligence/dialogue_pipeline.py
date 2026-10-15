@@ -14,6 +14,7 @@ rejected, with the reason, so the caller can keep the music going.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -155,6 +156,11 @@ class DialoguePipeline:
         calls = _Calls(self._max_calls)
         try:
             return self._noted(await self._run(material, slot, budget.hard_max_seconds, calls, outcome))
+        except asyncio.CancelledError:
+            # Not a result, but what a started repair cost is still counted - then it propagates.
+            outcome.calls = calls.used
+            self._noted(outcome, cancelled=True)
+            raise
         except _BudgetExhausted:
             outcome.reason = "budget_exhausted"
         except ProviderError as error:
@@ -163,7 +169,7 @@ class DialoguePipeline:
         outcome.calls = calls.used
         return self._noted(outcome)
 
-    def _noted(self, outcome: DialogueOutcome) -> DialogueOutcome:
+    def _noted(self, outcome: DialogueOutcome, *, cancelled: bool = False) -> DialogueOutcome:
         """Count the passage in the repair statistics (when asked to) and say so in the log."""
 
         repaired = outcome.status is DialogueStatus.REPAIRED
@@ -176,7 +182,10 @@ class DialoguePipeline:
             ),
             repair_triggered=outcome.repair_started,
             repair_succeeded=repaired,
-            rejected_before_check=None if outcome.reached_first_check else (outcome.reason or "rejected"),
+            cancelled=cancelled,
+            rejected_before_check=(
+                None if outcome.reached_first_check or cancelled else (outcome.reason or "rejected")
+            ),
             extra_seconds=outcome.repair_seconds,
             extra_cost_cny=outcome.repair_cost_cny,
             information_loss_sentences=outcome.information_loss_sentences,
@@ -184,9 +193,10 @@ class DialoguePipeline:
         if self._metrics is not None:
             self._metrics.add(attempt)
         logger.info(
-            "dialogue_passage status=%s first_pass=%s repair_triggered=%s repair_succeeded=%s "
-            "extra_seconds=%s lost_sentences=%s",
+            "dialogue_passage status=%s cancelled=%s first_pass=%s repair_triggered=%s "
+            "repair_succeeded=%s extra_seconds=%s lost_sentences=%s",
             outcome.status.value,
+            cancelled,
             attempt.first_check_passed,
             attempt.repair_triggered,
             attempt.repair_succeeded,
@@ -238,9 +248,29 @@ class DialoguePipeline:
             outcome.calls = calls.used
             return outcome
 
-        mark, started = LedgerMark(self._ledger), time.monotonic()
+        calls.take()  # no budget left for a repair: it never started, and is not counted as one
         outcome.repair_started = True
-        calls.take()
+        mark, started = LedgerMark(self._ledger), time.monotonic()
+        try:
+            return await self._repair_phase(
+                block, material, flagged, first, hard_max_seconds, calls, outcome
+            )
+        finally:
+            # However the repair ends - rejected, timed out, over budget, cancelled - what it
+            # cost so far is settled: the price of the calls the ledger knows, and the time.
+            outcome.repair_seconds = time.monotonic() - started
+            outcome.repair_cost_cny = mark.repair_cost_cny()
+
+    async def _repair_phase(
+        self,
+        block: DialogueBlock,
+        material: StoryMaterial,
+        flagged: dict[int, str],
+        first: DialogueCheckReport,
+        hard_max_seconds: int,
+        calls: _Calls,
+        outcome: DialogueOutcome,
+    ) -> DialogueOutcome:
         repair = await self._repairer.repair(block, material, flagged)
         repaired = self._apply(block, repair, set(flagged), material)
         if repaired is None:
@@ -248,6 +278,9 @@ class DialoguePipeline:
             outcome.final_issues = list(first.issues)
             outcome.calls = calls.used
             return outcome
+        outcome.information_loss_sentences = sum(
+            sentences_lost(block.turns[index].text, repaired.turns[index].text) for index in flagged
+        )
 
         if repaired.duration_seconds > hard_max_seconds:
             # The repair can lengthen a passage as well as shorten it: same ceiling as the draft.
@@ -258,11 +291,6 @@ class DialoguePipeline:
 
         calls.take()
         second = await self._checker.review(repaired, material)
-        outcome.repair_seconds = time.monotonic() - started
-        outcome.repair_cost_cny = mark.repair_cost_cny()
-        outcome.information_loss_sentences = sum(
-            sentences_lost(block.turns[index].text, repaired.turns[index].text) for index in flagged
-        )
         outcome.model_checked = outcome.model_checked and second.model_checked
         if not second.model_checked and repaired.purpose in PURPOSES_REQUIRING_FACTS:
             outcome.reason = "checker_unavailable"

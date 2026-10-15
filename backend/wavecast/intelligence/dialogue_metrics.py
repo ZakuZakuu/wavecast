@@ -49,6 +49,9 @@ class PassageAttempt:
     repair_triggered: bool = False
     repair_succeeded: bool = False
     rejected_before_check: str | None = None
+    # Interrupted before a result: its repair cost is real and counted, but it is no outcome and
+    # stays out of every rate.
+    cancelled: bool = False
     extra_seconds: float | None = None
     extra_cost_cny: float | None = None
     information_loss_sentences: int = 0
@@ -97,14 +100,17 @@ class DialogueMetrics:
         self.attempts.append(attempt)
 
     def summary(self) -> dict[str, Any]:
-        reached = [a for a in self.attempts if a.reached_first_check]
+        finished = [a for a in self.attempts if not a.cancelled]
+        reached = [a for a in finished if a.reached_first_check]
         repaired = [a for a in reached if a.repair_triggered]
         passed_first = sum(a.first_check_passed for a in reached)
         succeeded = sum(a.repair_succeeded for a in repaired)
-        costs = [a.extra_cost_cny for a in repaired if a.extra_cost_cny is not None]
-        times = [a.extra_seconds for a in repaired if a.extra_seconds is not None]
+        # What repairs cost counts every repair that started, whether or not it finished.
+        started = [a for a in self.attempts if a.repair_triggered]
+        costs = [a.extra_cost_cny for a in started if a.extra_cost_cny is not None]
+        times = [a.extra_seconds for a in started if a.extra_seconds is not None]
         rejected: dict[str, int] = {}
-        for attempt in self.attempts:
+        for attempt in finished:
             if attempt.rejected_before_check:
                 rejected[attempt.rejected_before_check] = rejected.get(attempt.rejected_before_check, 0) + 1
 
@@ -130,14 +136,16 @@ class DialogueMetrics:
                 "total": round(sum(costs), 6) if costs else None,
                 "mean_per_repair": round(sum(costs) / len(costs), 6) if costs else None,
                 "repairs_with_known_cost": len(costs),
-                "repairs": len(repaired),
+                "repairs": len(started),
             },
             "extra_seconds": {
                 "total": round(sum(times), 2) if times else None,
                 "mean_per_repair": round(sum(times) / len(times), 2) if times else None,
+                "repairs_with_known_time": len(times),
             },
-            "information_loss_sentences": sum(a.information_loss_sentences for a in repaired),
-            "repairs_with_information_loss": sum(a.information_loss_sentences > 0 for a in repaired),
+            "cancelled": len(self.attempts) - len(finished),
+            "information_loss_sentences": sum(a.information_loss_sentences for a in started),
+            "repairs_with_information_loss": sum(a.information_loss_sentences > 0 for a in started),
             "rates_established": len(reached) >= MIN_SAMPLE_FOR_RATES,
             "minimum_passages_for_rates": MIN_SAMPLE_FOR_RATES,
         }
