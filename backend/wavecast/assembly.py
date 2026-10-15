@@ -4581,10 +4581,16 @@ def create_episode_assembly_service(
         deep_research: SearchProvider | None = None
     else:
         discovery = ExaSearchProvider(live_settings, ledger=ledger)
-        research = TavilySearchProvider(live_settings, ledger=ledger)
-        deep_research = TavilySearchProvider(
-            live_settings, ledger=ledger, search_depth="advanced"
-        )
+        if settings.search_backend == "exa":
+            # Exa alone: the exact-lookup slot is the same Exa client; Tavily is never built,
+            # so it is never asked and its key is not needed.  No automatic switching.
+            research = discovery
+            deep_research = None
+        else:
+            research = TavilySearchProvider(live_settings, ledger=ledger)
+            deep_research = TavilySearchProvider(
+                live_settings, ledger=ledger, search_depth="advanced"
+            )
 
     if settings.resolved_tts_provider == "mock":
         tts: TTSProvider = MockTTSProvider(storage)
@@ -4594,13 +4600,17 @@ def create_episode_assembly_service(
             raise ProviderConfigurationError("minimax TTS requires MINIMAX_TTS_VOICE_ID")
         tts = MiniMaxTTSProvider(live_settings, storage=storage, ledger=ledger)
 
-    fast_research = FastResearchService(discovery=discovery, research=research, ledger=ledger)
+    research_label = "exa" if settings.search_backend == "exa" else "tavily"
+    fast_research = FastResearchService(
+        discovery=discovery, research=research, ledger=ledger, research_label=research_label
+    )
     background_research = BackgroundResearchService(
         discovery=discovery,
         research=research,
         ledger=ledger,
-        planner=BackgroundResearchPlanner(research_llm),
+        planner=BackgroundResearchPlanner(research_llm, exa_only=settings.search_backend == "exa"),
         deep_research=deep_research,
+        research_label=research_label,
     )
     fast_path = FastPathCoordinator(
         research=fast_research,

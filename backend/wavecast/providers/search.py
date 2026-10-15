@@ -1,5 +1,6 @@
 """Exa and Tavily search adapters normalized to the Wavecast search contract."""
 
+import asyncio
 from time import perf_counter
 from typing import Any, Literal
 
@@ -33,21 +34,25 @@ class ExaSearchProvider:
         self, query: str, *, limit: int = 5, stage: str | None = None
     ) -> list[SearchResult]:
         started_at = perf_counter()
-        payload, response = await request_json(
-            self.client,
-            provider="exa",
-            method="POST",
-            url=self.endpoint,
-            max_attempts=self.settings.max_attempts,
-            headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
-            json={
-                "query": query,
-                "type": "auto",
-                "numResults": limit,
-                # Highlights offer downstream reasoning context without requesting full bodies.
-                "contents": {"text": False, "highlights": True},
-            },
-        )
+        try:
+            payload, response = await request_json(
+                self.client,
+                provider="exa",
+                method="POST",
+                url=self.endpoint,
+                max_attempts=self.settings.max_attempts,
+                headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
+                json={
+                    "query": query,
+                    "type": "auto",
+                    "numResults": limit,
+                    # Highlights offer downstream reasoning context without requesting full bodies.
+                    "contents": {"text": False, "highlights": True},
+                },
+            )
+        except BaseException as error:
+            _record_unfinished(self.ledger, "exa", started_at, stage, error)
+            raise
         request_id = _optional_string(payload.get("requestId")) or response.headers.get(
             "x-request-id"
         )
@@ -70,6 +75,7 @@ class ExaSearchProvider:
                 search_queries=1,
                 actual_cost_usd=actual_cost if isinstance(actual_cost, (int, float)) else None,
                 metadata={
+                    "outcome": "ok",
                     "resolved_search_type": payload.get("resolvedSearchType"),
                     "result_count": len(normalized),
                     **({"stage": stage} if stage is not None else {}),
@@ -137,23 +143,27 @@ class TavilySearchProvider:
     ) -> list[SearchResult]:
         depth = search_depth or self.search_depth
         started_at = perf_counter()
-        payload, response = await request_json(
-            self.client,
-            provider="tavily",
-            method="POST",
-            url=self.endpoint,
-            max_attempts=self.settings.max_attempts,
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            json={
-                "query": query,
-                "topic": "general",
-                "search_depth": depth,
-                "include_answer": False,
-                "include_raw_content": False,
-                "include_usage": True,
-                "max_results": limit,
-            },
-        )
+        try:
+            payload, response = await request_json(
+                self.client,
+                provider="tavily",
+                method="POST",
+                url=self.endpoint,
+                max_attempts=self.settings.max_attempts,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "query": query,
+                    "topic": "general",
+                    "search_depth": depth,
+                    "include_answer": False,
+                    "include_raw_content": False,
+                    "include_usage": True,
+                    "max_results": limit,
+                },
+            )
+        except BaseException as error:
+            _record_unfinished(self.ledger, "tavily", started_at, stage, error, search_depth=depth)
+            raise
         request_id = _optional_string(payload.get("request_id")) or response.headers.get(
             "x-request-id"
         )
@@ -176,6 +186,7 @@ class TavilySearchProvider:
                 search_queries=1,
                 search_credits=float(credits) if isinstance(credits, (int, float)) else None,
                 metadata={
+                    "outcome": "ok",
                     "search_depth": depth,
                     "result_count": len(normalized),
                     **({"stage": stage} if stage is not None else {}),
@@ -202,6 +213,35 @@ class TavilySearchProvider:
             score=_optional_float(item.get("score")),
             request_id=request_id,
         )
+
+
+def _record_unfinished(
+    ledger: UsageLedger,
+    provider: str,
+    started_at: float,
+    stage: str | None,
+    error: BaseException,
+    **extra: Any,
+) -> None:
+    """A request that did not come back: it was dispatched, so it is counted, but no receipt
+    arrived - tokens, credits and cost are unknown (``None``), which is not zero."""
+
+    cancelled = isinstance(error, asyncio.CancelledError)
+    ledger.record(
+        UsageEvent(
+            provider=provider,
+            operation="search",
+            elapsed_ms=int((perf_counter() - started_at) * 1000),
+            search_queries=1,
+            metadata={
+                "outcome": "cancelled" if cancelled else "error",
+                "error_type": type(error).__name__,
+                "cost_basis": "no_receipt",
+                **extra,
+                **({"stage": stage} if stage is not None else {}),
+            },
+        )
+    )
 
 
 def _optional_string(value: object) -> str | None:

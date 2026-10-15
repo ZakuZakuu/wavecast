@@ -14,7 +14,7 @@ Updated: 2026-10-15（双人讲述单段验收后；#303 核对改为轻量兜�
 
 **默认链路已简化（ADR 0029，待 GPT 审查与 CI）：** 实时检索 → Pro 素材提炼 → Lite 写稿 → 基础校验（素材范围内的事实 ID、结构、时长硬上限）→ 豆包配音。事后 Pro 核对、局部修复、复核已从默认路径移除（取代 ADR 0025 的核对与 ADR 0028）；存档如实记 `model_checked=false`，旧存档照常恢复。原因：两次真实验收里该核对都没抓到真正的事实错误，却阻塞了产出；demo 阶段接受小的措辞偏差。默认开关仍关闭。
 
-下一步：该 PR 审查通过且最新 CI 通过后普通 merge 到 integration；用上一轮保存的真实素材与候选稿做一次配音验收（不重做检索、提炼、写稿）。不要再扩模型名单、不要围绕核对扩功能。main 留到完整验收。
+#304 已合入 integration（`a641d4d`）。随后一批（[ADR 0030](adr/0030-exa-only-search-doubao-pricing-usage-persistence.md)）：`WAVECAST_SEARCH_BACKEND=exa` 的 Exa-only 检索配置、豆包按回执 token 自动估价（输入 ¥120 / 输出音频 ¥100 每百万 token）、用量事件持久化（按节目查询接口重启后仍可读，按币种分开、未知单列）。下一步：完整节目（方大同人物志，SHORT）的真实验收，结果另记。不要再扩模型名单、不要围绕核对扩功能。main 留到完整验收。
 
 验收记录（2026-10-15）：人物志单段经过一次局部修复后通过，用户试听认可（首次核对未通过；随便听控长仍未通过，未重测）。样本见 `tests/fixtures/dialogue_portrait_20261015/`（历史存档，保持原样），当时的核对/修复路线与结论见 [ADR 0028](adr/0028-light-fact-check-and-repair-statistics.md)，已被 [ADR 0029](adr/0029-drop-post-hoc-check-from-default-dialogue-path.md) 取代。同日第二次真实验收（实时检索，Tavily 额度耗尽、仅 Exa 有结果）停在核对阶段（`unresolved_after_repair`），未产出音频，促成了 ADR 0029。动态等待策略暂不改，等产品讨论。
 

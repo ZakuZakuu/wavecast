@@ -294,9 +294,8 @@ class DoubaoPodcastSpeechProvider:
             "output_audio_tokens": attempt.total("output_audio_tokens"),
             # A local count of what was sent - not what was billed.
             "sent_characters": sum(len(line.text) for line in script.lines),
-            # No price table exists for this service: the cost is unknown, never zero.
-            "cost_basis": "unpriced",
         }
+        metadata.update(_price(attempt))
         if outcome != "ok":
             metadata["failed_stage"] = stage
         if audio_seconds is not None:
@@ -310,6 +309,42 @@ class DoubaoPodcastSpeechProvider:
                 metadata=metadata,
             )
         )
+
+
+# Published rates for the podcast model (CNY per million tokens), as the user gave them on
+# 2026-10-15.  Bump the version when they change.
+PRICE_VERSION = "doubao-podcast-2026-10-15"
+INPUT_TEXT_CNY_PER_MILLION = 120.0
+OUTPUT_AUDIO_CNY_PER_MILLION = 100.0
+
+
+def _price(attempt: PodcastAttempt) -> dict[str, Any]:
+    """The cost of an attempt from the counts the service reported - never from characters.
+
+    A reported zero stays zero (receipts have carried 0 input text tokens so far).  Unless the
+    session finished and both counts arrived the cost is unknown (``None``), not a smaller
+    number: the service may have billed more than it told us.
+    """
+
+    input_text = attempt.total("input_text_tokens")
+    output_audio = attempt.total("output_audio_tokens")
+    if attempt.usage_status() != "complete" or input_text is None or output_audio is None:
+        cost = None
+        basis = "usage_incomplete"
+    else:
+        cost = round(
+            (input_text * INPUT_TEXT_CNY_PER_MILLION + output_audio * OUTPUT_AUDIO_CNY_PER_MILLION)
+            / 1_000_000,
+            8,
+        )
+        basis = "reported_token_counts"
+    return {
+        "estimated_cost_cny": cost,
+        "estimated_cost_cny_low": cost,
+        "estimated_cost_cny_high": cost,
+        "cost_basis": basis,
+        "price_version": PRICE_VERSION,
+    }
 
 
 def _wav(pcm: bytes) -> bytes:

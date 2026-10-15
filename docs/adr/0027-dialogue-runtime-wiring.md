@@ -87,6 +87,5 @@ episode 记录里的 `dialogue_audio` 是权威；存档旁的快照（`…audio
 ## 豆包语音播客大模型定价（用户提供，2026-10-15）
 
 - 推理服务-输入-文本：**¥120 / 百万 token**；推理服务-输出-音频：**¥100 / 百万 token**。
-- 费用 = 输入文本 token × 120 ＋ 输出音频 token × 100（均除以 10⁶）。用量事件里的字段是 `input_text_tokens` 与 `output_audio_tokens`。
-- 至今每张回执的 `input_text_tokens` 都是 0（实验与两次验收），所以实际费用基本等于输出音频的部分；若回执哪天给出非零输入 token，按上面的单价计入。
-- 用量事件的 `cost_basis` 目前仍标 `unpriced`（代码没有内置单价）；报告里的费用由这两个数手算，未知仍写“未知”，不写 0。
+- 用量事件现在自动估价（[ADR 0030](0030-exa-only-search-doubao-pricing-usage-persistence.md)）：费用 = 回执里的 `input_text_tokens` × 120 ＋ `output_audio_tokens` × 100（÷10⁶），记录 `price_version=doubao-podcast-2026-10-15`、`cost_basis=reported_token_counts`。服务端报告的 0 保持 0；两项计数缺失、或会话未完成（`usage_status` 不是 `complete`）时费用为**未知**（`None`，`cost_basis=usage_incomplete`），不是更小的数；汉字数不当作 token 数，也不用作费用上限。
+- 至今每张回执的 `input_text_tokens` 都是 0（实验与验收），所以实际费用基本等于输出音频部分。

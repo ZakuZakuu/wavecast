@@ -179,7 +179,7 @@ def test_a_success_leaves_exactly_one_final_event_with_the_known_counts(tmp_path
     assert meta["outcome"] == "ok" and meta["protocol"] == DOUBAO_PODCAST_PROTOCOL
     assert (meta["input_text_tokens"], meta["output_audio_tokens"]) == (0, 403)  # a reported zero stays zero
     assert meta["usage_status"] == "complete" and meta["audio_seconds"] == 7.2
-    assert meta["sent_characters"] == len(LINE_A + LINE_B) and meta["cost_basis"] == "unpriced"
+    assert meta["sent_characters"] == len(LINE_A + LINE_B)
     assert event.estimated_cost_usd is None and event.actual_cost_usd is None  # unknown, not zero
     assert event.usage_characters is None  # nothing was billed in characters
     assert LINE_A not in str(event.model_dump())
@@ -292,7 +292,8 @@ def test_the_speech_counts_reach_the_safe_report_and_the_totals(tmp_path) -> Non
     assert (first["input_text_tokens"], first["output_audio_tokens"], first["usage_status"]) == (0, 403, "complete")
     assert second["output_audio_tokens"] is None and second["failed_stage"] == "transport"
     assert report["usage"]["output_audio_tokens"] == 403  # type: ignore[index]
-    assert report["usage"]["usage_incomplete_calls"] == 1 and report["usage"]["cost_unknown_calls"] == 2  # type: ignore[index]
+    assert report["usage"]["usage_incomplete_calls"] == 1 and report["usage"]["cost_unknown_calls"] == 1  # type: ignore[index]
+    assert report["usage"]["estimated_cost_cny"] == pytest.approx(0.0403)  # type: ignore[index]  # only the priced call
     assert "刚听完" not in json.dumps(report, ensure_ascii=False)
 
 
@@ -642,3 +643,50 @@ def test_through_the_adapter_a_session_is_stored_and_recorded_end_to_end(tmp_pat
     (event,) = ledger.events
     assert event.metadata["output_audio_tokens"] == 711 and event.metadata["usage_status"] == "complete"
     assert event.request_id and event.metadata["rounds_completed"] == 2
+
+
+# --- price: from the counts the service reported, never from characters --------------------------
+
+
+def test_a_complete_receipt_is_priced_from_its_token_counts(tmp_path) -> None:
+    provider, _, _, ledger = _provider(tmp_path)
+    asyncio.run(provider.synthesize_dialogue(_request()))
+
+    meta = ledger.events[0].metadata
+    # 0 input text tokens (reported zero) and 403 output audio tokens: 403 * 100 / 1e6.
+    assert meta["estimated_cost_cny"] == pytest.approx(0.0403)
+    assert meta["estimated_cost_cny_low"] == meta["estimated_cost_cny_high"] == meta["estimated_cost_cny"]
+    assert meta["cost_basis"] == "reported_token_counts" and meta["price_version"] == "doubao-podcast-2026-10-15"
+    assert meta["sent_characters"] == len(LINE_A + LINE_B)  # characters are recorded, never priced
+
+
+def test_both_rates_apply_and_a_reported_zero_stays_zero() -> None:
+    from wavecast.providers.doubao_podcast import _price
+
+    attempt = PodcastAttempt()
+    attempt.usage_reports = [{"input_text_tokens": 1000, "output_audio_tokens": 2000}]
+    attempt.session_finished = True
+    assert _price(attempt)["estimated_cost_cny"] == pytest.approx((1000 * 120 + 2000 * 100) / 1e6)
+
+    attempt.usage_reports = [{"input_text_tokens": 0, "output_audio_tokens": 0}]
+    assert _price(attempt)["estimated_cost_cny"] == 0.0  # the service said zero; not "unknown"
+
+
+@pytest.mark.parametrize("finished", [True, False])
+def test_a_missing_or_partial_receipt_is_unknown_not_a_smaller_number(finished) -> None:  # type: ignore[no-untyped-def]
+    from wavecast.providers.doubao_podcast import _price
+
+    attempt = PodcastAttempt()
+    attempt.session_finished = finished
+    assert _price(attempt) | {} == {
+        "estimated_cost_cny": None,
+        "estimated_cost_cny_low": None,
+        "estimated_cost_cny_high": None,
+        "cost_basis": "usage_incomplete",
+        "price_version": "doubao-podcast-2026-10-15",
+    }
+    attempt.usage_reports = [{"output_audio_tokens": 12}]  # input text tokens never reported
+    assert _price(attempt)["estimated_cost_cny"] is None
+    if not finished:
+        attempt.usage_reports = [{"input_text_tokens": 5, "output_audio_tokens": 12}]
+        assert _price(attempt)["estimated_cost_cny"] is None  # the session did not finish: maybe more was billed
