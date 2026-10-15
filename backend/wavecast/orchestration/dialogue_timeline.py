@@ -124,9 +124,18 @@ async def regenerate_segment(
     block = segment.dialogue
     if block is None:
         raise ValueError("only a dialogue segment can be regenerated")
-    await materializer.regenerate_dialogue(segment)
-    assert segment.dialogue_audio is not None
-    await artifacts.save_audio(episode_id, block.block_id, segment.dialogue_audio)
+    # Keep the current segment authoritative until the replacement snapshot is durable.
+    # Synthesis can succeed while saving is cancelled or fails; that must not leave the
+    # in-memory programme pointing at audio that its saved record does not describe.
+    replacement = segment.model_copy(deep=True)
+    await materializer.regenerate_dialogue(replacement)
+    assert replacement.dialogue_audio is not None
+    await artifacts.save_audio(episode_id, block.block_id, replacement.dialogue_audio)
+    segment.asset_ref = replacement.asset_ref
+    segment.audio_source_url = replacement.audio_source_url
+    segment.actual_duration_seconds = replacement.actual_duration_seconds
+    segment.dialogue_audio = replacement.dialogue_audio
+    segment.state = replacement.state
     return segment
 
 

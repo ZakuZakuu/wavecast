@@ -806,6 +806,49 @@ def test_regenerating_never_touches_published_audio_and_a_failure_keeps_the_prev
     assert speech.calls == calls and segment.dialogue_audio == previous[1]
 
 
+@pytest.mark.parametrize("cancel_save", [False, True])
+def test_failed_snapshot_save_keeps_the_previous_segment_and_restorable_audio(
+    storage: LocalObjectStorageProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    cancel_save: bool,
+) -> None:
+    speech = MockDialogueSpeechProvider(storage)
+    artifacts, segment = voiced(storage, speech)
+    previous = segment.model_dump(mode="json")
+    original_snapshot = segment.dialogue_audio
+    new_voices = (
+        VoiceRoleSnapshot(speaker=DialogueSpeaker.A, voice_id="replacement-a"),
+        VoiceRoleSnapshot(speaker=DialogueSpeaker.B, voice_id="replacement-b"),
+    )
+
+    async def fail_save(*_args: object) -> str:
+        if cancel_save:
+            raise asyncio.CancelledError
+        raise OSError("snapshot storage unavailable")
+
+    monkeypatch.setattr(artifacts, "save_audio", fail_save)
+    expected = asyncio.CancelledError if cancel_save else OSError
+    with pytest.raises(expected):
+        asyncio.run(
+            regenerate_segment(
+                materializer(storage, speech, voices=new_voices), artifacts, EPISODE, segment
+            )
+        )
+
+    assert speech.calls == 2  # The replacement audio was made before its snapshot save failed.
+    assert segment.model_dump(mode="json") == previous
+    assert asyncio.run(artifacts.load_audio(EPISODE, SLOT.block_id)) == original_snapshot
+    restored = asyncio.run(
+        restore_narration_segment(
+            artifacts, EPISODE, SLOT.block_id, chapter_id="chapter-2", order=1
+        )
+    )
+    assert restored is not None
+    replay = MockDialogueSpeechProvider(storage)
+    asyncio.run(materializer(storage, replay).materialize(restored))
+    assert replay.calls == 0 and restored.asset_ref == segment.asset_ref
+
+
 def test_a_snapshot_must_declare_its_version_and_cover_the_speakers(
     storage: LocalObjectStorageProvider,
 ) -> None:
