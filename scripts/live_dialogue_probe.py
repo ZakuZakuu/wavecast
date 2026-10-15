@@ -1,6 +1,10 @@
 """One short dialogue probe. Dry-run by default; each paid stage once, failure stops.
 
 Uses frozen Evidence, not a new search. No repair, Writer fallback or API retry.
+The station (hence the length budget) is a stated condition of the run, recorded with it; the
+default is the casual budget, the portrait one is selected with ``--station portrait``.
+Every completed stage is saved as an editorial artifact at once (normalised material, the
+*unchecked* candidate, the check result), so a later failure never loses paid work.
 Offline mode uses the explicitly reconstructed test fixture and makes no network calls.
 Editorial records and completed audio may be saved; raw prompts/responses never are.
 """
@@ -15,12 +19,17 @@ import json
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
 from wavecast.arrangement.models import AudioClip, MixPlan
 from wavecast.intelligence.dialogue import block_from_draft
-from wavecast.intelligence.dialogue_budget import dialogue_budget_for, estimate_dialogue_seconds
+from wavecast.intelligence.dialogue_budget import (
+    DIALOGUE_CHARS_PER_SECOND,
+    dialogue_budget_for,
+    estimate_dialogue_seconds,
+)
 from wavecast.intelligence.dialogue_check import DialogueCheck, DialogueFactChecker
 from wavecast.intelligence.dialogue_pipeline import DialogueOutcome, DialogueStatus
 from wavecast.intelligence.dialogue_writer import DialogueSlot, DialogueWriter
@@ -57,6 +66,11 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--prompt-keys", action="store_true")
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument(
+        "--station", choices=[station.value for station in StationId if station is not StationId.NIGHT],
+        default=StationId.CASUAL.value,
+    )
+    parser.add_argument("--condition", default="", help="free text stating what this run is meant to show")
     parser.add_argument("--material-model", default=PRO)
     parser.add_argument("--writer-model", default=LITE)
     parser.add_argument("--checker-model", default=PRO)
@@ -78,15 +92,30 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     }
     if shutil.which("ffmpeg") is None:
         raise ValueError("ffmpeg_unavailable")
+    station = StationId(args.station)
+    budget = dialogue_budget_for(station)
+    if budget is None:
+        raise ValueError("station_has_no_dialogue_budget")
+    target_chars = budget.target_characters
     preflight = {
         "evidence_count": len(evidence),
         "evidence_sha256": hashlib.sha256(raw).hexdigest(),
         "strict_schemas": list(schemas),
         "models": [args.material_model, args.writer_model, args.checker_model],
-        "max_paid_calls": 4,
+        "max_text_calls": 3,
+        "max_speech_calls": 1,
         "automatic_retry": False,
         "repair_or_writer_fallback": False,
-        "max_audio_seconds": 70,
+        # The audio guard follows the station's hard maximum; it is a local guard, not a service limit.
+        "max_audio_seconds": budget.hard_max_seconds,
+        "conditions": {
+            "station": station.value,
+            "note": args.condition,
+            "target_seconds": [budget.target_min_seconds, budget.target_max_seconds],
+            "target_characters": list(target_chars),
+            "hard_max_seconds": budget.hard_max_seconds,
+            "chars_per_second": DIALOGUE_CHARS_PER_SECOND,
+        },
         "mode": "live" if args.live else "offline" if args.offline else "dry_run",
     }
     if not args.live and not args.offline:
@@ -108,6 +137,20 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     clients: list[ArkLLMProvider] = []
     storage = LocalObjectStorageProvider(args.run_dir / "assets")
     state: dict[str, Any] = {**preflight, "status": "started", "stage": "material"}
+    stage_seconds: dict[str, float] = {}
+    clock = time.monotonic()
+
+    def mark(stage: str) -> None:
+        nonlocal clock
+        now = time.monotonic()
+        stage_seconds[stage] = round(now - clock, 2)
+        clock = now
+        state["stage_seconds"] = dict(stage_seconds)
+
+    def keep(name: str, value: Any) -> None:
+        """Save an editorial artifact the moment its stage is done (no raw requests/responses)."""
+        save(args.run_dir / name, value)
+        state.setdefault("saved_artifacts", []).append(name)
     episode_id, story_id = "dialogue-live-probe", "live-fdt"
     track_ref = "frozen:fdt-ai-ai-ai"
     try:
@@ -136,7 +179,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 clients.append(ArkLLMProvider(settings, model=model, role=role, ledger=ledger))
             material_llm, writer_llm, checker_llm = clients
             speech = DoubaoPodcastSpeechProvider(
-                DoubaoPodcastWebSocketTransport(podcast_key, max_audio_seconds=70), storage, ledger=ledger
+                DoubaoPodcastWebSocketTransport(
+                    podcast_key, max_audio_seconds=float(budget.hard_max_seconds)
+                ), storage, ledger=ledger
             )
         with usage_scope(episode_id):
             material = await StoryMaterialService(material_llm).extract(
@@ -144,26 +189,53 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             if material is None:
                 raise ValueError("no_verified_material")
+            mark("material")
             state["verified_facts"] = len(material.facts)
+            keep("material.normalized.json", {
+                "status": "normalised_and_verified_by_code",
+                "material": material.model_dump(mode="json"),
+            })
             state["stage"] = "writer"
             slot = DialogueSlot(
                 slot_id="probe:before-track", block_id="probe-block", purpose=DialoguePurpose.STORY,
-                station=StationId.CASUAL, just_played="我们能不能", upcoming="爱爱爱",
+                station=station, just_played="我们能不能", upcoming="爱爱爱",
             )
-            budget = dialogue_budget_for(slot.station)
-            assert budget is not None
             draft = await DialogueWriter(writer_llm).write(material, slot, budget)
+            mark("writer")
+            characters = sum(len(turn.text) for turn in draft.turns)
+            estimated = estimate_dialogue_seconds(characters)
+            # Recorded before any rejection can happen, so a refused draft is still measured.
+            state["draft"] = {
+                "turns": len(draft.turns),
+                "characters": characters,
+                "estimated_seconds": estimated,
+                "target_seconds": [budget.target_min_seconds, budget.target_max_seconds],
+                "target_characters": list(target_chars),
+                "hard_max_seconds": budget.hard_max_seconds,
+                "within_target": target_chars[0] <= characters <= target_chars[1],
+                "over_hard_max": estimated > budget.hard_max_seconds,
+            }
+            keep("candidate.unchecked.json", {
+                "status": "UNCHECKED candidate: not fact-checked, not approved for broadcast",
+                "measure": state["draft"],
+                "turns": [turn.model_dump(mode="json") for turn in draft.turns],
+            })
             block = block_from_draft(
                 draft, block_id=slot.block_id, slot_id=slot.slot_id, purpose=slot.purpose,
                 duration_seconds=estimate_dialogue_seconds(sum(len(t.text) for t in draft.turns)),
                 allowed_fact_refs=material.fact_ids, story_id=story_id,
             )
             if block.duration_seconds > budget.hard_max_seconds:
-                raise ValueError("draft_exceeds_short_probe_budget")
-            state["turns"] = len(block.turns)
-            state["estimated_seconds"] = block.duration_seconds
+                raise ValueError("draft_exceeds_probe_budget")
             state["stage"] = "fact_check"
             checked = await DialogueFactChecker(checker_llm).review(block, material)
+            mark("fact_check")
+            keep("check.result.json", {
+                "model_checked": checked.model_checked,
+                "passed": bool(checked.model_checked and not checked.issues),
+                "issues": [issue.model_dump(mode="json") for issue in checked.issues],
+                "supported_by_turn": {str(turn): refs for turn, refs in checked.supported.items()},
+            })
             if not checked.model_checked or checked.issues:
                 state["issue_codes"] = sorted({issue.code for issue in checked.issues})
                 raise ValueError("fact_check_rejected_no_repair")
@@ -173,6 +245,10 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             artifacts = DialogueArtifactStore(storage)
             await artifacts.save(episode_id, outcome.to_record())
+            keep("candidate.checked.json", {
+                "status": "CHECKED: passed the fact check unchanged (no repair)",
+                "turns": [turn.model_dump(mode="json") for turn in block.turns],
+            })
             segment = narration_segment_from_record(outcome.to_record(), chapter_id="chapter-1", order=0)
             materializer = NarrationMaterializer(
                 MockTTSProvider(storage), storage, dialogue_speech=speech,
@@ -180,6 +256,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             state["stage"] = "speech"
             await voice_segment(materializer, artifacts, episode_id, segment)
+            mark("speech")
             if segment.dialogue_audio is None or not segment.audio_source_url:
                 raise ValueError("speech_did_not_produce_snapshot")
             stored = await storage.get(segment.dialogue_audio.cache_key)
@@ -203,17 +280,26 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             again = await render_program_prefix(plan, storage, complete=True)
             if again != manifest:
                 raise ValueError("hls_not_repeatable")
+            mark("hls")
             state.update(status="completed", audio_seconds=duration, hls_chunks=len(manifest.chunks))
+            state["turn_timings"] = (await storage.get(segment.dialogue_audio.cache_key)).metadata.get("turn_timings")  # type: ignore[union-attr]
     except asyncio.CancelledError:
         state.update(status="cancelled", error_type="CancelledError")
         raise
     except Exception as error:  # safe diagnosis: never persist provider exception text
         state.update(status="failed", error_type=type(error).__name__)
         if isinstance(error, ValueError) and str(error) in {
-            "no_verified_material", "draft_exceeds_short_probe_budget", "fact_check_rejected_no_repair",
+            "no_verified_material", "draft_exceeds_probe_budget", "fact_check_rejected_no_repair",
         }:
             state["reason"] = str(error)
+        state["failed_stage"] = state.get("stage")
     finally:
+        # Two separate questions, never one verdict: did this chain work under the stated
+        # condition, and does the casual-length control (an earlier attempt) pass?
+        state["conclusions"] = {
+            f"{station.value}_chain_passed": state.get("status") == "completed",
+            "casual_length_control": "not_passed (earlier attempt, a different run directory, untouched)",
+        }
         state["providers"] = usage_diagnostics(ledger, scope=episode_id)
         state["live_calls"] = len(ledger.events) if args.live else 0
         save(args.run_dir / "summary.safe.json", state)
