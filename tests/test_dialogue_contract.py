@@ -260,12 +260,16 @@ def test_the_dialogue_survives_serialization_instead_of_being_dropped() -> None:
 # --- paths that cannot carry a dialogue refuse it ------------------------------------------------
 
 
-def test_a_narration_segment_is_never_made_from_a_dialogue_by_flattening() -> None:
+def test_a_narration_segment_carries_the_dialogue_instead_of_flattening_it() -> None:
     block = RadioScriptBlock(kind=RadioScriptBlockKind.TRANSITION, dialogue=story_block())
 
-    with pytest.raises(DialogueNotSupportedError, match="b1"):
-        _narration_segment(block, 0, 1)
+    segment = _narration_segment(block, 0, 1)
+
+    # Batch 3: the segment keeps the turns, speakers and references; the visible text is derived.
+    assert segment.dialogue == block.dialogue and segment.narration_text == block.text
+    assert segment.tts_text is None
     assert _narration_segment(plain_block(), 0, 1).narration_text == "接下来。"
+    assert _narration_segment(plain_block(), 0, 1).dialogue is None
 
 
 def test_merging_writer_blocks_refuses_a_dialogue() -> None:

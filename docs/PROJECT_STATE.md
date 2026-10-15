@@ -1,17 +1,18 @@
 # WaveCast Project State
 
-Updated: 2026-10-14（下一轮接入准备）；下方旧分支/部署条目保留为历史，非实时部署事实。**唯一的当前状态入口**。
+Updated: 2026-10-15（双人讲述离线接入审查）；下方旧部署条目为历史，非实时部署事实。**唯一的当前状态入口**。
 
-## 本轮执行入口：有内容的讲述与双人配音（尚未接入）
+## 本轮执行入口：有内容的讲述与双人配音（尚未启用于真实生成）
 
-2026-10-14核对main/integration均为29c6383（#297）。用户认可两份实验样本，选B音色（刘飞→潇磊），并决定Claude实施、GPT审查验收；下一步先完成离线模型配置/Ark适配/稿件契约，当前不发布、不调用付费API。用户明确要求随便听比来龙去脉短，保留电台时长与密度差异。
+第一、二批已通过审查与 CI，并以普通 merge 合入 integration：#299（Ark 适配、角色配置和对话契约）、#300（素材→双人稿→核对/局部修复→版本化存档）。integration 的已核对基线为 838ba27。未推进 main，未修改生产变量。
 
-实施范围、兼容性、验收与后续批次见[接入设计§10](design/researched-dialogue-radio.md)；先读该任务，再按需看[最后文本实验](research/dialogue-radio-2026-10/final-text-experiments.md)、[已认可样本边界](research/dialogue-radio-2026-10/accepted-samples.md)。Lite strict样本结构通过但仍须事实检查；提案Pro是候选，不是已确认的全面替换。下面旧初赛工作顺序不覆盖本轮已授权范围。
+第三批 #301（对话→音频缓存/请求快照→NarrationSegment→时间线、故事预约账本）正在完成审查。已修复同块重复生成、按原声音/语速/供应商恢复，以及重新合成后快照保存失败或取消时保留旧片段和旧存档。全部为固定响应和假音频；接线、真实豆包、HLS 工作线尚未验收，不能宣称真实节目已经支持双人主持。
 
-**第一批（离线基础）已实现，待审查**：Ark 文本适配器（Chat strict、单次发送、无重试，CNY 估价与未知费用标记）、按角色配置模型（Writer 换 Ark 不带走事实核对和曲目调研）、供应商 schema 规整、双人稿件契约与 `SpeechRequest`。未接入整档生成、TTS、播放器，默认仍是 mock/DeepSeek，未做任何付费调用。对话进入播放片段的路径会显式拒绝，持久化与恢复属于后续批次。详见 [ADR 0024](adr/0024-ark-text-models-and-dialogue-contract.md)。
+用户已选择 B 音色：A=刘飞、B=潇磊，豆包语速 0。保留不同电台的时长和密度差异；首曲尽快开始、音乐连续性优先。模型候选为 Pro 素材、Lite Writer，角色独立配置；Pro 提案仍是候选。当前默认行为保持不变。
 
-**第二批（离线文本路径）已实现，待审查**：共享故事素材（`material` 角色，事实 ID↔Evidence↔逐字引文，应用编号）→ Writer 双人稿 → 对话事实核对（带事实前提的问题按上下文判断，只修被标记的轮，保留轮次和角色）→ 可保存/可读回的检查后稿件（对象存储 JSON，与播放片段分开）；双人路径单独的电台时长/频率预算（单人默认不变，无最小字数）。固定响应验证了完整路径；未接真实接口、TTS、播放器，对话转播放片段的限制保持。详见 [ADR 0025](adr/0025-story-material-and-checked-dialogue-path.md)，其中列出仍需真实接口确认的部分。
+下一步收敛为完整接线与端到端验收：在默认关闭的新路径中接实际检索证据、文本流水线和豆包适配器；先 fake/已有音频验证运行时到 HLS、恢复和发布前缀，再安排有明确范围与预算的真实调用。不要再扩模型名单或拆无消费者的基础模块。普通 merge 到 integration 由审查通过且最新 CI 通过后执行；main 留到完整验收。
 
+设计和样本入口：[接入设计](design/researched-dialogue-radio.md)、[实验报告](research/dialogue-radio-2026-10/final-text-experiments.md)、[已认可样本边界](research/dialogue-radio-2026-10/accepted-samples.md)。实施边界：[ADR 0024](adr/0024-ark-text-models-and-dialogue-contract.md)、[ADR 0025](adr/0025-story-material-and-checked-dialogue-path.md)、[ADR 0026](adr/0026-dialogue-to-timeline.md)。
 
 ## 当前阶段与产品
 

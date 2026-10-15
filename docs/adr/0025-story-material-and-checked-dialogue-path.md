@@ -37,7 +37,7 @@
 
 ## 不变的约束
 
-- 对话转播放片段的限制没有放开；`composer._narration_segment` 和 `assembly._merge_writer_blocks` 仍显式拒绝对话块。
+- 对话转播放片段的限制在本批没有放开；`composer._narration_segment` 和 `assembly._merge_writer_blocks` 仍显式拒绝对话块。（第三批已解除前者，见 [ADR 0026](0026-dialogue-to-timeline.md)。）
 - 没有接新 TTS，没有改播放器，没有付费调用，生产变量和部署不变。`create_dialogue_stack` 按角色配置建出 material/writer/fact_check 三个模型（修复用 Writer 的模型），尚未被装配调用。
 
 ## 用固定响应验证了什么

@@ -65,6 +65,20 @@ class DialogueOutcome:
     model_checked: bool = False
     station_value: str = ""
 
+    @classmethod
+    def from_record(cls, record: CheckedDialogueRecord) -> DialogueOutcome:
+        """The outcome of a passage that was already made and checked (nothing is called)."""
+        return cls(
+            status=DialogueStatus.READY if record.status == "ready" else DialogueStatus.REPAIRED,
+            block=record.block,
+            material=record.material,
+            first_check_issues=list(record.first_check_issues),
+            repaired_turns=list(record.repaired_turns),
+            calls=0,
+            model_checked=record.model_checked,
+            station_value=record.station.value,
+        )
+
     @property
     def speakable(self) -> bool:
         return self.status in (DialogueStatus.READY, DialogueStatus.REPAIRED)
@@ -239,6 +253,7 @@ class DialoguePipeline:
                 purpose=slot.purpose,
                 duration_seconds=estimate_dialogue_seconds(characters),
                 allowed_fact_refs=material.fact_ids,
+                story_id=material.story_id,
             )
         except DialogueValidationError as error:
             outcome.reason = "invalid_draft"

@@ -16,7 +16,6 @@ from wavecast.intelligence.models import (
     ResolvedTrackCandidate,
     UnresolvedTrackError,
 )
-from wavecast.models.dialogue import DialogueNotSupportedError
 from wavecast.models.episode import (
     MusicSegment,
     NarrationRole,
@@ -237,13 +236,6 @@ def _script_blocks(
 def _narration_segment(
     block: RadioScriptBlock, order: int, chapter_number: int
 ) -> NarrationSegment:
-    if block.dialogue is not None:
-        # A narration segment stores one text.  Flattening here would drop the turns, the
-        # speakers and the fact references without a trace; the persisted-segment path for
-        # dialogue is a later batch (see docs/adr/0024).
-        raise DialogueNotSupportedError(
-            f"block {block.dialogue.block_id} is a dialogue; NarrationSegment cannot carry it yet"
-        )
     return NarrationSegment(
         id=f"segment-narration-{order}",
         chapter_id=f"chapter-{chapter_number}",
@@ -252,9 +244,11 @@ def _narration_segment(
         planned_duration_seconds=block.intended_duration_seconds,
         title=block.kind.value.replace("_", " ").title(),
         narration_text=block.text,
-        tts_text=block.tts_text,
-        tts_cues=list(block.tts_cues),
+        tts_text=None if block.dialogue is not None else block.tts_text,
+        tts_cues=[] if block.dialogue is not None else list(block.tts_cues),
         narration_role=_narration_role(block.kind),
+        # A dialogue travels with its segment (narration_text is then derived from it).
+        dialogue=block.dialogue,
     )
 
 
