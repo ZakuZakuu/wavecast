@@ -25,11 +25,6 @@ DEFAULT_MAX_EVENTS = 4000
 _usage_run_kind: ContextVar[str | None] = ContextVar("wavecast_usage_run_kind", default=None)
 
 
-def current_usage_scope() -> str | None:
-    """The scope (usually an episode id) provider calls made right now are attributed to."""
-    return _usage_scope.get()
-
-
 @contextmanager
 def usage_run_kind(kind: str) -> Iterator[None]:
     """Label every provider call made inside the block, so reports can tell replays apart."""

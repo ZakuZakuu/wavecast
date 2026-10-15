@@ -2,8 +2,9 @@
 
 A structurally valid block is not a supported one.  This checks what the schema cannot: that the
 facts a turn cites exist in the material the caller supplied, and that a block whose purpose is
-researched talk actually cites some.  Whether the cited facts support what is *said* is the fact
-checker's job (a later batch); nothing here fills a missing reference in to make a block pass.
+researched talk actually cites some.  Whether the cited facts support what is *said* is left to
+the verified material and the Writer's prompt (ADR 0029); nothing here fills a missing
+reference in to make a block pass.
 """
 
 from collections.abc import Collection

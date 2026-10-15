@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from wavecast.arrangement.planner import plan_episode_mix
 from wavecast.composer import _narration_segment
 from wavecast.intelligence.dialogue_pipeline import DialogueStatus
-from wavecast.intelligence.dialogue_writer import DialogueRepair, DialogueSlot
+from wavecast.intelligence.dialogue_writer import DialogueSlot
 from wavecast.intelligence.models import RadioScriptBlock, RadioScriptBlockKind
 from wavecast.materialization.narration import NarrationMaterializer
 from wavecast.models.dialogue import DialogueSpeaker, VoiceRoleSnapshot
@@ -53,7 +53,7 @@ from wavecast.storage.dialogue_artifacts import DialogueArtifactError, DialogueA
 from wavecast.storage.episodes import EpisodeConcurrencyError
 from wavecast.storage.story_usage import StoryUsageError, StoryUsageStore, usage_key
 
-from tests.dialogue_fixtures import STORY_ID, ScriptedLLM, clean_draft
+from tests.dialogue_fixtures import STORY_ID, clean_draft
 from tests.test_dialogue_pipeline import SLOT, build, material
 from tests.test_narration_authoring import _authored_chapter, _episode, _Host
 
@@ -72,7 +72,7 @@ def _snapshot(**changes):  # type: ignore[no-untyped-def]
 
 
 def record():  # type: ignore[no-untyped-def]
-    pipeline, _, _ = build(clean_draft())
+    pipeline, _ = build(clean_draft())
     outcome = asyncio.run(pipeline.produce(material(), SLOT))
     assert outcome.status is DialogueStatus.READY
     return outcome.to_record()
@@ -275,14 +275,14 @@ def test_adding_the_passage_later_leaves_the_published_part_of_the_programme_alo
 def test_a_saved_passage_comes_back_without_a_model_call_or_new_audio(
     storage: LocalObjectStorageProvider,
 ) -> None:
-    pipeline, writer, judge = build(clean_draft())
+    pipeline, writer = build(clean_draft())
     outcome = asyncio.run(pipeline.produce(material(), SLOT))
     artifacts = DialogueArtifactStore(storage)
     asyncio.run(artifacts.save(EPISODE, outcome.to_record()))
     first_speech = MockDialogueSpeechProvider(storage)
     original = narration_segment_from_record(outcome.to_record(), chapter_id="chapter-2", order=1)
     asyncio.run(materializer(storage, first_speech).materialize(original))
-    model_calls = (list(writer.calls), list(judge.calls))
+    model_calls = list(writer.calls)
 
     # "A restart": new store, new provider, new materializer - only the storage is shared.
     restored = asyncio.run(
@@ -295,7 +295,7 @@ def test_a_saved_passage_comes_back_without_a_model_call_or_new_audio(
     asyncio.run(materializer(storage, second_speech).materialize(restored))
 
     assert second_speech.calls == 0 and first_speech.calls == 1
-    assert (list(writer.calls), list(judge.calls)) == model_calls  # nothing was written or checked again
+    assert list(writer.calls) == model_calls  # nothing was written again
     assert restored.dialogue == original.dialogue
     assert restored.asset_ref == original.asset_ref
     assert restored.actual_duration_seconds == original.actual_duration_seconds
@@ -435,7 +435,7 @@ def test_a_late_voicing_cannot_overwrite_a_seam_that_was_given_up() -> None:
 
 
 def seam_service(storage: LocalObjectStorageProvider, draft=None):  # type: ignore[no-untyped-def]
-    pipeline, writer, judge = build(draft or clean_draft())
+    pipeline, writer = build(draft or clean_draft())
     service = DialogueSeamService(
         pipeline=pipeline, artifacts=DialogueArtifactStore(storage), usage=StoryUsageStore(storage)
     )
@@ -464,10 +464,7 @@ def test_a_story_is_reserved_while_made_and_a_second_passage_cannot_tell_it(
 
 
 def test_a_rejected_passage_gives_the_story_back(storage: LocalObjectStorageProvider) -> None:
-    from tests.dialogue_fixtures import draft_with_two_problems
-
-    service, usage, writer = seam_service(storage, draft_with_two_problems())
-    writer.queue(DialogueRepair, ProviderTimeoutError("repair model is down"))
+    service, usage, writer = seam_service(storage, ProviderTimeoutError("writer model is down"))
 
     result = asyncio.run(service.author(EPISODE, material(), SLOT, chapter_id="c", order=1))
 
@@ -488,16 +485,11 @@ def test_cancellation_while_making_a_passage_releases_the_story(
             started.set()
             await asyncio.sleep(30)
 
-    from wavecast.intelligence.dialogue_check import DialogueFactChecker
     from wavecast.intelligence.dialogue_pipeline import DialoguePipeline
-    from wavecast.intelligence.dialogue_writer import DialogueRepairer, DialogueWriter
+    from wavecast.intelligence.dialogue_writer import DialogueWriter
 
     service = DialogueSeamService(
-        pipeline=DialoguePipeline(
-            writer=DialogueWriter(Hangs()),  # type: ignore[arg-type]
-            checker=DialogueFactChecker(ScriptedLLM()),
-            repairer=DialogueRepairer(ScriptedLLM()),
-        ),
+        pipeline=DialoguePipeline(writer=DialogueWriter(Hangs())),  # type: ignore[arg-type]
         artifacts=DialogueArtifactStore(storage),
         usage=StoryUsageStore(storage),
     )
@@ -651,7 +643,7 @@ def test_a_passage_that_was_saved_but_never_inserted_is_handed_back_not_remade(
 
 def voiced(storage, speech, *, episode=EPISODE):  # type: ignore[no-untyped-def]
     """Make and voice the passage once, keeping the snapshot (the original programme)."""
-    pipeline, _, _ = build(clean_draft())
+    pipeline, _ = build(clean_draft())
     outcome = asyncio.run(pipeline.produce(material(), SLOT))
     artifacts = DialogueArtifactStore(storage)
     asyncio.run(artifacts.save(episode, outcome.to_record()))

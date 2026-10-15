@@ -18,9 +18,8 @@ from fastapi.testclient import TestClient
 from wavecast.assembly import StagedProgressiveChapterGenerator, create_episode_assembly_service
 from wavecast.composer import EpisodeComposer
 from wavecast.intelligence.dialogue_budget import story_slot_ids
-from wavecast.intelligence.dialogue_check import DialogueFactChecker
 from wavecast.intelligence.dialogue_pipeline import DialoguePipeline
-from wavecast.intelligence.dialogue_writer import DialogueRepairer, DialogueWriter
+from wavecast.intelligence.dialogue_writer import DialogueWriter
 from wavecast.intelligence.models import (
     ChapterPlan,
     FastStartPlan,
@@ -71,7 +70,6 @@ from wavecast.timing import build_program_timing_plan
 import services.api.main as api_module
 from tests.dialogue_fixtures import (
     TRACK_REF,
-    JudgingLLM,
     ScriptedLLM,
     clean_draft,
     evidence,
@@ -250,7 +248,7 @@ class Rig:
         *,
         station: StationId | None = StationId.PORTRAIT,
         first_slot: NarrationSlotContext | None = None,
-        fail_check: BaseException | None = None,
+        fail_writer: BaseException | None = None,
         seed: str | None = None,
         voices: Any = VOICE_COMBINATION_B,
         scripted: bool = True,
@@ -262,14 +260,10 @@ class Rig:
         self.ledger_of_calls = UsageLedger()
         draft = _retag(clean_draft())
         self.material_llm = ScriptedLLM(material_draft()) if scripted else ScriptedLLM()
-        self.writer_llm = _HookedLLM(draft) if scripted else _HookedLLM()
-        self.check_llm = JudgingLLM(_material_for_runtime(), [draft], insufficient=())
-        self.check_llm.fail = fail_check
-        pipeline = DialoguePipeline(
-            writer=DialogueWriter(self.writer_llm),  # type: ignore[arg-type]
-            checker=DialogueFactChecker(self.check_llm),  # type: ignore[arg-type]
-            repairer=DialogueRepairer(self.writer_llm),  # type: ignore[arg-type]
+        self.writer_llm = (
+            _HookedLLM(fail_writer) if fail_writer is not None else _HookedLLM(draft) if scripted else _HookedLLM()
         )
+        pipeline = DialoguePipeline(writer=DialogueWriter(self.writer_llm))  # type: ignore[arg-type]
         self.usage = StoryUsageStore(self.storage)
         self.artifacts = DialogueArtifactStore(self.storage)
         self.runtime = DialogueRuntime(
@@ -378,10 +372,10 @@ def test_voicing_keeps_the_hosts_voices_and_the_real_audio_length(tmp_path) -> N
     assert restored.dialogue_audio == segment.dialogue_audio
 
 
-def test_a_failing_fact_check_leaves_the_chapter_to_the_writer_and_gives_the_story_back(tmp_path) -> None:
+def test_a_failing_dialogue_writer_leaves_the_chapter_to_the_writer_and_gives_the_story_back(tmp_path) -> None:
     from tests.dialogue_fixtures import unavailable
 
-    rig = Rig(tmp_path, fail_check=unavailable())
+    rig = Rig(tmp_path, fail_writer=unavailable())
 
     rig.author()
 
@@ -398,7 +392,7 @@ def test_an_unchosen_slot_makes_no_model_call_at_all(tmp_path) -> None:
 
     (segment,) = rig.narration()
     assert segment.dialogue is None and rig.writer.calls == 1
-    assert rig.material_llm.calls == [] and rig.writer_llm.calls == [] and rig.check_llm.calls == []
+    assert rig.material_llm.calls == [] and rig.writer_llm.calls == []
 
 
 @pytest.mark.parametrize(
@@ -758,20 +752,20 @@ def _offer_args(rig: Rig) -> dict[str, Any]:
 
 
 def _quiet(rig: Rig) -> bool:
-    return rig.material_llm.calls == [] and rig.writer_llm.calls == [] and rig.check_llm.calls == []
+    return rig.material_llm.calls == [] and rig.writer_llm.calls == []
 
 
 def test_asking_again_for_a_saved_passage_costs_no_model_call(tmp_path) -> None:
     rig = Rig(tmp_path)
     rig.author()
-    before = (len(rig.material_llm.calls), len(rig.writer_llm.calls), len(rig.check_llm.calls))
-    assert before == (1, 1, 1)
+    before = (len(rig.material_llm.calls), len(rig.writer_llm.calls))
+    assert before == (1, 1)  # material and the draft: nothing else is asked
 
     again = asyncio.run(rig.runtime.offer(**_offer_args(rig)))
 
     assert again is not None and again.restored
     assert again.block == rig.narration()[0].dialogue
-    assert (len(rig.material_llm.calls), len(rig.writer_llm.calls), len(rig.check_llm.calls)) == before
+    assert (len(rig.material_llm.calls), len(rig.writer_llm.calls)) == before
 
 
 def test_a_fresh_process_resumes_the_saved_passage_with_no_model_at_all(tmp_path) -> None:

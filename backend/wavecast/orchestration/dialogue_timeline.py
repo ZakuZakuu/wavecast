@@ -1,4 +1,4 @@
-"""From a checked two-host passage to a segment the existing timeline understands.
+"""From a validated two-host passage to a segment the existing timeline understands.
 
 The passage is saved first, the story it tells is reserved, and the segment it becomes is an
 ordinary ``NarrationSegment`` (SCRIPT_READY, carrying the dialogue).  From there the existing
@@ -71,7 +71,7 @@ async def restore_narration_segment(
     chapter_id: str,
     order: int,
 ) -> NarrationSegment | None:
-    """Rebuild the segment from the saved record: no model call, no new check, no new audio.
+    """Rebuild the segment from the saved record: no model call, no new audio.
 
     If the passage was voiced, the segment carries the snapshot of that request, so voicing it
     again *restores* the original audio with its original voices - whatever the configuration
@@ -161,7 +161,7 @@ class DialogueSeamResult:
     artifact_key: str | None = None
     reason: str | None = None
     # True when this is the passage that was already made (saved), handed back instead of a new
-    # one: asking again for the same passage never writes or checks anything a second time.
+    # one: asking again for the same passage never writes anything a second time.
     restored: bool = False
 
 
@@ -186,7 +186,7 @@ class DialogueSeamService:
         chapter_id: str,
         order: int,
     ) -> DialogueSeamResult:
-        """Make, check, save and package one passage - or give the story back and say why not."""
+        """Make, validate, save and package one passage - or give the story back and say why not."""
         story_id, block_id = material.story_id, slot.block_id
         reservation = await self._usage.reserve(episode_id, story_id, block_id)
         if reservation is Reservation.TAKEN:
@@ -199,7 +199,7 @@ class DialogueSeamService:
             return DialogueSeamResult(outcome=skipped, reason="story_already_used")
         if reservation is not Reservation.ACQUIRED:
             # The same passage again: either it is still being made, or it is made (and perhaps
-            # already published).  Neither starts another Writer run or another check.
+            # already published).  Neither starts another Writer run.
             return await self._existing(
                 episode_id,
                 material,
