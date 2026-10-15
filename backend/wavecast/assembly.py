@@ -36,6 +36,7 @@ from wavecast.coverage import (
 )
 from wavecast.intelligence.background import BackgroundIntelligencePipeline
 from wavecast.intelligence.curation import CuratorContractError, CuratorService
+from wavecast.intelligence.dialogue_pipeline import create_dialogue_stack
 from wavecast.intelligence.fact_support import FactChecker
 from wavecast.intelligence.fast_start import FastPathCoordinator, FastPathResult, FastStartPlanner
 from wavecast.intelligence.models import (
@@ -75,7 +76,7 @@ from wavecast.intelligence.trace import GenerationTrace
 from wavecast.intelligence.track_research import TrackResearchService
 from wavecast.intelligence.writer import WriterService, fallback_closing
 from wavecast.materialization import NarrationMaterializer
-from wavecast.models.dialogue import DialogueNotSupportedError
+from wavecast.models.dialogue import DialogueBlock, DialogueNotSupportedError
 from wavecast.models.episode import (
     LiveEpisode,
     MusicSegment,
@@ -86,6 +87,8 @@ from wavecast.models.episode import (
 )
 from wavecast.music_discovery import catalog_queries, community_tags
 from wavecast.narration_quality import opener_of
+from wavecast.orchestration.dialogue_runtime import DialogueRuntime
+from wavecast.orchestration.dialogue_timeline import DialogueSeamService
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
@@ -106,6 +109,7 @@ from wavecast.providers.contracts import (
     SearchProvider,
     TTSProvider,
 )
+from wavecast.providers.dialogue_voicing import build_dialogue_voicing
 from wavecast.providers.errors import (
     ProviderConfigurationError,
     ProviderError,
@@ -155,6 +159,8 @@ from wavecast.route_work import (
 from wavecast.spoken_form import catalog_album, chinese_title
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
+from wavecast.storage.dialogue_artifacts import DialogueArtifactStore
+from wavecast.storage.story_usage import StoryUsageStore
 from wavecast.text_identity import (
     base_title_key,
     canonical_name,
@@ -599,7 +605,9 @@ class LiveEpisodeAssemblyService:
         track_research: TrackResearchService | None = None,
         duration_scaling: bool = False,
         owned_clients: Sequence[Any] = (),
+        dialogue_runtime: DialogueRuntime | None = None,
     ) -> None:
+        self.dialogue_runtime = dialogue_runtime
         # Provider clients this service created (one per text-model role, the deep search
         # variant, ...) and must close.  The wiring below also reaches some structurally;
         # ``aclose`` closes each distinct object once.
@@ -798,6 +806,7 @@ class LiveEpisodeAssemblyService:
             composer=self.composer,
             materializer=self.materializer,
             track_research=self.track_research,
+            dialogue=self.dialogue_runtime,
         )
 
     async def _resolve_catalog_replacement(
@@ -3390,9 +3399,12 @@ def _merge_writer_blocks(
     if not blocks:
         return None
     if any(block.dialogue is not None for block in blocks):
-        raise DialogueNotSupportedError(
-            "Writer blocks carrying a dialogue cannot be merged into one narration text"
-        )
+        if len(blocks) != 1:
+            raise DialogueNotSupportedError(
+                "Writer blocks carrying a dialogue cannot be merged into one narration text"
+            )
+        # A checked passage is placed as it is: only its slot-owned kind and anchor change.
+        return blocks[0].model_copy(update={"kind": kind, "track_index": None})
     text = " ".join(block.text.strip() for block in blocks)
     if len(text) > 4000:
         raise NarrationPlacementError("merged Writer narration exceeds block text limit")
@@ -3692,12 +3704,14 @@ class StagedProgressiveChapterGenerator:
         composer: EpisodeComposer,
         materializer: NarrationMaterializer,
         track_research: TrackResearchService | None = None,
+        dialogue: DialogueRuntime | None = None,
     ) -> None:
         self.session = session
         self.writer = writer
         self.composer = composer
         self.materializer = materializer
         self.track_research = track_research
+        self.dialogue = dialogue
 
     @scoped_to_episode
     async def generate_next(self, episode: LiveEpisode) -> GeneratedChapter | None:
@@ -3925,10 +3939,48 @@ class StagedProgressiveChapterGenerator:
             _assert_narration_blocks_materialized(radio_script, composed)
             return composed
 
+        # A researched two-host passage is offered first; whenever it is not made, the chapter is
+        # authored by the Writer exactly as before.
+        dialogue_block: DialogueBlock | None = None
+        if self.dialogue is not None and research_track is not None and len(chapter.slot_contexts) == 1:
+            scoped_evidence_ids = set(writer_chapter.evidence_ids)
+            dialogue_block = await self.dialogue.offer(
+                episode_id=episode.id,
+                station=self.session.station,
+                context=chapter.slot_contexts[0],
+                chosen_slot_ids=self.dialogue.eligible_slot_ids(
+                    self.session.station,
+                    [item.slot_contexts for item in self.session.chapters],
+                    episode.seed_id,
+                ),
+                chapter_id=chapter.chapter_id,
+                order=chapter_start_order,
+                evidence=[item for item in writer_evidence if item.id in scoped_evidence_ids],
+                subject=self.session.topic,
+                track_ref=research_track.track_ref,
+                track_label=f"{research_track.canonical_artist} - {research_track.canonical_title}",
+            )
+        dialogue_script: RadioScript | None = (
+            RadioScript(
+                blocks=[
+                    RadioScriptBlock(
+                        kind=RadioScriptBlockKind.TRANSITION,
+                        text=dialogue_block.text,
+                        tts_text=dialogue_block.tts_text,
+                        duration_seconds=dialogue_block.duration_seconds,
+                        dialogue=dialogue_block,
+                    )
+                ],
+                intended_duration_seconds=dialogue_block.duration_seconds,
+            )
+            if dialogue_block is not None
+            else None
+        )
+
         playable: PlayableEpisode | None = None
         authoring_errors = (ProviderError, NarrationPlacementError, EpisodeAssemblyError, ValueError)
         try:
-            script = await self.writer.write(
+            script = dialogue_script if dialogue_script is not None else await self.writer.write(
                 writer_chapter,
                 writer_evidence,
                 previous_committed_context=previous_context,
@@ -3997,6 +4049,9 @@ class StagedProgressiveChapterGenerator:
                 self.session.presentation_intent.host_mode.value,
                 str(error)[:120],
             )
+        if playable is None and dialogue_block is not None and self.dialogue is not None:
+            # Made but not placed: give the story back so another slot can tell it.
+            await self.dialogue.release(episode.id, dialogue_block)
         if playable is None and is_final_chapter and self.session.output_language is OutputLanguage.ZH_CN:
             # A programme always ends: without the Writer's closing the application says where
             # the route ended and signs off.
@@ -4536,12 +4591,38 @@ def create_episode_assembly_service(
         writer=WriterService(writer_llm, fact_checker=FactChecker(fact_check_llm)),
     )
     retrieval = MusicRetrievalService(music_registry)
+
+    # Researched two-host passages: off unless WAVECAST_DIALOGUE_RADIO is on (ADR 0027).
+    dialogue_runtime: DialogueRuntime | None = None
+    dialogue_clients: list[object] = []
+    dialogue_voicing = build_dialogue_voicing(settings, storage, ledger=ledger)
+    if dialogue_voicing is not None:
+        dialogue_stack = create_dialogue_stack(settings, ledger=ledger, mock=mock_llm)
+        story_usage = StoryUsageStore(storage)
+        dialogue_runtime = DialogueRuntime(
+            material=dialogue_stack.material,
+            seam=DialogueSeamService(
+                pipeline=dialogue_stack.pipeline,
+                artifacts=DialogueArtifactStore(storage),
+                usage=story_usage,
+            ),
+            usage=story_usage,
+        )
+        dialogue_clients = dialogue_stack.owned_clients
     return LiveEpisodeAssemblyService(
         fast_path=fast_path,
         background_pipeline=background_pipeline,
         retrieval=retrieval,
         composer=EpisodeComposer(music_registry),
-        materializer=NarrationMaterializer(tts, storage),
+        materializer=NarrationMaterializer(
+            tts,
+            storage,
+            dialogue_speech=dialogue_voicing.speech if dialogue_voicing else None,
+            dialogue_voices=dialogue_voicing.voices if dialogue_voicing else (),
+            dialogue_speed=dialogue_voicing.speed if dialogue_voicing else None,
+            dialogue_format=dialogue_voicing.audio_format if dialogue_voicing else None,
+        ),
+        dialogue_runtime=dialogue_runtime,
         ledger=ledger,
         catalog_pool_builder=(
             CatalogPoolBuilder(
@@ -4570,5 +4651,6 @@ def create_episode_assembly_service(
             discovery,
             research,
             deep_research,
+            *dialogue_clients,
         ],
     )

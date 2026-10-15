@@ -86,6 +86,7 @@ from wavecast.providers.contracts import (
     ProgressiveLLMProvider,
 )
 from wavecast.providers.deepseek import DeepSeekLLMProvider
+from wavecast.providers.dialogue_voicing import build_dialogue_voicing
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
 from wavecast.providers.factory import build_music_registry
 from wavecast.providers.fakes import MockAudioProvider, MockTTSProvider
@@ -512,7 +513,15 @@ def _build_audio_provider(settings: ProviderSettings) -> AudioProvider:
 
 
 _tts_provider = _build_tts_provider(_provider_settings, audio_storage)
-narration_materializer = NarrationMaterializer(_tts_provider, audio_storage)
+_dialogue_voicing = build_dialogue_voicing(_provider_settings, audio_storage)
+narration_materializer = NarrationMaterializer(
+    _tts_provider,
+    audio_storage,
+    dialogue_speech=_dialogue_voicing.speech if _dialogue_voicing else None,
+    dialogue_voices=_dialogue_voicing.voices if _dialogue_voicing else (),
+    dialogue_speed=_dialogue_voicing.speed if _dialogue_voicing else None,
+    dialogue_format=_dialogue_voicing.audio_format if _dialogue_voicing else None,
+)
 
 
 def _build_progressive_runtime(

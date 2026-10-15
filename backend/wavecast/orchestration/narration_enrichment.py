@@ -180,7 +180,25 @@ async def author_pending_narration(
             )
         processed += 1
 
-    return await asyncio.to_thread(host.repository.get, episode_id)
+    final = await asyncio.to_thread(host.repository.get, episode_id)
+    await _settle_dialogue(runtime, final)
+    return final
+
+
+async def _settle_dialogue(runtime: StagedProgressiveRuntime, episode: LiveEpisode) -> None:
+    """Return stories whose passage did not make it into the programme; best effort."""
+
+    settle = getattr(runtime, "settle_dialogue", None)
+    if not callable(settle):
+        return
+    try:
+        await settle(episode.id, episode.segments)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:  # noqa: BLE001 - bookkeeping must never fail authoring
+        logger.warning(
+            "dialogue_settle_failed episode_id=%s error_type=%s", episode.id, type(error).__name__
+        )
 
 
 def _with_chapter_research(

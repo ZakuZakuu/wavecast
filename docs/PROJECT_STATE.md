@@ -4,15 +4,15 @@ Updated: 2026-10-15（双人讲述离线接入审查）；下方旧部署条目�
 
 ## 本轮执行入口：有内容的讲述与双人配音（尚未启用于真实生成）
 
-第一、二批已通过审查与 CI，并以普通 merge 合入 integration：#299（Ark 适配、角色配置和对话契约）、#300（素材→双人稿→核对/局部修复→版本化存档）。integration 的已核对基线为 838ba27。未推进 main，未修改生产变量。
+第一至三批已通过审查与 CI，并以普通 merge 合入 integration：#299（Ark 适配、角色配置和对话契约）、#300（素材→双人稿→核对/局部修复→版本化存档）、#301（对话→音频缓存/请求快照→NarrationSegment→时间线、故事预约账本；integration 基线 8b98167）。未推进 main，未修改生产变量。
 
-第三批 #301（对话→音频缓存/请求快照→NarrationSegment→时间线、故事预约账本）正在完成审查。已修复同块重复生成、按原声音/语速/供应商恢复，以及重新合成后快照保存失败或取消时保留旧片段和旧存档。全部为固定响应和假音频；接线、真实豆包、HLS 工作线尚未验收，不能宣称真实节目已经支持双人主持。
+第四批（完整接线，PR 审查中）把检索证据→素材→双人稿→核对→配音接进 `author_narration` 和装配，**默认关闭**（`WAVECAST_DIALOGUE_RADIO=off`）；开启后用固定响应和假音频走通了真实 program-render 的 HLS 路径、恢复和故事对账。**真实豆包传输层尚未实现**（缺可依据的线协议），所以 `doubao` 配音在启动时被拒绝，不能宣称真实节目已经支持双人主持。
 
 用户已选择 B 音色：A=刘飞、B=潇磊，豆包语速 0。保留不同电台的时长和密度差异；首曲尽快开始、音乐连续性优先。模型候选为 Pro 素材、Lite Writer，角色独立配置；Pro 提案仍是候选。当前默认行为保持不变。
 
-下一步收敛为完整接线与端到端验收：在默认关闭的新路径中接实际检索证据、文本流水线和豆包适配器；先 fake/已有音频验证运行时到 HLS、恢复和发布前缀，再安排有明确范围与预算的真实调用。不要再扩模型名单或拆无消费者的基础模块。普通 merge 到 integration 由审查通过且最新 CI 通过后执行；main 留到完整验收。
+下一步：凭一次带录制的实验写真实豆包传输层（需要固定稿件模式的请求/响应样本、音频格式、时间戳与用量字段），再安排有明确范围与预算的真实调用与完整验收。不要再扩模型名单或拆无消费者的基础模块。普通 merge 到 integration 由审查通过且最新 CI 通过后执行；main 留到完整验收。
 
-设计和样本入口：[接入设计](design/researched-dialogue-radio.md)、[实验报告](research/dialogue-radio-2026-10/final-text-experiments.md)、[已认可样本边界](research/dialogue-radio-2026-10/accepted-samples.md)。实施边界：[ADR 0024](adr/0024-ark-text-models-and-dialogue-contract.md)、[ADR 0025](adr/0025-story-material-and-checked-dialogue-path.md)、[ADR 0026](adr/0026-dialogue-to-timeline.md)。
+设计和样本入口：[接入设计](design/researched-dialogue-radio.md)、[实验报告](research/dialogue-radio-2026-10/final-text-experiments.md)、[已认可样本边界](research/dialogue-radio-2026-10/accepted-samples.md)。实施边界：[ADR 0024](adr/0024-ark-text-models-and-dialogue-contract.md)、[ADR 0025](adr/0025-story-material-and-checked-dialogue-path.md)、[ADR 0026](adr/0026-dialogue-to-timeline.md)、[ADR 0027](adr/0027-dialogue-runtime-wiring.md)。
 
 ## 当前阶段与产品
 

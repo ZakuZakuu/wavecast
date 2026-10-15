@@ -80,6 +80,14 @@ class ProviderSettings:
     fact_check_provider: LLMCapabilitySelector = "inherit"
     track_research_provider: LLMCapabilitySelector = "inherit"
     tts_provider: TTSCapabilitySelector = "inherit"
+    # Researched two-host passages (ADR 0027).  Off by default: when off, nothing about
+    # authoring or voicing changes.  "mock" voices a passage with credential-free silent audio
+    # (tests and local runs); "doubao" needs the credentials below and a podcast transport.
+    dialogue_radio: bool = False
+    dialogue_speech_provider: Literal["mock", "doubao"] = "mock"
+    doubao_app_id: str | None = None
+    doubao_access_token: str | None = field(default=None, repr=False)
+    doubao_resource_id: str | None = None
     # ADR 0022: build a verified-playable catalog pool before the Curator chooses tracks.
     catalog_pool: bool = True
     # Size the route (tracks and chapters) from the requested duration instead of a fixed cap.
@@ -199,6 +207,16 @@ class ProviderSettings:
                     {"inherit", "mock", "minimax"},
                 ),
             ),
+            dialogue_radio=_flag_from_env("WAVECAST_DIALOGUE_RADIO", default="off"),
+            dialogue_speech_provider=cast(
+                Literal["mock", "doubao"],
+                _selector_from_env(
+                    "WAVECAST_DIALOGUE_SPEECH_PROVIDER", {"mock", "doubao"}, default="mock"
+                ),
+            ),
+            doubao_app_id=getenv("DOUBAO_APP_ID") or None,
+            doubao_access_token=getenv("DOUBAO_ACCESS_TOKEN") or None,
+            doubao_resource_id=getenv("DOUBAO_RESOURCE_ID") or None,
             catalog_pool=_flag_from_env("WAVECAST_CATALOG_POOL", default="on"),
             duration_scaling=_flag_from_env("WAVECAST_DURATION_SCALING", default="on"),
             track_research=_flag_from_env("WAVECAST_TRACK_RESEARCH", default="on"),
@@ -379,8 +397,8 @@ class ProviderSettings:
 _LLM_SELECTORS = {"inherit", "mock", "deepseek", "ark"}
 
 
-def _selector_from_env(name: str, allowed: set[str]) -> str:
-    value = getenv(name, "inherit").strip().lower()
+def _selector_from_env(name: str, allowed: set[str], default: str = "inherit") -> str:
+    value = getenv(name, default).strip().lower()
     if value not in allowed:
         choices = ", ".join(sorted(allowed))
         raise ProviderConfigurationError(f"{name} must be one of: {choices}")

@@ -1078,12 +1078,14 @@ class EpisodeOrchestrator:
             if segment.is_committed or segment.state is not SegmentState.SCRIPT_READY:
                 return episode
 
-            if materialized is None:
+            if materialized is None or materialized.state is SegmentState.SKIPPED:
                 segment.state = SegmentState.SKIPPED
             else:
                 segment.asset_ref = materialized.asset_ref
                 segment.audio_source_url = materialized.audio_source_url
                 segment.actual_duration_seconds = materialized.actual_duration_seconds
+                # The record of what a two-host passage was voiced with travels with its audio.
+                segment.dialogue_audio = materialized.dialogue_audio
                 segment.state = SegmentState.AUDIO_READY
             episode.last_activity_at = self.now()
             try:

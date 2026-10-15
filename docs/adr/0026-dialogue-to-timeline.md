@@ -59,8 +59,8 @@
 ## 仍未覆盖，需要真实接口或后续接线
 
 - **真实豆包适配器**：本批只有契约和假音频。真实请求格式（固定稿件模式）、音频格式（mp3）、逐轮时间戳的真实形状、整段超时/取消/迟到时的真实计费，都未验证。真实适配器应像 Ark 适配器那样为失败和取消记录费用未知的用量事件；假提供方没有写用量账本。
-- **接线**：装配（`create_episode_assembly_service`）还没有配置对话配音提供方；`author_narration` 还不会调用素材/流水线；`DialogueSeamService` 没有被运行时调用。所以真实生成链路里不会出现对话。
-- **真实渲染**：前缀稳定用混音指纹和 `_finish_authoring` 验证，没有跑 HLS 渲染工作线和 `_canonical_render_plan`。
+- **接线**：本批没有接线；已由 [ADR 0027](0027-dialogue-runtime-wiring.md) 在默认关闭的开关后接入装配与 `author_narration`。
+- **真实渲染**：本批的前缀稳定用混音指纹和 `_finish_authoring` 验证；经由真实 program-render 的验证见 ADR 0027。
 - **朗读转换**：Writer 不能提供 `tts_text`（ADR 0025）；读音、专名的确定性转换尚未做。
 - **并发**：对象存储没有比较并设置，账本的读改写只在同一进程内串行（每集一把锁）；多进程需要数据库行加版本号。
 - **接口暴露**：`LiveEpisode` 的 JSON 现在会多出 `dialogue`、`dialogue_voices`（含 `fact_refs`）；前端会忽略未知字段，但没有逐一检查。数据库里的旧记录读取不受影响（字段可选），新记录被旧版本代码读取则不保证。

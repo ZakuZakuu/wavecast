@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from wavecast.intelligence.models import ResolvedTrack
@@ -406,3 +407,11 @@ class StagedProgressiveRuntimeAdapter:
         self, segment: NarrationSegment
     ) -> NarrationSegment:
         return await self.assembly.materializer.materialize(segment)
+
+    async def settle_dialogue(
+        self, episode_id: str, segments: Sequence[MusicSegment | NarrationSegment]
+    ) -> None:
+        """Reconcile reserved/told stories with the programme (no-op while the feature is off)."""
+        runtime = getattr(self.assembly, "dialogue_runtime", None)
+        if runtime is not None:
+            await runtime.settle(episode_id, segments)
