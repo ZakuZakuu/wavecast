@@ -1795,7 +1795,9 @@ async def create_episode(seed_id: str, request: Request) -> LiveEpisode:
             actor.listener_id,
             actor.user_id,
         )
-        episode = await _prepare_opening_host(episode, seed)
+        # The opening host's voice is a cost of this episode, whoever is asking for it.
+        with usage_scope(episode.id):
+            episode = await _prepare_opening_host(episode, seed)
         return await to_thread.run_sync(
             lambda: _queue_progressive_generation(
                 episode,
