@@ -301,8 +301,6 @@ def safe_usage_event(event: UsageEvent) -> dict[str, object]:
 
     stage = metadata.get("stage")
     projected: dict[str, object] = {
-        "event_id": event.event_id,
-        "recorded_at": event.recorded_at.isoformat(),
         "provider": event.provider,
         "operation": event.operation,
         "stage": stage if isinstance(stage, str) else None,
@@ -337,7 +335,10 @@ def usage_diagnostics(ledger: UsageLedger, scope: str | None = None) -> UsageDia
     return diagnostics_of(ledger.events if scope is None else ledger.for_scope(scope))
 
 
-def diagnostics_of(events: list[UsageEvent]) -> UsageDiagnostics:
+def diagnostics_of(events: list[UsageEvent], *, with_ids: bool = False) -> UsageDiagnostics:
+    """``with_ids`` adds each event's id and time (the per-episode report needs them to show that a
+    call is counted once); the projection every other caller sees keeps its exact shape."""
+
     stages: dict[str, dict[str, object]] = {}
     for event in events:
         stage = event.metadata.get("stage")
@@ -348,7 +349,13 @@ def diagnostics_of(events: list[UsageEvent]) -> UsageDiagnostics:
     return {
         "usage": UsageLedger._totals(events).model_dump(),
         "usage_by_stage": stages,
-        "provider_events": [safe_usage_event(event) for event in events],
+        "provider_events": [
+            {
+                **({"event_id": event.event_id, "recorded_at": event.recorded_at.isoformat()} if with_ids else {}),
+                **safe_usage_event(event),
+            }
+            for event in events
+        ],
     }
 
 

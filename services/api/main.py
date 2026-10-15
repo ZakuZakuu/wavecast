@@ -2026,7 +2026,7 @@ async def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
                 if item.kind is SegmentKind.NARRATION and item.state is SegmentState.SKIPPED
             ),
         },
-        "providers": diagnostics_of(events) if reporting else None,
+        "providers": diagnostics_of(events, with_ids=True) if reporting else None,
         "costs": cost_summary(events) if reporting else None,
         "stored_events": len(stored),
     }
