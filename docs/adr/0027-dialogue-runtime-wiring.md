@@ -34,7 +34,7 @@
 
 ### 二（补）：先问账本和存档，再问模型
 
-`offer` 在发任何模型请求**之前**调用 `DialogueSeamService.resume`（只读判断，故事的取得仍然走 `author` 里的预约，并发时它才是权威）：故事被别的块占用 / 已讲 / 本块正在别处制作 → 直接跳过，不发素材请求；本块已存档 → 原样取回，**素材、Writer、核对者调用均为 0**，并把存档旁的音频请求快照带回片段；存档在但故事已退回池中（例如对账释放过）→ 经账本重新取得后取回，不重写。已讲的稿件永不再次进入。取回的片段带 `dialogue_audio` 时，配音按快照**恢复**（零合成、原音色），不看当前配置。配音成功后，`materialize_pending_narration_async` 通过可选钩子 `record_dialogue_audio` 把快照写到存档旁（仅第一次，失败只记日志；episode 记录仍是权威）。
+`offer` 在发任何模型请求**之前**调用 `DialogueSeamService.resume`（只读判断，故事的取得仍然走 `author` 里的预约，并发时它才是权威）：故事被别的块占用 / 已讲 / 本块正在别处制作 → 直接跳过，不发素材请求；本块已存档**且身份一致**（故事 ID、槽位 ID、电台都与本次请求相同）→ 原样取回，**素材、Writer、核对者调用均为 0**，并把存档旁的音频请求快照带回片段；存档在但故事已退回池中（例如对账释放过）→ 经账本重新取得后取回，不重写。已讲的稿件永不再次进入。块 ID 只表示节目里的位置：同一位置若换成了另一首歌（路线变了），存档里的旧稿和旧音频**不复用**，也不为新歌留下预约，不覆盖旧存档，章节走 Writer 路径（`resume`、`author`、`_existing` 三处都核对）。取回的片段带 `dialogue_audio` 时，配音按快照**恢复**（零合成、原音色），不看当前配置。配音成功后，`materialize_pending_narration_async` 通过可选钩子 `record_dialogue_audio` 把快照写到存档旁（仅第一次，失败只记日志；episode 记录仍是权威）。
 
 ### 三、配音与快照
 
@@ -52,7 +52,7 @@ episode 记录里的 `dialogue_audio` 是权威；存档旁的快照（`…audio
 
 **适配器**把 PCM 在本地封成 WAV（逐轮起止由 PCM 字节数推导，**没有**服务端原生时间戳）；缓存键含音色、语速、格式（`wav`）、协议版本（`doubao-podcast-fixed-script-pcm24k-v1`）。只接受已验证的取值：语速 0、格式 `wav`；其他取值在发请求前报配置错误。未支持并且未声称验证的：服务端直出 MP3/WAV、其他语速、重连/续传、原生时间戳。
 
-**用量**：每次**真实尝试恰好一条最终事件**，不论成功、服务失败、响应校验失败、存储失败还是取消（`finally` 中记录）。服务已经返回的用量不因应用端失败而丢失：`input_text_tokens`、`output_audio_tokens`（供应商的计数；未报告为 `null`，报告的 0 保持 0）、`usage_status`（`complete` 会话完成且两项都有 / `partial` / `unknown`）、`outcome`、`failed_stage`、`rounds_completed`、`audio_seconds`、`sent_characters`（本地发送字数，不是计费）。成本未知记为 `cost_basis=unpriced`（计入 `cost_unknown_calls`），不是 0，也没有新增价格常量。计数只接受有限、非负、非布尔的整数。诊断投影（`safe_usage_event`）和总计（`UsageTotals.input_text_tokens / output_audio_tokens / usage_incomplete_calls`）都带上这些字段；不记录正文、请求体、原始响应、认证头或 URL。
+**用量**：每次**真实尝试恰好一条最终事件**，不论成功、服务失败、响应校验失败、存储失败还是取消（`finally` 中记录）。服务已经返回的用量不因应用端失败而丢失：`input_text_tokens`、`output_audio_tokens`（供应商的计数；未报告为 `null`，报告的 0 保持 0）、`usage_status`（`complete` 会话完成且两项都有 / `partial` / `unknown`）、`outcome`、`failed_stage`、`rounds_completed`、`audio_seconds`、`sent_characters`（本地发送字数，不是计费）。成本未知记为 `cost_basis=unpriced`（计入 `cost_unknown_calls`），不是 0，也没有新增价格常量。计数只接受有限、非负、非布尔的整数。配音调用归属到节目：渐进配音（`materialize_pending_narration_async`）和 API 单片段入口都在 `usage_scope(episode_id)` 内调用，成功、失败、取消的事件都带节目 scope，按节目查询（`/api/episodes/{id}/usage`）只包含该节目；API 的物化器与渐进运行时共用同一个账本（`websockets` 现已显式声明为直接依赖并更新 `uv.lock`）。诊断投影（`safe_usage_event`）和总计（`UsageTotals.input_text_tokens / output_audio_tokens / usage_incomplete_calls`）都带上这些字段；不记录正文、请求体、原始响应、认证头或 URL。
 
 ## 验收对照
 
@@ -69,6 +69,8 @@ episode 记录里的 `dialogue_audio` 是权威；存档旁的快照（`…audio
 | 启动失败 | `doubao` 缺 `DOUBAO_PODCAST_API_KEY` → 启动时报配置错误；有密钥则接上正式传输层；设置与 `repr` 不泄露密钥 |
 | 适配器与用量 | 成功后上传失败 / 上传取消 / 响应校验失败 / 部分用量后断流 / 取消：每次恰好一条最终事件，已知计数保留，未知为 null；报告与总计带新字段；缓存键、WAV 封装、未验证取值被拒；经物化器配音与恢复（第二次零请求） |
 | 传输层（假 WebSocket） | 握手头、事件顺序与 StartSession 载荷；整段对话收齐；握手 401/403/429/其他、错误帧只留数字码、文本/音色/轮数不符、孤立音频、轮错误、时长不符、未知事件、非二进制、坏 JSON、连接/会话失败、提前结束、中途断开、静默超时、总超时、取消关闭、音频护栏；礼貌关闭失败不丢完整音频；均只连接一次 |
+| 同槽位换歌 | 存档属于另一首歌/另一电台/另一槽位时：不复用旧稿或旧音频、不留预约、旧存档与旧音频快照不变、0 次模型调用、走 Writer；原有同曲目恢复仍是 0 次调用 |
+| 用量归属 | 渐进配音与 API 单片段入口：成功、失败、取消都计入该节目且没有无归属事件；另一个节目的用量查询为 0；API 物化器使用运行时的共享账本 |
 | 恢复不重复花费 | 已存档：再次提议 0 次模型调用；全新进程、无脚本模型也能取回；故事被占用/已讲/他处制作 → 跳过且 0 次请求；改了当前音色后仍按存档快照恢复（零合成、原音色、同一资产）；故事被退回后经账本重取而不重写 |
 | Writer 兜底 | 只有对话放置失败、普通 Writer 成功 → Writer 恰好 1 次，对话不重试，故事先退回；听众已到达 / 占位已跳过 → 不兜底；取消 → 不兜底；Writer 也失败 → 音乐继续 |
 | 渐进 HLS：迟到稿 | 渐进节目先经真实 program-render 发布越过宿主缝的前缀；双人稿此时才写完：已发布清单和分片逐字节不变且只追加、迟到稿不插入、片段保持 SKIPPED、故事预约释放、没有合成 |
@@ -79,6 +81,5 @@ episode 记录里的 `dialogue_audio` 是权威；存档旁的快照（`…audio
 - **真实模型**的素材/稿件质量与 Ark 对这些结构化 schema 的接受度（ADR 0025）。
 - **整档生成路径**（非渐进的 `assemble`）仍拒绝对话；对话只在渐进的 `author_narration` 中出现。
 - **并发**：同一集的 authoring 必须是单写者；故事账本在多进程下没有比较并设置。
-- **API 手动物化端点**（`/segments/{id}/materialize`）能为对话片段配音（同一份设置），但不写存档旁的快照副本。
-- **`websockets`** 目前由 `uvicorn[standard]` 间接带入，未单独写进 `pyproject.toml`（避免在没有网络时改动 `uv.lock`）；缺失时配置错误并给出提示。
+- **API 手动物化端点**（`/segments/{id}/materialize`）能为对话片段配音（同一份设置、记入同一个共享账本、归属该节目），但不写存档旁的快照副本。
 - 朗读转换（读音/专名）、播放器展示、对话放在歌曲之间之外的位置。

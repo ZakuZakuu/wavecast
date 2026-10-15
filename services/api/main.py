@@ -84,9 +84,11 @@ from wavecast.providers.contracts import (
     AudioSource,
     ObjectStorageProvider,
     ProgressiveLLMProvider,
+    TTSProvider,
 )
 from wavecast.providers.deepseek import DeepSeekLLMProvider
 from wavecast.providers.dialogue_voicing import build_dialogue_voicing
+from wavecast.providers.doubao_podcast import PodcastTransport
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
 from wavecast.providers.factory import build_music_registry
 from wavecast.providers.fakes import MockAudioProvider, MockTTSProvider
@@ -96,7 +98,7 @@ from wavecast.providers.netease import NeteaseMusicProvider
 from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
 from wavecast.providers.retrieval import MusicRetrievalService
-from wavecast.providers.usage import UsageLedger, usage_diagnostics
+from wavecast.providers.usage import UsageLedger, usage_diagnostics, usage_scope
 from wavecast.recommendations import (
     DeterministicRecommendationPlanner,
     InMemoryProgramIdeaRepository,
@@ -513,15 +515,29 @@ def _build_audio_provider(settings: ProviderSettings) -> AudioProvider:
 
 
 _tts_provider = _build_tts_provider(_provider_settings, audio_storage)
-_dialogue_voicing = build_dialogue_voicing(_provider_settings, audio_storage)
-narration_materializer = NarrationMaterializer(
-    _tts_provider,
-    audio_storage,
-    dialogue_speech=_dialogue_voicing.speech if _dialogue_voicing else None,
-    dialogue_voices=_dialogue_voicing.voices if _dialogue_voicing else (),
-    dialogue_speed=_dialogue_voicing.speed if _dialogue_voicing else None,
-    dialogue_format=_dialogue_voicing.audio_format if _dialogue_voicing else None,
-)
+# Usage of calls made outside a progressive runtime (the single-segment endpoint with no runtime).
+_api_usage_ledger = UsageLedger()
+
+
+def _build_narration_materializer(
+    settings: ProviderSettings,
+    tts: TTSProvider,
+    storage: ObjectStorageProvider,
+    ledger: UsageLedger,
+    *,
+    transport: PodcastTransport | None = None,
+) -> NarrationMaterializer:
+    """The API's materializer; two-host voicing (when on) records into the *shared* ledger."""
+
+    voicing = build_dialogue_voicing(settings, storage, ledger=ledger, transport=transport)
+    return NarrationMaterializer(
+        tts,
+        storage,
+        dialogue_speech=voicing.speech if voicing else None,
+        dialogue_voices=voicing.voices if voicing else (),
+        dialogue_speed=voicing.speed if voicing else None,
+        dialogue_format=voicing.audio_format if voicing else None,
+    )
 
 
 def _build_progressive_runtime(
@@ -544,6 +560,16 @@ def _build_progressive_runtime(
 
 
 progressive_runtime = _build_progressive_runtime(_provider_settings, audio_storage)
+
+
+def _usage_ledger() -> UsageLedger:
+    """The ledger the usage endpoint reads: the runtime's, so every call is queryable there."""
+    return progressive_runtime.assembly.ledger if progressive_runtime is not None else _api_usage_ledger
+
+
+narration_materializer = _build_narration_materializer(
+    _provider_settings, _tts_provider, audio_storage, _usage_ledger()
+)
 audio_provider = _build_audio_provider(_provider_settings)
 orchestrator = EpisodeOrchestrator(
     repository,
@@ -1963,7 +1989,7 @@ def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
 
     owned(episode_id, principal(request))
     current = orchestrator.get(episode_id)
-    ledger = progressive_runtime.assembly.ledger if progressive_runtime is not None else None
+    ledger = _usage_ledger() if progressive_runtime is not None or _api_usage_ledger.events else None
     segments = current.timeline_segments
     return {
         "episode_id": current.id,
@@ -2811,7 +2837,8 @@ async def materialize_narration(
     if not isinstance(segment, NarrationSegment):
         raise HTTPException(status_code=409, detail="Only narration segments can be materialized")
     try:
-        await narration_materializer.materialize(segment)
+        with usage_scope(episode_id):
+            await narration_materializer.materialize(segment)
         return await to_thread.run_sync(repository.save, episode)
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error

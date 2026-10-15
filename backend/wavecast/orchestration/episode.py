@@ -26,6 +26,7 @@ from wavecast.models.episode import (
 )
 from wavecast.presentation import HostMode
 from wavecast.providers import AudioProvider, MockAudioProvider
+from wavecast.providers.usage import usage_scope
 from wavecast.storage.episodes import (
     EpisodeConcurrencyError,
     EpisodeNotFoundError,
@@ -1028,7 +1029,9 @@ class EpisodeOrchestrator:
             candidate_id = candidate.id
             detached = candidate.model_copy(deep=True)
             try:
-                materialized = await materialize(detached)
+                # Whatever voicing costs belongs to this programme's usage, however it ends.
+                with usage_scope(episode_id):
+                    materialized = await materialize(detached)
             except Exception as error:
                 # TTS is optional enrichment. Any non-cancellation failure must
                 # release the speculative seam so music continuity wins.

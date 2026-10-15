@@ -57,9 +57,11 @@ from wavecast.orchestration.staged import ProgressiveAssemblyChapter, Progressiv
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.dialogue_speech import MockDialogueSpeechProvider
 from wavecast.providers.dialogue_voicing import build_dialogue_voicing
+from wavecast.providers.doubao_podcast import DoubaoPodcastSpeechProvider
 from wavecast.providers.doubao_voices import SPEECH_RATE_B, VOICE_COMBINATION_B
 from wavecast.providers.errors import ProviderConfigurationError
 from wavecast.providers.fakes import MockMusicProvider, MockTTSProvider
+from wavecast.providers.usage import UsageLedger
 from wavecast.stations import StationId
 from wavecast.storage import LocalObjectStorageProvider
 from wavecast.storage.dialogue_artifacts import DialogueArtifactStore
@@ -254,8 +256,10 @@ class Rig:
         scripted: bool = True,
         music_seconds: int = 2,
         plain_repository: bool = False,
+        doubao_transport: Any = None,
     ) -> None:
         self.storage = LocalObjectStorageProvider(tmp_path / "audio")
+        self.ledger_of_calls = UsageLedger()
         draft = _retag(clean_draft())
         self.material_llm = ScriptedLLM(material_draft()) if scripted else ScriptedLLM()
         self.writer_llm = _HookedLLM(draft) if scripted else _HookedLLM()
@@ -274,13 +278,18 @@ class Rig:
             usage=self.usage,
             artifacts=self.artifacts,
         )
-        self.speech = MockDialogueSpeechProvider(self.storage, fixed_duration_seconds=3)
+        self.speech: Any = (
+            DoubaoPodcastSpeechProvider(doubao_transport, self.storage, ledger=self.ledger_of_calls)
+            if doubao_transport is not None
+            else MockDialogueSpeechProvider(self.storage, fixed_duration_seconds=3)
+        )
         self.materializer = NarrationMaterializer(
             MockTTSProvider(self.storage),
             self.storage,
             dialogue_speech=self.speech,
             dialogue_voices=voices,
             dialogue_speed=float(SPEECH_RATE_B),
+            dialogue_format="wav" if doubao_transport is not None else None,
         )
         self.session = _session(station, first_slot)
         self.seed = seed or (
@@ -301,7 +310,9 @@ class Rig:
             create_progressive_chapter_generator=lambda session: self.generator,
             materializer=self.materializer,
             dialogue_runtime=self.runtime,
+            ledger=self.ledger_of_calls,
         )
+        self.assembly = assembly
         self.repository: InMemoryEpisodeRepository = (
             InMemoryEpisodeRepository() if plain_repository else EventLoopRejectingEpisodeRepository()
         )
@@ -911,3 +922,203 @@ def test_a_passage_that_arrives_after_the_prefix_was_published_changes_nothing_t
     for chunk in manifest["chunks"]:
         content = client.get(chunk["audioUrl"]).content
         assert content == published["bytes"][chunk["audioUrl"]] and len(content) == len(published["bytes"][chunk["audioUrl"]])
+
+
+# --- the same place, another song ------------------------------------------------------------
+
+OTHER_TRACK = "netease:another-song"
+
+
+def test_a_slot_that_now_holds_another_song_never_gets_the_old_passage_or_its_reservation(tmp_path) -> None:
+    first = Rig(tmp_path)
+    first.author()
+    first.voice()
+    old = asyncio.run(first.artifacts.load(EPISODE_ID, block_id_for(FIRST_SLOT)))
+    old_audio = asyncio.run(first.artifacts.load_audio(EPISODE_ID, block_id_for(FIRST_SLOT)))
+    assert old is not None and old_audio is not None
+    ledger_before = first.ledger()
+
+    second = Rig(tmp_path, scripted=False)
+    offered = asyncio.run(second.runtime.offer(**{**_offer_args(second), "track_ref": OTHER_TRACK}))
+
+    assert offered is None  # neither the old text nor the old audio comes back
+    assert _quiet(second)  # and nothing was asked of a model
+    assert second.ledger() == ledger_before  # no reservation for the new song, the old one untouched
+    assert story_id_for(OTHER_TRACK) not in second.ledger().entries
+    assert asyncio.run(second.artifacts.load(EPISODE_ID, block_id_for(FIRST_SLOT))) == old  # not replaced
+    assert asyncio.run(second.artifacts.load_audio(EPISODE_ID, block_id_for(FIRST_SLOT))) == old_audio
+
+
+def test_the_other_song_is_authored_by_the_writer_path_through_the_whole_chain(tmp_path) -> None:
+    first = Rig(tmp_path)
+    first.author()
+
+    second = Rig(tmp_path, scripted=False)
+    other = ResolvedTrack(track_ref=OTHER_TRACK, canonical_artist="方大同", canonical_title="另一首")
+    second.session.chapters[0] = second.session.chapters[0].model_copy(update={"resolved_track": other})
+    episode = second.repository.get(EPISODE_ID)
+    episode.segments = [
+        s.model_copy(update={"track_ref": OTHER_TRACK, "title": "另一首"}) if isinstance(s, MusicSegment) and s.chapter_id == "chapter-2" else s
+        for s in episode.segments
+    ]
+    episode.progressive_session = second.session
+    second.repository.save(episode)
+
+    second.author()
+
+    (segment,) = second.narration()
+    assert segment.dialogue is None and second.writer.calls == 1  # the Writer, as before
+    assert _quiet(second)
+    assert story_id_for(OTHER_TRACK) not in second.ledger().entries
+
+
+def test_a_saved_passage_for_another_station_or_slot_is_not_taken_either(tmp_path) -> None:
+    from wavecast.intelligence.dialogue_writer import DialogueSlot
+    from wavecast.models.dialogue import DialoguePurpose
+
+    first = Rig(tmp_path)
+    first.author()
+    story = story_id_for(TRACK_REF)
+    block = block_id_for(FIRST_SLOT)
+
+    def ask(slot_id: str, station: StationId):  # type: ignore[no-untyped-def]
+        slot = DialogueSlot(slot_id=slot_id, block_id=block, purpose=DialoguePurpose.STORY, station=station)
+        return asyncio.run(first.runtime._seam.resume(EPISODE_ID, story, slot, chapter_id="chapter-2", order=1))
+
+    right = ask(FIRST_SLOT, StationId.PORTRAIT)
+    assert right is not None and right.segment is not None and right.restored
+    for slot_id, station in ((FIRST_SLOT, StationId.CRATE), ("chapter-9:before-track", StationId.PORTRAIT)):
+        refused = ask(slot_id, station)
+        assert refused is not None and refused.segment is None
+        assert refused.reason == "saved_passage_is_for_another_story"
+
+
+# --- whose voicing it was ----------------------------------------------------------------------
+
+
+def _doubao_rig(tmp_path: Any, *outcomes: Any, **options: Any) -> tuple[Rig, Any]:
+    """A rig voiced by the Doubao adapter over a fake transport: one outcome per attempt.
+
+    ``None`` is a success (one second of audio per line, 403 audio tokens reported); an
+    exception is raised after the service has already reported its usage.
+    """
+
+    from wavecast.providers.doubao_podcast import PodcastAudio
+
+    queue = list(outcomes) or [None]
+
+    class Sequenced:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def synthesize(self, script: Any, attempt: Any) -> Any:
+            self.attempts += 1
+            outcome = queue.pop(0) if len(queue) > 1 else queue[0]
+            attempt.request_id = f"req-{self.attempts}"
+            attempt.add_usage({"input_text_tokens": 0, "output_audio_tokens": 403})
+            if outcome is not None:
+                raise outcome
+            second = b"\x01\x00" * 24000
+            attempt.session_finished = True
+            return PodcastAudio(
+                pcm=second * len(script.lines),
+                sample_rate=24000,
+                line_byte_lengths=(len(second),) * len(script.lines),
+            )
+
+    transport = Sequenced()
+    return Rig(tmp_path, doubao_transport=transport, **options), transport
+
+
+def _events(rig: Rig, scope: str) -> list[Any]:
+    return [event for event in rig.ledger_of_calls.events if event.scope == scope]
+
+
+def test_voicing_through_the_orchestrator_is_charged_to_the_episode(tmp_path) -> None:
+    from wavecast.providers.usage import usage_diagnostics
+
+    rig, _ = _doubao_rig(tmp_path)
+    rig.author()
+
+    rig.voice()
+
+    (event,) = rig.ledger_of_calls.events
+    assert event.scope == EPISODE_ID and event.metadata["output_audio_tokens"] == 403
+    report = usage_diagnostics(rig.ledger_of_calls, scope=EPISODE_ID)
+    assert report["usage"]["output_audio_tokens"] == 403  # type: ignore[index]
+    assert usage_diagnostics(rig.ledger_of_calls, scope="another-episode")["usage"]["output_audio_tokens"] == 0  # type: ignore[index]
+
+
+def test_a_failed_and_a_cancelled_voicing_are_charged_to_the_episode_too(tmp_path) -> None:
+    from wavecast.providers.errors import ProviderTimeoutError
+
+    rig, _ = _doubao_rig(tmp_path, ProviderTimeoutError("slow"), asyncio.CancelledError())
+    rig.author()
+
+    rig.voice()  # the first attempt fails: the seam is given up, the episode carries on
+    assert rig.narration()[0].state is SegmentState.SKIPPED
+    (failed,) = _events(rig, EPISODE_ID)
+    assert failed.metadata["outcome"] == "ProviderTimeoutError" and failed.metadata["output_audio_tokens"] == 403
+
+    # a second attempt on another passage that is cancelled midway
+    episode = rig.repository.get(EPISODE_ID)
+    for segment in episode.segments:
+        if isinstance(segment, NarrationSegment) and segment.dialogue is not None:
+            segment.state = SegmentState.SCRIPT_READY
+    rig.repository.save(episode)
+    with pytest.raises(asyncio.CancelledError):
+        rig.voice()
+    failed, cancelled = _events(rig, EPISODE_ID)
+    assert cancelled.metadata["outcome"] == "cancelled" and cancelled.scope == EPISODE_ID
+    assert [event.scope for event in rig.ledger_of_calls.events] == [EPISODE_ID, EPISODE_ID]  # none unattributed
+
+
+def test_the_single_segment_endpoint_charges_the_episode_and_never_another(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from wavecast.providers.errors import ProviderTimeoutError
+    from wavecast.providers.usage import UsageLedger
+
+    rig, _ = _doubao_rig(tmp_path, ProviderTimeoutError("slow"), None, plain_repository=True)
+    rig.author()
+    runtime = StagedProgressiveRuntimeAdapter(rig.assembly)  # type: ignore[arg-type]
+    monkeypatch.setattr(api_module, "repository", rig.repository)
+    monkeypatch.setattr(api_module, "orchestrator", EpisodeOrchestrator(rig.repository, progressive_runtime=runtime))
+    monkeypatch.setattr(api_module, "progressive_runtime", runtime)
+    monkeypatch.setattr(api_module, "narration_materializer", rig.materializer)
+    monkeypatch.setattr(api_module, "audio_storage", rig.storage)
+    client = TestClient(api_module.app)
+    headers = {"X-Wavecast-Listener": "listener-a"}
+    assert isinstance(rig.ledger_of_calls, UsageLedger) and api_module._usage_ledger() is rig.ledger_of_calls
+
+    other = rig.repository.get(EPISODE_ID).model_copy(deep=True)
+    other.id = "other-episode"
+    rig.repository.save(other)
+
+    segment_id = rig.narration()[0].id
+    failed = client.post(f"/api/episodes/{EPISODE_ID}/segments/{segment_id}/materialize", headers=headers)
+    assert failed.status_code == 502
+    done = client.post(f"/api/episodes/{EPISODE_ID}/segments/{segment_id}/materialize", headers=headers)
+    assert done.status_code == 200, done.text
+
+    usage = client.get(f"/api/episodes/{EPISODE_ID}/usage", headers=headers).json()["providers"]
+    assert usage["usage"]["event_count"] == 2
+    assert usage["usage"]["output_audio_tokens"] == 806  # the failed attempt reported 403 too
+    outcomes = [event["outcome"] if "outcome" in event else None for event in usage["provider_events"]]
+    assert all(event["provider"] == "doubao_podcast" for event in usage["provider_events"]) and len(outcomes) == 2
+    elsewhere = client.get("/api/episodes/other-episode/usage", headers=headers).json()["providers"]
+    assert elsewhere["usage"]["event_count"] == 0 and elsewhere["usage"]["output_audio_tokens"] == 0
+    assert "刚听完" not in str(usage)
+
+
+def test_the_api_materializer_records_into_the_runtime_ledger(tmp_path) -> None:
+    from tests.test_doubao_podcast import FakeTransport
+
+    ledger = UsageLedger()
+    settings = ProviderSettings(dialogue_radio=True, dialogue_speech_provider="doubao", doubao_podcast_api_key="k")
+    storage = LocalObjectStorageProvider(tmp_path / "audio")
+
+    materializer = api_module._build_narration_materializer(
+        settings, MockTTSProvider(storage), storage, ledger, transport=FakeTransport()
+    )
+
+    assert materializer.dialogue_speech is not None and materializer.dialogue_speech._ledger is ledger  # type: ignore[attr-defined]
+    assert api_module._build_narration_materializer(ProviderSettings(), MockTTSProvider(storage), storage, ledger).dialogue_speech is None
