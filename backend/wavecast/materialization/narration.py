@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from typing import Any
 
+from pydantic import ValidationError
+
+from wavecast.models.dialogue import DialogueAudioSnapshot, VoiceRoleSnapshot
 from wavecast.models.episode import NarrationSegment, SegmentKind, SegmentState
 from wavecast.narration import render_narration
 from wavecast.providers.contracts import (
@@ -14,7 +18,13 @@ from wavecast.providers.contracts import (
     ObjectStorageProvider,
     TTSProvider,
 )
-from wavecast.providers.errors import ProviderError, ProviderInvalidResponseError
+from wavecast.providers.dialogue_speech import DIALOGUE_PROTOCOL_VERSION, DialogueSpeechProvider
+from wavecast.providers.errors import (
+    ProviderConfigurationError,
+    ProviderError,
+    ProviderInvalidResponseError,
+)
+from wavecast.providers.speech import SpeechRequest
 from wavecast.speech import SpeechDirector, SpeechProfile
 from wavecast.spoken_form import has_unspeakable_script
 
@@ -28,9 +38,21 @@ class NarrationMaterializer:
         self,
         tts_provider: TTSProvider,
         storage: ObjectStorageProvider,
+        *,
+        dialogue_speech: DialogueSpeechProvider | None = None,
+        dialogue_voices: Sequence[VoiceRoleSnapshot] = (),
+        dialogue_speed: float | None = None,
+        dialogue_format: str | None = None,
     ) -> None:
         self.tts_provider = tts_provider
         self.storage = storage
+        # Two-host passages are voiced by their own provider with a fixed voice-per-host
+        # mapping; without them a dialogue segment cannot be materialized (it is not read out
+        # by the one-voice TTS).
+        self.dialogue_speech = dialogue_speech
+        self.dialogue_voices = tuple(dialogue_voices)
+        self.dialogue_speed = dialogue_speed
+        self.dialogue_format = dialogue_format
         self._locks: dict[str, asyncio.Lock] = {}
 
     async def materialize(self, segment: NarrationSegment) -> NarrationSegment:
@@ -44,6 +66,8 @@ class NarrationMaterializer:
             raise ProviderInvalidResponseError(
                 f"narration materialization requires SCRIPT_READY, got {segment.state.value}"
             )
+        if segment.dialogue is not None:
+            return await self._materialize_dialogue(segment)
         synthesis_text = segment.tts_text or segment.narration_text
         if not synthesis_text:
             raise ProviderInvalidResponseError("narration segment has no script text")
@@ -115,12 +139,200 @@ class NarrationMaterializer:
                 segment.state = SegmentState.SCRIPT_READY
                 raise ProviderInvalidResponseError("narration materialization failed") from error
 
+    async def _materialize_dialogue(self, segment: NarrationSegment) -> NarrationSegment:
+        """Voice a dialogue segment: restore it as it was made, or make it under today's config.
+
+        A segment that carries the snapshot of its original request is *restored*: the recorded
+        voices, speed, vendor and format are used, and the recorded asset if it still exists.
+        Changing today's configuration never changes an old programme.  Only a segment with no
+        snapshot is voiced from the current configuration, and that records a new snapshot.
+        """
+        provider = self.dialogue_speech
+        if provider is None:
+            raise ProviderConfigurationError("no dialogue voices are configured")
+        if segment.dialogue_audio is not None:
+            return await self._restore_dialogue(segment, provider, segment.dialogue_audio)
+        if not self.dialogue_voices:
+            raise ProviderConfigurationError("no dialogue voices are configured")
+        return await self._voice_dialogue(segment, provider, self._current_request(segment))
+
+    def _current_request(self, segment: NarrationSegment) -> SpeechRequest:
+        assert segment.dialogue is not None
+        try:
+            return SpeechRequest.dialogue(
+                segment.dialogue,
+                list(self.dialogue_voices),
+                speed=self.dialogue_speed,
+                audio_format=self.dialogue_format,
+            )
+        except ValidationError as error:
+            raise ProviderConfigurationError("dialogue voices do not cover the speakers") from error
+
+    async def regenerate_dialogue(self, segment: NarrationSegment) -> NarrationSegment:
+        """Make new audio for a dialogue under the *current* configuration (an explicit act).
+
+        Unlike restoring, this replaces the recorded snapshot and asset - but never for audio the
+        listener has reached (published audio is immutable), and a failure leaves the previous
+        audio and snapshot exactly as they were.
+        """
+        if segment.dialogue is None:
+            raise ValueError("only a dialogue segment can be regenerated")
+        if segment.is_committed:
+            raise ValueError("published audio is immutable and cannot be regenerated")
+        provider = self.dialogue_speech
+        if provider is None or not self.dialogue_voices:
+            raise ProviderConfigurationError("no dialogue voices are configured")
+        previous = (
+            segment.state,
+            segment.asset_ref,
+            segment.audio_source_url,
+            segment.actual_duration_seconds,
+            segment.dialogue_audio,
+        )
+        try:
+            return await self._voice_dialogue(segment, provider, self._current_request(segment))
+        except BaseException:
+            (
+                segment.state,
+                segment.asset_ref,
+                segment.audio_source_url,
+                segment.actual_duration_seconds,
+                segment.dialogue_audio,
+            ) = previous
+            raise
+
+    async def _restore_dialogue(
+        self,
+        segment: NarrationSegment,
+        provider: DialogueSpeechProvider,
+        snapshot: DialogueAudioSnapshot,
+    ) -> NarrationSegment:
+        assert segment.dialogue is not None
+        try:
+            request = SpeechRequest.dialogue(
+                segment.dialogue,
+                list(snapshot.voices),
+                speed=snapshot.speed,
+                audio_format=snapshot.audio_format,
+            )
+        except ValidationError as error:
+            raise ProviderInvalidResponseError("the recorded voices do not cover the speakers") from error
+        cached = await self.storage.get(snapshot.cache_key)
+        duration = _stored_duration(cached.metadata) if cached else None
+        if cached is not None and duration is not None:
+            # The recorded audio is still there: nothing is synthesized, whatever is configured.
+            self._apply_asset(
+                segment,
+                AudioAsset(
+                    asset_id=snapshot.cache_key,
+                    asset_type=AudioAssetType.NARRATION,
+                    provider=snapshot.provider,
+                    playback_url=self.storage.url_for(snapshot.cache_key),
+                    duration=duration,
+                    metadata={"cache_key": snapshot.cache_key, "cache_hit": True},
+                ),
+            )
+            return segment
+        # The audio is gone.  It can be made again only exactly as before, by the same vendor,
+        # model and protocol; anything else would silently change an old programme's voices.
+        identity = (provider.provider_name, provider.model, _protocol_of(provider))
+        recorded = (snapshot.provider, snapshot.model, snapshot.protocol_version)
+        if identity != recorded or provider.cache_key(request) != snapshot.cache_key:
+            raise ProviderConfigurationError(
+                "the original dialogue audio is missing and the configured voice provider cannot "
+                "reproduce it; regenerate explicitly to make new audio"
+            )
+        return await self._voice_dialogue(segment, provider, request, keep_snapshot=snapshot)
+
+    async def _voice_dialogue(
+        self,
+        segment: NarrationSegment,
+        provider: DialogueSpeechProvider,
+        request: SpeechRequest,
+        *,
+        keep_snapshot: DialogueAudioSnapshot | None = None,
+    ) -> NarrationSegment:
+        block = segment.dialogue
+        assert block is not None
+        if any(has_unspeakable_script(turn.tts_text or turn.text) for turn in block.turns):
+            logger.warning("narration_skipped segment_id=%s reason=unspeakable_script", segment.id)
+            segment.state = SegmentState.SKIPPED
+            return segment
+        cache_key = provider.cache_key(request)
+        lock = self._locks.setdefault(cache_key, asyncio.Lock())
+        async with lock:
+            cached = await self.storage.get(cache_key)
+            cached_duration = _stored_duration(cached.metadata) if cached else None
+            if cached is not None and cached_duration is not None:
+                # Repeated: the audio already exists, so nothing is synthesized.
+                self._apply_dialogue_asset(
+                    segment,
+                    AudioAsset(
+                        asset_id=cache_key,
+                        asset_type=AudioAssetType.NARRATION,
+                        provider=provider.provider_name,
+                        playback_url=self.storage.url_for(cache_key),
+                        duration=cached_duration,
+                        metadata={"cache_key": cache_key, "cache_hit": True},
+                    ),
+                    request,
+                    provider,
+                    keep_snapshot,
+                )
+                return segment
+
+            segment.state = SegmentState.AUDIO_GENERATING
+            try:
+                asset = await provider.synthesize_dialogue(request)
+                if asset.asset_type is not AudioAssetType.NARRATION:
+                    raise ProviderInvalidResponseError("dialogue speech returned a non-narration asset")
+                if not asset.playback_url or asset.duration <= 0:
+                    raise ProviderInvalidResponseError("dialogue speech returned an invalid audio asset")
+            except asyncio.CancelledError:
+                # Cancelled or superseded mid-synthesis: back to a clean, unpublished state.
+                segment.state = SegmentState.SCRIPT_READY
+                raise
+            except ProviderError:
+                segment.state = SegmentState.SCRIPT_READY
+                raise
+            except Exception as error:
+                segment.state = SegmentState.SCRIPT_READY
+                raise ProviderInvalidResponseError("dialogue materialization failed") from error
+            self._apply_dialogue_asset(segment, asset, request, provider, keep_snapshot)
+            return segment
+
+    def _apply_dialogue_asset(
+        self,
+        segment: NarrationSegment,
+        asset: AudioAsset,
+        request: SpeechRequest,
+        provider: DialogueSpeechProvider,
+        keep_snapshot: DialogueAudioSnapshot | None,
+    ) -> None:
+        # The actual audio length (not the estimate) is what the timeline plans with.
+        self._apply_asset(segment, asset)
+        segment.dialogue_audio = keep_snapshot or DialogueAudioSnapshot(
+            schema_version=1,
+            provider=provider.provider_name,
+            model=provider.model,
+            protocol_version=_protocol_of(provider),
+            audio_format=request.audio_format,
+            speed=request.speed,
+            voices=list(request.roles),
+            cache_key=asset.asset_id,
+            duration_seconds=asset.duration,
+        )
+
     @staticmethod
     def _apply_asset(segment: NarrationSegment, asset: AudioAsset) -> None:
         segment.asset_ref = asset.asset_id
         segment.audio_source_url = asset.playback_url
         segment.actual_duration_seconds = asset.duration
         segment.state = SegmentState.AUDIO_READY
+
+
+def _protocol_of(provider: DialogueSpeechProvider) -> str:
+    return str(getattr(provider, "protocol_version", DIALOGUE_PROTOCOL_VERSION))
 
 
 def _provider_cache_key(

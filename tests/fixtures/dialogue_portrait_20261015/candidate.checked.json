@@ -1,0 +1,67 @@
+{
+  "status": "CHECKED after ONE local repair (turns 5, 7)",
+  "turns": [
+    {
+      "speaker": "A",
+      "text": "刚这首《我们能不能》刚落，我突然想到一个很多人问过的问题：方大同在香港发展，怎么一直唱国语？",
+      "tts_text": null,
+      "fact_refs": []
+    },
+    {
+      "speaker": "B",
+      "text": "他自己说过，他的语言一直是中文，开口唱歌理所当然就是唱国语。他出生在夏威夷，在上海和广州住了六年才到香港，语文环境以国语为主，所以也没想过要唱粤语歌。",
+      "tts_text": null,
+      "fact_refs": [
+        "live-fdt-F1",
+        "live-fdt-F2",
+        "live-fdt-F3"
+      ]
+    },
+    {
+      "speaker": "A",
+      "text": "那他一开始就把听众范围定得很清楚吗？",
+      "tts_text": null,
+      "fact_refs": []
+    },
+    {
+      "speaker": "B",
+      "text": "对，他决定做音乐之后，告诉自己要做给亚洲听的音乐，他觉得亚洲最大宗的通用语言是国语，所以一直唱中文歌。",
+      "tts_text": null,
+      "fact_refs": [
+        "live-fdt-F4",
+        "live-fdt-F5"
+      ]
+    },
+    {
+      "speaker": "A",
+      "text": "接下来要放的这张专辑，就是他国语路线里很有代表性的一张。2006年12月31日，华纳唱片发行了他的《爱爱爱》，整张专辑都是国语。",
+      "tts_text": null,
+      "fact_refs": [
+        "live-fdt-F9"
+      ]
+    },
+    {
+      "speaker": "B",
+      "text": "这张专辑的风格以Soul和R&B为主导，而且所有歌曲的作曲、编曲、制作还有和声，都是方大同一手包办，歌词部分是他和林夕、周耀辉一起写的。",
+      "tts_text": null,
+      "fact_refs": [
+        "live-fdt-F10",
+        "live-fdt-F11"
+      ]
+    },
+    {
+      "speaker": "A",
+      "text": "这张专辑叫《爱爱爱》，背后还有什么特别的想法吗？",
+      "tts_text": null,
+      "fact_refs": []
+    },
+    {
+      "speaker": "B",
+      "text": "他希望自己的歌曲能够唤起大家爱的共鸣。接下来我们就来听这张专辑里的歌。",
+      "tts_text": null,
+      "fact_refs": [
+        "live-fdt-F6"
+      ]
+    }
+  ]
+}

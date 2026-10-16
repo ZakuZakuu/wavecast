@@ -28,6 +28,7 @@ from .models import (
     ResearchPlanMode,
     SearchIntent,
     TrackProposal,
+    reliable_publication_date,
 )
 from .trace import GenerationTrace
 
@@ -75,8 +76,9 @@ BACKGROUND_RESEARCH_PLANNER_DEADLINE_SECONDS = 20.0
 class BackgroundResearchPlanner:
     """One bounded, provider-neutral planning call for slow research."""
 
-    def __init__(self, llm: ProgressiveLLMProvider) -> None:
+    def __init__(self, llm: ProgressiveLLMProvider, *, exa_only: bool = False) -> None:
         self.llm = llm
+        self.exa_only = exa_only
 
     async def plan(
         self,
@@ -86,7 +88,7 @@ class BackgroundResearchPlanner:
         trace: GenerationTrace | None = None,
     ) -> ResearchPlan:
         result = await self.llm.structured(
-            self._prompt(request, fast_result),
+            self._prompt(request, fast_result, exa_only=self.exa_only),
             ResearchPlan,
             transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
             profile=InferenceProfile.BALANCED,
@@ -106,13 +108,22 @@ class BackgroundResearchPlanner:
         return normalized
 
     @staticmethod
-    def _prompt(request: FastResearchInput, fast_result: FastResultLike) -> str:
+    def _prompt(
+        request: FastResearchInput, fast_result: FastResultLike, *, exa_only: bool = False
+    ) -> str:
         budget = (
             DEEP_BACKGROUND_BUDGET
             if request.depth is ResearchDepth.DEEP
             else STANDARD_BACKGROUND_BUDGET
         )
         max_exa, max_tavily = budget[0], budget[1]
+        routing = (
+            f"execute at most {max_exa} DISCOVERY and {max_tavily} RESEARCH/EXACT queries, all "
+            "through Exa, in the order you list them, so put the "
+            if exa_only
+            else f"execute at most {max_exa} DISCOVERY queries through Exa and {max_tavily} "
+            "RESEARCH/EXACT queries through Tavily, in the order you list them, so put the "
+        )
         return (
             "Plan the bounded background research for the listener's actual topic. This is a "
             "research-intent step, not a fixed show-type classifier and not a search call. "
@@ -120,8 +131,7 @@ class BackgroundResearchPlanner:
             "creative-work analysis, and non-music context should produce different questions "
             "when warranted. Use normalized fast evidence as context, but do not invent facts "
             "or track entities. Propose zero to eight distinct queries; application code will "
-            f"execute at most {max_exa} DISCOVERY queries through Exa and {max_tavily} "
-            "RESEARCH/EXACT queries through Tavily, in the order you list them, so put the "
+            f"{routing}"
             "most informative first and make each facet (biography, collaborations, key works, "
             "style, reception) a separate query when the request is about one artist. Every query needs a non-empty rationale and valid facet IDs. "
             "Use research_mode=adaptive when more evidence is useful; if no additional "
@@ -151,11 +161,15 @@ class FastResearchService:
         research: SearchCallable,
         ledger: UsageLedger | None = None,
         deadline_seconds: float = FAST_RESEARCH_DEADLINE_SECONDS,
+        research_label: str = "tavily",
     ) -> None:
         self.discovery = discovery
         self.research = research
         self.ledger = ledger
         self.deadline_seconds = deadline_seconds
+        # What the research slot really is ("tavily", or "exa" in the Exa-only configuration);
+        # the slots themselves stay "exa" (discovery) and "tavily" (research) as roles.
+        self.research_label = research_label
 
     async def run(
         self, request: FastResearchInput, *, trace: GenerationTrace | None = None
@@ -185,14 +199,18 @@ class FastResearchService:
             try:
                 results_by_provider[provider] = task.result()
                 if trace:
-                    trace.mark(f"{provider}_done", result_count=len(results_by_provider[provider]))
+                    trace.mark(
+                        f"{self._name(provider)}_done", result_count=len(results_by_provider[provider])
+                    )
             except Exception as error:  # provider failures are data-quality uncertainty
-                failures.append(f"{provider} unavailable: {type(error).__name__}")
+                failures.append(f"{self._name(provider)} unavailable: {type(error).__name__}")
                 if trace:
-                    trace.mark(f"{provider}_failed")
+                    trace.mark(f"{self._name(provider)}_failed")
         for provider in tasks.values():
-            if provider not in results_by_provider and provider not in {item.split()[0] for item in failures}:
-                failures.append(f"{provider} unavailable: deadline")
+            if provider not in results_by_provider and self._name(provider) not in {
+                item.split()[0] for item in failures
+            }:
+                failures.append(f"{self._name(provider)} unavailable: deadline")
         normalized = normalize_results(
             results_by_provider.get("exa", []) + results_by_provider.get("tavily", [])
         )
@@ -220,6 +238,13 @@ class FastResearchService:
             )
         return FastResearchResult(bundle=bundle, elapsed_ms=elapsed_ms, queries=queries)
 
+    def _name(self, role: str) -> str:
+        return _display_name(role, self.research_label)
+
+
+def _display_name(role: str, research_label: str) -> str:
+    return research_label if role == "tavily" else role
+
 
 class BackgroundResearchService:
     """Adds bounded context after the fast path and can be cancelled before paid work."""
@@ -234,6 +259,7 @@ class BackgroundResearchService:
         planner_deadline_seconds: float = BACKGROUND_RESEARCH_PLANNER_DEADLINE_SECONDS,
         planner: ResearchIntentPlanner | None = None,
         deep_research: SearchCallable | None = None,
+        research_label: str = "tavily",
     ) -> None:
         self.discovery = discovery
         self.research = research
@@ -242,6 +268,7 @@ class BackgroundResearchService:
         self.deadline_seconds = deadline_seconds
         self.planner_deadline_seconds = planner_deadline_seconds
         self.planner = planner
+        self.research_label = research_label  # see FastResearchService
 
     async def run(
         self,
@@ -275,7 +302,7 @@ class BackgroundResearchService:
                 planned_background_query_count=len(plan.background_queries),
                 selected_queries=[
                     {
-                        "provider": provider,
+                        "provider": _display_name(provider, self.research_label),
                         "query": planned.query,
                         "intent": planned.intent.value,
                         "facet_ids": list(planned.facet_ids),
@@ -331,7 +358,7 @@ class BackgroundResearchService:
             return None
         provider_pending = [provider_task for provider_task in tasks if provider_task in pending]
         pending_failures = [
-            f"{tasks[provider_task][0]} unavailable: deadline"
+            f"{_display_name(tasks[provider_task][0], self.research_label)} unavailable: deadline"
             for provider_task in provider_pending
         ]
         for provider_task in provider_pending:
@@ -353,7 +380,9 @@ class BackgroundResearchService:
             try:
                 extra.extend(task.result())
             except Exception as error:
-                failures.append(f"{provider} unavailable: {type(error).__name__}")
+                failures.append(
+                    f"{_display_name(provider, self.research_label)} unavailable: {type(error).__name__}"
+                )
                 continue
         merged = merge_bundles(
             fast_result.bundle,
@@ -775,6 +804,7 @@ def bundle_from_results(
                 source_title=result.title,
                 facet_ids=list(planned.facet_ids) if planned else [],
                 search_intent=planned.intent if planned else None,
+                published_at=reliable_publication_date(result.published_at),
             )
         )
     return ResearchBundle(

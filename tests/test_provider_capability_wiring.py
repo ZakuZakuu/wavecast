@@ -32,7 +32,7 @@ def test_writer_override_does_not_enable_sibling_capabilities(
         pass
 
     monkeypatch.setattr(
-        "wavecast.assembly.DeepSeekLLMProvider",
+        "wavecast.providers.llm_factory.DeepSeekLLMProvider",
         lambda *_args, **_kwargs: LiveLLM(),
     )
     service = create_episode_assembly_service(
@@ -65,7 +65,7 @@ def test_research_override_enables_only_research_boundary(
         pass
 
     monkeypatch.setattr(
-        "wavecast.assembly.DeepSeekLLMProvider",
+        "wavecast.providers.llm_factory.DeepSeekLLMProvider",
         lambda *_args, **_kwargs: LiveLLM(),
     )
     monkeypatch.setattr(
@@ -103,7 +103,7 @@ def test_tts_override_selects_minimax_without_enabling_other_capabilities(
         provider_name = "minimax"
 
     monkeypatch.setattr(
-        "wavecast.assembly.MiniMaxTTSProvider",
+        "wavecast.providers.tts_factory.MiniMaxTTSProvider",
         lambda *_args, **_kwargs: LiveTTS(),
     )
     service = create_episode_assembly_service(
@@ -121,3 +121,16 @@ def test_tts_override_selects_minimax_without_enabling_other_capabilities(
     assert isinstance(service.background_pipeline.curator.llm, MockEpisodeAssemblyLLM)
     assert isinstance(service.background_pipeline.writer.llm, MockEpisodeAssemblyLLM)
     assert isinstance(service.materializer.tts_provider, LiveTTS)
+
+
+def test_tts_override_selects_doubao_without_enabling_other_capabilities(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from wavecast.providers.doubao_tts import DoubaoTTSProvider
+
+    service = create_episode_assembly_service(
+        ProviderSettings(mode="mock", tts_provider="doubao", doubao_tts_api_key="test"),
+        storage=LocalObjectStorageProvider(tmp_path / "audio"),
+    )
+
+    assert isinstance(service.fast_path.planner.llm, MockEpisodeAssemblyLLM)
+    assert isinstance(service.background_pipeline.research.discovery, FakeSearchProvider)
+    assert isinstance(service.materializer.tts_provider, DoubaoTTSProvider)

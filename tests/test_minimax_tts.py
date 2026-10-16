@@ -45,6 +45,7 @@ def test_live_mode_with_incomplete_configuration_fails_before_runtime_use(
                 mode="live", minimax_api_key=api_key, minimax_tts_voice_id=voice_id
             ),
             LocalObjectStorageProvider(tmp_path / "audio"),
+            UsageLedger(),
         )
 
 
@@ -115,7 +116,7 @@ def test_minimax_payload_decodes_hex_and_records_usage(tmp_path) -> None:
     assert '"voice_id":"test-voice"' in payload
     assert '"sample_rate":32000' in payload
     assert asset.playback_url.startswith("/api/assets/audio/")
-    assert asset.duration == 2
+    assert asset.duration == 3  # 2.052 s, rounded up so the line is not cut
     assert ledger.events[0].provider == "minimax"
     assert ledger.events[0].operation == "tts"
     assert ledger.events[0].usage_characters == 12
@@ -188,17 +189,17 @@ def test_minimax_cache_hit_does_not_make_second_request(tmp_path) -> None:
 
 @pytest.mark.parametrize(
     ("audio_length_ms", "expected_seconds"),
-    [(4087, 4), (4500, 5), (5000, 5), (250, 1)],
+    [(4087, 5), (4500, 5), (5000, 5), (5001, 6), (250, 1)],
 )
-def test_minimax_duration_uses_nearest_integer_second(
+def test_minimax_duration_covers_the_whole_clip(
     audio_length_ms: int, expected_seconds: int
 ) -> None:
     assert _duration_seconds(b"", {"audio_length": audio_length_ms}) == expected_seconds
 
 
-def test_minimax_mp3_frame_fallback_uses_nearest_integer_second(monkeypatch) -> None:
+def test_minimax_mp3_frame_fallback_covers_the_whole_clip(monkeypatch) -> None:
     import wavecast.providers.minimax as minimax
 
     monkeypatch.setattr(minimax, "_mp3_duration_seconds", lambda _audio: 4.087)
 
-    assert _duration_seconds(b"not-used", {}) == 4
+    assert _duration_seconds(b"not-used", {}) == 5

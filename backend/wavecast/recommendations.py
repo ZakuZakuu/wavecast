@@ -493,7 +493,7 @@ class ProposalContextRepository(Protocol):
 
 
 class ProviderBackedRecommendationPlanner:
-    """Bounded DeepSeek planner with a deterministic, credential-safe fallback."""
+    """Bounded model planner with a deterministic, credential-safe fallback."""
 
     source = "deepseek_planner"
 
@@ -502,7 +502,10 @@ class ProviderBackedRecommendationPlanner:
         llm_factory: Callable[[], ProgressiveLLMProvider],
         *,
         fallback: RecommendationPlanner | None = None,
+        source: str | None = None,
     ) -> None:
+        if source is not None:
+            self.source = source
         self._llm_factory = llm_factory
         self._fallback = fallback or DeterministicRecommendationPlanner()
 

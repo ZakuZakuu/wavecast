@@ -218,7 +218,9 @@ def _manifest_for_plan_prefix(
         index=0,
         start_seconds=0,
         duration_seconds=end_seconds,
-        plan_fingerprint=mix_plan_fingerprint(sliced),
+        # A manifest built here has no loudness rule, which means a programme published before loudness
+        # handling: its fingerprints hash the plan alone.
+        plan_fingerprint=mix_plan_fingerprint(sliced, "none"),
         content_sha256="0" * 64,
         asset_key="program-renders/test/chunk.ts",
         audio_url="/api/assets/audio/program-renders/test/chunk.ts",

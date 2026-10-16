@@ -76,20 +76,36 @@ from wavecast.proposals import (
     ProposalPersistenceConflict,
     shared_copy,
 )
+from wavecast.providers.ark import ArkLLMProvider
 from wavecast.providers.audius import AudiusMusicProvider
 from wavecast.providers.config import ProviderSettings
-from wavecast.providers.contracts import AudioProvider, AudioSource, ObjectStorageProvider
+from wavecast.providers.contracts import (
+    AudioProvider,
+    AudioSource,
+    ObjectStorageProvider,
+    ProgressiveLLMProvider,
+    TTSProvider,
+)
 from wavecast.providers.deepseek import DeepSeekLLMProvider
+from wavecast.providers.dialogue_voicing import build_dialogue_voicing
+from wavecast.providers.doubao_podcast import PodcastTransport
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
 from wavecast.providers.factory import build_music_registry
-from wavecast.providers.fakes import MockAudioProvider, MockTTSProvider
-from wavecast.providers.minimax import MiniMaxTTSProvider
+from wavecast.providers.fakes import MockAudioProvider
 from wavecast.providers.music_http import SidecarMusicProvider
 from wavecast.providers.netease import NeteaseMusicProvider
 from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
 from wavecast.providers.retrieval import MusicRetrievalService
-from wavecast.providers.usage import UsageLedger, usage_diagnostics
+from wavecast.providers.tts_factory import build_tts_provider
+from wavecast.providers.usage import (
+    UsageEvent,
+    UsageLedger,
+    cost_summary,
+    diagnostics_of,
+    merge_events,
+    usage_scope,
+)
 from wavecast.recommendations import (
     DeterministicRecommendationPlanner,
     InMemoryProgramIdeaRepository,
@@ -136,6 +152,7 @@ from wavecast.storage import (
 )
 from wavecast.storage.episodes import EpisodeRepository
 from wavecast.storage.recommendations import PostgresProgramIdeaRepository
+from wavecast.storage.usage_events import UsageEventStore
 from wavecast.storage.user_context import (
     PostgresUserEventRepository,
     PostgresUserPreferencesRepository,
@@ -371,18 +388,28 @@ def _build_recommendation_planner(settings: ProviderSettings) -> RecommendationP
     mode = os.getenv("WAVECAST_RECOMMENDATION_PLANNER", "deterministic").strip().lower()
     if mode == "deterministic":
         return DeterministicRecommendationPlanner()
-    if mode != "deepseek":
+    if mode not in {"deepseek", "ark"}:
         raise ProviderConfigurationError(
-            "WAVECAST_RECOMMENDATION_PLANNER must be deterministic or deepseek"
+            "WAVECAST_RECOMMENDATION_PLANNER must be deterministic, deepseek or ark"
         )
 
     # Recommendation inference is an independently gated capability.  It may use
-    # DeepSeek while episode assembly, TTS, and music providers remain in mock
+    # a live model while episode assembly, TTS, and music providers remain in mock
     # mode, so enabling personalized ideas does not implicitly enable paid
-    # generation elsewhere.
+    # generation elsewhere.  Ark shares the proposal role's model (ARK_PROPOSAL_MODEL)
+    # with the on-demand proposal generator; the two keep their own prompts and modes.
     recommendation_settings = settings.for_live_capability()
-    recommendation_settings.credential_for("deepseek")
     ledger = UsageLedger()
+    if mode == "ark":
+        recommendation_settings.credential_for("ark")
+        ark_model = recommendation_settings.ark_model_for("proposal")
+        return ProviderBackedRecommendationPlanner(
+            lambda: ArkLLMProvider(
+                recommendation_settings, model=ark_model, role="proposal", ledger=ledger
+            ),
+            source="ark_planner",
+        )
+    recommendation_settings.credential_for("deepseek")
     return ProviderBackedRecommendationPlanner(
         lambda: DeepSeekLLMProvider(recommendation_settings, ledger=ledger)
     )
@@ -406,15 +433,28 @@ def _provider_error_summary(error: Exception) -> str:
     return f"{type(error).__name__}: {str(error)[:200]}"
 
 
-def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGenerator:
+def _build_proposal_generator(
+    settings: ProviderSettings, ledger: UsageLedger
+) -> ProgramProposalGenerator:
+    """``ledger`` is the shared one: a proposal's calls are recorded (under the proposal's own id,
+    before any episode exists) and persisted like the episode's, instead of in a private ledger."""
+
     if settings.resolved_proposal_planner == "mock":
         return DeterministicMockProgramProposalGenerator()
     live_settings = settings.for_live_capability()
-    live_settings.credential_for("deepseek")
-    ledger = UsageLedger()
+    if settings.resolved_proposal_planner == "ark":
+        proposal_llm: ProgressiveLLMProvider = ArkLLMProvider(
+            live_settings,
+            model=live_settings.ark_model_for("proposal"),
+            role="proposal",
+            ledger=ledger,
+        )
+    else:
+        live_settings.credential_for("deepseek")
+        proposal_llm = DeepSeekLLMProvider(live_settings, ledger=ledger)
     retrieval = MusicRetrievalService(build_music_registry(settings))
     return LLMProgramProposalGenerator(
-        DeepSeekLLMProvider(live_settings, ledger=ledger),
+        proposal_llm,
         retrieval,
         pool_builder=(
             CatalogPoolBuilder(
@@ -427,24 +467,18 @@ def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGene
     )
 
 
-proposal_generator: ProgramProposalGenerator | None = _build_proposal_generator(
-    _provider_settings
-)
 repository: EpisodeRepository = (
     PostgresEpisodeRepository(DATABASE_URL) if DATABASE_URL else InMemoryEpisodeRepository()
 )
 
 
 def _build_tts_provider(
-    settings: ProviderSettings, storage: ObjectStorageProvider
-) -> MiniMaxTTSProvider | MockTTSProvider:
-    if settings.resolved_tts_provider == "mock":
-        return MockTTSProvider(storage)
-    live_settings = settings.for_live_capability()
-    live_settings.credential_for("minimax")
-    if not live_settings.minimax_tts_voice_id:
-        raise ProviderConfigurationError("minimax TTS requires MINIMAX_TTS_VOICE_ID")
-    return MiniMaxTTSProvider(live_settings, storage=storage)
+    settings: ProviderSettings, storage: ObjectStorageProvider, ledger: UsageLedger
+) -> TTSProvider:
+    """``ledger`` is the shared one the usage endpoint reads; a provider with a ledger of its own
+    keeps the opening host's voice out of the episode's report."""
+
+    return build_tts_provider(settings, storage, ledger)
 
 
 class BrowserProxyAudioProvider:
@@ -486,8 +520,29 @@ def _build_audio_provider(settings: ProviderSettings) -> AudioProvider:
     return BrowserProxyAudioProvider()
 
 
-_tts_provider = _build_tts_provider(_provider_settings, audio_storage)
-narration_materializer = NarrationMaterializer(_tts_provider, audio_storage)
+# Usage of calls made outside a progressive runtime (the single-segment endpoint with no runtime).
+_api_usage_ledger = UsageLedger()
+
+
+def _build_narration_materializer(
+    settings: ProviderSettings,
+    tts: TTSProvider,
+    storage: ObjectStorageProvider,
+    ledger: UsageLedger,
+    *,
+    transport: PodcastTransport | None = None,
+) -> NarrationMaterializer:
+    """The API's materializer; two-host voicing (when on) records into the *shared* ledger."""
+
+    voicing = build_dialogue_voicing(settings, storage, ledger=ledger, transport=transport)
+    return NarrationMaterializer(
+        tts,
+        storage,
+        dialogue_speech=voicing.speech if voicing else None,
+        dialogue_voices=voicing.voices if voicing else (),
+        dialogue_speed=voicing.speed if voicing else None,
+        dialogue_format=voicing.audio_format if voicing else None,
+    )
 
 
 def _build_progressive_runtime(
@@ -510,6 +565,25 @@ def _build_progressive_runtime(
 
 
 progressive_runtime = _build_progressive_runtime(_provider_settings, audio_storage)
+
+
+def _usage_ledger() -> UsageLedger:
+    """The ledger the usage endpoint reads: the runtime's, so every call is queryable there."""
+    return progressive_runtime.assembly.ledger if progressive_runtime is not None else _api_usage_ledger
+
+
+# Every scoped usage event is also kept in storage, so the per-episode report survives a restart.
+_usage_event_store = UsageEventStore(audio_storage)
+_usage_ledger().attach_sink(_usage_event_store)
+# Built after the shared ledger exists, so the opening host's voice and the proposal planner
+# record into it rather than into ledgers nobody reads.
+_tts_provider = _build_tts_provider(_provider_settings, audio_storage, _usage_ledger())
+proposal_generator: ProgramProposalGenerator | None = _build_proposal_generator(
+    _provider_settings, _usage_ledger()
+)
+narration_materializer = _build_narration_materializer(
+    _provider_settings, _tts_provider, audio_storage, _usage_ledger()
+)
 audio_provider = _build_audio_provider(_provider_settings)
 orchestrator = EpisodeOrchestrator(
     repository,
@@ -1562,6 +1636,10 @@ async def create_program_proposals(
         proposal_ids = [item.id for item in proposals]
         if len(set(proposal_ids)) != len(proposal_ids):
             raise ProgramProposalGenerationError("proposal_id_collision")
+        try:
+            await _usage_event_store.link_batch(proposal_ids)
+        except Exception:  # noqa: BLE001 - the usage report is secondary; never fail a proposal for it
+            logger.warning("usage_batch_link_failed proposals=%s", len(proposal_ids))
         await to_thread.run_sync(
             lambda: proposal_repository.save_many(
                 proposals, owner_listener_id=owner.listener_id,
@@ -1725,7 +1803,9 @@ async def create_episode(seed_id: str, request: Request) -> LiveEpisode:
             actor.listener_id,
             actor.user_id,
         )
-        episode = await _prepare_opening_host(episode, seed)
+        # The opening host's voice is a cost of this episode, whoever is asking for it.
+        with usage_scope(episode.id):
+            episode = await _prepare_opening_host(episode, seed)
         return await to_thread.run_sync(
             lambda: _queue_progressive_generation(
                 episode,
@@ -1920,16 +2000,39 @@ def episode(episode_id: str, request: Request) -> LiveEpisode:
 
 
 @app.get("/api/episodes/{episode_id}/usage")
-def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
+async def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
     """Provider usage and a programme summary for one episode, without prompts or URLs.
 
-    Usage is held in memory by the running API process, so it covers calls made since the
-    last restart; it is meant for reviewing one generation, not as a billing record.
+    The events come from the running process and from storage (so a restart does not empty the
+    report), each call once.  Costs are per currency, with the calls whose cost is unknown
+    listed apart.  It is meant for reviewing a generation, not as a billing record.
     """
 
-    owned(episode_id, principal(request))
-    current = orchestrator.get(episode_id)
-    ledger = progressive_runtime.assembly.ledger if progressive_runtime is not None else None
+    # The episode repository is synchronous (Postgres runs it with asyncio.run), so it is read
+    # off the event loop like everywhere else.
+    await to_thread.run_sync(owned, episode_id, principal(request))
+    current = await to_thread.run_sync(orchestrator.get, episode_id)
+    ledger = _usage_ledger()
+    await ledger.flush()
+    try:
+        stored = await _usage_event_store.load(episode_id)
+    except ValueError:
+        logger.warning("usage_events_unreadable episode_id=%s", episode_id)
+        stored = []
+    events = merge_events(ledger.for_scope(episode_id), stored)
+    # What the proposal that started this episode cost.  Kept apart: it happened before the
+    # episode existed, and it is not part of generating the programme.
+    proposal_events: list[UsageEvent] = []
+    batch_size = 1
+    if current.seed_id:
+        # Cards generated together share one call: its events sit under the batch's first id.
+        try:
+            proposal_scope, batch_size = await _usage_event_store.batch_scope(current.seed_id)
+            proposal_stored = await _usage_event_store.load(proposal_scope)
+        except ValueError:
+            proposal_scope, batch_size, proposal_stored = current.seed_id, 1, []
+        proposal_events = merge_events(ledger.for_scope(proposal_scope), proposal_stored)
+    reporting = progressive_runtime is not None or bool(_api_usage_ledger.events) or bool(stored)
     segments = current.timeline_segments
     return {
         "episode_id": current.id,
@@ -1945,7 +2048,19 @@ def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
                 if item.kind is SegmentKind.NARRATION and item.state is SegmentState.SKIPPED
             ),
         },
-        "providers": usage_diagnostics(ledger, scope=episode_id) if ledger is not None else None,
+        "providers": diagnostics_of(events, with_ids=True) if reporting else None,
+        "costs": cost_summary(events) if reporting else None,
+        "proposal": (
+            {
+                "providers": diagnostics_of(proposal_events, with_ids=True),
+                "costs": cost_summary(proposal_events),
+                # >1: the cost of one call that produced this many cards; counted once, not per card.
+                "shared_by_proposals": batch_size,
+            }
+            if proposal_events
+            else None
+        ),
+        "stored_events": len(stored),
     }
 
 
@@ -2777,7 +2892,8 @@ async def materialize_narration(
     if not isinstance(segment, NarrationSegment):
         raise HTTPException(status_code=409, detail="Only narration segments can be materialized")
     try:
-        await narration_materializer.materialize(segment)
+        with usage_scope(episode_id):
+            await narration_materializer.materialize(segment)
         return await to_thread.run_sync(repository.save, episode)
     except EpisodeConcurrencyError as error:
         raise HTTPException(status_code=409, detail="Episode changed; reload and retry") from error

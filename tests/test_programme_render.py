@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import shutil
 import struct
@@ -20,6 +21,7 @@ from wavecast.models.episode import (
 from wavecast.rendering import (
     ProgramImmutabilityError,
     hls_playlist,
+    mix_plan_fingerprint,
     render_program_prefix,
     slice_mix_plan,
 )
@@ -321,5 +323,64 @@ def test_real_arrangement_can_append_future_host_and_music_without_rewriting_pre
 
         assert extended.chunks[: len(first.chunks)] == first.chunks
         assert len(extended.chunks) > len(first.chunks)
+
+    asyncio.run(run())
+
+
+def _strip_loudness_rule_from_stored_manifest(tmp_path: Path) -> None:
+    """What a manifest written before loudness handling looks like: no such field at all."""
+
+    path = next((tmp_path / "audio").rglob("manifest.json"))
+    document = json.loads(path.read_text())
+    assert document.pop("loudness_rule") == "none"
+    path.write_text(json.dumps(document))
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_a_programme_published_before_loudness_handling_keeps_its_audio_and_can_finish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unfinished and finished old programmes: nothing is deleted, cleared or relaxed."""
+
+    from wavecast.rendering import programme
+
+    async def run() -> None:
+        storage = LocalObjectStorageProvider(tmp_path / "audio")
+        await storage.put("source.wav", _wav_bytes(24), "audio/wav")
+        with monkeypatch.context() as old:
+            old.setattr(programme, "LOUDNESS_RULE", "none")  # the code of that time
+            published = await render_program_prefix(_plan(16), storage, holdback_seconds=3)
+        _strip_loudness_rule_from_stored_manifest(tmp_path)
+        assert len(published.chunks) >= 2
+
+        # Unfinished: today's code continues it, the published chunks are untouched.
+        grown = await render_program_prefix(_plan(22), storage, holdback_seconds=3)
+        assert grown.loudness_rule == "none"
+        assert grown.chunks[: len(published.chunks)] == published.chunks
+        assert len(grown.chunks) > len(published.chunks)
+        for chunk in published.chunks:
+            assert (await storage.get(chunk.asset_key)) is not None
+
+        # Finished: it completes, and asking again changes nothing.
+        done = await render_program_prefix(_plan(22), storage, complete=True, holdback_seconds=3)
+        assert done.complete is True and done.loudness_rule == "none"
+        assert done.chunks[: len(grown.chunks)] == grown.chunks
+        assert await render_program_prefix(_plan(22), storage, complete=True, holdback_seconds=3) == done
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_a_new_programme_and_a_programme_with_nothing_published_use_the_current_loudness_rule(
+    tmp_path: Path,
+) -> None:
+    from wavecast.rendering.ffmpeg import LOUDNESS_RULE
+
+    async def run() -> None:
+        storage = LocalObjectStorageProvider(tmp_path / "audio")
+        await storage.put("source.wav", _wav_bytes(24), "audio/wav")
+        fresh = await render_program_prefix(_plan(16), storage, holdback_seconds=3)
+        assert fresh.loudness_rule == LOUDNESS_RULE
+        assert mix_plan_fingerprint(_plan(16)) != mix_plan_fingerprint(_plan(16), "none")
 
     asyncio.run(run())

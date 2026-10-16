@@ -3,12 +3,21 @@
 import { useCallback, useEffect, useRef } from "react";
 
 import { prefersNativeHls } from "../lib/program-stream";
+import { STALL_SECONDS, stuckPlaybackReason } from "../lib/stuck-playback";
 
 const HLS_MIME = "application/vnd.apple.mpegurl";
 const FRONTIER_WAKE_SECONDS = 45;
 const FRONTIER_SEEK_EPSILON_SECONDS = 0.05;
 const FRONTIER_RELOAD_EPSILON_SECONDS = 2;
 const POSITION_EMIT_INTERVAL_MS = 200;
+// An element with no data yet is more likely still loading than stuck.
+const SEEK_UNLOADED_GRACE_MS = 7_000;
+// After a network return or an element error, a player that has not moved for this long is suspect.
+const SUSPECT_STALL_MS = 2_000;
+// Recoveries in a row that did not get the audio moving again before the player gives up and pauses.
+const MAX_FAILED_RECOVERIES = 3;
+// Seconds of position advancing at about playing speed, with no seek pending, that prove a recovery worked.
+const SUSTAINED_PLAYBACK_SECONDS = 4;
 
 type ProgrammeAudioPlayerProps = {
   streamUrl: string;
@@ -312,6 +321,133 @@ export function ProgrammeAudioPlayer({
       // A failed wake is non-fatal; the normal frontier polling path remains.
     }
   }, [positionSeconds, renderedFrontierSeconds]);
+
+  // The element can be left saying "playing" while nothing moves: a seek it never confirms keeps the
+  // player's own seek pending (which blocks both position reports and playback), or it simply stops
+  // advancing without an event.  No event arrives for either, so look at the clock.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    let lastTime = audio.currentTime || 0;
+    let lastAdvanceMs = performance.now();
+    let pendingValue: number | null = pendingSeekRef.current;
+    let pendingSinceMs: number | null = pendingValue === null ? null : performance.now();
+    let lastRecoveryMs: number | null = null;
+    let failedRecoveries = 0;
+    let gaveUp = false;
+    let sustainFrom: { time: number; ms: number } | null = null;
+
+    const check = () => {
+      const now = performance.now();
+      const time = audio.currentTime || 0;
+      if (Math.abs(time - lastTime) > 0.01) {
+        lastTime = time;
+        lastAdvanceMs = now;
+      }
+      if (!desiredPlayingRef.current) {
+        failedRecoveries = 0; // a pause or a new play starts afresh
+        gaveUp = false;
+        sustainFrom = null;
+      }
+      if (gaveUp) return;
+      // A recovery has not worked until the audio keeps moving: the jump back to the old position
+      // after a reload is a seek, not playback. Count from the first moment with no seek pending and
+      // call it success only after a few seconds of position that advance at about playing speed.
+      if (failedRecoveries > 0) {
+        if (pendingSeekRef.current !== null || audio.seeking) {
+          sustainFrom = null;
+        } else if (sustainFrom === null || time < sustainFrom.time - 0.5) {
+          sustainFrom = { time, ms: now };
+        } else {
+          const played = time - sustainFrom.time;
+          const elapsed = (now - sustainFrom.ms) / 1000;
+          if (elapsed >= SUSTAINED_PLAYBACK_SECONDS && played >= elapsed * 0.5 && played <= elapsed + 2) {
+            failedRecoveries = 0;
+            sustainFrom = null;
+          }
+        }
+      }
+      const pending = pendingSeekRef.current;
+      if (pending !== pendingValue) {
+        pendingValue = pending;
+        pendingSinceMs = pending === null ? null : now;
+      }
+
+      const reason = stuckPlaybackReason({
+        nowMs: now,
+        desiredPlaying: desiredPlayingRef.current,
+        complete: completeRef.current,
+        currentTime: time,
+        frontierSeconds: frontierRef.current,
+        lastAdvanceMs,
+        pendingSeekTarget: pending,
+        // An element that has no data yet may just be loading: give it longer than one that has.
+        pendingSinceMs: pendingSinceMs === null || audio.readyState > 0
+          ? pendingSinceMs
+          : pendingSinceMs + SEEK_UNLOADED_GRACE_MS,
+        lastRecoveryMs,
+      });
+      if (reason === null) return;
+
+      lastRecoveryMs = now;
+      failedRecoveries += 1;
+      sustainFrom = null;
+      if (failedRecoveries > MAX_FAILED_RECOVERIES) {
+        // Reloading again and again is not going to help: stop, and show the player as paused
+        // instead of "playing" with nothing happening.
+        gaveUp = true;
+        onBufferingChangeRef.current?.(false);
+        onErrorRef.current("节目音频暂时无法播放，可以再点一次播放");
+        onPauseRequestRef.current();
+        return;
+      }
+      lastAdvanceMs = now;
+      pendingSinceMs = pending === null ? null : now;
+      pendingSeekRef.current = reason === "seek-unconfirmed" && pending !== null ? pending : time;
+      pendingValue = pendingSeekRef.current;
+      pendingSinceMs = now;
+      appliedSeekTargetRef.current = null;
+      suppressPositionUntilRef.current = 0;
+      onBufferingChangeRef.current?.(true);
+      try {
+        if (hlsRef.current) {
+          hlsRef.current.recoverMediaError();
+          hlsRef.current.startLoad(-1);
+        } else {
+          // The canplay/loadedmetadata listeners re-apply the kept seek and resume playback.
+          audio.load();
+        }
+      } catch {
+        // Best effort; the next check tries again after the cool-down.
+      }
+    };
+
+    // The network coming back, or the element reporting an error, is a sign that whatever it was
+    // loading is gone; do not wait out the whole stall time before trying again.
+    const suspect = () => {
+      const now = performance.now();
+      if (now - lastAdvanceMs >= SUSPECT_STALL_MS) {
+        lastAdvanceMs = Math.min(lastAdvanceMs, now - STALL_SECONDS * 1000);
+      }
+    };
+    const interval = window.setInterval(check, 1000);
+    window.addEventListener("online", suspect);
+    audio.addEventListener("error", suspect);
+    const visible = () => {
+      if (document.visibilityState !== "visible") return;
+      // Timers are throttled in the background; do not count that time against the player.
+      lastAdvanceMs = performance.now();
+      if (desiredPlayingRef.current && audio.paused) playIfDesired();
+    };
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("online", suspect);
+      audio.removeEventListener("error", suspect);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [playIfDesired, streamUrl]);
 
   useEffect(() => {
     const audio = audioRef.current;

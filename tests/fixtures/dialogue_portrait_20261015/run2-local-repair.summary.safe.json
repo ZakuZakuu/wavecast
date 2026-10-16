@@ -1,0 +1,299 @@
+{
+  "resumed_from": ".wavecast-data/dialogue-live-portrait-20261015",
+  "source_sha256": {
+    "attempt.json": "f0c723ab1da1bc1099c3a3cac6b41577d56fd9c9e16e867dfe7205b5043c261b",
+    "summary.safe.json": "80808d86d328f17388e9cadb8cee68a6ffd5fa2e7adda81277fa0750a4332638",
+    "material.normalized.json": "7848e84a624edc507627caebdff971e4090b46d11eace7050c35a223cd4994dc",
+    "candidate.unchecked.json": "44b770337bfc684885ccca98467b004e90b6d9707ad2adc38f46371fdeeda5a6",
+    "check.result.json": "5573b4a51f1cffbfba2b1b6ba94628d265617835e822a7c7b024823eb67d1311"
+  },
+  "condition": {
+    "station": "portrait",
+    "note": "portrait budget (target 50-90 s, hard max 115 s); casual 25-45 s length control is NOT re-tested here",
+    "target_seconds": [
+      50,
+      90
+    ],
+    "target_characters": [
+      300,
+      540
+    ],
+    "hard_max_seconds": 115,
+    "chars_per_second": 6.0
+  },
+  "flagged_turns": [
+    5,
+    7
+  ],
+  "flagged_reasons_codes": [
+    "qualifier_not_in_quote"
+  ],
+  "unchanged_turns": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    6
+  ],
+  "strict_schemas_ok": true,
+  "max_new_paid_calls": {
+    "repair_lite": 1,
+    "recheck_pro": 1,
+    "speech": 1
+  },
+  "automatic_retry": false,
+  "second_repair_or_redraw_or_single_voice_fallback": false,
+  "max_audio_seconds": 115,
+  "repaired_once": true,
+  "mode": "live",
+  "status": "completed",
+  "stage": "hls",
+  "stage_seconds": {
+    "repair": 4.57,
+    "recheck": 9.4,
+    "speech": 27.37,
+    "hls": 4.69
+  },
+  "saved_artifacts": [
+    "repair.output.json",
+    "candidate.repaired.unchecked.json",
+    "check.after-repair.json",
+    "candidate.checked.json"
+  ],
+  "after_repair": {
+    "turns": 8,
+    "characters": 381,
+    "estimated_seconds": 64,
+    "within_target": true,
+    "over_hard_max": false,
+    "only_flagged_turns_changed": true
+  },
+  "audio_seconds": 67.0,
+  "hls_chunks": 12,
+  "turn_timings": [
+    {
+      "end": 7.225,
+      "speaker": "A",
+      "start": 0.0
+    },
+    {
+      "end": 21.181,
+      "speaker": "B",
+      "start": 7.225
+    },
+    {
+      "end": 24.201,
+      "speaker": "A",
+      "start": 21.181
+    },
+    {
+      "end": 33.157,
+      "speaker": "B",
+      "start": 24.201
+    },
+    {
+      "end": 43.711,
+      "speaker": "A",
+      "start": 33.157
+    },
+    {
+      "end": 56.605,
+      "speaker": "B",
+      "start": 43.711
+    },
+    {
+      "end": 60.622,
+      "speaker": "A",
+      "start": 56.605
+    },
+    {
+      "end": 66.576,
+      "speaker": "B",
+      "start": 60.622
+    }
+  ],
+  "conclusions": {
+    "portrait_chain_passed_after_one_local_repair": true,
+    "first_pass_without_repair": false,
+    "casual_length_control": "not_passed (earlier attempt, not re-tested)",
+    "open_issue": "first-person interview attribution ('he said ...') is refused by the short-quotation qualifier rule; the rule is kept as it is and is NOT claimed to be right"
+  },
+  "previous_run_usage": {
+    "source": ".wavecast-data/dialogue-live-portrait-20261015/summary.safe.json",
+    "estimated_cost_cny": 0.0789609,
+    "input_tokens": 5840,
+    "output_tokens": 2175,
+    "paid_calls": 3
+  },
+  "increment": {
+    "usage": {
+      "event_count": 3,
+      "elapsed_ms": 41214,
+      "slowest_ms": 27358,
+      "input_tokens": 3509,
+      "output_tokens": 541,
+      "cached_input_tokens": 0,
+      "uncached_input_tokens": 3509,
+      "cache_reported_input_tokens": 3509,
+      "cache_unreported_calls": 0,
+      "usage_characters": 0,
+      "reasoning_tokens": 0,
+      "search_queries": 0,
+      "search_credits": 0.0,
+      "actual_cost_usd": 0.0,
+      "estimated_cost_usd": 0.0,
+      "estimated_cost_cny": 0.0251368,
+      "estimated_cost_cny_low": 0.0251368,
+      "estimated_cost_cny_high": 0.0251368,
+      "cost_unknown_calls": 1,
+      "input_text_tokens": 0,
+      "output_audio_tokens": 1659,
+      "usage_incomplete_calls": 0
+    },
+    "usage_by_stage": {
+      "dialogue_repair": {
+        "event_count": 1,
+        "elapsed_ms": 4459,
+        "slowest_ms": 4459,
+        "input_tokens": 1643,
+        "output_tokens": 132,
+        "cached_input_tokens": 0,
+        "uncached_input_tokens": 1643,
+        "cache_reported_input_tokens": 1643,
+        "cache_unreported_calls": 0,
+        "usage_characters": 0,
+        "reasoning_tokens": 0,
+        "search_queries": 0,
+        "search_credits": 0.0,
+        "actual_cost_usd": 0.0,
+        "estimated_cost_usd": 0.0,
+        "estimated_cost_cny": 0.0016708,
+        "estimated_cost_cny_low": 0.0016708,
+        "estimated_cost_cny_high": 0.0016708,
+        "cost_unknown_calls": 0,
+        "input_text_tokens": 0,
+        "output_audio_tokens": 0,
+        "usage_incomplete_calls": 0
+      },
+      "dialogue_fact_check": {
+        "event_count": 1,
+        "elapsed_ms": 9397,
+        "slowest_ms": 9397,
+        "input_tokens": 1866,
+        "output_tokens": 409,
+        "cached_input_tokens": 0,
+        "uncached_input_tokens": 1866,
+        "cache_reported_input_tokens": 1866,
+        "cache_unreported_calls": 0,
+        "usage_characters": 0,
+        "reasoning_tokens": 0,
+        "search_queries": 0,
+        "search_credits": 0.0,
+        "actual_cost_usd": 0.0,
+        "estimated_cost_usd": 0.0,
+        "estimated_cost_cny": 0.023466,
+        "estimated_cost_cny_low": 0.023466,
+        "estimated_cost_cny_high": 0.023466,
+        "cost_unknown_calls": 0,
+        "input_text_tokens": 0,
+        "output_audio_tokens": 0,
+        "usage_incomplete_calls": 0
+      }
+    },
+    "provider_events": [
+      {
+        "provider": "ark",
+        "operation": "structured",
+        "stage": "dialogue_repair",
+        "elapsed_ms": 4459,
+        "input_tokens": 1643,
+        "output_tokens": 132,
+        "cached_input_tokens": 0,
+        "uncached_input_tokens": 1643,
+        "usage_characters": null,
+        "search_queries": null,
+        "search_credits": null,
+        "actual_cost_usd": null,
+        "estimated_cost_usd": null,
+        "model": "doubao-seed-2-1-lite-260915",
+        "transport": "ark_chat_json_schema_strict",
+        "response_model": "doubao-seed-2-1-lite-260915",
+        "run_kind": null,
+        "finish_reason": "stop",
+        "reasoning_tokens": 0,
+        "role": "writer",
+        "outcome": "ok",
+        "request_dispatched": true,
+        "response_received": true,
+        "usage_known": true,
+        "estimated_cost_cny": 0.0016708,
+        "estimated_cost_cny_low": 0.0016708,
+        "estimated_cost_cny_high": 0.0016708,
+        "cost_basis": "usage_and_known_cache",
+        "price_version": "ark-experiment-receipts-2026-10-14"
+      },
+      {
+        "provider": "ark",
+        "operation": "structured",
+        "stage": "dialogue_fact_check",
+        "elapsed_ms": 9397,
+        "input_tokens": 1866,
+        "output_tokens": 409,
+        "cached_input_tokens": 0,
+        "uncached_input_tokens": 1866,
+        "usage_characters": null,
+        "search_queries": null,
+        "search_credits": null,
+        "actual_cost_usd": null,
+        "estimated_cost_usd": null,
+        "model": "doubao-seed-2-1-pro-260915",
+        "transport": "ark_chat_json_schema_strict",
+        "response_model": "doubao-seed-2-1-pro-260915",
+        "run_kind": null,
+        "finish_reason": "stop",
+        "reasoning_tokens": 0,
+        "role": "fact_check",
+        "outcome": "ok",
+        "request_dispatched": true,
+        "response_received": true,
+        "usage_known": true,
+        "estimated_cost_cny": 0.023466,
+        "estimated_cost_cny_low": 0.023466,
+        "estimated_cost_cny_high": 0.023466,
+        "cost_basis": "usage_and_known_cache",
+        "price_version": "ark-experiment-receipts-2026-10-14"
+      },
+      {
+        "provider": "doubao_podcast",
+        "operation": "dialogue_speech",
+        "stage": null,
+        "elapsed_ms": 27358,
+        "input_tokens": null,
+        "output_tokens": null,
+        "cached_input_tokens": null,
+        "uncached_input_tokens": null,
+        "usage_characters": null,
+        "search_queries": null,
+        "search_credits": null,
+        "actual_cost_usd": null,
+        "estimated_cost_usd": null,
+        "model": "doubao-podcast",
+        "transport": null,
+        "response_model": null,
+        "run_kind": null,
+        "finish_reason": null,
+        "reasoning_tokens": null,
+        "outcome": "ok",
+        "cost_basis": "unpriced",
+        "input_text_tokens": 0,
+        "output_audio_tokens": 1659,
+        "usage_status": "complete",
+        "rounds_completed": 8,
+        "audio_seconds": 66.576,
+        "sent_characters": 381
+      }
+    ]
+  },
+  "increment_paid_calls": 3
+}

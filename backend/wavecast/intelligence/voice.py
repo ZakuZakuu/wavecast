@@ -91,8 +91,9 @@ STATION_VOICES: dict[StationId, StationVoice] = {
     ),
     StationId.PORTRAIT: StationVoice(
         StationId.PORTRAIT,
-        "Steady and exact, like a well-written profile: dates, albums, turning points, who "
-        "worked with whom. No flattery, no biography dump; one point per block.",
+        "Warm and thoughtful, like someone sharing an artist's music: creative choices, "
+        "collaborations and turning points. Dates only when they help the story, no biography "
+        "dump; develop one point per block.",
         {Move.FACT: 5, Move.LINK: 3, Move.REASON: 2, Move.LISTEN: 1},
         (
             "一九九八年她出了第二张专辑，这首是里面的主打。那一年她刚搬去台北。",
@@ -195,7 +196,7 @@ MIN_FILL: dict[StationId, float] = {
 }
 
 
-NEVER_START = ("刚才", "接下来", "我们先从", "下一首")
+NEVER_START = ("刚才", "接下来", "我们先从")
 
 
 def voice_instructions(
@@ -211,8 +212,7 @@ def voice_instructions(
 ) -> str:
     """The voice section of the Writer prompt for one block.
 
-    ``has_points``: the application hands the Writer checked points for the last song, so the
-    closing may tell one of them before it gathers the route (every sentence is still checked).
+    ``has_points`` is retained for callers; a closing still recaps only what was played.
     """
 
     voice = _voice(station)
@@ -223,20 +223,10 @@ def voice_instructions(
         "arriving, parking, walking, working, cooking): mention a situation only if their "
         "request does. A closing is about the music, never about a journey ending."
     )
-    if is_final and has_points:
+    if is_final:
         lines.append(
-            "This block closes the programme in two or three plain sentences. First tell ONE of the "
-            "verified points given below, in your own words and about exactly what its label says "
-            "(the song that just played, its album or film, or the person); then say in one sentence "
-            "what the route was about, the idea or the thread the listener has been following. Name "
-            "at most two of the songs actually played, never list them, state no other fact about who "
-            "composed, wrote, sang or released anything, repeat nothing an earlier block already said, "
-            "and say nothing about what comes next. Do not say goodbye, thank the listener or name "
-            "the station: the application adds the sign-off after your text."
-        )
-    elif is_final:
-        lines.append(
-            "This block closes the programme in one or two plain sentences: say what the route "
+            "This block closes the programme in one or two plain sentences, only about what was "
+            "played (a closing introduces no new fact, so nothing in it needs a source): say what the route "
             "was about, the idea or the thread the listener has been following, and let it end "
             "on that or on the last track. Name at most two of the songs actually played, never "
             "list them, give no year, say nothing about who composed, wrote, sang or released "
@@ -262,7 +252,8 @@ def voice_instructions(
     never = "、".join(NEVER_START)
     lines.append(
         f"Begin with the subject itself (a name, a year, the thing heard), never with {never}. "
-        "A block may begin with the track title only if the move is plain."
+        "A block may begin with the track title only if the move is plain. A plain handoff such as "
+        "「下一首是《…》」 is fine when the block only introduces the next song; do not open every block that way."
     )
     if used_openers:
         lines.append(
@@ -278,8 +269,9 @@ def voice_instructions(
         "sentences, everyday verbs, one idea per sentence, ordinary connectives (其实, 不过, "
         "因为, 所以) used sparingly. Concrete things (names, years, versions, who played) "
         "instead of adjectives. Every factual statement must come from the evidence or the "
-        "track names; do not describe tempo, mood, volume or instrumentation unless the "
-        "evidence says so. Do not claim personal memories or feelings you cannot have. Do not "
+        "track names. Listening impressions and editorial interpretations may develop that "
+        "material naturally; do not invent instruments, musical techniques, credits or an "
+        "artist's intentions. Do not claim personal memories you cannot have. Do not "
         "talk about evidence or certainty. If the evidence is about another artist's song with "
         "the same title, or about a different work, leave it out: it is not about what is playing."
     )

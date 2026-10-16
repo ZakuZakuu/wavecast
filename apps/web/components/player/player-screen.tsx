@@ -8,7 +8,7 @@ import { api } from "../../lib/api";
 import { isDarkColour } from "../../lib/cover/build-cover";
 import { recordLessLikeThis } from "../../lib/listener-feedback";
 import { friendlyError } from "../../lib/friendly-error";
-import { chapterNumberOf, currentMusicSegment, estimatedTotalSeconds, nextMusicSegment, trackLabel, voiceClipTiming } from "../../lib/now-playing";
+import { chapterNumberOf, currentMusicSegment, estimatedTotalSeconds, nextMusicSegment, publishedNarration, trackLabel, voiceClipTiming } from "../../lib/now-playing";
 import { currentSentenceIndex, nowLineMode, splitSentences, type NowLineMode } from "../../lib/now-line";
 import { nextProgramMusicStart, previousProgramMusicStart } from "../../lib/playback";
 import { formatFreq, stationForProgramme } from "../../lib/stations";
@@ -105,22 +105,18 @@ export function PlayerScreen({
   const narration = np?.current?.kind === "NARRATION" ? np.current : null;
   const narrationText = narration?.narration_text?.trim() || (forcedMode === "narration" ? LAYOUT_SAMPLE : "");
   const sentences = useMemo(() => splitSentences(narrationText), [narrationText]);
-  const [passages, setPassages] = useState<{ episodeId: string | null; list: NarrationPassage[] }>({ episodeId: null, list: [] });
   const narrationId = narration?.id ?? (forcedMode === "narration" ? "layout-sample" : null);
-  const passageEpisodeId = episode?.id ?? null;
-  useEffect(() => {
-    if (!narrationId || !sentences.length) return;
-    setPassages((state) => {
-      const list = state.episodeId === passageEpisodeId ? state.list : [];
-      const known = list.findIndex((passage) => passage.id === narrationId);
-      if (known >= 0) {
-        if (list[known].sentences.join("") === sentences.join("")) return state.episodeId === passageEpisodeId ? state : { episodeId: passageEpisodeId, list };
-        return { episodeId: passageEpisodeId, list: list.map((passage, i) => i === known ? { id: narrationId, sentences } : passage) };
-      }
-      return { episodeId: passageEpisodeId, list: [...list, { id: narrationId, sentences }] };
-    });
-  }, [narrationId, sentences, passageEpisodeId]);
-  const passageList = passages.episodeId === passageEpisodeId ? passages.list : [];
+  // The script sheet lists what the programme has published of the host's words, not what this
+  // screen happened to see being spoken, so it is complete after a resume or a remount.
+  const publishedFrontier = np?.maxSeekPosition ?? 0;
+  const passageList = useMemo<NarrationPassage[]>(() => {
+    if (forcedMode === "narration") return [{ id: "layout-sample", sentences: splitSentences(LAYOUT_SAMPLE) }];
+    if (!episode || !np) return [];
+    return publishedNarration(episode, np.mixPlan, publishedFrontier).map((item) => ({
+      id: item.id,
+      sentences: splitSentences(item.text),
+    }));
+  }, [episode, np, forcedMode, publishedFrontier]);
 
   const music = useMemo(
     () => episode && np ? currentMusicSegment(episode, np.mixPlan, np.browserPosition, np.current) : undefined,

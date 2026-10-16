@@ -13,6 +13,12 @@ class ProviderAuthenticationError(ProviderError):
     pass
 
 
+class ProviderPermissionError(ProviderAuthenticationError):
+    """The credential was understood but is not allowed to do this (HTTP 403)."""
+
+    pass
+
+
 class ProviderRateLimitError(ProviderError):
     pass
 
@@ -26,6 +32,12 @@ class ProviderUnavailableError(ProviderError):
 
 
 class ProviderInvalidResponseError(ProviderError):
+    pass
+
+
+class ProviderRequestError(ProviderInvalidResponseError):
+    """The provider rejected the request itself (HTTP 4xx other than auth and rate limits)."""
+
     pass
 
 

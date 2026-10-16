@@ -1,0 +1,36 @@
+{
+  "model_checked": true,
+  "passed": false,
+  "issues": [
+    {
+      "turn": 5,
+      "sentence": 1,
+      "code": "qualifier_not_in_quote",
+      "message": "“他还说过，自己没学过创作，都是自己摸索出来的，创作大多来自自己的生活经验或者朋友的故事。” adds a qualifier (first time, only, why, who said it...) the quote does not carry. Say only what the facts state, or leave it out."
+    },
+    {
+      "turn": 7,
+      "sentence": 0,
+      "code": "qualifier_not_in_quote",
+      "message": "“他说过，希望自己的歌曲能够唤起大家关于爱的共鸣。” adds a qualifier (first time, only, why, who said it...) the quote does not carry. Say only what the facts state, or leave it out."
+    }
+  ],
+  "supported_by_turn": {
+    "1": [
+      "live-fdt-F1",
+      "live-fdt-F2",
+      "live-fdt-F3"
+    ],
+    "3": [
+      "live-fdt-F4",
+      "live-fdt-F5"
+    ],
+    "4": [
+      "live-fdt-F9"
+    ],
+    "5": [
+      "live-fdt-F10",
+      "live-fdt-F11"
+    ]
+  }
+}

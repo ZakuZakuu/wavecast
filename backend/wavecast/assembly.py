@@ -16,6 +16,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from time import perf_counter
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
@@ -35,7 +36,7 @@ from wavecast.coverage import (
 )
 from wavecast.intelligence.background import BackgroundIntelligencePipeline
 from wavecast.intelligence.curation import CuratorContractError, CuratorService
-from wavecast.intelligence.fact_support import FactChecker
+from wavecast.intelligence.dialogue_pipeline import create_dialogue_stack
 from wavecast.intelligence.fast_start import FastPathCoordinator, FastPathResult, FastStartPlanner
 from wavecast.intelligence.models import (
     ChapterPlan,
@@ -64,6 +65,7 @@ from wavecast.intelligence.models import (
     resolve_output_language,
 )
 from wavecast.intelligence.research import (
+    BACKGROUND_RESEARCH_PLANNER_DEADLINE_SECONDS,
     BackgroundResearchPlanner,
     BackgroundResearchService,
     FastResearchService,
@@ -74,6 +76,7 @@ from wavecast.intelligence.trace import GenerationTrace
 from wavecast.intelligence.track_research import TrackResearchService
 from wavecast.intelligence.writer import WriterService, fallback_closing
 from wavecast.materialization import NarrationMaterializer
+from wavecast.models.dialogue import DialogueNotSupportedError
 from wavecast.models.episode import (
     LiveEpisode,
     MusicSegment,
@@ -84,6 +87,9 @@ from wavecast.models.episode import (
 )
 from wavecast.music_discovery import catalog_queries, community_tags
 from wavecast.narration_quality import opener_of
+from wavecast.orchestration.authoring_gate import authoring_still_open
+from wavecast.orchestration.dialogue_runtime import DialogueOffer, DialogueRuntime
+from wavecast.orchestration.dialogue_timeline import DialogueSeamService
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.staged import (
     ProgressiveAssemblyChapter,
@@ -104,22 +110,21 @@ from wavecast.providers.contracts import (
     SearchProvider,
     TTSProvider,
 )
-from wavecast.providers.deepseek import DeepSeekLLMProvider
+from wavecast.providers.dialogue_voicing import build_dialogue_voicing
 from wavecast.providers.errors import (
-    ProviderConfigurationError,
     ProviderError,
     ProviderSchemaValidationError,
 )
 from wavecast.providers.factory import build_music_registry
 from wavecast.providers.fakes import (
     FakeSearchProvider,
-    MockTTSProvider,
 )
 from wavecast.providers.lastfm import LastFmArtistHints
-from wavecast.providers.minimax import MiniMaxTTSProvider
+from wavecast.providers.llm_factory import build_llm
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.search import ExaSearchProvider, TavilySearchProvider
+from wavecast.providers.tts_factory import build_tts_provider
 from wavecast.providers.usage import (
     UsageLedger,
     UsageTotals,
@@ -153,6 +158,8 @@ from wavecast.route_work import (
 from wavecast.spoken_form import catalog_album, chinese_title
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
+from wavecast.storage.dialogue_artifacts import DialogueArtifactStore
+from wavecast.storage.story_usage import StoryUsageStore
 from wavecast.text_identity import (
     base_title_key,
     canonical_name,
@@ -596,7 +603,14 @@ class LiveEpisodeAssemblyService:
         catalog_pool_builder: CatalogPoolBuilder | None = None,
         track_research: TrackResearchService | None = None,
         duration_scaling: bool = False,
+        owned_clients: Sequence[Any] = (),
+        dialogue_runtime: DialogueRuntime | None = None,
     ) -> None:
+        self.dialogue_runtime = dialogue_runtime
+        # Provider clients this service created (one per text-model role, the deep search
+        # variant, ...) and must close.  The wiring below also reaches some structurally;
+        # ``aclose`` closes each distinct object once.
+        self._owned_clients = tuple(owned_clients)
         self.catalog_pool_builder = catalog_pool_builder
         self.track_research = track_research
         self.duration_scaling = duration_scaling
@@ -791,6 +805,7 @@ class LiveEpisodeAssemblyService:
             composer=self.composer,
             materializer=self.materializer,
             track_research=self.track_research,
+            dialogue=self.dialogue_runtime,
         )
 
     async def _resolve_catalog_replacement(
@@ -2155,7 +2170,11 @@ class LiveEpisodeAssemblyService:
         return await self.assemble(request, request_id=request_id)
 
     async def aclose(self) -> None:
-        """Close owned provider clients when a probe or worker is finished."""
+        """Close owned provider clients when a probe or worker is finished.
+
+        Every distinct client is closed once, however many roles share it.  One failing close
+        does not leave the others open; the first error is raised after all were attempted.
+        """
         candidates = [
             self.fast_path.research.discovery,
             self.fast_path.research.research,
@@ -2165,16 +2184,23 @@ class LiveEpisodeAssemblyService:
             self.background_pipeline.writer.llm,
             self.composer.music_provider,
             self.materializer.tts_provider,
+            *self._owned_clients,
         ]
         closed: set[int] = set()
+        first_error: Exception | None = None
         for candidate in candidates:
             close = getattr(candidate, "aclose", None)
             if not callable(close) or id(candidate) in closed:
                 continue
             closed.add(id(candidate))
-            result = close()
-            if hasattr(result, "__await__"):
-                await result
+            try:
+                result = close()
+                if hasattr(result, "__await__"):
+                    await result
+            except Exception as error:  # noqa: BLE001 - keep closing the rest
+                first_error = first_error or error
+        if first_error is not None:
+            raise first_error
 
 
 def _elapsed_ms(started: float) -> int:
@@ -3371,6 +3397,13 @@ def _merge_writer_blocks(
 
     if not blocks:
         return None
+    if any(block.dialogue is not None for block in blocks):
+        if len(blocks) != 1:
+            raise DialogueNotSupportedError(
+                "Writer blocks carrying a dialogue cannot be merged into one narration text"
+            )
+        # A checked passage is placed as it is: only its slot-owned kind and anchor change.
+        return blocks[0].model_copy(update={"kind": kind, "track_index": None})
     text = " ".join(block.text.strip() for block in blocks)
     if len(text) > 4000:
         raise NarrationPlacementError("merged Writer narration exceeds block text limit")
@@ -3670,12 +3703,14 @@ class StagedProgressiveChapterGenerator:
         composer: EpisodeComposer,
         materializer: NarrationMaterializer,
         track_research: TrackResearchService | None = None,
+        dialogue: DialogueRuntime | None = None,
     ) -> None:
         self.session = session
         self.writer = writer
         self.composer = composer
         self.materializer = materializer
         self.track_research = track_research
+        self.dialogue = dialogue
 
     @scoped_to_episode
     async def generate_next(self, episode: LiveEpisode) -> GeneratedChapter | None:
@@ -3815,7 +3850,7 @@ class StagedProgressiveChapterGenerator:
 
         # Everything already authored for this programme, not only what has been played:
         # narration is written ahead of playback, so "committed" would let facts repeat.
-        previous_context = " ".join(
+        previous_context = "\n".join(
             segment.narration_text
             for segment in episode.ordered_segments
             if (
@@ -3823,7 +3858,7 @@ class StagedProgressiveChapterGenerator:
                 and segment.state is not SegmentState.SKIPPED
                 and segment.narration_text
             )
-        )[-1000:]
+        )
         upcoming = next(
             (
                 slot.upcoming_track
@@ -3903,50 +3938,73 @@ class StagedProgressiveChapterGenerator:
             _assert_narration_blocks_materialized(radio_script, composed)
             return composed
 
+        # A researched two-host passage is offered first; whenever it is not made, the chapter is
+        # authored by the Writer exactly as before.
+        dialogue_offer: DialogueOffer | None = None
+        if self.dialogue is not None and research_track is not None and len(chapter.slot_contexts) == 1:
+            scoped_evidence_ids = set(writer_chapter.evidence_ids)
+            dialogue_offer = await self.dialogue.offer(
+                episode_id=episode.id,
+                station=self.session.station,
+                context=chapter.slot_contexts[0],
+                chosen_slot_ids=self.dialogue.eligible_slot_ids(
+                    self.session.station,
+                    [item.slot_contexts for item in self.session.chapters],
+                    episode.seed_id,
+                ),
+                chapter_id=chapter.chapter_id,
+                order=chapter_start_order,
+                evidence=[item for item in writer_evidence if item.id in scoped_evidence_ids],
+                subject=self.session.topic,
+                track_ref=research_track.track_ref,
+                previous_context=previous_context,
+                track_label=f"{research_track.canonical_artist} - {research_track.canonical_title}",
+            )
+
         playable: PlayableEpisode | None = None
         authoring_errors = (ProviderError, NarrationPlacementError, EpisodeAssemblyError, ValueError)
-        try:
-            script = await self.writer.write(
-                writer_chapter,
-                writer_evidence,
-                previous_committed_context=previous_context,
-                next_track_metadata=next_track_metadata,
-                host_mode=self.session.presentation_intent.host_mode,
-                target_duration_seconds=chapter.target_narration_seconds,
-                output_language=self.session.output_language,
-                station=self.session.station,
-                voice_seed=episode.seed_id,
-                used_openers=_used_openers(episode),
-                route_tracks=route_tracks,
-                unplayed_artists=unplayed_artists,
-                unfulfilled_artists=self.session.unfulfilled_artists,
-                topic=self.session.topic,
-                slot_contexts=chapter.slot_contexts,
-                track_points=track_points,
-            )
-            if (
-                isinstance(script, RadioScript)
-                and not script.blocks
-                and not is_final_chapter
-                and self.track_research is not None
-                and (story := await self.track_research.background_story(
-                    episode_id=episode.id,
-                    station=self.session.station,
-                    subject=self.session.topic,
-                    subject_names=self.session.required_artists,
-                    evidence=self.session.research.evidence,
-                ))
-                is not None
-            ):
-                # What was written about this song did not survive the checks; tell one of the
-                # programme's background stories instead of leaving the slot silent.
-                logger.info("narration_background_retry chapter_id=%s", chapter.chapter_id)
-                scoped = list(writer_chapter.evidence_ids)
-                if story.evidence_id not in scoped:
-                    scoped.append(story.evidence_id)
-                    track_evidence_ids = [*track_evidence_ids, story.evidence_id]
+        writer_allowed = True
+        if dialogue_offer is not None and self.dialogue is not None:
+            offered = dialogue_offer.block
+            try:
+                playable = assemble(
+                    RadioScript(
+                        blocks=[
+                            RadioScriptBlock(
+                                kind=RadioScriptBlockKind.TRANSITION,
+                                text=offered.text,
+                                tts_text=offered.tts_text,
+                                duration_seconds=offered.duration_seconds,
+                                dialogue=offered,
+                            )
+                        ],
+                        intended_duration_seconds=offered.duration_seconds,
+                    )
+                )
+                if dialogue_offer.audio is not None:
+                    # The passage was voiced before: keep that request with the segment, so the
+                    # saved audio and its voices are restored, not made again.
+                    for segment in playable.segments:
+                        if isinstance(segment, NarrationSegment) and segment.dialogue is not None:
+                            segment.dialogue_audio = dialogue_offer.audio
+            except authoring_errors as error:
+                logger.warning(
+                    "dialogue_placement_failed chapter_id=%s error_type=%s",
+                    chapter.chapter_id,
+                    type(error).__name__,
+                )
+                playable = None
+                await self.dialogue.release(episode.id, offered)
+                # The Writer gets one try in the time that is left - not when the listener has
+                # reached the chapter, the seam was skipped for continuity, or it was cancelled
+                # (cancellation never gets here).  The passage is not retried.
+                writer_allowed = await authoring_still_open()
+                if not writer_allowed:
+                    logger.info("dialogue_fallback_skipped chapter_id=%s", chapter.chapter_id)
+        if playable is None and writer_allowed:
+            try:
                 script = await self.writer.write(
-                    writer_chapter.model_copy(update={"evidence_ids": scoped}),
+                    writer_chapter,
                     writer_evidence,
                     previous_committed_context=previous_context,
                     next_track_metadata=next_track_metadata,
@@ -3961,20 +4019,59 @@ class StagedProgressiveChapterGenerator:
                     unfulfilled_artists=self.session.unfulfilled_artists,
                     topic=self.session.topic,
                     slot_contexts=chapter.slot_contexts,
-                    track_points=[story],
+                    track_points=track_points,
                 )
-            playable = assemble(script)
-        except authoring_errors as error:
-            # Writer is the quality layer, not the existence guarantee. P0
-            # deliberately prefers a clean music-only gap over canned catalog
-            # copy when Writer cannot produce a trustworthy bridge.
-            logger.warning(
-                "narration_authoring_failed chapter_id=%s error_type=%s host_mode=%s reason=%s",
-                chapter.chapter_id,
-                type(error).__name__,
-                self.session.presentation_intent.host_mode.value,
-                str(error)[:120],
-            )
+                if (
+                    isinstance(script, RadioScript)
+                    and not script.blocks
+                    and not is_final_chapter
+                    and self.track_research is not None
+                    and (story := await self.track_research.background_story(
+                        episode_id=episode.id,
+                        station=self.session.station,
+                        subject=self.session.topic,
+                        subject_names=self.session.required_artists,
+                        evidence=self.session.research.evidence,
+                    ))
+                    is not None
+                ):
+                    # What was written about this song did not survive the checks; tell one of the
+                    # programme's background stories instead of leaving the slot silent.
+                    logger.info("narration_background_retry chapter_id=%s", chapter.chapter_id)
+                    scoped = list(writer_chapter.evidence_ids)
+                    if story.evidence_id not in scoped:
+                        scoped.append(story.evidence_id)
+                        track_evidence_ids = [*track_evidence_ids, story.evidence_id]
+                    script = await self.writer.write(
+                        writer_chapter.model_copy(update={"evidence_ids": scoped}),
+                        writer_evidence,
+                        previous_committed_context=previous_context,
+                        next_track_metadata=next_track_metadata,
+                        host_mode=self.session.presentation_intent.host_mode,
+                        target_duration_seconds=chapter.target_narration_seconds,
+                        output_language=self.session.output_language,
+                        station=self.session.station,
+                        voice_seed=episode.seed_id,
+                        used_openers=_used_openers(episode),
+                        route_tracks=route_tracks,
+                        unplayed_artists=unplayed_artists,
+                        unfulfilled_artists=self.session.unfulfilled_artists,
+                        topic=self.session.topic,
+                        slot_contexts=chapter.slot_contexts,
+                        track_points=[story],
+                    )
+                playable = assemble(script)
+            except authoring_errors as error:
+                # Writer is the quality layer, not the existence guarantee. P0
+                # deliberately prefers a clean music-only gap over canned catalog
+                # copy when Writer cannot produce a trustworthy bridge.
+                logger.warning(
+                    "narration_authoring_failed chapter_id=%s error_type=%s host_mode=%s reason=%s",
+                    chapter.chapter_id,
+                    type(error).__name__,
+                    self.session.presentation_intent.host_mode.value,
+                    str(error)[:120],
+                )
         if playable is None and is_final_chapter and self.session.output_language is OutputLanguage.ZH_CN:
             # A programme always ends: without the Writer's closing the application says where
             # the route ended and signs off.
@@ -4450,6 +4547,19 @@ class MockEpisodeAssemblyLLM(ProgressiveLLMProvider):
 
 
 
+def _planner_deadline_seconds(settings: ProviderSettings) -> float:
+    """How long the background research planner may take before the generic plan is used.
+
+    20 s fits a fast model.  An Ark planner answers in 22 to 55 s (a real run cancelled a Pro
+    planner at exactly 20 s and fell back), so it gets Ark's own timeout plus a margin.  The
+    planner runs behind the opening track, so waiting longer is not heard.
+    """
+
+    if settings.resolved_llm("research_plan") == "ark":
+        return max(BACKGROUND_RESEARCH_PLANNER_DEADLINE_SECONDS, settings.ark_timeout_seconds + 5.0)
+    return BACKGROUND_RESEARCH_PLANNER_DEADLINE_SECONDS
+
+
 def create_episode_assembly_service(
     settings: ProviderSettings | None = None,
     *,
@@ -4463,25 +4573,18 @@ def create_episode_assembly_service(
     live_settings = settings.for_live_capability()
     mock_llm = MockEpisodeAssemblyLLM()
 
-    fast_llm: ProgressiveLLMProvider = (
-        mock_llm
-        if settings.resolved_fast_start_provider == "mock"
-        else DeepSeekLLMProvider(live_settings, ledger=ledger)
-    )
-    research_llm: ProgressiveLLMProvider = (
-        mock_llm
-        if settings.resolved_research_provider == "mock"
-        else DeepSeekLLMProvider(live_settings, ledger=ledger)
-    )
-    curator_llm: ProgressiveLLMProvider = (
-        mock_llm
-        if settings.resolved_curator_provider == "mock"
-        else DeepSeekLLMProvider(live_settings, ledger=ledger)
-    )
-    writer_llm: ProgressiveLLMProvider = (
-        mock_llm
-        if settings.resolved_writer_provider == "mock"
-        else DeepSeekLLMProvider(live_settings, ledger=ledger)
+    # One model per role.  Unconfigured roles keep the model they always had (see
+    # ``ProviderSettings.resolved_llm``); an Ark Writer does not change per-track research.
+    # The legacy fact_check selector is accepted for configuration compatibility, but no
+    # post-writing review client is built.
+    fast_llm = build_llm(settings, "fast_start", ledger=ledger, mock=mock_llm)
+    research_llm = build_llm(settings, "research_plan", ledger=ledger, mock=mock_llm)
+    curator_llm = build_llm(settings, "curator", ledger=ledger, mock=mock_llm)
+    writer_llm = build_llm(settings, "writer", ledger=ledger, mock=mock_llm)
+    track_research_llm = (
+        build_llm(settings, "track_research", ledger=ledger, mock=mock_llm)
+        if settings.track_research and settings.resolved_research_provider != "mock"
+        else None
     )
 
     if settings.resolved_research_provider == "mock":
@@ -4490,26 +4593,31 @@ def create_episode_assembly_service(
         deep_research: SearchProvider | None = None
     else:
         discovery = ExaSearchProvider(live_settings, ledger=ledger)
-        research = TavilySearchProvider(live_settings, ledger=ledger)
-        deep_research = TavilySearchProvider(
-            live_settings, ledger=ledger, search_depth="advanced"
-        )
+        if settings.search_backend == "exa":
+            # Exa alone: the exact-lookup slot is the same Exa client; Tavily is never built,
+            # so it is never asked and its key is not needed.  No automatic switching.
+            research = discovery
+            deep_research = None
+        else:
+            research = TavilySearchProvider(live_settings, ledger=ledger)
+            deep_research = TavilySearchProvider(
+                live_settings, ledger=ledger, search_depth="advanced"
+            )
 
-    if settings.resolved_tts_provider == "mock":
-        tts: TTSProvider = MockTTSProvider(storage)
-    else:
-        live_settings.credential_for("minimax")
-        if not live_settings.minimax_tts_voice_id:
-            raise ProviderConfigurationError("minimax TTS requires MINIMAX_TTS_VOICE_ID")
-        tts = MiniMaxTTSProvider(live_settings, storage=storage, ledger=ledger)
+    tts: TTSProvider = build_tts_provider(settings, storage, ledger)
 
-    fast_research = FastResearchService(discovery=discovery, research=research, ledger=ledger)
+    research_label = "exa" if settings.search_backend == "exa" else "tavily"
+    fast_research = FastResearchService(
+        discovery=discovery, research=research, ledger=ledger, research_label=research_label
+    )
     background_research = BackgroundResearchService(
         discovery=discovery,
         research=research,
         ledger=ledger,
-        planner=BackgroundResearchPlanner(research_llm),
+        planner=BackgroundResearchPlanner(research_llm, exa_only=settings.search_backend == "exa"),
         deep_research=deep_research,
+        research_label=research_label,
+        planner_deadline_seconds=_planner_deadline_seconds(settings),
     )
     fast_path = FastPathCoordinator(
         research=fast_research,
@@ -4518,15 +4626,43 @@ def create_episode_assembly_service(
     background_pipeline = BackgroundIntelligencePipeline(
         research=background_research,
         curator=CuratorService(curator_llm),
-        writer=WriterService(writer_llm, fact_checker=FactChecker(writer_llm)),
+        writer=WriterService(writer_llm),
     )
     retrieval = MusicRetrievalService(music_registry)
+
+    # Researched two-host passages: off unless WAVECAST_DIALOGUE_RADIO is on (ADR 0027).
+    dialogue_runtime: DialogueRuntime | None = None
+    dialogue_clients: list[object] = []
+    dialogue_voicing = build_dialogue_voicing(settings, storage, ledger=ledger)
+    if dialogue_voicing is not None:
+        dialogue_stack = create_dialogue_stack(settings, ledger=ledger, mock=mock_llm)
+        story_usage = StoryUsageStore(storage)
+        dialogue_artifacts = DialogueArtifactStore(storage)
+        dialogue_runtime = DialogueRuntime(
+            material=dialogue_stack.material,
+            seam=DialogueSeamService(
+                pipeline=dialogue_stack.pipeline,
+                artifacts=dialogue_artifacts,
+                usage=story_usage,
+            ),
+            usage=story_usage,
+            artifacts=dialogue_artifacts,
+        )
+        dialogue_clients = dialogue_stack.owned_clients
     return LiveEpisodeAssemblyService(
         fast_path=fast_path,
         background_pipeline=background_pipeline,
         retrieval=retrieval,
         composer=EpisodeComposer(music_registry),
-        materializer=NarrationMaterializer(tts, storage),
+        materializer=NarrationMaterializer(
+            tts,
+            storage,
+            dialogue_speech=dialogue_voicing.speech if dialogue_voicing else None,
+            dialogue_voices=dialogue_voicing.voices if dialogue_voicing else (),
+            dialogue_speed=dialogue_voicing.speed if dialogue_voicing else None,
+            dialogue_format=dialogue_voicing.audio_format if dialogue_voicing else None,
+        ),
+        dialogue_runtime=dialogue_runtime,
         ledger=ledger,
         catalog_pool_builder=(
             CatalogPoolBuilder(
@@ -4539,8 +4675,21 @@ def create_episode_assembly_service(
         ),
         duration_scaling=settings.duration_scaling,
         track_research=(
-            TrackResearchService(search=research, llm=writer_llm, deep_search=deep_research)
-            if settings.track_research and settings.resolved_research_provider != "mock"
+            TrackResearchService(
+                search=research, llm=track_research_llm, deep_search=deep_research
+            )
+            if track_research_llm is not None
             else None
         ),
+        owned_clients=[
+            fast_llm,
+            research_llm,
+            curator_llm,
+            writer_llm,
+            track_research_llm,
+            discovery,
+            research,
+            deep_research,
+            *dialogue_clients,
+        ],
     )

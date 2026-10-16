@@ -1,0 +1,65 @@
+{
+  "title": "人物志单段·经过一次局部修复后通过·用户试听认可（回归样本）",
+  "recorded": "2026-10-15",
+  "acceptance_status": "人物志单段经过一次局部修复后通过，用户试听认可",
+  "not_claimed": [
+    "首次无修复通过：否（首次核对未通过，经一次局部修复后通过）",
+    "随便听（casual）25-45 秒控长：未通过，未在本样本中重测",
+    "一个样本不足以证明兜底低频，也不足以证明修复稳定有效"
+  ],
+  "conditions": {
+    "station": "portrait",
+    "target_seconds": [
+      50,
+      90
+    ],
+    "hard_max_seconds": 115,
+    "evidence": "evidence.frozen.json（2026-10-14 Exa C 检索冻结的三份证据投影）",
+    "material_model": "doubao-seed-2-1-pro-260915",
+    "writer_and_repair_model": "doubao-seed-2-1-lite-260915",
+    "checker_model": "doubao-seed-2-1-pro-260915",
+    "speech": "doubao_podcast B 音色，语速 0，24 kHz PCM → 本地 WAV"
+  },
+  "flow": [
+    "material.normalized.json",
+    "candidate.unchecked.json",
+    "check.result.json（2 句 qualifier_not_in_quote，第 5、7 轮）",
+    "repair.output.json（Lite 只修这两轮）",
+    "candidate.repaired.unchecked.json",
+    "check.after-repair.json（通过）",
+    "candidate.checked.json"
+  ],
+  "audio_attachment": {
+    "kept_outside_the_repository": true,
+    "reason": "3.2 MB 的试听附件，不作为测试输入；已发给用户，并保留在运行目录（被 .gitignore 忽略）",
+    "local_path": ".wavecast-data/dialogue-live-portrait-resume-20261015/dialogue.wav",
+    "sha256": "45ce5ca5a865054006b619b1bae9b0227f43a9c03fbd353843a36cbe24c6e87e",
+    "bytes": 3195670,
+    "format": "WAV 24000 Hz mono 16-bit",
+    "seconds": 66.576
+  },
+  "information_loss": {
+    "recorded_not_redone": true,
+    "turn_5": "修复删去了整句“自己没学过创作……”（原 2 句 → 1 句）；记为信息损失，不追回重做",
+    "turn_7": "句数不变，措辞略改（“关于爱的共鸣”→“爱的共鸣”）"
+  },
+  "open_issue_at_recording": "第一人称采访的归属句（“他说过……”）被短引文规则误拦；本批改为：语义归属交给同一次 Pro 核对（附来源标题与上下文），正则命中只作提示、不再否决或触发修复（见 ADR 0028），样本保留当时的原始结果",
+  "usage_is_kept_apart": {
+    "first_attempt": "run1-first-attempt.summary.safe.json（素材 + 写稿 + 核对，3 次付费文本调用）",
+    "increment": "run2-local-repair.summary.safe.json（修复 + 复核 + 配音，3 次付费调用）",
+    "casual_attempt": "casual-attempt.summary.safe.json（随便听预算，2 次付费文本调用，写稿后被预算拒绝）"
+  },
+  "files": {
+    "candidate.checked.json": "8f3b716ce80551674b4f30f531f249d96ea280ec6e43284714a8cd6afc63c9bb",
+    "candidate.repaired.unchecked.json": "018e0eb0523bb134a35e46c1f95e06cd657833e39be8f29dc6631fc76a9a46ef",
+    "candidate.unchecked.json": "44b770337bfc684885ccca98467b004e90b6d9707ad2adc38f46371fdeeda5a6",
+    "casual-attempt.summary.safe.json": "c0294867c98f511a8187c326a0b4479f3b388a44d5ef234c175af81cf74b0585",
+    "check.after-repair.json": "93fccfb75349f6cb9442af7e0209b8005e83a0426a326d6df3675dc0c44a777d",
+    "check.result.json": "5573b4a51f1cffbfba2b1b6ba94628d265617835e822a7c7b024823eb67d1311",
+    "evidence.frozen.json": "681df2cc676febc6b73129de53e5a11c8bf4970453c1cc8dd2ff5a5e4e076f30",
+    "material.normalized.json": "7848e84a624edc507627caebdff971e4090b46d11eace7050c35a223cd4994dc",
+    "repair.output.json": "1ef70bc4629eb2abd933761ba7b5c460937fec410eca8a8b0049bcae6a47c564",
+    "run1-first-attempt.summary.safe.json": "80808d86d328f17388e9cadb8cee68a6ffd5fa2e7adda81277fa0750a4332638",
+    "run2-local-repair.summary.safe.json": "4272ed4e95063c7c2a3a0cc27f460e89d5cc31a12363c2055340bcc1049666c6"
+  }
+}

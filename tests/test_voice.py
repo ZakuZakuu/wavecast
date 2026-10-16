@@ -85,7 +85,7 @@ def test_instructions_name_the_move_limit_and_banned_openers() -> None:
     assert "Station: 来龙去脉" in text
     assert f"({move_for('s', StationId.LINEAGE, 2).value})" in text
     assert "between 40 and 63 Chinese characters" in text
-    assert "never with 刚才、接下来、我们先从、下一首" in text
+    assert "never with 刚才、接下来、我们先从" in text
     assert "刚才、Jody" in text
     assert "不是……而是……" in text
 
@@ -179,53 +179,6 @@ def test_a_clean_draft_is_not_rewritten() -> None:
     assert result.blocks[0].text == "Jody 是同一个人写的。"
 
 
-def test_a_draft_with_stock_phrasing_gets_one_rewrite_with_the_reasons() -> None:
-    llm = Sequenced(
-        _script("刚才那首，吉他一层层叠起来，慢慢铺开。"),
-        _script("Jody 是同一个人写的，节奏松很多。"),
-    )
-
-    result = _write(llm)
-
-    assert len(llm.prompts) == 2
-    assert "stock figurative wording" in llm.prompts[1]
-    assert "一层层" in llm.prompts[1]
-    assert "starts with 刚才" in llm.prompts[1]
-    assert result.blocks[0].text == "Jody 是同一个人写的，节奏松很多。"
-
-
-def test_a_rewrite_that_is_no_better_is_discarded() -> None:
-    first = _script("刚才那首，吉他一层层叠起来。")
-    worse = _script("刚才那首，吉他一层层叠起来，慢慢铺开，这也提醒我们很多。")
-    llm = Sequenced(first, worse)
-
-    result = _write(llm)
-
-    assert len(llm.prompts) == 2
-    assert result.blocks[0].text == first.blocks[0].text
-
-
-def test_rewriting_is_bounded_to_one_extra_call() -> None:
-    bad = _script("刚才那首，吉他一层层叠起来。")
-    llm = Sequenced(bad, bad, bad)
-
-    _write(llm)
-
-    assert len(llm.prompts) == 2
-
-
-def test_rewriting_can_be_turned_off() -> None:
-    llm = Sequenced(_script("刚才那首，吉他一层层叠起来。"))
-
-    asyncio.run(
-        WriterService(llm, max_revisions=0).write(
-            _chapter(), [], slot_context=_slot(), output_language=OutputLanguage.ZH_CN
-        )
-    )
-
-    assert len(llm.prompts) == 1
-
-
 @pytest.mark.parametrize("language", [OutputLanguage.EN_US, OutputLanguage.JA_JP])
 def test_the_chinese_voice_section_is_not_used_for_other_languages(language) -> None:
     llm = StructuredFixture(RadioScript(blocks=[]))
@@ -238,37 +191,6 @@ def test_the_chinese_voice_section_is_not_used_for_other_languages(language) -> 
     assert "Voice:" not in llm.prompts[0]
 
 
-def test_a_year_that_is_not_in_the_evidence_triggers_a_rewrite() -> None:
-    from wavecast.intelligence.models import Evidence
-
-    chapter = skeleton().chapters[0]  # evidence_ids == ["e1"]
-    evidence = [
-        Evidence(
-            id="e1",
-            claim_or_excerpt="《Ride on Time》是山下达郎 1980 年的专辑。",
-            source_url="https://example.test",
-            source_provider="fixture",
-            confidence=0.8,
-            query="q",
-        )
-    ]
-    llm = Sequenced(_script("Jody 是 1979 年的歌。"), _script("Jody 是 1980 年的歌。"))
-
-    result = asyncio.run(
-        WriterService(llm).write(
-            chapter,
-            evidence,
-            slot_context=_slot(),
-            target_duration_seconds=14,
-            output_language=OutputLanguage.ZH_CN,
-        )
-    )
-
-    assert len(llm.prompts) == 2
-    assert "gives a year that is not in the evidence (1979)" in llm.prompts[1]
-    assert result.blocks[0].text == "Jody 是 1980 年的歌。"
-
-
 def test_a_station_caps_the_spoken_window_whatever_the_plan_offers() -> None:
     from wavecast.intelligence.voice import MAX_SECONDS, window_for
 
@@ -279,7 +201,7 @@ def test_a_station_caps_the_spoken_window_whatever_the_plan_offers() -> None:
     assert window_for(StationId.CASUAL, None) is None
 
 
-def test_the_capped_window_reaches_the_prompt_and_the_length_check() -> None:
+def test_the_capped_window_reaches_the_prompt_without_a_second_model_call() -> None:
     long_text = "这首歌的故事很长很长。" * 20
     llm = Sequenced(_script(long_text), _script("Jody 是同一个人写的。"))
 
@@ -296,8 +218,7 @@ def test_the_capped_window_reaches_the_prompt_and_the_length_check() -> None:
     )
 
     assert "Target narration duration seconds: 15" in llm.prompts[0]
-    assert len(llm.prompts) == 2  # 200 characters is far over a 15 s window
-    assert "longer than its spoken window" in llm.prompts[1]
+    assert len(llm.prompts) == 1  # the Writer owns pacing; no length-based rewrite
 
 
 def test_the_previous_context_is_kept_from_its_end() -> None:
@@ -324,19 +245,6 @@ def test_the_route_and_the_unplayed_artists_reach_the_prompt() -> None:
 
     assert "the only ones that are played: A - One; A - Jody" in llm.prompts[0]
     assert "do not mention them: Explosions In The Sky" in llm.prompts[0]
-
-
-def test_a_draft_that_mentions_an_unplayed_artist_is_rewritten() -> None:
-    llm = Sequenced(
-        _script("Jody 之后，Explosions In The Sky 会接上来。"),
-        _script("Jody 是同一个人写的。"),
-    )
-
-    result = _write(llm, unplayed_artists=["Explosions In The Sky"])
-
-    assert len(llm.prompts) == 2
-    assert "mentions an artist who is not played in this programme" in llm.prompts[1]
-    assert result.blocks[0].text == "Jody 是同一个人写的。"
 
 
 def test_the_route_summary_separates_played_from_planned_artists() -> None:

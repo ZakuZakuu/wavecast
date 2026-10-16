@@ -244,9 +244,11 @@ def _narration_segment(
         planned_duration_seconds=block.intended_duration_seconds,
         title=block.kind.value.replace("_", " ").title(),
         narration_text=block.text,
-        tts_text=block.tts_text,
-        tts_cues=list(block.tts_cues),
+        tts_text=None if block.dialogue is not None else block.tts_text,
+        tts_cues=[] if block.dialogue is not None else list(block.tts_cues),
         narration_role=_narration_role(block.kind),
+        # A dialogue travels with its segment (narration_text is then derived from it).
+        dialogue=block.dialogue,
     )
 
 

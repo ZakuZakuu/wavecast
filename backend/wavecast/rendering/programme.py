@@ -13,7 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from wavecast.arrangement.models import AudioClip, GainPoint, MixPlan
 from wavecast.providers.contracts import ObjectStorageProvider
 from wavecast.rendering.errors import MixRenderError
-from wavecast.rendering.ffmpeg import HlsRenderedSegment, render_mix_hls_prefix
+from wavecast.rendering.ffmpeg import (
+    LOUDNESS_RULE,
+    NO_LOUDNESS_RULE,
+    HlsRenderedSegment,
+    render_mix_hls_prefix,
+)
 from wavecast.rendering.fingerprint import mix_plan_fingerprint
 from wavecast.rendering.sources import resolve_mix_sources
 
@@ -56,6 +61,9 @@ class ProgramRenderManifest(BaseModel):
     complete: bool = False
     chunks: tuple[ProgramRenderChunk, ...] = ()
     stream_url: str = Field(min_length=1, serialization_alias="streamUrl")
+    # How this programme's audio is rendered. A manifest written before loudness handling has no such
+    # field and keeps the "none" rule for the rest of its life, so what it published stays valid.
+    loudness_rule: str = Field(default=NO_LOUDNESS_RULE, serialization_alias="loudnessRule")
 
     @model_validator(mode="after")
     def validate_append_only_shape(self) -> ProgramRenderManifest:
@@ -246,6 +254,7 @@ def _new_manifest(
         complete=False,
         chunks=(),
         stream_url=stream_url(episode_id),
+        loudness_rule=LOUDNESS_RULE,
     )
 
 
@@ -253,11 +262,12 @@ def _fingerprint_interval(
     plan: MixPlan,
     start_seconds: float,
     media_end_seconds: float,
+    loudness_rule: str,
 ) -> str:
     source_end = min(media_end_seconds, plan.duration_seconds)
     if source_end <= start_seconds + 1e-9:
         raise ProgramImmutabilityError("rendered media extends beyond the canonical programme")
-    return mix_plan_fingerprint(slice_mix_plan(plan, start_seconds, source_end))
+    return mix_plan_fingerprint(slice_mix_plan(plan, start_seconds, source_end), loudness_rule)
 
 
 def _verify_frozen_prefix(plan: MixPlan, manifest: ProgramRenderManifest) -> None:
@@ -268,6 +278,7 @@ def _verify_frozen_prefix(plan: MixPlan, manifest: ProgramRenderManifest) -> Non
             plan,
             chunk.start_seconds,
             chunk.end_seconds,
+            manifest.loudness_rule,
         )
         if fingerprint != chunk.plan_fingerprint:
             raise ProgramImmutabilityError("new plan rewrites frozen programme audio")
@@ -337,6 +348,9 @@ async def render_program_prefix(
         or abs(manifest.holdback_seconds - holdback_seconds) > 1e-9
     ):
         raise ProgramImmutabilityError("render policy changed after programme publication")
+    if not manifest.chunks and manifest.loudness_rule == NO_LOUDNESS_RULE:
+        # Nothing has been published yet, so nothing needs to stay as it was: start under the current rule.
+        manifest = manifest.model_copy(update={"loudness_rule": LOUDNESS_RULE})
 
     _verify_frozen_prefix(plan, manifest)
     if manifest.complete:
@@ -358,6 +372,7 @@ async def render_program_prefix(
             sources,
             root / "hls",
             segment_time_seconds=chunk_duration_seconds,
+            loudness=manifest.loudness_rule != NO_LOUDNESS_RULE,
         )
         candidates = _candidate_prefix(
             rendered.segments,
@@ -391,7 +406,7 @@ async def render_program_prefix(
             if not content:
                 raise MixRenderError("program renderer produced an empty chunk")
             digest = hashlib.sha256(content).hexdigest()
-            fingerprint = _fingerprint_interval(plan, start, end)
+            fingerprint = _fingerprint_interval(plan, start, end, manifest.loudness_rule)
             key = (
                 f"program-renders/{_safe_episode_id(plan.episode_id)}/r1/"
                 f"{index:06d}-{digest[:20]}.ts"

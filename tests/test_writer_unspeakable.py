@@ -1,4 +1,4 @@
-"""A block the voice cannot read is rewritten, not silently lost; a closing never vanishes."""
+"""Unreadable blocks are omitted intact with no rewrite; a closing never vanishes."""
 
 import asyncio
 
@@ -17,22 +17,12 @@ JAPANESE = "Jody 之后是《千と千尋の神隠し》的音乐。"
 CHINESE = "Jody 之后是《千与千寻》的音乐。"
 
 
-def test_a_block_the_voice_cannot_read_is_sent_back_for_a_rewrite_in_chinese() -> None:
-    llm = Sequenced(_script(JAPANESE), _script(CHINESE))
+def test_a_block_the_voice_cannot_read_is_dropped_without_rewriting() -> None:
+    llm = Sequenced(_script(JAPANESE))
 
     result = _write(llm)
 
-    assert len(llm.prompts) == 2
-    assert "The voice cannot read" in llm.prompts[1] and "千と千尋の神隠し" in llm.prompts[1]
-    assert [block.text for block in result.blocks] == [CHINESE]
-
-
-def test_a_block_still_unreadable_after_the_rewrite_is_dropped() -> None:
-    llm = Sequenced(_script(JAPANESE), _script(JAPANESE))
-
-    result = _write(llm)
-
-    assert len(llm.prompts) == 2
+    assert len(llm.prompts) == 1
     assert result.blocks == []
 
 
@@ -92,11 +82,3 @@ def test_the_writer_is_told_to_use_chinese_titles_or_say_what_a_foreign_title_me
     assert "established Chinese title" in prompt
     assert "这首歌的名字，中文意思是" in prompt
     assert "do not invent a Chinese title" in prompt
-
-
-def test_the_rewrite_for_unreadable_text_offers_the_meaning_phrase() -> None:
-    llm = Sequenced(_script(JAPANESE), _script(CHINESE))
-
-    _write(llm)
-
-    assert "这首歌的名字，中文意思是" in llm.prompts[1]
