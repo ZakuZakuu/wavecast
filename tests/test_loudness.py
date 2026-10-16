@@ -145,3 +145,35 @@ def test_without_the_loudness_rule_the_graph_is_the_one_old_programmes_were_publ
     assert "alimiter" not in legacy
     assert legacy.count("stereo,volume=eval=frame") == len(plan.clips)  # no gain stage before each clip's own automation
     assert "alimiter" in build_filter_graph(plan, {"a:music": -3.0})
+
+
+def test_the_same_source_in_two_renders_is_measured_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each render works on fresh temporary copies; the measurement follows the content, not the path."""
+
+    from wavecast.rendering import ffmpeg
+
+    source = tmp_path / "song.wav"
+    tone(source, 3, 0.5, 660.0)
+    first_render = tmp_path / "render-1"
+    second_render = tmp_path / "render-2"
+    first_render.mkdir()
+    second_render.mkdir()
+    first_copy = first_render / "input-0.wav"
+    second_copy = second_render / "input-0.wav"
+    shutil.copyfile(source, first_copy)
+    shutil.copyfile(source, second_copy)  # a different path and modification time, the same bytes
+    ffmpeg._measured.clear()
+    real_run = subprocess.run
+    calls: list[int] = []
+
+    def counting_run(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(ffmpeg.subprocess, "run", counting_run)
+
+    first = measure_integrated_lufs(first_copy)
+    second = measure_integrated_lufs(second_copy)
+
+    assert first == second and first is not None
+    assert len(calls) == 1

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 import subprocess
@@ -24,14 +25,28 @@ SILENCE_LUFS = -60.0
 PEAK_LIMIT = 0.7943  # -2 dBFS
 
 _I_LUFS = re.compile(r"I:\s*(-?\d+(?:\.\d+)?)\s*LUFS")
-_measured: dict[tuple[str, int, int], float | None] = {}
+_measured: dict[str, float | None] = {}
+_MEASURED_LIMIT = 1024
+
+
+def _content_key(path: Path) -> str:
+    """Identity of a source by its bytes: render inputs are fresh temporary files every time."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def measure_integrated_lufs(path: Path, binary: str = "ffmpeg") -> float | None:
-    """Integrated loudness of a whole source file, or None when it cannot be measured (silence, error)."""
+    """Integrated loudness of a whole source file, or None when it cannot be measured (silence, error).
 
-    stat = path.stat()
-    key = (str(path), stat.st_size, stat.st_mtime_ns)
+    Cached by the file's content, so the same asset is measured once however many renders and
+    temporary copies it goes through.
+    """
+
+    key = _content_key(path)
     if key in _measured:
         return _measured[key]
     try:
@@ -47,7 +62,9 @@ def measure_integrated_lufs(path: Path, binary: str = "ffmpeg") -> float | None:
         if value is not None and value <= SILENCE_LUFS:
             value = None  # ebur128 reports silence as about -70, which must not be amplified
     except (OSError, subprocess.SubprocessError):
-        value = None
+        return None  # not cached: a transient failure should be tried again next time
+    if len(_measured) >= _MEASURED_LIMIT:
+        _measured.clear()
     _measured[key] = value
     return value
 
