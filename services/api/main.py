@@ -1642,6 +1642,10 @@ async def create_program_proposals(
         proposal_ids = [item.id for item in proposals]
         if len(set(proposal_ids)) != len(proposal_ids):
             raise ProgramProposalGenerationError("proposal_id_collision")
+        try:
+            await _usage_event_store.link_batch(proposal_ids)
+        except Exception:  # noqa: BLE001 - the usage report is secondary; never fail a proposal for it
+            logger.warning("usage_batch_link_failed proposals=%s", len(proposal_ids))
         await to_thread.run_sync(
             lambda: proposal_repository.save_many(
                 proposals, owner_listener_id=owner.listener_id,
@@ -2025,12 +2029,15 @@ async def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
     # What the proposal that started this episode cost.  Kept apart: it happened before the
     # episode existed, and it is not part of generating the programme.
     proposal_events: list[UsageEvent] = []
+    batch_size = 1
     if current.seed_id:
+        # Cards generated together share one call: its events sit under the batch's first id.
         try:
-            proposal_stored = await _usage_event_store.load(current.seed_id)
+            proposal_scope, batch_size = await _usage_event_store.batch_scope(current.seed_id)
+            proposal_stored = await _usage_event_store.load(proposal_scope)
         except ValueError:
-            proposal_stored = []
-        proposal_events = merge_events(ledger.for_scope(current.seed_id), proposal_stored)
+            proposal_scope, batch_size, proposal_stored = current.seed_id, 1, []
+        proposal_events = merge_events(ledger.for_scope(proposal_scope), proposal_stored)
     reporting = progressive_runtime is not None or bool(_api_usage_ledger.events) or bool(stored)
     segments = current.timeline_segments
     return {
@@ -2053,6 +2060,8 @@ async def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
             {
                 "providers": diagnostics_of(proposal_events, with_ids=True),
                 "costs": cost_summary(proposal_events),
+                # >1: the cost of one call that produced this many cards; counted once, not per card.
+                "shared_by_proposals": batch_size,
             }
             if proposal_events
             else None

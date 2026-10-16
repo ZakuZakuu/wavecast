@@ -172,3 +172,63 @@ def test_a_proposals_cost_is_recorded_under_its_own_id_and_reported_apart(monkey
     assert "program_proposal" not in json.dumps(own)
     assert "program_proposal" in json.dumps(report["proposal"]["providers"])
     assert ProposalGenerationRequest  # the request type the endpoint validated
+
+
+def test_choosing_the_second_of_two_cards_still_finds_the_batchs_cost_after_a_restart(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """One call produced both cards: its cost is shared by them, stored once, found from either."""
+
+    from wavecast.providers.usage import UsageLedger
+
+    live = ProviderSettings(
+        mode="live", deepseek_api_key="k", proposal_planner="deepseek", music_provider="mock"
+    )
+    generator = api_module._build_proposal_generator(live, api_module._usage_ledger())
+    one = {
+        "short_description": "a short hour of quiet songs",
+        "editorial_route": ["first", "second"],
+        "opening_track_candidates": [{"artist": "Mira Fields", "title": "Neon First Light"}],
+    }
+    draft = {"proposals": [{**one, "title": "Quiet songs"}, {**one, "title": "More quiet songs"}]}
+
+    class Responses:
+        async def create(self, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                status="completed",
+                output=[
+                    SimpleNamespace(
+                        type="message",
+                        content=[SimpleNamespace(type="output_text", text=json.dumps(draft))],
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=21, output_tokens=9),
+                _request_id="r",
+            )
+
+    generator.llm.client = SimpleNamespace(responses=Responses())
+    monkeypatch.setattr(api_module, "proposal_generator", generator)
+    client = TestClient(api_module.app)
+    owner = {"X-Wavecast-Listener": "ledger-attribution-batch"}
+
+    batch = client.post(
+        "/api/program-proposals",
+        json={"prompt": "quiet songs for an hour", "count": 2, "duration_intent": "SHORT"},
+        headers=owner,
+    )
+    assert batch.status_code == 200, batch.text
+    first, second = (item["id"] for item in batch.json()["proposals"])
+    created = client.post(f"/api/episodes/from-seed/{second}", headers=owner)
+    assert created.status_code == 200, created.text
+    asyncio.run(api_module._usage_ledger().flush())  # noqa: SLF001
+
+    # A new process: nothing of the call is in memory, only what was stored.
+    monkeypatch.setattr(api_module, "_usage_ledger", lambda: UsageLedger())
+    report = client.get(f"/api/episodes/{created.json()['id']}/usage", headers=owner).json()
+
+    assert report["proposal"] is not None, "the second card must still find the batch's cost"
+    assert report["proposal"]["shared_by_proposals"] == 2
+    assert "program_proposal" in json.dumps(report["proposal"]["providers"])
+    # stored once, under the first id: the second card has no copy of its own
+    stored_first = asyncio.run(api_module._usage_event_store.load(first))  # noqa: SLF001
+    stored_second = asyncio.run(api_module._usage_event_store.load(second))  # noqa: SLF001
+    assert [e.input_tokens for e in stored_first] == [21]
+    assert stored_second == []

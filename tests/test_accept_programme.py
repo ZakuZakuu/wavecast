@@ -187,3 +187,72 @@ def test_two_recoveries_at_once_resume_only_once(harness) -> None:  # type: igno
     asyncio.run(scenario())
 
     assert api.resumes == 1
+
+
+def test_a_failed_paid_call_stops_every_later_paid_call(harness) -> None:  # type: ignore[no-untyped-def]
+    meter = harness.Meter()
+
+    async def scenario() -> tuple[str, str | None]:
+        try:
+            async with meter.permit("ark", cny=0.1):
+                raise RuntimeError("provider failed")
+        except RuntimeError as error:
+            first = str(error)  # the failure still reaches its caller
+        try:
+            async with meter.permit("exa", usd=0.01):
+                return first, "allowed"
+        except harness.BudgetStop:
+            return first, None
+
+    first, second = asyncio.run(scenario())
+
+    assert first == "provider failed"
+    assert second is None  # the next paid call was refused
+    assert meter.tripped == "ark_failed"
+    assert meter.denied["exa"] == 1
+    assert meter.inflight_cny == 0  # the reservation was released
+
+
+def test_a_cancelled_paid_call_stops_later_paid_calls_and_the_cancellation_propagates(harness) -> None:  # type: ignore[no-untyped-def]
+    meter = harness.Meter()
+
+    async def scenario() -> bool:
+        async def slow() -> None:
+            async with meter.permit("doubao", cny=0.6):
+                await asyncio.sleep(10)
+
+        task = asyncio.create_task(slow())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return True
+        return False
+
+    assert asyncio.run(scenario()) is True
+    assert meter.tripped == "doubao_cancelled"
+
+    async def later() -> bool:
+        try:
+            async with meter.permit("ark", cny=0.01):
+                return True
+        except harness.BudgetStop:
+            return False
+
+    assert asyncio.run(later()) is False
+
+
+def test_a_successful_paid_call_does_not_stop_the_run(harness) -> None:  # type: ignore[no-untyped-def]
+    meter = harness.Meter()
+
+    async def scenario() -> None:
+        async with meter.permit("ark", cny=0.1):
+            pass
+        async with meter.permit("ark", cny=0.1):
+            pass
+
+    asyncio.run(scenario())
+
+    assert meter.tripped is None
+    assert meter.calls["ark"] == 2

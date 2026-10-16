@@ -106,6 +106,11 @@ class Meter:
         self.inflight_exa += usd
         try:
             yield
+        except BaseException as error:
+            # A paid call that failed or was cancelled stops the run: no further paid call is
+            # allowed (the exception, or the cancellation, still propagates to its caller).
+            self.trip(f"{kind}_{'cancelled' if isinstance(error, asyncio.CancelledError) else 'failed'}")
+            raise
         finally:
             self.inflight_cny -= cny
             self.inflight_exa -= usd
