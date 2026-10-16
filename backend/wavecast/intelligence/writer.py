@@ -303,7 +303,6 @@ class WriterService:
         result = await self._attempt(prompt, chapter, evidence, known_tracks, inference_profile)
         if isinstance(result, RadioScript):
             result = _without_identity_conflicts(result, known_tracks, unplayed_artists)
-            result = _without_invalid_speech(result, known_tracks)
             if signoff:
                 result = _with_signoff(
                     result, signoff, writer_window, closing=_route_closing(known_tracks, route_tracks)
@@ -329,6 +328,10 @@ class WriterService:
             raise TypeError("writer returned an unexpected output model")
         _validate_evidence_references(result, chapter, evidence)
         if isinstance(result, RadioScript):
+            # Check the authored display / optional speech copy, before spoken-form
+            # conversion removes title delimiters. A song named 《最近比较烦》 is not
+            # a present-day claim; generated TTS copy must not turn it into one.
+            result = _without_invalid_speech(result, known_tracks)
             # Numeric playback placement is application-owned.  Strip any
             # compatibility field emitted by an older/faulty structured model
             # before assembly normalizes the parsed blocks into this slot.

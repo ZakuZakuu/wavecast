@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 
+from wavecast.text_identity import to_simplified
+
 # Not 刚 / 刚刚: "刚听完《X》" is the host talking about the song that just played.
 _RELATIVE_TIME = re.compile(
     r"最近|近日|近来|近期|上个月|上月|本月|这个月|上周|上星期|这周|本周|前几天|这几天|这两天|前阵子|日前|"
@@ -34,7 +36,7 @@ def has_relative_time(text: str) -> bool:
     """
 
     # A work's title is neither a claim about today nor an event date.
-    text = _WORK_TITLE.sub("", text)
+    text = _WORK_TITLE.sub("", to_simplified(text))
     return _RELATIVE_TIME.search(text) is not None or any(
         _NEW_RELEASE.search(sentence) and not _ABSOLUTE_YEAR.search(sentence)
         for sentence in re.split(r"[。！？!?；;\n]|\.\s+", text)
@@ -44,4 +46,4 @@ def has_relative_time(text: str) -> bool:
 def invents_experience(text: str) -> bool:
     """True when a host claims a personal memory or a piece of research of their own."""
 
-    return _INVENTED_EXPERIENCE.search(_WORK_TITLE.sub("", text)) is not None
+    return _INVENTED_EXPERIENCE.search(_WORK_TITLE.sub("", to_simplified(text))) is not None

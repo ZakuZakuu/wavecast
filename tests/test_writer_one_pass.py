@@ -48,6 +48,29 @@ def test_a_spoken_override_cannot_hide_an_unanchored_claim() -> None:
     assert _write(Sequenced(script)).blocks == []
 
 
+@pytest.mark.parametrize("title", ["最近比较烦", "我记得", "去年夏天"])
+def test_literal_song_titles_survive_the_complete_path_including_spoken_conversion(title: str) -> None:
+    slot = _slot()
+    assert slot.upcoming_track is not None
+    track = slot.upcoming_track.model_copy(update={"canonical_title": title})
+    slot = slot.model_copy(update={"chapter_track": track, "upcoming_track": track})
+    text = f"下一首是《{title}》。"
+    llm = Sequenced(_script(text))
+
+    result = asyncio.run(WriterService(llm).write(
+        _chapter(), [], slot_context=slot, output_language=OutputLanguage.ZH_CN,
+    ))
+
+    assert isinstance(result, RadioScript)
+    assert [block.text for block in result.blocks] == [text]
+    assert result.blocks[0].tts_text == f"下一首是{title}。"
+    assert len(llm.prompts) == 1
+
+
+def test_traditional_chinese_cannot_bypass_the_time_guard_before_spoken_conversion() -> None:
+    assert _write(Sequenced(_script("他上個月發行了新專輯。"))).blocks == []
+
+
 def test_an_anchored_historical_release_is_kept_in_display_and_speech() -> None:
     text = "2006 年他发行了新专辑《爱爱爱》。这也是他第二张专辑。"
     llm = Sequenced(_script(text))
