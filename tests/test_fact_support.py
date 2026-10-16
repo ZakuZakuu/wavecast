@@ -780,3 +780,70 @@ def test_an_unrelated_finding_in_the_rejected_rewrite_costs_the_old_draft_nothin
     result = _write(llm)
 
     assert [block.text for block in result.blocks] == [f"{KIKI_FIRST}{GOOD}"]
+
+
+def _drop_sentence(script: RadioScript, sentence: int = 1) -> RadioScript:
+    from wavecast.intelligence.fact_support import (
+        FactReport,
+        SentenceIssue,
+        without_flagged_sentences,
+    )
+
+    report = FactReport(issues=[SentenceIssue(0, sentence, "removed", "insufficient", "m")])
+    return without_flagged_sentences(script, report)
+
+
+def test_a_handoff_cut_down_to_a_bare_title_is_said_as_a_plain_handoff() -> None:
+    """Real case: 《一百种表情》，同样来自方大同 was all that was left after the unsupported sentence went."""
+
+    script = _script("《一百种表情》，同样来自方大同。他一九八四年发行了第一张唱片。")
+
+    (block,) = _drop_sentence(script).blocks
+
+    assert block.text == "下一首是《一百种表情》，同样来自方大同。"
+    assert block.tts_text is None or block.tts_text.startswith("下一首是")
+
+
+def test_a_transition_cut_down_to_a_bare_title_gets_the_same_plain_handoff() -> None:
+    script = _script("《一百种表情》。他一九八四年发行了第一张唱片。", kind=RadioScriptBlockKind.TRANSITION)
+
+    (block,) = _drop_sentence(script).blocks
+
+    assert block.text == "下一首是《一百种表情》。"
+
+
+def test_a_line_that_is_still_a_sentence_after_the_cut_is_left_alone() -> None:
+    script = _script("这首歌的鼓点很松弛。他一九八四年发行了第一张唱片。")
+
+    (block,) = _drop_sentence(script).blocks
+
+    assert block.text == "这首歌的鼓点很松弛。"
+
+
+def test_a_title_that_starts_a_real_sentence_is_not_given_a_handoff() -> None:
+    script = _script("《一百种表情》是一首很安静的歌，主要靠钢琴推进。他一九八四年发行了第一张唱片。")
+
+    (block,) = _drop_sentence(script).blocks
+
+    assert block.text.startswith("《一百种表情》是")
+
+
+def test_an_intro_or_outro_is_never_given_a_next_track_handoff() -> None:
+    for kind in (RadioScriptBlockKind.INTRO, RadioScriptBlockKind.OUTRO):
+        script = _script("《一百种表情》，同样来自方大同。他一九八四年发行了第一张唱片。", kind=kind)
+
+        (block,) = _drop_sentence(script).blocks
+
+        assert not block.text.startswith("下一首")
+
+
+def test_a_line_nothing_was_cut_from_is_not_touched() -> None:
+    script = _script("《一百种表情》，同样来自方大同。")
+
+    assert without_flagged_sentences_unchanged(script)
+
+
+def without_flagged_sentences_unchanged(script: RadioScript) -> bool:
+    from wavecast.intelligence.fact_support import FactReport, without_flagged_sentences
+
+    return [b.text for b in without_flagged_sentences(script, FactReport()).blocks] == [b.text for b in script.blocks]
