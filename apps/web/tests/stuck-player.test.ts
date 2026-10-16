@@ -150,6 +150,49 @@ describe("a player that says it is playing while nothing moves", () => {
     expect(errors.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("does not count the jump back to the old position after a reload as playback", () => {
+    const errors: string[] = [];
+    let pauses = 0;
+    const audio = mount({ onError: (message) => { errors.push(message); }, onPauseRequest: () => { pauses += 1; } });
+    const baseline = loads;
+    // Every load starts at zero, and four seconds later the element is put back at the old position
+    // and then stays there: it never plays.
+    vi.mocked(HTMLMediaElement.prototype.load).mockImplementation(() => {
+      loads += 1;
+      (audio as unknown as { currentTime: number }).currentTime = 0;
+      setTimeout(() => { (audio as unknown as { currentTime: number }).currentTime = 820; }, 4_000);
+    });
+
+    act(() => { vi.advanceTimersByTime(240_000); });
+
+    expect(loads - baseline).toBe(3); // still at most three recoveries, then it stops
+    expect(pauses).toBeGreaterThanOrEqual(1);
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("clears the failure count once the audio really keeps playing after a recovery", () => {
+    let pauses = 0;
+    const audio = mount({ onPauseRequest: () => { pauses += 1; } });
+    const baseline = loads;
+    const setTime = (value: number) => { (audio as unknown as { currentTime: number }).currentTime = value; };
+    vi.mocked(HTMLMediaElement.prototype.load).mockImplementation(() => {
+      loads += 1;
+      setTimeout(() => { audio.dispatchEvent(new Event("canplay")); }, 100); // the element settles
+    });
+
+    // Five stalls, each followed by ten seconds of healthy playback.
+    for (let round = 0; round < 5; round += 1) {
+      act(() => { vi.advanceTimersByTime(8_000); }); // stalled long enough to be recovered
+      for (let second = 0; second < 12; second += 1) {
+        setTime((audio as unknown as { currentTime: number }).currentTime + 1);
+        act(() => { vi.advanceTimersByTime(1_000); });
+      }
+    }
+
+    expect(loads - baseline).toBe(5);
+    expect(pauses).toBe(0); // it never reached the give-up count
+  });
+
   it("does not reload a player that is advancing", () => {
     const audio = mount();
     const baseline = loads;

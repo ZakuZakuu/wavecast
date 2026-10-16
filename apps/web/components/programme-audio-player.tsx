@@ -16,6 +16,8 @@ const SEEK_UNLOADED_GRACE_MS = 7_000;
 const SUSPECT_STALL_MS = 2_000;
 // Recoveries in a row that did not get the audio moving again before the player gives up and pauses.
 const MAX_FAILED_RECOVERIES = 3;
+// Seconds of position advancing at about playing speed, with no seek pending, that prove a recovery worked.
+const SUSTAINED_PLAYBACK_SECONDS = 4;
 
 type ProgrammeAudioPlayerProps = {
   streamUrl: string;
@@ -334,6 +336,7 @@ export function ProgrammeAudioPlayer({
     let lastRecoveryMs: number | null = null;
     let failedRecoveries = 0;
     let gaveUp = false;
+    let sustainFrom: { time: number; ms: number } | null = null;
 
     const check = () => {
       const now = performance.now();
@@ -341,14 +344,30 @@ export function ProgrammeAudioPlayer({
       if (Math.abs(time - lastTime) > 0.01) {
         lastTime = time;
         lastAdvanceMs = now;
-        // Moving for a few seconds after a recovery means it worked.
-        if (lastRecoveryMs !== null && now - lastRecoveryMs > 3000) failedRecoveries = 0;
       }
       if (!desiredPlayingRef.current) {
         failedRecoveries = 0; // a pause or a new play starts afresh
         gaveUp = false;
+        sustainFrom = null;
       }
       if (gaveUp) return;
+      // A recovery has not worked until the audio keeps moving: the jump back to the old position
+      // after a reload is a seek, not playback. Count from the first moment with no seek pending and
+      // call it success only after a few seconds of position that advance at about playing speed.
+      if (failedRecoveries > 0) {
+        if (pendingSeekRef.current !== null || audio.seeking) {
+          sustainFrom = null;
+        } else if (sustainFrom === null || time < sustainFrom.time - 0.5) {
+          sustainFrom = { time, ms: now };
+        } else {
+          const played = time - sustainFrom.time;
+          const elapsed = (now - sustainFrom.ms) / 1000;
+          if (elapsed >= SUSTAINED_PLAYBACK_SECONDS && played >= elapsed * 0.5 && played <= elapsed + 2) {
+            failedRecoveries = 0;
+            sustainFrom = null;
+          }
+        }
+      }
       const pending = pendingSeekRef.current;
       if (pending !== pendingValue) {
         pendingValue = pending;
@@ -373,6 +392,7 @@ export function ProgrammeAudioPlayer({
 
       lastRecoveryMs = now;
       failedRecoveries += 1;
+      sustainFrom = null;
       if (failedRecoveries > MAX_FAILED_RECOVERIES) {
         // Reloading again and again is not going to help: stop, and show the player as paused
         // instead of "playing" with nothing happening.
