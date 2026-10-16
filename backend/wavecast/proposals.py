@@ -28,6 +28,7 @@ from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError, ProviderSchemaValidationError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
+from wavecast.providers.usage import usage_scope
 from wavecast.spoken_form import catalog_album, chinese_title, spoken_artist, spoken_title
 from wavecast.stations import (
     STATION_PROFILES,
@@ -642,13 +643,16 @@ class LLMProgramProposalGenerator:
         # asked to lean towards, and each id seeds the rotation of its programme's candidates.
         proposal_ids = [f"proposal-{uuid4().hex}" for _ in range(request.count)]
         prompt = self._prompt(request, variety_seed=proposal_ids[0])
-        try:
-            raw = await self._draft(prompt)
-        except ProviderSchemaValidationError:
-            # The fast profile makes a single attempt.  A reply that does not fit the schema
-            # is usually a one-off, and the listener is waiting on this answer, so ask once more.
-            logger.warning("program_proposal_schema_retry")
-            raw = await self._draft(prompt)
+        # The proposal's own scope (its first id): its cost is recorded before any episode exists
+        # and stays apart from the episode's, which the usage report links back through the seed.
+        with usage_scope(proposal_ids[0]):
+            try:
+                raw = await self._draft(prompt)
+            except ProviderSchemaValidationError:
+                # The fast profile makes a single attempt.  A reply that does not fit the schema
+                # is usually a one-off, and the listener is waiting on this answer, so ask once more.
+                logger.warning("program_proposal_schema_retry")
+                raw = await self._draft(prompt)
         if not isinstance(raw, ProgramProposalDraftBatch):
             raise ProgramProposalGenerationError("invalid_structured_output")
         if len(raw.proposals) != request.count:

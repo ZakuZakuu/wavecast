@@ -45,6 +45,7 @@ def test_live_mode_with_incomplete_configuration_fails_before_runtime_use(
                 mode="live", minimax_api_key=api_key, minimax_tts_voice_id=voice_id
             ),
             LocalObjectStorageProvider(tmp_path / "audio"),
+            UsageLedger(),
         )
 
 
