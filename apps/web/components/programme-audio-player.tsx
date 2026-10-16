@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef } from "react";
 
 import { prefersNativeHls } from "../lib/program-stream";
-import { stuckPlaybackReason } from "../lib/stuck-playback";
+import { STALL_SECONDS, stuckPlaybackReason } from "../lib/stuck-playback";
 
 const HLS_MIME = "application/vnd.apple.mpegurl";
 const FRONTIER_WAKE_SECONDS = 45;
@@ -12,6 +12,8 @@ const FRONTIER_RELOAD_EPSILON_SECONDS = 2;
 const POSITION_EMIT_INTERVAL_MS = 200;
 // An element with no data yet is more likely still loading than stuck.
 const SEEK_UNLOADED_GRACE_MS = 7_000;
+// After a network return or an element error, a player that has not moved for this long is suspect.
+const SUSPECT_STALL_MS = 2_000;
 
 type ProgrammeAudioPlayerProps = {
   streamUrl: string;
@@ -380,7 +382,17 @@ export function ProgrammeAudioPlayer({
       }
     };
 
+    // The network coming back, or the element reporting an error, is a sign that whatever it was
+    // loading is gone; do not wait out the whole stall time before trying again.
+    const suspect = () => {
+      const now = performance.now();
+      if (now - lastAdvanceMs >= SUSPECT_STALL_MS) {
+        lastAdvanceMs = Math.min(lastAdvanceMs, now - STALL_SECONDS * 1000);
+      }
+    };
     const interval = window.setInterval(check, 1000);
+    window.addEventListener("online", suspect);
+    audio.addEventListener("error", suspect);
     const visible = () => {
       if (document.visibilityState !== "visible") return;
       // Timers are throttled in the background; do not count that time against the player.
@@ -390,6 +402,8 @@ export function ProgrammeAudioPlayer({
     document.addEventListener("visibilitychange", visible);
     return () => {
       window.clearInterval(interval);
+      window.removeEventListener("online", suspect);
+      audio.removeEventListener("error", suspect);
       document.removeEventListener("visibilitychange", visible);
     };
   }, [playIfDesired, streamUrl]);

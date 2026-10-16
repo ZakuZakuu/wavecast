@@ -100,6 +100,43 @@ describe("a player that says it is playing while nothing moves", () => {
     expect(loads).toBe(baseline + 1);
   });
 
+  it("reloads soon after the network comes back instead of waiting out the whole stall time", () => {
+    mount();
+    const baseline = loads;
+    act(() => { vi.advanceTimersByTime(3_000); });
+    expect(loads).toBe(baseline); // only 3 s without movement: not yet
+
+    act(() => { window.dispatchEvent(new Event("online")); });
+    act(() => { vi.advanceTimersByTime(1_000); });
+
+    expect(loads).toBe(baseline + 1);
+  });
+
+  it("reloads soon after the element reports an error", () => {
+    const audio = mount();
+    const baseline = loads;
+    act(() => { vi.advanceTimersByTime(3_000); });
+
+    act(() => { audio.dispatchEvent(new Event("error")); });
+    act(() => { vi.advanceTimersByTime(1_000); });
+
+    expect(loads).toBe(baseline + 1);
+  });
+
+  it("does not treat the network coming back as a fault when the audio is playing normally", () => {
+    const audio = mount();
+    const baseline = loads;
+
+    for (let second = 0; second < 5; second += 1) {
+      (audio as unknown as { currentTime: number }).currentTime += 1;
+      act(() => { vi.advanceTimersByTime(1_000); });
+    }
+    act(() => { window.dispatchEvent(new Event("online")); });
+    act(() => { vi.advanceTimersByTime(1_000); });
+
+    expect(loads).toBe(baseline);
+  });
+
   it("does not reload a player that is advancing", () => {
     const audio = mount();
     const baseline = loads;
