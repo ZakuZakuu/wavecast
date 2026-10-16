@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
+import pytest
 from wavecast.intelligence.models import ChapterPlan, NarrationSlotContext
 from wavecast.models.episode import (
     EpisodeState,
@@ -452,5 +453,64 @@ def test_a_failed_authoring_run_releases_the_chapter_for_the_next_one() -> None:
 
     repository, episode = _pending_episode()
     asyncio.run(author_pending_narration(_ExplodingHost(repository), episode.id, max_chapters=1))
+
+    assert narration_enrichment._AUTHORING_IN_FLIGHT == set()
+
+
+def test_a_second_path_cannot_start_a_chapter_while_the_first_ones_result_is_still_being_saved(
+    monkeypatch,
+) -> None:
+    """Seen live: the guard was released as soon as the Writer returned, before the result was stored."""
+
+    import time
+
+    from wavecast.orchestration import narration_enrichment
+
+    repository, episode = _pending_episode()
+    runtime = _SlowCountingRuntime()
+    host = _Host(repository)
+    host.progressive_runtime = runtime  # type: ignore[assignment]
+    original = narration_enrichment._finish_authoring
+
+    def slow_save(*args, **kwargs):  # type: ignore[no-untyped-def]
+        time.sleep(0.2)  # the Writer is done; the result is not stored yet
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(narration_enrichment, "_finish_authoring", slow_save)
+
+    async def both() -> None:
+        first = asyncio.create_task(author_pending_narration(host, episode.id, max_chapters=1))
+        await asyncio.sleep(0.1)  # past the Writer call (0.05 s), inside the save
+        await author_pending_narration(host, episode.id, max_chapters=1)
+        await first
+
+    asyncio.run(both())
+
+    assert runtime.calls == 1
+    assert narration_enrichment._AUTHORING_IN_FLIGHT == set()
+
+
+def test_a_cancelled_authoring_run_releases_the_chapter() -> None:
+    from wavecast.orchestration import narration_enrichment
+
+    class Hangs:
+        async def author_narration(self, episode: LiveEpisode, chapter_id: str) -> GeneratedChapter | None:
+            del episode, chapter_id
+            await asyncio.sleep(3600)
+            return None
+
+    repository, episode = _pending_episode()
+    host = _Host(repository)
+    host.progressive_runtime = Hangs()  # type: ignore[assignment]
+
+    async def run() -> None:
+        task = asyncio.create_task(author_pending_narration(host, episode.id, max_chapters=1))
+        await asyncio.sleep(0.05)
+        assert narration_enrichment._AUTHORING_IN_FLIGHT  # held while it works
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
 
     assert narration_enrichment._AUTHORING_IN_FLIGHT == set()
