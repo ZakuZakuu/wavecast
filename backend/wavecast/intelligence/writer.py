@@ -394,6 +394,11 @@ def _without_invalid_speech(script: RadioScript, tracks: Sequence[KnownTrack]) -
     kept = []
     for block in script.blocks:
         spoken = block.tts_text or block.text
+        if block.tts_text == to_spoken_form(block.text, tracks).tts_text:
+            # An explicitly supplied normal pronunciation has the same content as
+            # the display copy, including any literal work titles. Only a distinct
+            # authored override needs its own temporal / experience check.
+            spoken = block.text
         reason = None
         if has_relative_time(block.text) or has_relative_time(spoken):
             reason = "unanchored_time"

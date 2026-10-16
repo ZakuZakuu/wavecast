@@ -49,13 +49,19 @@ def test_a_spoken_override_cannot_hide_an_unanchored_claim() -> None:
 
 
 @pytest.mark.parametrize("title", ["最近比较烦", "我记得", "去年夏天"])
-def test_literal_song_titles_survive_the_complete_path_including_spoken_conversion(title: str) -> None:
+@pytest.mark.parametrize("authored_speech", [False, True])
+def test_literal_song_titles_survive_the_complete_path_including_spoken_conversion(
+    title: str, authored_speech: bool,
+) -> None:
     slot = _slot()
     assert slot.upcoming_track is not None
     track = slot.upcoming_track.model_copy(update={"canonical_title": title})
     slot = slot.model_copy(update={"chapter_track": track, "upcoming_track": track})
     text = f"下一首是《{title}》。"
-    llm = Sequenced(_script(text))
+    script = _script(text)
+    if authored_speech:
+        script.blocks[0].tts_text = f"下一首是{title}。"
+    llm = Sequenced(script)
 
     result = asyncio.run(WriterService(llm).write(
         _chapter(), [], slot_context=slot, output_language=OutputLanguage.ZH_CN,
