@@ -47,3 +47,9 @@
 ## 保存的现场
 
 `accept-20261015/`（run 目录，不入库）：`timeline.jsonl`、`segments.json`、`script.txt`、`mix_plan.json`、`evidence.json`、`usage_before_restart.json` / `usage_after_restart.json`、`proposal.json`、`summary.json`、已发布前缀的音频。
+
+## 2026-10-16 更正与补充（以上原文保持原样）
+
+- **第 4 条“开场主持 TTS 没归属到节目”的修复不完整。** #306 只在创建节目时给开场配音套了 `usage_scope`，但根因是 `_build_tts_provider` 创建 MiniMax 时没有传共享账本——事件带着节目 scope 却进了提供方自己的账本，节目用量接口读不到。当时的测试是手动往共享账本里记一条事件，所以没有发现。已在第二次验收的批次里改为让该提供方用共享账本，并用真实提供方（假网络边界）重写测试；见 [第二次验收记录](programme-acceptance-20261015b.md)。
+- **第 1、5 条（音乐供给、快速路径重复）：** 音乐供给的结论仍成立，且已通过会员登录（新加坡 IP 扫码）和 music-dev 的 Cookie 整理补丁解决；“快速路径疑似重复”在第二次验收里只出现 1 次 `fast_start`，没有复现，原因仍未查明。
+- **“MiniMax 1 次、DeepSeek 4 次、费用未知”等用量汇总：** 其中开场主持配音在当时是属于节目的一次调用，但记在独立账本里，因此上面各表的“节目内”数字不含它。

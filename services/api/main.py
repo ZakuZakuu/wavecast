@@ -99,6 +99,7 @@ from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.usage import (
+    UsageEvent,
     UsageLedger,
     cost_summary,
     diagnostics_of,
@@ -432,11 +433,15 @@ def _provider_error_summary(error: Exception) -> str:
     return f"{type(error).__name__}: {str(error)[:200]}"
 
 
-def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGenerator:
+def _build_proposal_generator(
+    settings: ProviderSettings, ledger: UsageLedger
+) -> ProgramProposalGenerator:
+    """``ledger`` is the shared one: a proposal's calls are recorded (under the proposal's own id,
+    before any episode exists) and persisted like the episode's, instead of in a private ledger."""
+
     if settings.resolved_proposal_planner == "mock":
         return DeterministicMockProgramProposalGenerator()
     live_settings = settings.for_live_capability()
-    ledger = UsageLedger()
     if settings.resolved_proposal_planner == "ark":
         proposal_llm: ProgressiveLLMProvider = ArkLLMProvider(
             live_settings,
@@ -462,24 +467,24 @@ def _build_proposal_generator(settings: ProviderSettings) -> ProgramProposalGene
     )
 
 
-proposal_generator: ProgramProposalGenerator | None = _build_proposal_generator(
-    _provider_settings
-)
 repository: EpisodeRepository = (
     PostgresEpisodeRepository(DATABASE_URL) if DATABASE_URL else InMemoryEpisodeRepository()
 )
 
 
 def _build_tts_provider(
-    settings: ProviderSettings, storage: ObjectStorageProvider
+    settings: ProviderSettings, storage: ObjectStorageProvider, ledger: UsageLedger
 ) -> MiniMaxTTSProvider | MockTTSProvider:
+    """``ledger`` is the shared one the usage endpoint reads; a provider with a ledger of its own
+    keeps the opening host's voice out of the episode's report."""
+
     if settings.resolved_tts_provider == "mock":
         return MockTTSProvider(storage)
     live_settings = settings.for_live_capability()
     live_settings.credential_for("minimax")
     if not live_settings.minimax_tts_voice_id:
         raise ProviderConfigurationError("minimax TTS requires MINIMAX_TTS_VOICE_ID")
-    return MiniMaxTTSProvider(live_settings, storage=storage)
+    return MiniMaxTTSProvider(live_settings, storage=storage, ledger=ledger)
 
 
 class BrowserProxyAudioProvider:
@@ -521,7 +526,6 @@ def _build_audio_provider(settings: ProviderSettings) -> AudioProvider:
     return BrowserProxyAudioProvider()
 
 
-_tts_provider = _build_tts_provider(_provider_settings, audio_storage)
 # Usage of calls made outside a progressive runtime (the single-segment endpoint with no runtime).
 _api_usage_ledger = UsageLedger()
 
@@ -577,6 +581,12 @@ def _usage_ledger() -> UsageLedger:
 # Every scoped usage event is also kept in storage, so the per-episode report survives a restart.
 _usage_event_store = UsageEventStore(audio_storage)
 _usage_ledger().attach_sink(_usage_event_store)
+# Built after the shared ledger exists, so the opening host's voice and the proposal planner
+# record into it rather than into ledgers nobody reads.
+_tts_provider = _build_tts_provider(_provider_settings, audio_storage, _usage_ledger())
+proposal_generator: ProgramProposalGenerator | None = _build_proposal_generator(
+    _provider_settings, _usage_ledger()
+)
 narration_materializer = _build_narration_materializer(
     _provider_settings, _tts_provider, audio_storage, _usage_ledger()
 )
@@ -1632,6 +1642,10 @@ async def create_program_proposals(
         proposal_ids = [item.id for item in proposals]
         if len(set(proposal_ids)) != len(proposal_ids):
             raise ProgramProposalGenerationError("proposal_id_collision")
+        try:
+            await _usage_event_store.link_batch(proposal_ids)
+        except Exception:  # noqa: BLE001 - the usage report is secondary; never fail a proposal for it
+            logger.warning("usage_batch_link_failed proposals=%s", len(proposal_ids))
         await to_thread.run_sync(
             lambda: proposal_repository.save_many(
                 proposals, owner_listener_id=owner.listener_id,
@@ -2012,6 +2026,18 @@ async def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
         logger.warning("usage_events_unreadable episode_id=%s", episode_id)
         stored = []
     events = merge_events(ledger.for_scope(episode_id), stored)
+    # What the proposal that started this episode cost.  Kept apart: it happened before the
+    # episode existed, and it is not part of generating the programme.
+    proposal_events: list[UsageEvent] = []
+    batch_size = 1
+    if current.seed_id:
+        # Cards generated together share one call: its events sit under the batch's first id.
+        try:
+            proposal_scope, batch_size = await _usage_event_store.batch_scope(current.seed_id)
+            proposal_stored = await _usage_event_store.load(proposal_scope)
+        except ValueError:
+            proposal_scope, batch_size, proposal_stored = current.seed_id, 1, []
+        proposal_events = merge_events(ledger.for_scope(proposal_scope), proposal_stored)
     reporting = progressive_runtime is not None or bool(_api_usage_ledger.events) or bool(stored)
     segments = current.timeline_segments
     return {
@@ -2030,6 +2056,16 @@ async def episode_usage(episode_id: str, request: Request) -> dict[str, Any]:
         },
         "providers": diagnostics_of(events, with_ids=True) if reporting else None,
         "costs": cost_summary(events) if reporting else None,
+        "proposal": (
+            {
+                "providers": diagnostics_of(proposal_events, with_ids=True),
+                "costs": cost_summary(proposal_events),
+                # >1: the cost of one call that produced this many cards; counted once, not per card.
+                "shared_by_proposals": batch_size,
+            }
+            if proposal_events
+            else None
+        ),
         "stored_events": len(stored),
     }
 
