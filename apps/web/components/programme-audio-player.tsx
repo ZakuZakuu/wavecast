@@ -3,12 +3,15 @@
 import { useCallback, useEffect, useRef } from "react";
 
 import { prefersNativeHls } from "../lib/program-stream";
+import { stuckPlaybackReason } from "../lib/stuck-playback";
 
 const HLS_MIME = "application/vnd.apple.mpegurl";
 const FRONTIER_WAKE_SECONDS = 45;
 const FRONTIER_SEEK_EPSILON_SECONDS = 0.05;
 const FRONTIER_RELOAD_EPSILON_SECONDS = 2;
 const POSITION_EMIT_INTERVAL_MS = 200;
+// An element with no data yet is more likely still loading than stuck.
+const SEEK_UNLOADED_GRACE_MS = 7_000;
 
 type ProgrammeAudioPlayerProps = {
   streamUrl: string;
@@ -312,6 +315,84 @@ export function ProgrammeAudioPlayer({
       // A failed wake is non-fatal; the normal frontier polling path remains.
     }
   }, [positionSeconds, renderedFrontierSeconds]);
+
+  // The element can be left saying "playing" while nothing moves: a seek it never confirms keeps the
+  // player's own seek pending (which blocks both position reports and playback), or it simply stops
+  // advancing without an event.  No event arrives for either, so look at the clock.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    let lastTime = audio.currentTime || 0;
+    let lastAdvanceMs = performance.now();
+    let pendingValue: number | null = pendingSeekRef.current;
+    let pendingSinceMs: number | null = pendingValue === null ? null : performance.now();
+    let lastRecoveryMs: number | null = null;
+
+    const check = () => {
+      const now = performance.now();
+      const time = audio.currentTime || 0;
+      if (Math.abs(time - lastTime) > 0.01) {
+        lastTime = time;
+        lastAdvanceMs = now;
+      }
+      const pending = pendingSeekRef.current;
+      if (pending !== pendingValue) {
+        pendingValue = pending;
+        pendingSinceMs = pending === null ? null : now;
+      }
+
+      const reason = stuckPlaybackReason({
+        nowMs: now,
+        desiredPlaying: desiredPlayingRef.current,
+        complete: completeRef.current,
+        currentTime: time,
+        frontierSeconds: frontierRef.current,
+        lastAdvanceMs,
+        pendingSeekTarget: pending,
+        // An element that has no data yet may just be loading: give it longer than one that has.
+        pendingSinceMs: pendingSinceMs === null || audio.readyState > 0
+          ? pendingSinceMs
+          : pendingSinceMs + SEEK_UNLOADED_GRACE_MS,
+        lastRecoveryMs,
+      });
+      if (reason === null) return;
+
+      lastRecoveryMs = now;
+      lastAdvanceMs = now;
+      pendingSinceMs = pending === null ? null : now;
+      pendingSeekRef.current = reason === "seek-unconfirmed" && pending !== null ? pending : time;
+      pendingValue = pendingSeekRef.current;
+      pendingSinceMs = now;
+      appliedSeekTargetRef.current = null;
+      suppressPositionUntilRef.current = 0;
+      onBufferingChangeRef.current?.(true);
+      try {
+        if (hlsRef.current) {
+          hlsRef.current.recoverMediaError();
+          hlsRef.current.startLoad(-1);
+        } else {
+          // The canplay/loadedmetadata listeners re-apply the kept seek and resume playback.
+          audio.load();
+        }
+      } catch {
+        // Best effort; the next check tries again after the cool-down.
+      }
+    };
+
+    const interval = window.setInterval(check, 1000);
+    const visible = () => {
+      if (document.visibilityState !== "visible") return;
+      // Timers are throttled in the background; do not count that time against the player.
+      lastAdvanceMs = performance.now();
+      if (desiredPlayingRef.current && audio.paused) playIfDesired();
+    };
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [playIfDesired, streamUrl]);
 
   useEffect(() => {
     const audio = audioRef.current;
