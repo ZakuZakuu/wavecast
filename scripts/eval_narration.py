@@ -121,13 +121,12 @@ async def main() -> None:
     parser.add_argument("--out", default=".wavecast-data/narration-eval")
     parser.add_argument("--station", default="", help="override the scenes' stations")
     parser.add_argument("--no-station", action="store_true", help="run without any station (old prompt)")
-    parser.add_argument("--revisions", type=int, default=1)
     args = parser.parse_args()
 
     settings = ProviderSettings.from_env()
     ledger = UsageLedger()
     llm = DeepSeekLLMProvider(settings, ledger=ledger, max_attempts=1)
-    writer = WriterService(llm, max_revisions=args.revisions)
+    writer = WriterService(llm)
     forced = StationId(args.station) if args.station else None
     wanted = {item for item in args.scenes.split(",") if item}
     scenes = [scene for scene in SCENES if not wanted or scene.scene_id in wanted]

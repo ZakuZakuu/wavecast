@@ -115,8 +115,7 @@ class DialoguePipeline:
         except ProviderError as error:
             outcome.reason = f"provider_failed:{type(error).__name__}"
             return outcome
-        spoken = "".join(turn.text for turn in draft.turns)
-        if has_relative_time(spoken) or invents_experience(spoken):
+        if any(has_relative_time(turn.text) or invents_experience(turn.text) for turn in draft.turns):
             # Said as it stands it would put an old page's "recently" into today, or give a host a
             # memory they do not have: no passage is better than a false one.
             logger.info("dialogue_rejected slot_id=%s reason=time_or_experience", slot.slot_id)

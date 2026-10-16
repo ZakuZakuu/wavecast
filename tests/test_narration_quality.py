@@ -357,7 +357,7 @@ def test_a_block_that_says_the_same_thing_twice_is_flagged() -> None:
     assert "repeats_itself" not in check_block("先听这段小号。再听钢琴怎么接住它。").issues
 
 
-def test_filler_that_only_says_songs_sit_together_is_removed_from_a_block() -> None:
+def test_a_complete_block_is_not_cut_up_by_filler_rules() -> None:
     import asyncio
 
     from wavecast.intelligence.models import OutputLanguage, RadioScript
@@ -375,4 +375,5 @@ def test_filler_that_only_says_songs_sit_together_is_removed_from_a_block() -> N
     )
 
     assert isinstance(result, RadioScript)
-    assert [block.text for block in result.blocks] == ["这首Summer来自久石让。留意开头的钢琴。"]
+    assert [block.text for block in result.blocks] == ["这首Summer来自久石让。两个作品并排放在一起。留意开头的钢琴。"]
+    assert len(llm.prompts) == 1

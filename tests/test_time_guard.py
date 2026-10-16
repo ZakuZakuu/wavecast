@@ -26,6 +26,39 @@ def test_a_host_claiming_to_have_researched_or_remembered_is_found() -> None:
     assert not invents_experience("资料里写到这张专辑是 2008 年发行的")
 
 
+def test_a_historical_new_release_is_not_treated_as_present_day_news() -> None:
+    for text in (
+        "2006年发行的新专辑《爱爱爱》", "二零零六年他发行了新专辑",
+        "In 2006 he released a new album.",
+    ):
+        assert not has_relative_time(text), text
+    for text in (
+        "他发行了新专辑", "他 2006 年开始唱歌。他发行了新专辑。",
+        "今年的新专辑", "He released a new album last month.",
+        "He started in 2006. His new album explores love.",
+        "他的最新专辑叫《2006》。",
+    ):
+        assert has_relative_time(text), text
+
+
+def test_a_song_title_is_not_a_relative_time_claim() -> None:
+    assert not has_relative_time("下一首是《最近比较烦》。")
+    assert not has_relative_time("这首《去年夏天》也谈到了时间。")
+    assert not invents_experience("下一首是《我记得》。")
+
+
+def test_a_dialogue_turn_cannot_borrow_an_event_date_from_another_turn() -> None:
+    class Writer:
+        async def write(self, material, slot, budget):  # type: ignore[no-untyped-def]
+            draft = clean_draft()
+            draft.turns[0].text = "2006年，他发行了这张专辑"
+            draft.turns[1].text = "他的新专辑值得一听。"
+            return draft
+
+    outcome = asyncio.run(DialoguePipeline(writer=Writer()).produce(material(), SLOT))  # type: ignore[arg-type]
+    assert outcome.block is None and outcome.reason == "time_or_experience"
+
+
 def test_a_publication_date_is_kept_only_when_it_is_plausible() -> None:
     assert reliable_publication_date("2023-10-05T00:00:00.000Z") == "2023-10-05"
     for raw in (None, "", "yesterday", "0000-00-00", "1850-01-01", "2023-13-40"):

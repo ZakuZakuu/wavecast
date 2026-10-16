@@ -173,7 +173,7 @@ def test_assembly_gives_the_ark_writer_alone_to_the_writer(tmp_path: Path, fakes
     assert pipeline.writer.llm.kwargs["model"] == "doubao-seed-2-1-lite-260915"
     assert pipeline.writer.llm.kwargs["role"] == "writer"
     # Unconfigured: they keep the base model, not the Writer's.
-    assert isinstance(pipeline.writer.fact_checker._llm, MockEpisodeAssemblyLLM)
+    assert not hasattr(pipeline.writer, "fact_checker")
     assert isinstance(service.track_research._llm, MockEpisodeAssemblyLLM)
 
 
@@ -184,22 +184,22 @@ def test_assembly_under_live_mode_keeps_deepseek_for_the_roles_next_to_an_ark_wr
     pipeline = service.background_pipeline
 
     assert pipeline.writer.llm.kind == "ark"
-    assert pipeline.writer.fact_checker._llm.kind == "deepseek"
+    assert not hasattr(pipeline.writer, "fact_checker")
     assert service.track_research._llm.kind == "deepseek"
     assert pipeline.curator.llm.kind == "deepseek"
 
 
-def test_assembly_can_bind_the_fact_checker_to_ark_separately(tmp_path: Path, fakes: None) -> None:
+def test_assembly_does_not_construct_the_legacy_fact_check_client(tmp_path: Path, fakes: None) -> None:
     service = build(
         tmp_path,
         mode="live",
         fact_check_provider="ark",
-        ark_models={"fact_check": "doubao-seed-2-1-pro-260915"},
+        ark_api_key=None,
+        ark_models={},
     )
 
     assert service.background_pipeline.writer.llm.kind == "deepseek"
-    assert service.background_pipeline.writer.fact_checker._llm.kind == "ark"
-    assert service.background_pipeline.writer.fact_checker._llm.kwargs["role"] == "fact_check"
+    assert not hasattr(service.background_pipeline.writer, "fact_checker")
 
 
 def test_unused_ark_settings_never_stop_a_service(tmp_path: Path, fakes: None) -> None:
@@ -273,10 +273,10 @@ def test_aclose_closes_every_role_client_and_the_deep_search_once(
 
     closed = Closeable.closes
     assert len(closed) == len(set(closed)), "a client was closed twice"
-    # fast_start, research_plan, curator, writer, fact_check, track_research + exa, tavily,
+    # fast_start, research_plan, curator, writer, track_research + exa, tavily,
     # and the separate advanced-depth tavily instance.
-    assert len([c for c in closed if c.startswith(("deepseek", "ark"))]) == 6
-    assert any(c.startswith("ark:fact_check") for c in closed)
+    assert len([c for c in closed if c.startswith(("deepseek", "ark"))]) == 5
+    assert not any(c.startswith("ark:fact_check") for c in closed)
     assert any(c.startswith("ark:writer") for c in closed)
     assert len([c for c in closed if c.startswith("tavily")]) == 2
     assert len([c for c in closed if c.startswith("exa")]) == 1
