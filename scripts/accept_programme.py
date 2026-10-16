@@ -287,8 +287,110 @@ def segment_rows(episode: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+HEARTBEAT_SECONDS = 10.0  # the web client's heartbeat timer (use-programme-playback.ts)
+CHECKPOINT_SECONDS = 5.0
+POLL_SECONDS = 3.0
+RENDER_RETRY_SECONDS = 20.0
+
+
+class Listener:
+    """A virtual listener that behaves like the web player where the server can tell.
+
+    The web player keeps its heartbeat on a timer of its own, reports its position as it plays, and,
+    when the server answers a heartbeat with 409 (the lease lapsed), takes the lease back with
+    ``resume``.  None of those waits for a programme render.  Here each is a task of its own, so a
+    render that takes minutes cannot make the server think the listener left, and the position it
+    reports follows the audio that has actually been published.
+    """
+
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        meter: Meter,
+        rec: Any,
+        episode_id: str,
+        *,
+        heartbeat_seconds: float = HEARTBEAT_SECONDS,
+        checkpoint_seconds: float = CHECKPOINT_SECONDS,
+    ) -> None:
+        self.client = client
+        self.meter = meter
+        self.rec = rec
+        self.episode_id = episode_id
+        self.heartbeat_seconds = heartbeat_seconds
+        self.checkpoint_seconds = checkpoint_seconds
+        self.playhead = 0.0
+        self.has_audio = False
+        self.lease_lost = 0
+        self.lease_recovered = 0
+        self._recovering = asyncio.Lock()
+        self._tasks: list[asyncio.Task[None]] = []
+
+    async def call(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        return await self.client.request(
+            method, f"/api/episodes/{self.episode_id}{path}", headers={"X-Wavecast-Listener": LISTENER}, **kwargs
+        )
+
+    def start(self) -> None:
+        self._tasks = [
+            asyncio.create_task(self._every(self.heartbeat_seconds, self._heartbeat), name="heartbeat"),
+            asyncio.create_task(self._every(self.checkpoint_seconds, self._checkpoint), name="checkpoint"),
+        ]
+
+    async def stop(self) -> None:
+        for task in self._tasks:
+            task.cancel()
+        for task in self._tasks:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        self._tasks = []
+
+    async def _every(self, seconds: float, action: Any) -> None:
+        while True:
+            try:
+                await action()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a lost request is retried by the next tick, as in the browser
+                pass
+            await asyncio.sleep(seconds)
+
+    async def _heartbeat(self) -> None:
+        response = await self.call("POST", "/heartbeat", timeout=30)
+        if response.status_code == 409:
+            await self.recover()
+
+    async def _checkpoint(self) -> None:
+        if self.has_audio:
+            await self.call("POST", "/program-playback-checkpoint", json={"position_seconds": round(self.playhead, 2)}, timeout=30)
+
+    async def recover(self) -> None:
+        """Take the lease back, once at a time.  Never after a failure: the run has stopped spending."""
+        if self._recovering.locked():
+            return
+        async with self._recovering:
+            self.lease_lost += 1
+            self.rec("lease_lost")
+            if self.meter.tripped is not None or self.meter.frozen:
+                self.rec("lease_not_recovered", reason="run_stopped")
+                return
+            response = await self.call("POST", "/resume", timeout=60)
+            if response.status_code == 200:
+                self.lease_recovered += 1
+                self.rec("lease_recovered")
+
+
 async def drive(
-    client: httpx.AsyncClient, meter: Meter, run_dir: Path, rec: Recorder, speed: float = 1.0
+    client: httpx.AsyncClient,
+    meter: Meter,
+    run_dir: Path,
+    rec: Any,
+    speed: float = 1.0,
+    *,
+    heartbeat_seconds: float = HEARTBEAT_SECONDS,
+    checkpoint_seconds: float = CHECKPOINT_SECONDS,
+    poll_seconds: float = POLL_SECONDS,
+    render_retry_seconds: float = RENDER_RETRY_SECONDS,
 ) -> dict[str, Any]:
     headers = {"X-Wavecast-Listener": LISTENER}
     report: dict[str, Any] = {"status": "started"}
@@ -319,87 +421,125 @@ async def drive(
     report["episode_id"] = episode_id
     rec("episode_started", id=episode_id, estimated_seconds=episode["program_estimated_duration_seconds"])
 
+    listener = Listener(
+        client, meter, rec, episode_id,
+        heartbeat_seconds=heartbeat_seconds, checkpoint_seconds=checkpoint_seconds,
+    )
+    listener.start()
+    try:
+        result = await _listen(listener, call, meter, rec, speed, poll_seconds, render_retry_seconds)
+    finally:
+        await listener.stop()
+    result.update({"lease_lost": listener.lease_lost, "lease_recovered": listener.lease_recovered})
+    return {**report, **result}
+
+
+async def _listen(
+    listener: Listener,
+    call: Any,
+    meter: Meter,
+    rec: Any,
+    speed: float,
+    poll_seconds: float,
+    render_retry_seconds: float,
+) -> dict[str, Any]:
+    episode_id = listener.episode_id
     begun = time.monotonic()
-    playhead = 0.0
     last = begun
     stalled_since: float | None = None
     stalls: list[dict[str, float]] = []
     first_audio_at: float | None = None
     manifest: dict[str, Any] | None = None
-    last_poll = last_beat = last_check = last_render = 0.0
+    last_poll = last_render = 0.0
     render_signature: Any = None
     render_failures = 0
     seen_states: dict[str, str] = {}
+    render: asyncio.Task[httpx.Response] | None = None
+    render_signature_pending: Any = None
 
-    while True:
-        now = time.monotonic()
-        dt, last = now - last, now
-        elapsed = now - begun
-        if elapsed > OVERALL_TIMEOUT_SECONDS:
-            meter.trip("overall_timeout")
-            return {**report, "status": "failed", "failed_at": "timeout", **stats(stalls, first_audio_at)}
-        frontier = float(manifest["renderedFrontierSeconds"]) if manifest else 0.0
-        complete = bool(manifest and manifest.get("complete"))
-        if manifest and playhead < frontier - 0.05:
-            if first_audio_at is None:
-                first_audio_at = elapsed
-                rec("first_audio", seconds_since_start=round(elapsed, 1))
-            playhead = min(frontier, playhead + dt * speed)
-            if stalled_since is not None:
-                stalls.append({"start_playhead": round(playhead, 1), "seconds": round(now - stalled_since, 1)})
-                rec("stall_ended", seconds=round(now - stalled_since, 1), playhead=round(playhead, 1))
-                stalled_since = None
-        elif manifest and not complete and stalled_since is None and first_audio_at is not None:
-            stalled_since = now
-            rec("stall_started", playhead=round(playhead, 1), frontier=round(frontier, 1))
-        if complete and playhead >= frontier - 0.1:
-            await call("POST", f"/episodes/{episode_id}/completed")
-            rec("completed", playhead=round(playhead, 1), frontier=round(frontier, 1))
-            return {**report, "status": "completed", "playhead_end": round(playhead, 1),
-                    "published_seconds": round(frontier, 1), "listening_seconds": round(elapsed, 1),
-                    **stats(stalls, first_audio_at)}
-        if now - last_beat >= 10:
-            last_beat = now
-            await call("POST", f"/episodes/{episode_id}/heartbeat")
-        if manifest and now - last_check >= 5:
-            last_check = now
-            await call("POST", f"/episodes/{episode_id}/program-playback-checkpoint",
-                       json={"position_seconds": round(playhead, 2)})
-        if now - last_poll >= 3:
-            last_poll = now
-            response = await call("GET", f"/episodes/{episode_id}")
-            episode = response.json()
-            for row in segment_rows(episode):
-                if seen_states.get(row["id"]) != row["state"]:
-                    seen_states[row["id"]] = row["state"]
-                    rec("segment_state", order=row["order"], kind=row["kind"], two_host=row["two_host"],
-                        state=row["state"], title=(row["title"] or "")[:40], role=row["role"])
-            states = [s["state"] for s in episode["segments"]]
-            signature = (len(states), tuple(sorted(Counter(states).items())), episode.get("version"))
-            due = signature != render_signature or (not complete and now - last_render >= 20)
-            if due and render_failures < 40:
-                last_render = now
-                rendered = await call("POST", f"/episodes/{episode_id}/program-render", timeout=300)
-                if rendered.status_code == 200:
-                    render_signature = signature
-                    new_manifest = rendered.json()
-                    if manifest is None or new_manifest["renderedFrontierSeconds"] != manifest["renderedFrontierSeconds"]:
-                        rec("published", frontier=round(new_manifest["renderedFrontierSeconds"], 1),
-                            complete=new_manifest.get("complete"), chunks=len(new_manifest["chunks"]))
-                    manifest = new_manifest
-                else:
-                    render_failures += 1
-                    rec("render_not_ready", http=rendered.status_code)
-            if episode["state"] == "CANCELLED":
-                meter.trip("episode_cancelled")
-                return {**report, "status": "failed", "failed_at": "episode_cancelled", **stats(stalls, first_audio_at)}
-            failed_job = await job_failed(episode_id)
-            if failed_job:
-                meter.trip("generation_job_failed")
-                rec("generation_job_failed", detail=failed_job)
-                return {**report, "status": "failed", "failed_at": "generation_job", "job": failed_job,
+    async def render_program() -> httpx.Response:
+        return await call("POST", f"/episodes/{episode_id}/program-render", timeout=300)
+
+    try:
+        while True:
+            now = time.monotonic()
+            dt, last = now - last, now
+            elapsed = now - begun
+            if elapsed > OVERALL_TIMEOUT_SECONDS:
+                meter.trip("overall_timeout")
+                return {"status": "failed", "failed_at": "timeout", **stats(stalls, first_audio_at)}
+            frontier = float(manifest["renderedFrontierSeconds"]) if manifest else 0.0
+            complete = bool(manifest and manifest.get("complete"))
+            # The position follows the audio that has been published, and only that.
+            if manifest and listener.playhead < frontier - 0.05:
+                if first_audio_at is None:
+                    first_audio_at = elapsed
+                    listener.has_audio = True
+                    rec("first_audio", seconds_since_start=round(elapsed, 1))
+                listener.playhead = min(frontier, listener.playhead + dt * speed)
+                if stalled_since is not None:
+                    stalls.append({"start_playhead": round(listener.playhead, 1), "seconds": round(now - stalled_since, 1)})
+                    rec("stall_ended", seconds=round(now - stalled_since, 1), playhead=round(listener.playhead, 1))
+                    stalled_since = None
+            elif manifest and not complete and stalled_since is None and first_audio_at is not None:
+                stalled_since = now
+                rec("stall_started", playhead=round(listener.playhead, 1), frontier=round(frontier, 1))
+            if complete and listener.playhead >= frontier - 0.1:
+                await call("POST", f"/episodes/{episode_id}/completed")
+                rec("completed", playhead=round(listener.playhead, 1), frontier=round(frontier, 1))
+                return {"status": "completed", "playhead_end": round(listener.playhead, 1),
+                        "published_seconds": round(frontier, 1), "listening_seconds": round(elapsed, 1),
                         **stats(stalls, first_audio_at)}
-        await asyncio.sleep(0.5)
+            # A render that has finished is read here; it never held the loop (or the heartbeat) up.
+            if render is not None and render.done():
+                finished, render = render, None
+                try:
+                    rendered = finished.result()
+                except Exception:  # noqa: BLE001 - counted like any other not-ready render
+                    render_failures += 1
+                    rec("render_not_ready", http="error")
+                else:
+                    if rendered.status_code == 200:
+                        render_signature = render_signature_pending
+                        new_manifest = rendered.json()
+                        if manifest is None or new_manifest["renderedFrontierSeconds"] != manifest["renderedFrontierSeconds"]:
+                            rec("published", frontier=round(new_manifest["renderedFrontierSeconds"], 1),
+                                complete=new_manifest.get("complete"), chunks=len(new_manifest["chunks"]))
+                        manifest = new_manifest
+                    else:
+                        render_failures += 1
+                        rec("render_not_ready", http=rendered.status_code)
+            if now - last_poll >= poll_seconds:
+                last_poll = now
+                response = await call("GET", f"/episodes/{episode_id}")
+                episode = response.json()
+                for row in segment_rows(episode):
+                    if seen_states.get(row["id"]) != row["state"]:
+                        seen_states[row["id"]] = row["state"]
+                        rec("segment_state", order=row["order"], kind=row["kind"], two_host=row["two_host"],
+                            state=row["state"], title=(row["title"] or "")[:40], role=row["role"])
+                states = [s["state"] for s in episode["segments"]]
+                signature = (len(states), tuple(sorted(Counter(states).items())), episode.get("version"))
+                due = signature != render_signature or (not complete and now - last_render >= render_retry_seconds)
+                if due and render is None and render_failures < 40:
+                    last_render = now
+                    render_signature_pending = signature
+                    render = asyncio.create_task(render_program(), name="program-render")
+                if episode["state"] == "CANCELLED":
+                    meter.trip("episode_cancelled")
+                    return {"status": "failed", "failed_at": "episode_cancelled", **stats(stalls, first_audio_at)}
+                failed_job = await job_failed(episode_id)
+                if failed_job:
+                    meter.trip("generation_job_failed")
+                    rec("generation_job_failed", detail=failed_job)
+                    return {"status": "failed", "failed_at": "generation_job", "job": failed_job,
+                            **stats(stalls, first_audio_at)}
+            await asyncio.sleep(0.05 if poll_seconds < 1 else 0.5)
+    finally:
+        if render is not None and not render.done():
+            render.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await render
 
 
 def stats(stalls: list[dict[str, float]], first_audio_at: float | None) -> dict[str, Any]:
