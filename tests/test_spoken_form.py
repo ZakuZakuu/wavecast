@@ -92,6 +92,15 @@ def test_names_the_application_does_not_know_are_reported_not_guessed() -> None:
     assert any("もののけ姫" in item for item in spoken.unspeakable)
 
 
+def test_a_foreign_name_in_parentheses_does_not_erase_the_surrounding_facts() -> None:
+    text = "她在这场巡演（雙六エクスタシー，共二十场）中认识了这些乐手。"
+
+    spoken = to_spoken_form(text)
+
+    assert spoken.tts_text == text
+    assert not spoken.ok  # Keep the unreadable-name fallback available; never silently cut a clause.
+
+
 def test_an_authored_tts_text_is_the_base_for_substitution() -> None:
     spoken = to_spoken_form(
         "展示用的文字", [KnownTrack("a", "Jody")], tts_text="朗读用的《Jody》"

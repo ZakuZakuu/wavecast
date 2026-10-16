@@ -608,6 +608,46 @@ def test_music_only_chunk_skips_writer_and_tts(tmp_path) -> None:
     assert generated.segments[0].is_audio_ready
 
 
+def test_trackless_empty_narration_returns_none_without_an_invalid_generated_chapter(tmp_path) -> None:
+    track = ResolvedTrack(track_ref="mock:next", canonical_artist="A", canonical_title="Next")
+    session = _session(track)
+    beat = session.chapters[0].model_copy(update={
+        "resolved_track": None,
+        "slot_contexts": [NarrationSlotContext(
+            chapter_index=0,
+            placement=NarrationSlotPlacement.AFTER_TRACK,
+            allowed_block_kinds=[RadioScriptBlockKind.TRANSITION],
+            just_played_track=track,
+            upcoming_track=track,
+        )],
+    })
+    session.chapters = [beat, session.chapters[0].model_copy(update={"chapter_id": "chapter-3"})]
+
+    class EmptyWriter:
+        calls = 0
+
+        async def write(self, *args: object, **kwargs: object) -> RadioScript:
+            self.calls += 1
+            return RadioScript(blocks=[])
+
+    writer = EmptyWriter()
+    storage = LocalObjectStorageProvider(tmp_path)
+    generator = StagedProgressiveChapterGenerator(
+        session=session, writer=writer,  # type: ignore[arg-type]
+        composer=EpisodeComposer(MockMusicProvider()),
+        materializer=NarrationMaterializer(MockTTSProvider(storage), storage),
+    )
+    episode = _episode()
+    episode.segments.append(NarrationSegment(
+        id="pending", chapter_id="chapter-2", order=1, planned_duration_seconds=20,
+        title="Pending", state=SegmentState.PLANNED,
+    ))
+    before = episode.model_dump()
+
+    assert asyncio.run(generator.author_narration(episode, "chapter-2")) is None
+    assert writer.calls == 1 and episode.model_dump() == before
+
+
 def test_trackless_final_narration_can_be_authored_after_continuity_advances(
     tmp_path,
 ) -> None:

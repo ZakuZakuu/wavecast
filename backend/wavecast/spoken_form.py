@@ -39,6 +39,16 @@ KNOWN_CHINESE_NAMES: dict[str, str] = {
 }
 
 GENERIC_SONG = "这首歌"
+SPOKEN_NAME_GUIDANCE = (
+    "The voice speaks only Chinese and English. Display text may keep original names, but "
+    "what is spoken must contain no Japanese kana, Korean or other unsupported scripts. "
+    "Use a catalog-provided spoken_title or an established Chinese title supported by the "
+    "evidence; do not invent a Chinese title, translate from memory, or use romaji. "
+    "Without a readable name, write a natural reference to the song, album, tour or person "
+    "instead, keeping the point and its context intact. This applies to every name in the "
+    "passage, including quoted tour and album names, not only the adjacent songs. "
+    "Do not simply remove foreign characters or insert the original name again in parentheses."
+)
 _TRAILING_GROUP = re.compile(r"\s*[\(\[（][^\)\]）]*[\)\]）]\s*$")
 _CATALOGUE_NUMBER = re.compile(r"\b(?:no|op|bwv|k|rv|hob|d|kv|woo)\.?\s*\d", re.IGNORECASE)
 _WRAPPERS = "《》「」『』“”\"'‘’"
@@ -203,7 +213,7 @@ def to_spoken_form(
 
     spoken = tts_text if tts_text else text
     # An explanatory original-name aside (“（原名：…）”) is display-only.
-    spoken = re.sub(r"[（(][^）)]*" + UNSPEAKABLE_SCRIPTS.pattern + r"[^）)]*[）)]", "", spoken)
+    spoken = re.sub(r"[（(]\s*原名\s*[:：][^）)]*" + UNSPEAKABLE_SCRIPTS.pattern + r"[^）)]*[）)]", "", spoken)
     for track in tracks:
         title_spoken = track.spoken_title or spoken_title(track.title)
         spoken = _replace_entity(spoken, _variants(track.title), title_spoken or GENERIC_SONG)

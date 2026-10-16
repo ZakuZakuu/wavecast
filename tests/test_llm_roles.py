@@ -65,6 +65,43 @@ def test_an_explicit_deepseek_or_mock_writer_still_carries_the_roles_that_shared
     assert ProviderSettings(mode="live", writer_provider="mock").resolved_llm("track_research") == "mock"
 
 
+def test_explicit_track_research_with_ark_writer_and_global_mock_accepts_the_brief_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from wavecast.intelligence.track_research import _Briefing
+    from wavecast.providers.deepseek import DeepSeekLLMProvider
+    from wavecast.providers.llm_factory import build_llm
+    from wavecast.providers.profiles import InferenceProfile, StructuredTransport
+    from wavecast.providers.usage import UsageLedger
+
+    monkeypatch.setenv("WAVECAST_PROVIDER_MODE", "mock")
+    monkeypatch.setenv("WAVECAST_WRITER_PROVIDER", "ark")
+    monkeypatch.setenv("WAVECAST_TRACK_RESEARCH_PROVIDER", "deepseek")
+    settings = ProviderSettings.from_env()
+    requested = []
+
+    class Responses:
+        async def create(self, **kwargs):  # noqa: ANN003
+            requested.append(kwargs["text"]["format"]["name"])
+            return SimpleNamespace(status="completed", output=[SimpleNamespace(
+                type="message", content=[SimpleNamespace(type="output_text", text='{"points":[]}')],
+            )])
+
+    monkeypatch.setattr(
+        "wavecast.providers.llm_factory.DeepSeekLLMProvider",
+        lambda *args, **kwargs: DeepSeekLLMProvider(*args, **kwargs, client=SimpleNamespace(responses=Responses())),
+    )
+    client = build_llm(settings, "track_research", ledger=UsageLedger(), mock=MockEpisodeAssemblyLLM())
+    result = asyncio.run(client.structured(
+        "brief", _Briefing, transport=StructuredTransport.RESPONSES_JSON_SCHEMA,
+        profile=InferenceProfile.FAST, stage="track_brief",
+    ))
+    assert requested == ["_Briefing"] and isinstance(result, _Briefing)
+
+
 def test_the_research_planner_still_follows_the_research_capability() -> None:
     assert ProviderSettings(mode="mock", research_provider="live").resolved_llm("research_plan") == "deepseek"
     assert ProviderSettings(mode="live", research_provider="mock").resolved_llm("research_plan") == "mock"
