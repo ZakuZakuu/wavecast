@@ -85,7 +85,7 @@ def test_instructions_name_the_move_limit_and_banned_openers() -> None:
     assert "Station: 来龙去脉" in text
     assert f"({move_for('s', StationId.LINEAGE, 2).value})" in text
     assert "between 40 and 63 Chinese characters" in text
-    assert "never with 刚才、接下来、我们先从、下一首" in text
+    assert "never with 刚才、接下来、我们先从" in text
     assert "刚才、Jody" in text
     assert "不是……而是……" in text
 

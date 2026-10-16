@@ -83,7 +83,7 @@ _SAME_NAME_TANGENT = re.compile(r"同名|同样的名字|同一个名字|重名|
 _RHETORICAL_HOOK = re.compile(r"有没有想过|你有没有|你知道吗|想象一下|不妨想想|是不是觉得")
 # A first sentence that is a question ("安静到底算什么？Mogwai 给了个答案。").
 _OPENS_WITH_QUESTION = re.compile(r"[^。！？!?\n]{2,40}[？?]")
-_STOCK_OPENERS = ("刚才", "接下来", "我们先从", "下一首")
+_STOCK_OPENERS = ("刚才", "接下来", "我们先从")
 _LISTEN_CUE = re.compile(r"留意|注意|听听|听它|听他|听她|你听|听着")
 _PARALLEL_LIST = re.compile(r"(?:[^，。、]{1,6}、){2}[^，。、]{1,6}")
 _SENTENCE_BREAK = re.compile(r"[。！？!?；;\n]+")
@@ -405,7 +405,7 @@ _REASON_TEXT = {
     "personal_experience": "claims a personal memory or experience",
     "too_long": "is longer than its spoken window",
     "final_block_points_forward": "points to what comes next in the closing block",
-    "stock_opener": "starts with 刚才/接下来/我们先从/下一首",
+    "stock_opener": "starts with 刚才/接下来/我们先从",
     "unsupported_year": "gives a year that is not in the evidence",
     "unsupported_duration": "states how long a song is (minutes, hours); the length of the played version is not known",
     "mentions_unplayed": "mentions an artist who is not played in this programme",

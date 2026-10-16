@@ -195,7 +195,7 @@ MIN_FILL: dict[StationId, float] = {
 }
 
 
-NEVER_START = ("刚才", "接下来", "我们先从", "下一首")
+NEVER_START = ("刚才", "接下来", "我们先从")
 
 
 def voice_instructions(
@@ -262,7 +262,8 @@ def voice_instructions(
     never = "、".join(NEVER_START)
     lines.append(
         f"Begin with the subject itself (a name, a year, the thing heard), never with {never}. "
-        "A block may begin with the track title only if the move is plain."
+        "A block may begin with the track title only if the move is plain. A plain handoff such as "
+        "「下一首是《…》」 is fine when the block only introduces the next song; do not open every block that way."
     )
     if used_openers:
         lines.append(

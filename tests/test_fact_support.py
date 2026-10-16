@@ -847,3 +847,16 @@ def without_flagged_sentences_unchanged(script: RadioScript) -> bool:
     from wavecast.intelligence.fact_support import FactReport, without_flagged_sentences
 
     return [b.text for b in without_flagged_sentences(script, FactReport()).blocks] == [b.text for b in script.blocks]
+
+
+def test_a_block_cut_down_to_a_few_characters_is_left_out_not_voiced() -> None:
+    script = _script("好听。他一九八四年发行了第一张唱片。")
+
+    assert _drop_sentence(script).blocks == []
+
+
+def test_a_plain_handoff_opening_is_not_a_stock_opener() -> None:
+    from wavecast.narration_quality import opener_of
+
+    assert opener_of("下一首是《一百种表情》。") != "下一首"
+    assert opener_of("接下来这首很安静。") == "接下来"

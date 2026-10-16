@@ -75,7 +75,12 @@ class MiniMaxTTSProvider:
             speed=speed,
             language_boost=language_boost,
             # The voice level is part of what was synthesised, so it is part of the cache key.
-            audio_settings={**self.audio_settings, "vol": self.settings.minimax_tts_volume},
+            audio_settings={
+                **self.audio_settings,
+                "vol": self.settings.minimax_tts_volume,
+                # Durations are rounded up since this rule; an entry cached under the old rounding is not reused.
+                "duration_rule": "ceil-v1",
+            },
             rendered_text=rendered_text,
             recognized_cues=cues,
             rendering_version=CUE_RENDERING_VERSION,

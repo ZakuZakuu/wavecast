@@ -706,6 +706,15 @@ def _kept_sentences(sentences: Sequence[str], removed: set[int]) -> list[str]:
 _BARE_TITLE_FRAGMENT = re.compile(r"^《[^》]{1,40}》\s*(?:[，,]\s*\S.{0,24})?[。.]?$")
 
 
+_MIN_SPOKEN_CHARS = 6
+
+
+def _is_fragment(text: str) -> bool:
+    """What is left of a block after cuts is too little to say (empty, or a few characters)."""
+
+    return len(re.sub(r"[\s，,。.！？!?、；;：:“”\"'《》「」『』（）()\-—…·]", "", text)) < _MIN_SPOKEN_CHARS
+
+
 def _plain_handoff(text: str, kind: RadioScriptBlockKind) -> str:
     """Make what is left of a handoff line into something a host would say.
 
@@ -745,8 +754,8 @@ def without_flagged_sentences(
                 len(kept),
             )
             text = _plain_handoff("".join(kept).strip(), block.kind)
-            if not text:
-                continue
+            if _is_fragment(text):
+                continue  # nothing a host would say is left: no line is better than a scrap
             # The spoken form was derived from the old text and would still say the removed
             # sentences, so it is derived again.
             spoken = to_spoken_form(text, tracks).tts_text
