@@ -143,5 +143,5 @@ def test_without_the_loudness_rule_the_graph_is_the_one_old_programmes_were_publ
     legacy = build_filter_graph(plan, None, limiter=False)
 
     assert "alimiter" not in legacy
-    assert legacy.count("volume=") == len(plan.clips)  # only each clip's own automation
+    assert legacy.count("stereo,volume=eval=frame") == len(plan.clips)  # no gain stage before each clip's own automation
     assert "alimiter" in build_filter_graph(plan, {"a:music": -3.0})
