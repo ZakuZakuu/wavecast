@@ -14,6 +14,8 @@ const POSITION_EMIT_INTERVAL_MS = 200;
 const SEEK_UNLOADED_GRACE_MS = 7_000;
 // After a network return or an element error, a player that has not moved for this long is suspect.
 const SUSPECT_STALL_MS = 2_000;
+// Recoveries in a row that did not get the audio moving again before the player gives up and pauses.
+const MAX_FAILED_RECOVERIES = 3;
 
 type ProgrammeAudioPlayerProps = {
   streamUrl: string;
@@ -330,6 +332,8 @@ export function ProgrammeAudioPlayer({
     let pendingValue: number | null = pendingSeekRef.current;
     let pendingSinceMs: number | null = pendingValue === null ? null : performance.now();
     let lastRecoveryMs: number | null = null;
+    let failedRecoveries = 0;
+    let gaveUp = false;
 
     const check = () => {
       const now = performance.now();
@@ -337,7 +341,14 @@ export function ProgrammeAudioPlayer({
       if (Math.abs(time - lastTime) > 0.01) {
         lastTime = time;
         lastAdvanceMs = now;
+        // Moving for a few seconds after a recovery means it worked.
+        if (lastRecoveryMs !== null && now - lastRecoveryMs > 3000) failedRecoveries = 0;
       }
+      if (!desiredPlayingRef.current) {
+        failedRecoveries = 0; // a pause or a new play starts afresh
+        gaveUp = false;
+      }
+      if (gaveUp) return;
       const pending = pendingSeekRef.current;
       if (pending !== pendingValue) {
         pendingValue = pending;
@@ -361,6 +372,16 @@ export function ProgrammeAudioPlayer({
       if (reason === null) return;
 
       lastRecoveryMs = now;
+      failedRecoveries += 1;
+      if (failedRecoveries > MAX_FAILED_RECOVERIES) {
+        // Reloading again and again is not going to help: stop, and show the player as paused
+        // instead of "playing" with nothing happening.
+        gaveUp = true;
+        onBufferingChangeRef.current?.(false);
+        onErrorRef.current("节目音频暂时无法播放，可以再点一次播放");
+        onPauseRequestRef.current();
+        return;
+      }
       lastAdvanceMs = now;
       pendingSinceMs = pending === null ? null : now;
       pendingSeekRef.current = reason === "seek-unconfirmed" && pending !== null ? pending : time;

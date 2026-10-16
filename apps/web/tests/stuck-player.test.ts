@@ -137,6 +137,19 @@ describe("a player that says it is playing while nothing moves", () => {
     expect(loads).toBe(baseline);
   });
 
+  it("gives up after a few recoveries that do not help, and asks to pause instead of staying on playing", () => {
+    const errors: string[] = [];
+    let pauses = 0;
+    mount({ onError: (message) => { errors.push(message); }, onPauseRequest: () => { pauses += 1; } });
+    const baseline = loads;
+
+    act(() => { vi.advanceTimersByTime(120_000); });
+
+    expect(loads - baseline).toBe(3); // three attempts, then it stops
+    expect(pauses).toBeGreaterThanOrEqual(1);
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("does not reload a player that is advancing", () => {
     const audio = mount();
     const baseline = loads;
