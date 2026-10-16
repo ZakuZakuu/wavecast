@@ -400,7 +400,8 @@ def test_with_no_verified_point_the_closing_is_still_written() -> None:
         )
     )
 
-    assert len(llm.prompts) == 1 and "state no facts about the song" in llm.prompts[0]
+    assert len(llm.prompts) == 1
+    assert "a closing introduces no new fact" in llm.prompts[0]
     assert result.blocks
 
 
