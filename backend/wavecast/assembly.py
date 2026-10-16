@@ -3851,7 +3851,7 @@ class StagedProgressiveChapterGenerator:
 
         # Everything already authored for this programme, not only what has been played:
         # narration is written ahead of playback, so "committed" would let facts repeat.
-        previous_context = " ".join(
+        previous_context = "\n".join(
             segment.narration_text
             for segment in episode.ordered_segments
             if (
@@ -3859,7 +3859,7 @@ class StagedProgressiveChapterGenerator:
                 and segment.state is not SegmentState.SKIPPED
                 and segment.narration_text
             )
-        )[-1000:]
+        )
         upcoming = next(
             (
                 slot.upcoming_track
@@ -3958,6 +3958,7 @@ class StagedProgressiveChapterGenerator:
                 evidence=[item for item in writer_evidence if item.id in scoped_evidence_ids],
                 subject=self.session.topic,
                 track_ref=research_track.track_ref,
+                previous_context=previous_context,
                 track_label=f"{research_track.canonical_artist} - {research_track.canonical_title}",
             )
 

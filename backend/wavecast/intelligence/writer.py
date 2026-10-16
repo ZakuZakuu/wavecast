@@ -14,6 +14,7 @@ from wavecast.narration_quality import (
     years_in,
 )
 from wavecast.presentation import HostMode, host_mode_prompt_guidance
+from wavecast.programme_date import programme_date
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.spoken_form import KnownTrack, has_unspeakable_script, to_spoken_form
@@ -280,9 +281,15 @@ class WriterService:
             f"{language_guidance}\n"
             f"{station_line}"
             f"{route_line}"
+            f"Programme date: {programme_date()}. Publication dates are in each evidence item's published_at when "
+            "known; the retrieval time is not one. Do not use words that depend on when it is now (最近, 上个月, "
+            "目前, 如今, 新专辑, 最新...): say when something happened, or say nothing about when. A person who has "
+            "died (when the evidence or the previous context says so) is spoken of in the past tense.\n"
+            "Previous host lines of this programme, verbatim and in order (the text is for continuing the story "
+            "smoothly and for not repeating or contradicting it; every fact you state must still come from the "
+            f"evidence below): {previous_committed_context or '(none yet: the programme has just begun)'}\n"
             f"Chapter: {chapter.model_dump_json()}\n"
             f"Evidence: {[item.model_dump() for item in scoped]}\n"
-            f"Previous context: {previous_committed_context[-1000:]}\n"
             f"Narration slot contexts: {json.dumps(playback_context, ensure_ascii=False)}\n"
             # Keep the old projection for compatibility with fixture callers;
             # it is explicitly not authoritative when typed slot contexts are present.

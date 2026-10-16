@@ -103,6 +103,7 @@ class DialogueRuntime:
         subject: str,
         track_ref: str | None,
         track_label: str,
+        previous_context: str = "",
     ) -> DialogueOffer | None:
         """A validated, saved passage for this slot, or ``None`` (the Writer path then runs).
 
@@ -134,6 +135,7 @@ class DialogueRuntime:
                 if context.upcoming_track is not None
                 else None
             ),
+            previous_context=previous_context,
         )
         try:
             result = await self._seam.resume(

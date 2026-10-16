@@ -32,6 +32,7 @@ from .dialogue import DialogueValidationError, block_from_draft
 from .dialogue_budget import dialogue_budget_for, estimate_dialogue_seconds
 from .dialogue_writer import DialogueSlot, DialogueWriter
 from .story_material import StoryMaterialService
+from .time_guard import has_relative_time, invents_experience
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,13 @@ class DialoguePipeline:
             raise
         except ProviderError as error:
             outcome.reason = f"provider_failed:{type(error).__name__}"
+            return outcome
+        spoken = "".join(turn.text for turn in draft.turns)
+        if has_relative_time(spoken) or invents_experience(spoken):
+            # Said as it stands it would put an old page's "recently" into today, or give a host a
+            # memory they do not have: no passage is better than a false one.
+            logger.info("dialogue_rejected slot_id=%s reason=time_or_experience", slot.slot_id)
+            outcome.reason = "time_or_experience"
             return outcome
         block = self._to_block(draft, material, slot, outcome)
         if block is None:
