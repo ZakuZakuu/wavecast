@@ -550,7 +550,7 @@ def test_writer_runs_only_after_resolution_and_receives_next_track_context(tmp_p
     writer_calls = [call for call in llm.calls if call["output_type"] is RadioScript]
     assert writer_calls
     assert "\"canonical_title\": \"Midnight Transfer\"" in writer_calls[0]["prompt"]
-    assert any("Previous context:" in call["prompt"] for call in writer_calls[1:])
+    assert any("Previous host lines of this programme" in call["prompt"] for call in writer_calls[1:])
     assert sum(block.kind is RadioScriptBlockKind.INTRO for block in result.radio_script.blocks) == 0
     assert sum(block.kind is RadioScriptBlockKind.OUTRO for block in result.radio_script.blocks) == 1
     assert all(
@@ -1631,8 +1631,8 @@ def test_writer_skips_chapters_without_owned_slots(tmp_path) -> None:
     assert result.writer_chapters[2].available_slots == []
     assert result.writer_chapters[2].normalized_blocks == []
     assert any(block.kind is RadioScriptBlockKind.OUTRO for block in result.radio_script.blocks)
-    previous_context = writer_calls[-1]["prompt"].split("Previous context:", 1)[1]
-    assert previous_context.split("\nNext track metadata:", 1)[0].strip()
+    previous_context = writer_calls[-1]["prompt"].split("evidence below): ", 1)[1]
+    assert previous_context.split("\nChapter:", 1)[0].strip() not in {"", "(none yet: the programme has just begun)"}
     assert all(chapter.slot_contexts for chapter in result.progressive_session.chapters)
 
 
