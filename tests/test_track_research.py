@@ -371,7 +371,7 @@ def test_with_no_verified_point_the_closing_is_still_written() -> None:
     assert result.blocks
 
 
-def test_a_closing_may_tell_one_verified_point_before_it_gathers_the_route() -> None:
+def test_a_closing_only_recaps_what_was_played_even_when_verified_points_exist() -> None:
     from tests.test_voice import _final_slot
 
     llm = Sequenced(_script("这张专辑附了一篇短篇故事。这一路到这里。"))
@@ -390,9 +390,8 @@ def test_a_closing_may_tell_one_verified_point_before_it_gathers_the_route() -> 
     )
 
     prompt = llm.prompts[0]
-    assert "First tell ONE of the verified points" in prompt
-    assert "(about the album or film, not the song) 这张专辑是概念专辑" in prompt
-    assert "say nothing about who composed, wrote, sang or released anything" not in prompt
+    assert "First tell ONE of the verified points" not in prompt
+    assert "a closing introduces no new fact" in prompt
 
 
 def test_without_track_research_the_prompt_is_unchanged() -> None:

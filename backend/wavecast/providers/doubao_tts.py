@@ -52,7 +52,7 @@ from wavecast.speech import SpeechProfile
 DOUBAO_TTS_PROVIDER_NAME = "doubao_tts"
 DOUBAO_TTS_ENDPOINT = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
 DOUBAO_TTS_RESOURCE_ID = "seed-tts-2.0"
-DOUBAO_TTS_PROTOCOL = "doubao-tts-unidirectional-pcm24k-v1"
+DOUBAO_TTS_PROTOCOL = "doubao-tts-unidirectional-pcm24k-v2"  # v2: the timeline duration is rounded up, not to the nearest second
 SAMPLE_RATE = 24000
 BYTES_PER_SECOND = SAMPLE_RATE * 2
 END_CODE = 20000000
@@ -178,7 +178,9 @@ class DoubaoTTSProvider:
             stage = "validate"
             audio_seconds = _validated_seconds(pcm)
             stage = "store"
-            duration = max(1, math.floor(audio_seconds + 0.5))
+            # The mix plan plays a narration clip for exactly this many seconds, so the whole of the
+            # audio must fit: rounding to the nearest second cut the end of a line by up to half a second.
+            duration = max(1, math.ceil(audio_seconds))
             url = await self.storage.put(
                 key,
                 _wav(pcm),

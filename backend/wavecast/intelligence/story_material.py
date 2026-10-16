@@ -21,6 +21,7 @@ from wavecast.models.story_material import (
     StoryMaterial,
     StoryScope,
 )
+from wavecast.programme_date import programme_date
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 
@@ -32,6 +33,7 @@ from .fact_support import (
 )
 from .fast_start import FastStructuredProvider
 from .models import Evidence
+from .time_guard import has_relative_time
 from .track_research import _CATALOGUE_TRIVIA
 
 logger = logging.getLogger(__name__)
@@ -84,6 +86,14 @@ recording or release it holds for, or null when it is not tied to one.
 - do_not_infer: relations or claims the evidence does NOT establish and the hosts must not make.
 - backstage: housekeeping that must never be spoken (catalogue numbers, source remarks).
 
+Programme date: {today}. An evidence item may carry its publication date in parentheses; the time a page \
+was fetched is not a publication date. No statement may use words that depend on when it is said \
+(最近, 近日, 上个月, 目前, 如今, 今年, 新专辑, 新发行, 最新, "recently", "last month"...). When the quote gives a \
+relative time and the item shows a publication date, write the absolute date; otherwise state the fact \
+without any time wording, or leave the fact out. Whether the subject is alive or has died is only what \
+the evidence says; if it does not say, do not state it either way, and speak of a person who has died in \
+the past tense.
+
 Focus recordings: {recordings}
 Subject hint: {subject}
 
@@ -124,11 +134,13 @@ class StoryMaterialService:
         self, evidence: Sequence[Evidence], subject: str, recording_refs: Sequence[str]
     ) -> StoryMaterialDraft:
         prompt = _PROMPT.format(
+            today=programme_date(),
             max_facts=MAX_MATERIAL_FACTS,
             recordings=", ".join(recording_refs) or "(none given)",
             subject=subject,
             evidence="\n".join(
-                f"[{item.id}]: {item.claim_or_excerpt[:_MAX_EVIDENCE_CHARS]}"
+                f"[{item.id}]{f' (published {item.published_at})' if item.published_at else ''}: "
+                f"{item.claim_or_excerpt[:_MAX_EVIDENCE_CHARS]}"
                 for item in sorted(evidence, key=lambda e: e.id)
             ),
         )
@@ -170,6 +182,8 @@ def verify_material(
         elif _CATALOGUE_TRIVIA.search(statement) or _CATALOGUE_TRIVIA.search(quote):
             backstage.append(statement[:300])
             drop("backstage")
+        elif has_relative_time(statement):
+            drop("relative_time")
         elif not quote_in_source(quote, source.claim_or_excerpt):
             drop("quote_not_in_evidence")
         elif qualifiers_missing(statement, quote):

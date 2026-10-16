@@ -75,7 +75,12 @@ class MiniMaxTTSProvider:
             speed=speed,
             language_boost=language_boost,
             # The voice level is part of what was synthesised, so it is part of the cache key.
-            audio_settings={**self.audio_settings, "vol": self.settings.minimax_tts_volume},
+            audio_settings={
+                **self.audio_settings,
+                "vol": self.settings.minimax_tts_volume,
+                # Durations are rounded up since this rule; an entry cached under the old rounding is not reused.
+                "duration_rule": "ceil-v1",
+            },
             rendered_text=rendered_text,
             recognized_cues=cues,
             rendering_version=CUE_RENDERING_VERSION,
@@ -302,11 +307,11 @@ def _decode_response(payload: dict[str, Any]) -> tuple[bytes, dict[str, Any]]:
 def _duration_seconds(audio_bytes: bytes, extra_info: dict[str, Any]) -> int:
     audio_length = extra_info.get("audio_length")
     if isinstance(audio_length, (int, float)) and not isinstance(audio_length, bool):
-        return _nearest_second(float(audio_length) / 1000)
+        return _covering_seconds(float(audio_length) / 1000)
     duration = _mp3_duration_seconds(audio_bytes)
     if duration is None:
         raise ProviderInvalidResponseError("minimax audio duration could not be determined")
-    return _nearest_second(duration)
+    return _covering_seconds(duration)
 
 
 def _mp3_duration_seconds(audio_bytes: bytes) -> float | None:
@@ -351,9 +356,13 @@ def _mp3_duration_seconds(audio_bytes: bytes) -> float | None:
     return total_seconds if frames else None
 
 
-def _nearest_second(seconds: float) -> int:
-    """Map positive audio duration to the integer timeline using half-up rounding."""
-    return max(1, math.floor(seconds + 0.5))
+def _covering_seconds(seconds: float) -> int:
+    """Map positive audio duration to the integer timeline, rounding up.
+
+    The mix plan plays a narration clip for exactly this many seconds; rounding to the nearest second
+    cut the end of a line by up to half a second.
+    """
+    return max(1, math.ceil(seconds))
 
 
 def _stored_duration(metadata: dict[str, Any]) -> int | None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import re
 import shutil
 import subprocess
 from collections.abc import Mapping
@@ -8,6 +10,74 @@ from pathlib import Path
 
 from wavecast.arrangement.models import AudioClip, MixPlan
 from wavecast.rendering.errors import MixRenderError, MixRendererUnavailableError
+
+# Every source (a host's clip or a song) is brought to the same integrated loudness before the mix,
+# and the mix is peak-limited. The numbers are listening candidates, measured on a real programme
+# where songs sat at -7 to -11 LUFS and the host clips well below them; the limit leaves room for
+# the encoder's overshoot under a true peak of -1.5 dBTP.
+LOUDNESS_RULE = "loudness-v1"
+# A programme published before this rule keeps being rendered without it: its published chunks are
+# immutable and must still reproduce byte for byte.
+NO_LOUDNESS_RULE = "none"
+TARGET_LUFS = -16.0
+MAX_GAIN_DB = 12.0
+SILENCE_LUFS = -60.0
+PEAK_LIMIT = 0.7943  # -2 dBFS
+
+_I_LUFS = re.compile(r"I:\s*(-?\d+(?:\.\d+)?)\s*LUFS")
+_measured: dict[str, float | None] = {}
+_MEASURED_LIMIT = 1024
+
+
+def _content_key(path: Path) -> str:
+    """Identity of a source by its bytes: render inputs are fresh temporary files every time."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def measure_integrated_lufs(path: Path, binary: str = "ffmpeg") -> float | None:
+    """Integrated loudness of a whole source file, or None when it cannot be measured (silence, error).
+
+    Cached by the file's content, so the same asset is measured once however many renders and
+    temporary copies it goes through.
+    """
+
+    key = _content_key(path)
+    if key in _measured:
+        return _measured[key]
+    try:
+        done = subprocess.run(
+            [_ffmpeg_binary(binary), "-hide_banner", "-nostats", "-nostdin", "-i", str(path),
+             "-af", "ebur128", "-f", "null", "-"],
+            capture_output=True,
+            check=False,
+            timeout=120,
+        )
+        found = _I_LUFS.findall(done.stderr.decode("utf-8", errors="replace"))
+        value: float | None = float(found[-1]) if found else None
+        if value is not None and value <= SILENCE_LUFS:
+            value = None  # ebur128 reports silence as about -70, which must not be amplified
+    except (OSError, subprocess.SubprocessError):
+        return None  # not cached: a transient failure should be tried again next time
+    if len(_measured) >= _MEASURED_LIMIT:
+        _measured.clear()
+    _measured[key] = value
+    return value
+
+
+def loudness_gains_db(plan: MixPlan, inputs: Mapping[str, Path], binary: str = "ffmpeg") -> dict[str, float]:
+    """Static gain per clip that brings its source to the target loudness (0 when unmeasurable)."""
+
+    gains: dict[str, float] = {}
+    for clip in plan.clips:
+        source = inputs.get(clip.id)
+        measured = measure_integrated_lufs(source, binary) if source is not None and source.is_file() else None
+        gains[clip.id] = 0.0 if measured is None else max(-MAX_GAIN_DB, min(MAX_GAIN_DB, TARGET_LUFS - measured))
+    return gains
 
 
 @dataclass(frozen=True)
@@ -56,8 +126,20 @@ def _gain_expression(clip: AudioClip) -> str:
     )
 
 
-def build_filter_graph(plan: MixPlan) -> str:
-    """Compile canonical clip timing and gain automation into ffmpeg filters."""
+def _loudness_filter(gain_db: float) -> str:
+    return f"volume={_number(10 ** (gain_db / 20))}," if abs(gain_db) > 1e-6 else ""
+
+
+def build_filter_graph(
+    plan: MixPlan,
+    gains_db: Mapping[str, float] | None = None,
+    *,
+    limiter: bool = True,
+) -> str:
+    """Compile canonical clip timing and gain automation into ffmpeg filters.
+
+    ``gains_db`` is the loudness gain of each clip (see ``loudness_gains_db``); the mix is peak-limited.
+    """
     chains: list[str] = []
     labels: list[str] = []
     for index, clip in enumerate(plan.clips):
@@ -70,6 +152,7 @@ def build_filter_graph(plan: MixPlan) -> str:
             f"duration={_number(clip.playable_duration_seconds)},"
             "asetpts=PTS-STARTPTS,"
             "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
+            f"{_loudness_filter((gains_db or {}).get(clip.id, 0.0))}"
             f"volume=eval=frame:volume='{_gain_expression(clip)}',"
             f"adelay={delay_ms}:all=1"
             f"[{label}]"
@@ -78,6 +161,7 @@ def build_filter_graph(plan: MixPlan) -> str:
         "".join(labels)
         + f"amix=inputs={len(plan.clips)}:duration=longest:normalize=0:"
         + "dropout_transition=0,"
+        + (f"alimiter=limit={PEAK_LIMIT}:attack=5:release=50:level=disabled," if limiter else "")
         # Source metadata is integer-second today and some provider assets end
         # a few AAC frames before that declared duration. The canonical
         # programme timeline is authoritative, so fill only a missing tail with
@@ -130,7 +214,7 @@ def _command(
     command.extend(
         [
             "-filter_complex",
-            build_filter_graph(plan),
+            build_filter_graph(plan, loudness_gains_db(plan, inputs, binary)),
             "-map",
             "[mixout]",
             "-map_metadata",
@@ -163,7 +247,7 @@ def _transport_command(
     command.extend(
         [
             "-filter_complex",
-            build_filter_graph(plan),
+            build_filter_graph(plan, loudness_gains_db(plan, inputs, binary)),
             "-map",
             "[mixout]",
             "-map_metadata",
@@ -201,6 +285,7 @@ def _hls_command(
     binary: str,
     *,
     segment_time_seconds: float,
+    loudness: bool = True,
 ) -> tuple[list[str], Path]:
     if segment_time_seconds <= 0:
         raise ValueError("HLS segment duration must be positive")
@@ -210,7 +295,11 @@ def _hls_command(
     command.extend(
         [
             "-filter_complex",
-            build_filter_graph(plan),
+            build_filter_graph(
+                plan,
+                loudness_gains_db(plan, inputs, binary) if loudness else None,
+                limiter=loudness,
+            ),
             "-map",
             "[mixout]",
             "-map_metadata",
@@ -300,6 +389,7 @@ def render_mix_hls_prefix(
     segment_time_seconds: float = 6.0,
     ffmpeg_binary: str = "ffmpeg",
     timeout_seconds: float | None = None,
+    loudness: bool = True,
 ) -> HlsRenderResult:
     """Render one continuous canonical prefix and let ffmpeg cut HLS segments.
 
@@ -315,6 +405,7 @@ def render_mix_hls_prefix(
         output_directory,
         ffmpeg_binary,
         segment_time_seconds=segment_time_seconds,
+        loudness=loudness,
     )
     timeout = timeout_seconds or max(30.0, plan.duration_seconds * 2)
     try:

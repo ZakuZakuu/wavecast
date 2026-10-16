@@ -40,7 +40,7 @@ from wavecast.spoken_form import KnownTrack, to_spoken_form
 from wavecast.text_identity import base_title_key, canonical_name
 
 from .fast_start import FastStructuredProvider
-from .models import ClaimSupport, ClaimType, Evidence, RadioScript
+from .models import ClaimSupport, ClaimType, Evidence, RadioScript, RadioScriptBlockKind
 
 logger = logging.getLogger(__name__)
 
@@ -701,6 +701,35 @@ def _kept_sentences(sentences: Sequence[str], removed: set[int]) -> list[str]:
     return kept
 
 
+# A line cut down to a bare title, "《一百种表情》，同样来自方大同": the sentence that made it a
+# sentence was the unsupported one.  Said as it stands it is a headline, not speech.
+_BARE_TITLE_FRAGMENT = re.compile(r"^《[^》]{1,40}》\s*(?:[，,]\s*\S.{0,24})?[。.]?$")
+
+
+_MIN_SPOKEN_CHARS = 6
+
+
+def _is_fragment(text: str) -> bool:
+    """What is left of a block after cuts is too little to say (empty, or a few characters)."""
+
+    return len(re.sub(r"[\s，,。.！？!?、；;：:“”\"'《》「」『』（）()\-—…·]", "", text)) < _MIN_SPOKEN_CHARS
+
+
+def _plain_handoff(text: str, kind: RadioScriptBlockKind) -> str:
+    """Make what is left of a handoff line into something a host would say.
+
+    Only a track introduction or a transition (each ends where the next track starts) that has lost
+    a sentence and is left as a bare title is touched; the words are the writer's own and nothing
+    is added to them except the plain "下一首是".  Anything else stays as it was.
+    """
+
+    if kind not in (RadioScriptBlockKind.TRACK_INTRO, RadioScriptBlockKind.TRANSITION):
+        return text
+    if not _BARE_TITLE_FRAGMENT.match(text):
+        return text
+    return f"下一首是{text}"
+
+
 def without_flagged_sentences(
     script: RadioScript, report: FactReport, tracks: Sequence[KnownTrack] = ()
 ) -> RadioScript:
@@ -724,9 +753,9 @@ def without_flagged_sentences(
                 len(removed),
                 len(kept),
             )
-            text = "".join(kept).strip()
-            if not text:
-                continue
+            text = _plain_handoff("".join(kept).strip(), block.kind)
+            if _is_fragment(text):
+                continue  # nothing a host would say is left: no line is better than a scrap
             # The spoken form was derived from the old text and would still say the removed
             # sentences, so it is derived again.
             spoken = to_spoken_form(text, tracks).tts_text

@@ -32,6 +32,10 @@ class NarrationAuthoringHost(Protocol):
     now: Callable[[], datetime]
 
 
+# (episode id, chapter id) of the chapters being authored right now in this process.
+_AUTHORING_IN_FLIGHT: set[tuple[str, str]] = set()
+
+
 async def author_pending_narration(
     host: NarrationAuthoringHost,
     episode_id: str,
@@ -104,84 +108,113 @@ async def author_pending_narration(
             or unresolved_music_slot
         )
 
-        generated: GeneratedChapter | None = None
-        if should_degrade:
-            if exposed:
-                reason = "exposed"
-            elif seam_skipped:
-                reason = "seam_skipped"
-            elif not session_chapter.slot_contexts:
-                reason = "no_slots"
+        # The chapter stays protected until its result is saved (or the run fails or is cancelled), so a
+        # second path cannot start it while the first one's result is still being written.
+        held_key: tuple[str, str] | None = None
+        try:
+            generated: GeneratedChapter | None = None
+            if should_degrade:
+                if exposed:
+                    reason = "exposed"
+                elif seam_skipped:
+                    reason = "seam_skipped"
+                elif not session_chapter.slot_contexts:
+                    reason = "no_slots"
+                else:
+                    reason = "unresolved_music"
+                logger.info(
+                    "narration_authoring_degraded episode_id=%s chapter_id=%s reason=%s",
+                    episode_id,
+                    chapter_id,
+                    reason,
+                )
             else:
-                reason = "unresolved_music"
-            logger.info(
-                "narration_authoring_degraded episode_id=%s chapter_id=%s reason=%s",
-                episode_id,
-                chapter_id,
-                reason,
-            )
-        else:
-            try:
-                with authoring_gate(partial(_chapter_still_open, host, episode_id, chapter_id)):
-                    generated = await runtime.author_narration(
-                        episode.model_copy(deep=True),
+                key = (episode_id, chapter_id)
+                if key in _AUTHORING_IN_FLIGHT:
+                    # The generation job and the detached enrichment both author the next chapter;
+                    # the one that got here first finishes it, the other must not write it again.
+                    logger.info(
+                        "narration_authoring_skipped episode_id=%s chapter_id=%s reason=in_flight",
+                        episode_id,
                         chapter_id,
                     )
-            except asyncio.CancelledError:
-                raise
-            except Exception as error:
+                    break
+                _AUTHORING_IN_FLIGHT.add(key)
+                held_key = key
+                # The state may have moved on while this run waited its turn: look again, inside the
+                # protected range, before spending anything.
+                latest = await asyncio.to_thread(host.repository.get, episode_id)
+                if _next_authoring_chapter_id(latest) != chapter_id:
+                    logger.info(
+                        "narration_authoring_skipped episode_id=%s chapter_id=%s reason=already_authored",
+                        episode_id,
+                        chapter_id,
+                    )
+                    break
+                try:
+                    with authoring_gate(partial(_chapter_still_open, host, episode_id, chapter_id)):
+                        generated = await runtime.author_narration(
+                            episode.model_copy(deep=True),
+                            chapter_id,
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    logger.warning(
+                        "narration_authoring_degraded episode_id=%s chapter_id=%s "
+                        "reason=writer_error error_type=%s",
+                        episode_id,
+                        chapter_id,
+                        type(error).__name__,
+                    )
+                    generated = None
+                if generated is None:
+                    logger.info(
+                        "narration_authoring_degraded episode_id=%s chapter_id=%s "
+                        "reason=writer_degraded",
+                        episode_id,
+                        chapter_id,
+                    )
+                else:
+                    narration_count = sum(
+                        isinstance(segment, NarrationSegment)
+                        for segment in generated.segments
+                    )
+                    logger.info(
+                        "narration_authoring_generated episode_id=%s chapter_id=%s "
+                        "narration_segments=%s",
+                        episode_id,
+                        chapter_id,
+                        narration_count,
+                    )
+
+            try:
+                await asyncio.to_thread(
+                    _finish_authoring,
+                    host,
+                    episode_id,
+                    chapter_id,
+                    generated,
+                )
+            except ValueError as error:
                 logger.warning(
                     "narration_authoring_degraded episode_id=%s chapter_id=%s "
-                    "reason=writer_error error_type=%s",
+                    "reason=validation_error error_type=%s",
                     episode_id,
                     chapter_id,
                     type(error).__name__,
                 )
-                generated = None
-            if generated is None:
-                logger.info(
-                    "narration_authoring_degraded episode_id=%s chapter_id=%s "
-                    "reason=writer_degraded",
+                await asyncio.to_thread(
+                    _finish_authoring,
+                    host,
                     episode_id,
                     chapter_id,
+                    None,
                 )
-            else:
-                narration_count = sum(
-                    isinstance(segment, NarrationSegment)
-                    for segment in generated.segments
-                )
-                logger.info(
-                    "narration_authoring_generated episode_id=%s chapter_id=%s "
-                    "narration_segments=%s",
-                    episode_id,
-                    chapter_id,
-                    narration_count,
-                )
-
-        try:
-            await asyncio.to_thread(
-                _finish_authoring,
-                host,
-                episode_id,
-                chapter_id,
-                generated,
-            )
-        except ValueError as error:
-            logger.warning(
-                "narration_authoring_degraded episode_id=%s chapter_id=%s "
-                "reason=validation_error error_type=%s",
-                episode_id,
-                chapter_id,
-                type(error).__name__,
-            )
-            await asyncio.to_thread(
-                _finish_authoring,
-                host,
-                episode_id,
-                chapter_id,
-                None,
-            )
-        processed += 1
+            processed += 1
+        finally:
+            if held_key is not None:
+                _AUTHORING_IN_FLIGHT.discard(held_key)
 
     final = await asyncio.to_thread(host.repository.get, episode_id)
     await _settle_dialogue(runtime, final)

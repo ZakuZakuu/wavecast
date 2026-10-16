@@ -28,6 +28,7 @@ from .models import (
     ResearchPlanMode,
     SearchIntent,
     TrackProposal,
+    reliable_publication_date,
 )
 from .trace import GenerationTrace
 
@@ -803,6 +804,7 @@ def bundle_from_results(
                 source_title=result.title,
                 facet_ids=list(planned.facet_ids) if planned else [],
                 search_intent=planned.intent if planned else None,
+                published_at=reliable_publication_date(result.published_at),
             )
         )
     return ResearchBundle(

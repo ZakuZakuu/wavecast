@@ -1,0 +1,225 @@
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ProgrammeAudioPlayer } from "../components/programme-audio-player";
+
+let container: HTMLDivElement;
+let root: Root;
+let loads: number;
+
+beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  // performance.now() is what the player measures with, so it has to follow the fake clock.
+  vi.useFakeTimers({
+    toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout", "performance", "requestAnimationFrame", "cancelAnimationFrame"],
+  });
+  loads = 0;
+  // Safari-like: native HLS, so the player owns the element directly.
+  Object.defineProperty(navigator, "userAgent", {
+    configurable: true,
+    value: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1",
+  });
+  vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockImplementation((type) =>
+    type.includes("mpegurl") ? "maybe" : "",
+  );
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => { loads += 1; });
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => Promise.resolve());
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+
+function mount(overrides: Partial<Parameters<typeof ProgrammeAudioPlayer>[0]> = {}, confirmOpeningSeek = true) {
+  act(() => {
+    root.render(createElement(ProgrammeAudioPlayer, {
+      streamUrl: "/api/program-streams/e.m3u8",
+      playing: true,
+      positionSeconds: 820,
+      seekToken: 0,
+      renderedFrontierSeconds: 1200,
+      complete: false,
+      title: "t",
+      onPositionChange: () => undefined,
+      onEnded: () => undefined,
+      onFrontierReached: () => undefined,
+      onPlayRequest: () => undefined,
+      onPauseRequest: () => undefined,
+      onSeekRequest: () => undefined,
+      onNextRequest: () => undefined,
+      onError: () => undefined,
+      ...overrides,
+    }));
+  });
+  const audio = container.querySelector("audio")!;
+  // A parked element: it reports a position and data, but the position never moves.
+  Object.defineProperty(audio, "currentTime", { configurable: true, writable: true, value: 820 });
+  Object.defineProperty(audio, "readyState", { configurable: true, value: 4 });
+  Object.defineProperty(audio, "paused", { configurable: true, value: false });
+  // The element confirms the opening position, as a real one does once it has data.
+  if (confirmOpeningSeek) act(() => { audio.dispatchEvent(new Event("canplay")); });
+  return audio;
+}
+
+describe("a player that says it is playing while nothing moves", () => {
+  it("reloads the stream at the same position after the audio stops advancing, then waits before trying again", () => {
+    mount();
+    // Mounting itself loads the source once.
+    const baseline = loads;
+
+    act(() => { vi.advanceTimersByTime(5_000); });
+    expect(loads).toBe(baseline); // not yet: a short gap is normal buffering
+
+    act(() => { vi.advanceTimersByTime(3_000); });
+    expect(loads).toBe(baseline + 1);
+
+    act(() => { vi.advanceTimersByTime(10_000); });
+    expect(loads).toBe(baseline + 1); // cool-down: a reload is itself a stall
+  });
+
+  it("reloads when the element never confirms the requested position (the seek stays pending and blocks everything)", () => {
+    const audio = mount({}, false);
+    const baseline = loads;
+    // The listener keeps the clock moving the way a half-alive element can: audio advances, the seek never settles.
+    for (let second = 0; second < 4; second += 1) {
+      (audio as unknown as { currentTime: number }).currentTime += 1;
+      act(() => { vi.advanceTimersByTime(1_000); });
+    }
+    expect(loads).toBe(baseline);
+
+    act(() => { vi.advanceTimersByTime(2_000); });
+
+    expect(loads).toBe(baseline + 1);
+  });
+
+  it("reloads soon after the network comes back instead of waiting out the whole stall time", () => {
+    mount();
+    const baseline = loads;
+    act(() => { vi.advanceTimersByTime(3_000); });
+    expect(loads).toBe(baseline); // only 3 s without movement: not yet
+
+    act(() => { window.dispatchEvent(new Event("online")); });
+    act(() => { vi.advanceTimersByTime(1_000); });
+
+    expect(loads).toBe(baseline + 1);
+  });
+
+  it("reloads soon after the element reports an error", () => {
+    const audio = mount();
+    const baseline = loads;
+    act(() => { vi.advanceTimersByTime(3_000); });
+
+    act(() => { audio.dispatchEvent(new Event("error")); });
+    act(() => { vi.advanceTimersByTime(1_000); });
+
+    expect(loads).toBe(baseline + 1);
+  });
+
+  it("does not treat the network coming back as a fault when the audio is playing normally", () => {
+    const audio = mount();
+    const baseline = loads;
+
+    for (let second = 0; second < 5; second += 1) {
+      (audio as unknown as { currentTime: number }).currentTime += 1;
+      act(() => { vi.advanceTimersByTime(1_000); });
+    }
+    act(() => { window.dispatchEvent(new Event("online")); });
+    act(() => { vi.advanceTimersByTime(1_000); });
+
+    expect(loads).toBe(baseline);
+  });
+
+  it("gives up after a few recoveries that do not help, and asks to pause instead of staying on playing", () => {
+    const errors: string[] = [];
+    let pauses = 0;
+    mount({ onError: (message) => { errors.push(message); }, onPauseRequest: () => { pauses += 1; } });
+    const baseline = loads;
+
+    act(() => { vi.advanceTimersByTime(120_000); });
+
+    expect(loads - baseline).toBe(3); // three attempts, then it stops
+    expect(pauses).toBeGreaterThanOrEqual(1);
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not count the jump back to the old position after a reload as playback", () => {
+    const errors: string[] = [];
+    let pauses = 0;
+    const audio = mount({ onError: (message) => { errors.push(message); }, onPauseRequest: () => { pauses += 1; } });
+    const baseline = loads;
+    // Every load starts at zero, and four seconds later the element is put back at the old position
+    // and then stays there: it never plays.
+    vi.mocked(HTMLMediaElement.prototype.load).mockImplementation(() => {
+      loads += 1;
+      (audio as unknown as { currentTime: number }).currentTime = 0;
+      setTimeout(() => { (audio as unknown as { currentTime: number }).currentTime = 820; }, 4_000);
+    });
+
+    act(() => { vi.advanceTimersByTime(240_000); });
+
+    expect(loads - baseline).toBe(3); // still at most three recoveries, then it stops
+    expect(pauses).toBeGreaterThanOrEqual(1);
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("clears the failure count once the audio really keeps playing after a recovery", () => {
+    let pauses = 0;
+    const audio = mount({ onPauseRequest: () => { pauses += 1; } });
+    const baseline = loads;
+    const setTime = (value: number) => { (audio as unknown as { currentTime: number }).currentTime = value; };
+    vi.mocked(HTMLMediaElement.prototype.load).mockImplementation(() => {
+      loads += 1;
+      setTimeout(() => { audio.dispatchEvent(new Event("canplay")); }, 100); // the element settles
+    });
+
+    // Five stalls, each followed by ten seconds of healthy playback.
+    for (let round = 0; round < 5; round += 1) {
+      act(() => { vi.advanceTimersByTime(8_000); }); // stalled long enough to be recovered
+      for (let second = 0; second < 12; second += 1) {
+        setTime((audio as unknown as { currentTime: number }).currentTime + 1);
+        act(() => { vi.advanceTimersByTime(1_000); });
+      }
+    }
+
+    expect(loads - baseline).toBe(5);
+    expect(pauses).toBe(0); // it never reached the give-up count
+  });
+
+  it("does not reload a player that is advancing", () => {
+    const audio = mount();
+    const baseline = loads;
+
+    for (let second = 0; second < 30; second += 1) {
+      (audio as unknown as { currentTime: number }).currentTime += 1;
+      act(() => { vi.advanceTimersByTime(1_000); });
+    }
+
+    expect(loads).toBe(baseline);
+  });
+
+  it("does not reload while the listener has paused", () => {
+    mount({ playing: false });
+    const baseline = loads;
+
+    act(() => { vi.advanceTimersByTime(60_000); });
+
+    expect(loads).toBe(baseline);
+  });
+
+  it("does not reload when the playhead is at the end of what is published (it is only waiting)", () => {
+    mount({ renderedFrontierSeconds: 824 });
+    const baseline = loads;
+
+    act(() => { vi.advanceTimersByTime(60_000); });
+
+    expect(loads).toBe(baseline);
+  });
+});

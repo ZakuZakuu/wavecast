@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
@@ -206,6 +207,24 @@ class Evidence(BaseModel):
     # Set when the evidence was gathered for particular recordings (track research): it is about
     # these tracks, not only about the programme's subject.
     track_refs: list[str] = Field(default_factory=list, max_length=16)
+    # The source's own publication date (YYYY-MM-DD), only when it is a plausible date.  The time
+    # the page was fetched is never a publication date and is never put here.
+    published_at: str | None = None
+
+
+_ISO_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
+
+
+def reliable_publication_date(raw: str | None) -> str | None:
+    """YYYY-MM-DD from a provider's date string, or None when it is missing or implausible."""
+
+    match = _ISO_DATE.match((raw or "").strip())
+    if match is None:
+        return None
+    year, month, day = (int(part) for part in match.groups())
+    if not (1990 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31):
+        return None
+    return f"{year:04d}-{month:02d}-{day:02d}"
 
 
 class TasteHypothesis(BaseModel):

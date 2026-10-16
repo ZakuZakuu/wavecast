@@ -411,23 +411,9 @@ GOOD = "听听这段钢琴和人声。"
 BAD = "这首歌作曲是久石让，唱的是木村弓。"
 
 
-def test_an_unsupported_sentence_is_sent_back_once_and_the_rewrite_is_used() -> None:
-    llm = Dispatch(
-        [_script(f"{BAD}{GOOD}"), _script(f"久石让的电影配乐主要是与宫崎骏合作的。{GOOD}")],
-        [
-            FactCheck(findings=[_finding(0, "insufficient")]),
-            FactCheck(findings=[_finding(0, "supported", "e1", "久石让的电影配乐主要是与宫崎骏和北野武两位导演")]),
-        ],
-    )
+def test_an_unsupported_sentence_is_removed_without_asking_for_a_rewrite() -> None:
+    """The evidence does not say it, so another wording cannot make it supported: it is cut."""
 
-    result = _write(llm)
-
-    assert len(llm.prompts) == 2 and len(llm.check_prompts) == 2
-    assert "is not supported by the evidence" in llm.prompts[1]
-    assert [block.text for block in result.blocks] == [f"久石让的电影配乐主要是与宫崎骏合作的。{GOOD}"]
-
-
-def test_a_sentence_still_unsupported_after_the_rewrite_is_left_out_not_the_block() -> None:
     llm = Dispatch(
         [_script(f"{BAD}{GOOD}")],
         [FactCheck(findings=[_finding(0, "insufficient")])],
@@ -435,7 +421,19 @@ def test_a_sentence_still_unsupported_after_the_rewrite_is_left_out_not_the_bloc
 
     result = _write(llm)
 
-    assert len(llm.prompts) == 2
+    assert len(llm.prompts) == 1 and len(llm.check_prompts) == 1  # no rewrite round, no second check
+    assert [block.text for block in result.blocks] == [GOOD]
+
+
+def test_an_unsupported_sentence_is_left_out_not_the_block() -> None:
+    llm = Dispatch(
+        [_script(f"{BAD}{GOOD}")],
+        [FactCheck(findings=[_finding(0, "insufficient")])],
+    )
+
+    result = _write(llm)
+
+    assert len(llm.prompts) == 1
     assert [block.text for block in result.blocks] == [GOOD]
     assert "久石让" not in (result.blocks[0].tts_text or "")
 
@@ -733,26 +731,6 @@ KIKI_REWRITTEN = "琪琪从火车顶飞向城市的那一段，用的就是它�
 SOURCE_QUOTE = "久石让的电影配乐主要是与宫崎骏和北野武两位导演"
 
 
-def test_a_claim_the_rejected_rewrite_found_contradicted_is_not_kept_from_the_old_draft() -> None:
-    # Draft 1: one unsupported sentence + a scene claim the first check accepted.  The rewrite fixes the
-    # first but its check finds the scene claim contradicted: equal problem counts, so draft 1 stays.
-    llm = Dispatch(
-        [
-            _script(f"{BAD}{KIKI_FIRST}{GOOD}"),
-            _script(f"{KIKI_REWRITTEN}{GOOD}"),
-        ],
-        [
-            FactCheck(findings=[_finding(0, "insufficient"), _finding(1, "supported", "e1", SOURCE_QUOTE)]),
-            FactCheck(findings=[_finding(0, "contradicted", "e1", SOURCE_QUOTE)]),
-        ],
-    )
-
-    result = _write(llm)
-
-    assert len(llm.prompts) == 2
-    assert [block.text for block in result.blocks] == [GOOD]
-
-
 def test_what_the_rewrite_found_is_matched_by_what_is_said_not_by_sentence_number() -> None:
     from wavecast.intelligence.fact_support import FactReport, SentenceIssue, with_carried_risks
 
@@ -780,3 +758,83 @@ def test_an_unrelated_finding_in_the_rejected_rewrite_costs_the_old_draft_nothin
     result = _write(llm)
 
     assert [block.text for block in result.blocks] == [f"{KIKI_FIRST}{GOOD}"]
+
+
+def _drop_sentence(script: RadioScript, sentence: int = 1) -> RadioScript:
+    from wavecast.intelligence.fact_support import (
+        FactReport,
+        SentenceIssue,
+        without_flagged_sentences,
+    )
+
+    report = FactReport(issues=[SentenceIssue(0, sentence, "removed", "insufficient", "m")])
+    return without_flagged_sentences(script, report)
+
+
+def test_a_handoff_cut_down_to_a_bare_title_is_said_as_a_plain_handoff() -> None:
+    """Real case: 《一百种表情》，同样来自方大同 was all that was left after the unsupported sentence went."""
+
+    script = _script("《一百种表情》，同样来自方大同。他一九八四年发行了第一张唱片。")
+
+    (block,) = _drop_sentence(script).blocks
+
+    assert block.text == "下一首是《一百种表情》，同样来自方大同。"
+    assert block.tts_text is None or block.tts_text.startswith("下一首是")
+
+
+def test_a_transition_cut_down_to_a_bare_title_gets_the_same_plain_handoff() -> None:
+    script = _script("《一百种表情》。他一九八四年发行了第一张唱片。", kind=RadioScriptBlockKind.TRANSITION)
+
+    (block,) = _drop_sentence(script).blocks
+
+    assert block.text == "下一首是《一百种表情》。"
+
+
+def test_a_line_that_is_still_a_sentence_after_the_cut_is_left_alone() -> None:
+    script = _script("这首歌的鼓点很松弛。他一九八四年发行了第一张唱片。")
+
+    (block,) = _drop_sentence(script).blocks
+
+    assert block.text == "这首歌的鼓点很松弛。"
+
+
+def test_a_title_that_starts_a_real_sentence_is_not_given_a_handoff() -> None:
+    script = _script("《一百种表情》是一首很安静的歌，主要靠钢琴推进。他一九八四年发行了第一张唱片。")
+
+    (block,) = _drop_sentence(script).blocks
+
+    assert block.text.startswith("《一百种表情》是")
+
+
+def test_an_intro_or_outro_is_never_given_a_next_track_handoff() -> None:
+    for kind in (RadioScriptBlockKind.INTRO, RadioScriptBlockKind.OUTRO):
+        script = _script("《一百种表情》，同样来自方大同。他一九八四年发行了第一张唱片。", kind=kind)
+
+        (block,) = _drop_sentence(script).blocks
+
+        assert not block.text.startswith("下一首")
+
+
+def test_a_line_nothing_was_cut_from_is_not_touched() -> None:
+    script = _script("《一百种表情》，同样来自方大同。")
+
+    assert without_flagged_sentences_unchanged(script)
+
+
+def without_flagged_sentences_unchanged(script: RadioScript) -> bool:
+    from wavecast.intelligence.fact_support import FactReport, without_flagged_sentences
+
+    return [b.text for b in without_flagged_sentences(script, FactReport()).blocks] == [b.text for b in script.blocks]
+
+
+def test_a_block_cut_down_to_a_few_characters_is_left_out_not_voiced() -> None:
+    script = _script("好听。他一九八四年发行了第一张唱片。")
+
+    assert _drop_sentence(script).blocks == []
+
+
+def test_a_plain_handoff_opening_is_not_a_stock_opener() -> None:
+    from wavecast.narration_quality import opener_of
+
+    assert opener_of("下一首是《一百种表情》。") != "下一首"
+    assert opener_of("接下来这首很安静。") == "接下来"

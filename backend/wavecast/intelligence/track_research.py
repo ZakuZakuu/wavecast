@@ -47,7 +47,7 @@ from .fact_support import (
     similar_claim,
 )
 from .fast_start import FastStructuredProvider
-from .models import Evidence, ResolvedTrack
+from .models import Evidence, ResolvedTrack, reliable_publication_date
 from .research import (
     DEEP_EXCERPT_CHARS,
     STANDARD_EXCERPT_CHARS,
@@ -419,6 +419,7 @@ class TrackResearchService:
                     query=query,
                     source_title=result.title,
                     track_refs=[track.track_ref],
+                    published_at=reliable_publication_date(result.published_at),
                 )
             )
         return found

@@ -195,7 +195,7 @@ MIN_FILL: dict[StationId, float] = {
 }
 
 
-NEVER_START = ("刚才", "接下来", "我们先从", "下一首")
+NEVER_START = ("刚才", "接下来", "我们先从")
 
 
 def voice_instructions(
@@ -223,20 +223,10 @@ def voice_instructions(
         "arriving, parking, walking, working, cooking): mention a situation only if their "
         "request does. A closing is about the music, never about a journey ending."
     )
-    if is_final and has_points:
+    if is_final:
         lines.append(
-            "This block closes the programme in two or three plain sentences. First tell ONE of the "
-            "verified points given below, in your own words and about exactly what its label says "
-            "(the song that just played, its album or film, or the person); then say in one sentence "
-            "what the route was about, the idea or the thread the listener has been following. Name "
-            "at most two of the songs actually played, never list them, state no other fact about who "
-            "composed, wrote, sang or released anything, repeat nothing an earlier block already said, "
-            "and say nothing about what comes next. Do not say goodbye, thank the listener or name "
-            "the station: the application adds the sign-off after your text."
-        )
-    elif is_final:
-        lines.append(
-            "This block closes the programme in one or two plain sentences: say what the route "
+            "This block closes the programme in one or two plain sentences, only about what was "
+            "played (a closing introduces no new fact, so nothing in it needs a source): say what the route "
             "was about, the idea or the thread the listener has been following, and let it end "
             "on that or on the last track. Name at most two of the songs actually played, never "
             "list them, give no year, say nothing about who composed, wrote, sang or released "
@@ -262,7 +252,8 @@ def voice_instructions(
     never = "、".join(NEVER_START)
     lines.append(
         f"Begin with the subject itself (a name, a year, the thing heard), never with {never}. "
-        "A block may begin with the track title only if the move is plain."
+        "A block may begin with the track title only if the move is plain. A plain handoff such as "
+        "「下一首是《…》」 is fine when the block only introduces the next song; do not open every block that way."
     )
     if used_openers:
         lines.append(

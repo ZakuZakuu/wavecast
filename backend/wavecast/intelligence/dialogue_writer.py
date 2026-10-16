@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from wavecast.models.dialogue import DialogueDraft, DialoguePurpose
 from wavecast.models.story_material import StoryMaterial
+from wavecast.programme_date import programme_date
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.stations import StationId
@@ -31,20 +32,31 @@ class DialogueSlot:
     station: StationId
     just_played: str | None = None
     upcoming: str | None = None
+    # What the programme's hosts have already said (the end of it), so a passage neither contradicts
+    # nor repeats it; empty at the start of a programme.
+    previous_context: str = ""
 
 
 _WRITER_PROMPT = """你为一档真实的音乐电台写一段两位主持人的对话。主持人 A 先开口，B 接话；\
 他们是同一档节目的两位主持，不是问答机器。
 
-只能使用下面「素材」里列出的事实。每一轮的 fact_refs 填这一轮说到或默认成立的事实的 id（只能是素材里的 \
+只能使用本段「素材」里列出的事实。每一轮的 fact_refs 填这一轮说到或默认成立的事实的 id（只能是素材里的 \
 id）；这一轮没有用到任何事实就填空列表。不要补充素材之外的背景、动机、评价或因果，也不要写「更成熟」\
 「一直坚持」这类素材没有说过的判断；editorial_angle 是编辑的看法，只能说成「可以这样听」，不能说成事实。\
 do_not_infer 里的内容不能说。backstage 里的内容绝对不要念出来。
 
 怎么说由你定：可以用一个真实的问题带出下一句，但问题里的事实前提也要在 fact_refs 里列出。\
-不要在文字里写「A：」「B：」，不要念出事实 id。口语、自然、有来有回，每轮不超过 {max_turn_chars} 字。\
-这是一段 {purpose} 用途的对话，位置：{placement}。
+不要在文字里写「A：」「B：」，不要念出事实 id。口语、自然、有来有回，每轮不超过 {max_turn_chars} 字。
 
+节目日期：{today}。不要用依赖「现在是什么时候」的词（最近、近日、上个月、目前、如今、新发行、新专辑、最新）；\
+事情发生在什么时候，就说成过去的某年某月，素材没有时间就不说时间。素材或前文说这个人已经离世时，一律用过去时，\
+不要写他最近、正在做什么。主持人不要讲自己的经历（「我之前翻资料」「我记得」「我小时候」这类都不要）。
+
+本节目里主持人此前已经说过的话（原文，按先后顺序；只用来让这一段接得上、不重复、不与它矛盾；事实依据仍然只来自下面的素材）：
+{previous}
+
+下面是这一段的任务和素材。
+这是一段 {purpose} 用途的对话，位置：{placement}。
 篇幅目标约 {min_s}–{max_s} 秒（约 {min_chars}–{max_chars} 字）。这是目标，不是下限：素材不够就写短，\
 不要为了凑长度重复或加料。
 
@@ -93,6 +105,8 @@ class DialogueWriter:
             if part
         ) or "两首歌之间"
         prompt = _WRITER_PROMPT.format(
+            today=programme_date(),
+            previous=slot.previous_context or "（无：节目刚开始）",
             max_turn_chars=1500,
             purpose=slot.purpose.value,
             placement=placement,

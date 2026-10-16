@@ -180,3 +180,28 @@ export function voiceClipTiming(
   const clip = plan?.clips.find((candidate) => candidate.lane === "VOICE" && candidate.segmentId === segmentId);
   return clip ? { startSeconds: clip.timelineStartSeconds, durationSeconds: clip.playableDurationSeconds } : null;
 }
+
+
+/**
+ * Everything the host has said that is already published, in programme order: narration segments
+ * that are ready (not skipped, not a draft) and whose voice clip starts inside the published audio.
+ * It comes from the programme itself, so it is the same after a resume or a remount, and it does not
+ * depend on the listener having been there while it was spoken.
+ */
+export function publishedNarration(
+  episode: Pick<LiveEpisode, "segments">,
+  plan: MixPlan | null,
+  frontierSeconds: number,
+): Array<{ id: string; text: string }> {
+  if (!plan) return [];
+  const ready = new Set(["AUDIO_READY", "COMMITTED", "PLAYED"]);
+  const byId = new Map(episode.segments.map((segment) => [segment.id, segment]));
+  return plan.clips
+    .filter((clip) => clip.lane === "VOICE" && clip.timelineStartSeconds < frontierSeconds)
+    .sort((left, right) => left.timelineStartSeconds - right.timelineStartSeconds)
+    .flatMap((clip) => {
+      const segment = byId.get(clip.segmentId);
+      const text = segment?.kind === "NARRATION" ? segment.narration_text?.trim() : "";
+      return segment && text && ready.has(segment.state) ? [{ id: segment.id, text }] : [];
+    });
+}
