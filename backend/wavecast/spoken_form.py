@@ -213,7 +213,7 @@ def to_spoken_form(
 
     spoken = tts_text if tts_text else text
     # An explanatory original-name aside (“（原名：…）”) is display-only.
-    spoken = re.sub(r"[（(][^）)]*" + UNSPEAKABLE_SCRIPTS.pattern + r"[^）)]*[）)]", "", spoken)
+    spoken = re.sub(r"[（(]\s*原名\s*[:：][^）)]*" + UNSPEAKABLE_SCRIPTS.pattern + r"[^）)]*[）)]", "", spoken)
     for track in tracks:
         title_spoken = track.spoken_title or spoken_title(track.title)
         spoken = _replace_entity(spoken, _variants(track.title), title_spoken or GENERIC_SONG)
