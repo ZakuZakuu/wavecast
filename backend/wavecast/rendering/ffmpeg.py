@@ -15,6 +15,9 @@ from wavecast.rendering.errors import MixRenderError, MixRendererUnavailableErro
 # where songs sat at -7 to -11 LUFS and the host clips well below them; the limit leaves room for
 # the encoder's overshoot under a true peak of -1.5 dBTP.
 LOUDNESS_RULE = "loudness-v1"
+# A programme published before this rule keeps being rendered without it: its published chunks are
+# immutable and must still reproduce byte for byte.
+NO_LOUDNESS_RULE = "none"
 TARGET_LUFS = -16.0
 MAX_GAIN_DB = 12.0
 SILENCE_LUFS = -60.0
@@ -110,7 +113,12 @@ def _loudness_filter(gain_db: float) -> str:
     return f"volume={_number(10 ** (gain_db / 20))}," if abs(gain_db) > 1e-6 else ""
 
 
-def build_filter_graph(plan: MixPlan, gains_db: Mapping[str, float] | None = None) -> str:
+def build_filter_graph(
+    plan: MixPlan,
+    gains_db: Mapping[str, float] | None = None,
+    *,
+    limiter: bool = True,
+) -> str:
     """Compile canonical clip timing and gain automation into ffmpeg filters.
 
     ``gains_db`` is the loudness gain of each clip (see ``loudness_gains_db``); the mix is peak-limited.
@@ -136,7 +144,7 @@ def build_filter_graph(plan: MixPlan, gains_db: Mapping[str, float] | None = Non
         "".join(labels)
         + f"amix=inputs={len(plan.clips)}:duration=longest:normalize=0:"
         + "dropout_transition=0,"
-        + f"alimiter=limit={PEAK_LIMIT}:attack=5:release=50:level=disabled,"
+        + (f"alimiter=limit={PEAK_LIMIT}:attack=5:release=50:level=disabled," if limiter else "")
         # Source metadata is integer-second today and some provider assets end
         # a few AAC frames before that declared duration. The canonical
         # programme timeline is authoritative, so fill only a missing tail with
@@ -260,6 +268,7 @@ def _hls_command(
     binary: str,
     *,
     segment_time_seconds: float,
+    loudness: bool = True,
 ) -> tuple[list[str], Path]:
     if segment_time_seconds <= 0:
         raise ValueError("HLS segment duration must be positive")
@@ -269,7 +278,11 @@ def _hls_command(
     command.extend(
         [
             "-filter_complex",
-            build_filter_graph(plan, loudness_gains_db(plan, inputs, binary)),
+            build_filter_graph(
+                plan,
+                loudness_gains_db(plan, inputs, binary) if loudness else None,
+                limiter=loudness,
+            ),
             "-map",
             "[mixout]",
             "-map_metadata",
@@ -359,6 +372,7 @@ def render_mix_hls_prefix(
     segment_time_seconds: float = 6.0,
     ffmpeg_binary: str = "ffmpeg",
     timeout_seconds: float | None = None,
+    loudness: bool = True,
 ) -> HlsRenderResult:
     """Render one continuous canonical prefix and let ffmpeg cut HLS segments.
 
@@ -374,6 +388,7 @@ def render_mix_hls_prefix(
         output_directory,
         ffmpeg_binary,
         segment_time_seconds=segment_time_seconds,
+        loudness=loudness,
     )
     timeout = timeout_seconds or max(30.0, plan.duration_seconds * 2)
     try:

@@ -129,3 +129,19 @@ def test_the_end_of_a_host_clip_is_still_there_after_limiting(tmp_path: Path) ->
 
     assert last_loud == pytest.approx(2.5, abs=0.05)  # the clip ends at 0.5 + 2.0 s, not earlier
     assert render_mix is not None
+
+
+def test_without_the_loudness_rule_the_graph_is_the_one_old_programmes_were_published_with() -> None:
+    """Old programmes keep rendering as they did: no extra gain stage and no limiter."""
+
+    plan = MixPlan(
+        episode_id="e", duration_seconds=3,
+        clips=(clip("a:music", "MUSIC", 0, 3), clip("b:voice", "VOICE", 0, 3)),
+        segment_starts={"a": 0, "b": 0},
+    )
+
+    legacy = build_filter_graph(plan, None, limiter=False)
+
+    assert "alimiter" not in legacy
+    assert legacy.count("volume=") == len(plan.clips)  # only each clip's own automation
+    assert "alimiter" in build_filter_graph(plan, {"a:music": -3.0})
