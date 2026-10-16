@@ -107,7 +107,7 @@ def test_a_complete_reply_is_stored_as_wav_and_priced_from_the_billed_characters
     assert str(uuid.UUID(request.headers["x-api-request-id"])) == request.headers["x-api-request-id"]
     assert body["req_params"]["speaker"] == "zh_male_liufei_uranus_bigtts"
     assert body["req_params"]["audio_params"] == {"format": "pcm", "sample_rate": 24000, "speech_rate": 0}
-    assert asset.duration == 2  # 1.5 s, to the nearest second
+    assert asset.duration == 2  # 1.5 s, rounded up so the timeline never cuts the end of the line
     stored = asyncio.run(rig.storage.get(asset.asset_id))
     with wave.open(io.BytesIO(stored.content)) as wav:
         assert (wav.getframerate(), wav.getnchannels(), wav.getsampwidth()) == (24000, 1, 2)
@@ -118,6 +118,18 @@ def test_a_complete_reply_is_stored_as_wav_and_priced_from_the_billed_characters
     assert event.metadata["estimated_cost_cny"] == pytest.approx(0.0243)  # 81 characters at 3 CNY / 10,000
     assert event.metadata["cost_basis"] == "reported_text_words"
     assert "k-secret" not in json.dumps(event.model_dump(mode="json"))
+
+
+@pytest.mark.parametrize(("seconds", "expected"), [(0.2, 1), (3.4, 4), (4.0, 4), (4.4, 5), (4.6, 5)])
+def test_the_timeline_duration_always_covers_the_whole_clip(tmp_path, seconds, expected) -> None:  # type: ignore[no-untyped-def]
+    """The mix plan plays a narration clip for exactly its recorded seconds: shorter would cut the line."""
+
+    rig = Rig(tmp_path, lambda _r: httpx.Response(200, content=stream(pcm(seconds))))
+
+    asset = run(rig)
+
+    assert asset.duration == expected
+    assert asset.duration >= seconds
 
 
 def test_http_200_without_the_completion_code_is_not_a_success(tmp_path) -> None:  # type: ignore[no-untyped-def]
