@@ -38,6 +38,7 @@ from wavecast.intelligence.models import (
 from wavecast.intelligence.story_material import StoryMaterialService, verify_material
 from wavecast.intelligence.track_research import TrackResearch
 from wavecast.materialization import NarrationMaterializer
+from wavecast.models.dialogue import DialogueDraft, DraftTurn
 from wavecast.models.episode import (
     EpisodeState,
     GenerationMode,
@@ -370,6 +371,42 @@ def test_voicing_keeps_the_hosts_voices_and_the_real_audio_length(tmp_path) -> N
     saved = rig.repository.get(EPISODE_ID)
     restored = [s for s in saved.ordered_segments if isinstance(s, NarrationSegment) and s.dialogue][0]
     assert restored.dialogue_audio == segment.dialogue_audio
+
+
+def test_a_foreign_track_title_survives_authoring_storage_and_voicing(tmp_path) -> None:
+    played = OPENING.model_copy(update={"canonical_title": "夢のあと", "spoken_title": "梦之后"})
+    rig = Rig(tmp_path, first_slot=_slot(FIRST_SLOT, 0, just_played_track=played))
+    text = "刚才的《夢のあと》留下了一个问题，我们沿着它继续听。"
+    draft = _retag(DialogueDraft(turns=[DraftTurn(speaker="A", text=text, fact_refs=["fdt-F1"])]))  # type: ignore[arg-type]
+    rig.writer_llm.queues[DialogueDraft] = [draft]
+
+    rig.author()
+    (authored,) = rig.narration()
+    assert authored.dialogue is not None
+    assert authored.dialogue.turns[0].tts_text == "刚才的梦之后留下了一个问题，我们沿着它继续听。"
+    saved = asyncio.run(rig.artifacts.load(EPISODE_ID, authored.dialogue.block_id))
+    assert saved is not None and saved.block == authored.dialogue
+
+    rig.voice()
+
+    (voiced,) = rig.narration()
+    assert voiced.state is SegmentState.AUDIO_READY and voiced.dialogue_audio is not None
+    assert voiced.narration_text == text
+    assert rig.writer.calls == 0 and rig.writer_llm.calls == [("DialogueDraft", "dialogue_writer")]
+
+
+def test_an_unreadable_tour_name_falls_back_before_audio_not_after_it(tmp_path) -> None:
+    rig = Rig(tmp_path)
+    draft = _retag(DialogueDraft(turns=[DraftTurn(speaker="A", text="她的“雙六エクスタシー”巡演聚集了这些乐手。", fact_refs=["fdt-F1"])]))  # type: ignore[arg-type]
+    rig.writer_llm.queues[DialogueDraft] = [draft]
+
+    rig.author()
+    rig.voice()
+
+    (segment,) = rig.narration()
+    assert segment.state is SegmentState.AUDIO_READY and segment.dialogue is None
+    assert rig.writer.calls == 1
+    assert not rig.ledger().entries
 
 
 def test_a_failing_dialogue_writer_leaves_the_chapter_to_the_writer_and_gives_the_story_back(tmp_path) -> None:

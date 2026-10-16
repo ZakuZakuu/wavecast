@@ -111,6 +111,13 @@ all of these mock until an explicit selector is changed. A live selector is
 fail-closed: missing credentials or a missing music endpoint should block that
 deployment instead of silently calling a mock provider.
 
+When using an Ark Writer with global `mock`, explicitly set
+`WAVECAST_TRACK_RESEARCH_PROVIDER=deepseek` on each live/test API that researches
+tracks. This role otherwise inherits global mock, whose fixture provider cannot
+produce track/background briefs; live search alone does not enable the briefing
+model. The 2026-10-17 production incident produced repeated `TypeError` and empty
+talking points. Keep global mode unchanged and select the role explicitly.
+
 Recommended rollout order after the wiring deploy:
 
 ~~~text

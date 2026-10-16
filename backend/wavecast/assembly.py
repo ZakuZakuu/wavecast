@@ -4088,7 +4088,8 @@ class StagedProgressiveChapterGenerator:
                         chapter.chapter_id,
                         type(error).__name__,
                     )
-        if playable is None:
+        if playable is None or not playable.segments:
+            # A trackless narrative beat can legitimately have nothing to say.
             return None
         generated = _generated_runtime_chapter(
             chapter.chapter_id,

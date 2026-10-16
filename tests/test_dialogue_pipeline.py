@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ from wavecast.models.story_material import StoryMaterial
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.errors import ProviderTimeoutError
 from wavecast.providers.usage import UsageLedger
+from wavecast.spoken_form import KnownTrack, has_unspeakable_script
 from wavecast.stations import StationId
 from wavecast.storage import LocalObjectStorageProvider
 from wavecast.storage.dialogue_artifacts import (
@@ -422,6 +424,43 @@ def test_the_writer_cannot_supply_what_is_spoken() -> None:
     outcome = run(pipeline)
 
     assert outcome.block is not None and all(t.tts_text is None for t in outcome.block.turns)
+
+
+@pytest.mark.parametrize("spoken_title", [None, "同一夜晚"])
+def test_known_foreign_names_get_spoken_forms_without_changing_the_turns_or_facts(
+    tmp_path: Path, spoken_title: str | None
+) -> None:
+    text = "宇多田ヒカル的《同じ夜》把这个问题留在了歌里。"
+    draft = DialogueDraft(turns=[DraftTurn(speaker="A", text=text, fact_refs=[f(1)])])  # type: ignore[arg-type]
+    pipeline, writer = build(draft)
+    slot = replace(SLOT, tracks=(KnownTrack("宇多田ヒカル", "同じ夜", spoken_title),))
+
+    outcome = run(pipeline, slot)
+
+    assert outcome.status is DialogueStatus.READY and outcome.block is not None
+    turn = outcome.block.turns[0]
+    assert turn.text == text and turn.fact_refs == [f(1)]
+    assert turn.tts_text == f"宇多田光的{spoken_title or '这首歌'}把这个问题留在了歌里。"
+    assert not has_unspeakable_script(turn.tts_text)
+    assert writer.calls == [("DialogueDraft", "dialogue_writer")]
+    store = DialogueArtifactStore(LocalObjectStorageProvider(tmp_path))
+    asyncio.run(store.save("ep-foreign", outcome.to_record()))
+    saved = asyncio.run(store.load("ep-foreign", SLOT.block_id))
+    assert saved is not None and saved.block == outcome.block
+
+
+def test_unresolved_foreign_names_leave_the_single_host_fallback_available() -> None:
+    # A tour name is not a known track: do not strip its kana into a misleading partial name.
+    text = "她在2003年的“雙六エクスタシー”巡演中与这些乐手合作。"
+    draft = DialogueDraft(turns=[DraftTurn(speaker="A", text=text, fact_refs=[f(1)])])  # type: ignore[arg-type]
+    pipeline, writer = build(draft)
+
+    outcome = run(pipeline)
+
+    assert outcome.status is DialogueStatus.REJECTED
+    assert outcome.reason == "unspeakable_script" and outcome.block is None
+    assert draft.turns[0].text == text
+    assert writer.calls == [("DialogueDraft", "dialogue_writer")]
 
 
 def test_a_block_that_carries_unchecked_spoken_text_is_refused_by_validation() -> None:

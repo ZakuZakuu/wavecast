@@ -16,6 +16,7 @@ from wavecast.models.story_material import StoryMaterial
 from wavecast.programme_date import programme_date
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
+from wavecast.spoken_form import SPOKEN_NAME_GUIDANCE, KnownTrack, to_spoken_form
 from wavecast.stations import StationId
 
 from .dialogue_budget import DialogueStationBudget
@@ -35,6 +36,7 @@ class DialogueSlot:
     # What the programme's hosts have already said, so a passage neither contradicts
     # nor repeats it; empty at the start of a programme.
     previous_context: str = ""
+    tracks: tuple[KnownTrack, ...] = ()
 
 
 _WRITER_PROMPT = """你为一档真实的音乐电台写一段两位主持人的对话。主持人 A 先开口，B 接话；\
@@ -59,6 +61,10 @@ A、B 要接住对方的话：追问、补一个具体细节、换个理解角�
 只有时间影响理解时才说证据支持的年份，不必给每个事实报日期。无法确定的时序不讲，不能只删「最近」还称「新专辑」。\
 素材确认人物已经离世时，不要描述成他现在仍在创作或开展活动；遗作发行也必须有素材支持。\
 前文只用于衔接，人物状态等事实仍以素材为准。主持人不要编造自己的经历或查资料的过程。
+
+口播名称规则：{speech_guidance}
+相邻歌曲的展示名与口播名（只用于称呼，不是事实证据）：{names}
+没有中文名称的巡演、专辑等，用上下文清楚的中文指代自然讲述，别照抄外文专名。
 
 本节目里主持人此前已经说过的话（原文，按先后顺序；只用来让这一段接得上、不重复、不与它矛盾；事实依据仍然只来自下面的素材）：
 {previous}
@@ -113,6 +119,17 @@ class DialogueWriter:
             if part
         ) or "两首歌之间"
         prompt = _WRITER_PROMPT.format(
+            speech_guidance=SPOKEN_NAME_GUIDANCE,
+            names=json.dumps(
+                [
+                    {
+                        "display": f"{track.artist} - {track.title}",
+                        "spoken": to_spoken_form(f"{track.artist} - {track.title}", [track]).tts_text,
+                    }
+                    for track in slot.tracks
+                ],
+                ensure_ascii=False,
+            ),
             today=programme_date(),
             previous=slot.previous_context or "（无：节目刚开始）",
             max_turn_chars=1500,

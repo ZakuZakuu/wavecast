@@ -27,6 +27,7 @@ from wavecast.intelligence.story_material import StoryMaterialService
 from wavecast.models.dialogue import DialogueAudioSnapshot, DialogueBlock, DialoguePurpose
 from wavecast.models.episode import MusicSegment, NarrationSegment
 from wavecast.orchestration.dialogue_timeline import DialogueSeamService
+from wavecast.spoken_form import KnownTrack
 from wavecast.stations import StationId
 from wavecast.storage.dialogue_artifacts import DialogueArtifactStore
 from wavecast.storage.story_usage import StoryUsageStore
@@ -136,6 +137,11 @@ class DialogueRuntime:
                 else None
             ),
             previous_context=previous_context,
+            tracks=tuple(
+                KnownTrack(track.canonical_artist, track.canonical_title, track.spoken_title)
+                for track in (context.just_played_track, context.upcoming_track)
+                if track is not None
+            ),
         )
         try:
             result = await self._seam.resume(
