@@ -26,7 +26,9 @@ import binascii
 import io
 import json
 import math
+import uuid
 import wave
+from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
 
@@ -166,10 +168,13 @@ class DoubaoTTSProvider:
         self, key: str, spoken: str, rate: int, api_key: str, started: float
     ) -> AudioAsset:
         outcome, stage = "error", "request"
-        billed: int | None = None
         audio_seconds: float | None = None
+        # What this attempt has learned so far.  It lives outside the request so that a receipt
+        # the service already sent (or an id it was given) is not lost when the reply breaks off.
+        reply = _Reply(request_id=str(uuid.uuid4()))
         try:
-            pcm, billed = await self._request(spoken, rate, api_key)
+            await self._request(spoken, rate, api_key, reply)
+            pcm = bytes(reply.pcm)
             stage = "validate"
             audio_seconds = _validated_seconds(pcm)
             stage = "store"
@@ -184,11 +189,11 @@ class DoubaoTTSProvider:
                     "model": self.model,
                     "voice_id": self.voice_id,
                     "speech_rate": rate,
-                    "billed_characters": billed,
+                    "billed_characters": reply.billed,
                 },
             )
             outcome = "ok"
-            return self._asset(key, duration, billed, cache_hit=False, url=url)
+            return self._asset(key, duration, reply.billed, cache_hit=False, url=url)
         except asyncio.CancelledError:
             outcome = "cancelled"
             raise
@@ -201,13 +206,16 @@ class DoubaoTTSProvider:
         finally:
             self._record(
                 started, spoken, rate, outcome, cache_hit=False,
-                billed=billed, stage=stage, audio_seconds=audio_seconds,
+                billed=reply.billed, stage=stage, audio_seconds=audio_seconds,
+                request_id=reply.request_id,
             )
 
-    async def _request(self, spoken: str, rate: int, api_key: str) -> tuple[bytes, int | None]:
+    async def _request(self, spoken: str, rate: int, api_key: str, reply: _Reply) -> None:
         headers = {
             "X-Api-Key": api_key,
             "X-Api-Resource-Id": self.model,
+            # Required by the service; one fresh id per real request (never for a cache hit).
+            "X-Api-Request-Id": reply.request_id,
             "X-Control-Require-Usage-Tokens-Return": "*",
             "Content-Type": "application/json",
         }
@@ -220,16 +228,20 @@ class DoubaoTTSProvider:
             },
         }
         try:
-            response = await self.client.post(
-                DOUBAO_TTS_ENDPOINT, headers=headers, json=body, timeout=self.settings.timeout_seconds
-            )
+            # Read as it arrives: a receipt that came before the reply broke off is kept.
+            async with self.client.stream(
+                "POST", DOUBAO_TTS_ENDPOINT, headers=headers, json=body,
+                timeout=self.settings.timeout_seconds,
+            ) as response:
+                if response.is_error:
+                    raise normalize_http_error(self.provider_name, response.status_code, "")
+                async for text in response.aiter_text():
+                    reply.feed(text)
         except httpx.TimeoutException as error:
             raise ProviderTimeoutError("doubao tts timed out") from error
         except httpx.RequestError as error:
             raise ProviderUnavailableError("doubao tts transport failed") from error
-        if response.is_error:
-            raise normalize_http_error(self.provider_name, response.status_code, "")
-        return _parse_stream(response.content)
+        reply.close()
 
     def _asset(
         self,
@@ -266,6 +278,7 @@ class DoubaoTTSProvider:
         billed: int | None = None,
         stage: str = "cache",
         audio_seconds: float | None = None,
+        request_id: str | None = None,
     ) -> None:
         """The one final event of this attempt.  Counts and outcomes only: no text, no URLs."""
 
@@ -296,6 +309,7 @@ class DoubaoTTSProvider:
             UsageEvent(
                 provider=self.provider_name,
                 operation="tts",
+                request_id=request_id,
                 elapsed_ms=int((perf_counter() - started) * 1000),
                 usage_characters=billed,
                 metadata=metadata,
@@ -326,32 +340,51 @@ def _is_count(value: object) -> bool:
     return math.isfinite(value) and value >= 0 and float(value).is_integer()
 
 
-def _parse_stream(content: bytes) -> tuple[bytes, int | None]:
-    """The PCM and the billed characters of one reply, or an error if it did not complete."""
+@dataclass
+class _Reply:
+    """One reply, read as it arrives: the audio so far, the billed characters, whether it ended.
 
-    try:
-        text = content.decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise ProviderInvalidResponseError("doubao tts returned an unreadable reply") from error
-    decoder = json.JSONDecoder()
-    pcm = bytearray()
+    The billed count is kept the moment the service reports it, so a reply that then ends early
+    or carries an error code still tells the usage event what the service said it billed.  No
+    count reported at all stays ``None`` (unknown); a reported 0 stays 0.
+    """
+
+    request_id: str
+    pcm: bytearray = field(default_factory=bytearray)
     billed: int | None = None
-    finished = False
-    cursor = 0
-    while True:
-        while cursor < len(text) and text[cursor].isspace():
-            cursor += 1
-        if cursor >= len(text):
-            break
-        try:
-            item, cursor = decoder.raw_decode(text, cursor)
-        except ValueError as error:
-            raise ProviderInvalidResponseError("doubao tts returned malformed JSON") from error
+    finished: bool = False
+    _buffer: str = ""
+
+    def feed(self, text: str) -> None:
+        self._buffer += text
+        decoder = json.JSONDecoder()
+        while True:
+            self._buffer = self._buffer.lstrip()
+            if not self._buffer:
+                return
+            try:
+                item, end = decoder.raw_decode(self._buffer)
+            except ValueError:
+                return  # an object that has not fully arrived yet; judged at the end
+            self._buffer = self._buffer[end:]
+            self._take(item)
+
+    def close(self) -> None:
+        """The stream ended: it must have said so, and left nothing half-read."""
+
+        if self._buffer.strip():
+            raise ProviderInvalidResponseError("doubao tts returned malformed JSON")
+        if not self.finished:
+            raise ProviderIncompleteResponseError(
+                "doubao tts reply ended without the completion code"
+            )
+
+    def _take(self, item: object) -> None:
         if not isinstance(item, dict):
             raise ProviderInvalidResponseError("doubao tts returned a non-object chunk")
         usage = item.get("usage")
         if isinstance(usage, dict) and _is_count(usage.get("text_words")):
-            billed = int(usage["text_words"])  # a reported 0 stays 0
+            self.billed = int(usage["text_words"])  # kept before anything below can fail
         code = item.get("code")
         if isinstance(code, bool) or not isinstance(code, int):
             raise ProviderInvalidResponseError("doubao tts returned a chunk without a code")
@@ -359,16 +392,15 @@ def _parse_stream(content: bytes) -> tuple[bytes, int | None]:
             data = item.get("data")
             if isinstance(data, str) and data:
                 try:
-                    pcm.extend(base64.b64decode(data, validate=True))
+                    self.pcm.extend(base64.b64decode(data, validate=True))
                 except (binascii.Error, ValueError) as error:
-                    raise ProviderInvalidResponseError("doubao tts returned invalid audio") from error
+                    raise ProviderInvalidResponseError(
+                        "doubao tts returned invalid audio"
+                    ) from error
         elif code == END_CODE:
-            finished = True
+            self.finished = True
         else:
             raise ProviderInvalidResponseError(f"doubao tts failed with code {code}")
-    if not finished:
-        raise ProviderIncompleteResponseError("doubao tts reply ended without the completion code")
-    return bytes(pcm), billed
 
 
 def _validated_seconds(pcm: bytes) -> float:

@@ -12,6 +12,7 @@ import io
 import json
 import subprocess
 import sys
+import uuid
 import wave
 from pathlib import Path
 from typing import Any
@@ -103,6 +104,7 @@ def test_a_complete_reply_is_stored_as_wav_and_priced_from_the_billed_characters
     assert request.headers["x-api-key"] == "k-secret"
     assert request.headers["x-api-resource-id"] == "seed-tts-2.0"
     assert request.headers["x-control-require-usage-tokens-return"] == "*"
+    assert str(uuid.UUID(request.headers["x-api-request-id"])) == request.headers["x-api-request-id"]
     assert body["req_params"]["speaker"] == "zh_male_liufei_uranus_bigtts"
     assert body["req_params"]["audio_params"] == {"format": "pcm", "sample_rate": 24000, "speech_rate": 0}
     assert asset.duration == 2  # 1.5 s, to the nearest second
@@ -388,3 +390,131 @@ def test_the_opening_hosts_doubao_voice_reaches_the_episode_report(monkeypatch, 
     assert voice.metadata["estimated_cost_cny"] == pytest.approx(0.0156)
     assert report["costs"]["cny"]["priced_calls"] >= 1
     asyncio.run(provider.client.aclose())
+
+
+# --- the receipt survives a reply that breaks off --------------------------------------------------------------------
+
+
+class BreaksOff(httpx.AsyncByteStream):
+    """A reply that delivers some lines, then ends (or fails, or hangs) instead of finishing."""
+
+    def __init__(self, first: bytes, *, then: Exception | None = None, hang: bool = False) -> None:
+        self.first, self.then, self.hang = first, then, hang
+
+    async def __aiter__(self):  # type: ignore[no-untyped-def]
+        yield self.first
+        if self.hang:
+            await asyncio.sleep(30)
+        if self.then is not None:
+            raise self.then
+
+
+def audio_line(billed: int | None) -> bytes:
+    item: dict[str, Any] = {"code": 0, "message": "", "data": base64.b64encode(pcm(1.0)).decode()}
+    if billed is not None:
+        item["usage"] = {"text_words": billed}
+    return (json.dumps(item) + "\n").encode()
+
+
+def test_every_real_request_has_its_own_request_id_and_the_event_carries_it(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    rig = Rig(tmp_path, lambda _r: httpx.Response(200, content=stream(pcm(1.0))))
+
+    async def three() -> None:
+        await rig.provider.synthesize("第一句话。", cues=[])
+        await rig.provider.synthesize("第二句话。", cues=[])
+        await rig.provider.synthesize("第一句话。", cues=[])  # a cache hit: no request, no id
+        await rig.client.aclose()
+
+    asyncio.run(three())
+
+    ids = [r.headers["x-api-request-id"] for r in rig.requests]
+    assert len(ids) == 2 and len(set(ids)) == 2
+    first, second, cached = rig.events()
+    assert (first.request_id, second.request_id) == tuple(ids)
+    assert cached.request_id is None and cached.metadata["cache_hit"] is True
+
+
+@pytest.mark.parametrize(
+    ("label", "stream_after_receipt", "error"),
+    [
+        ("ends without the completion code", {}, ProviderIncompleteResponseError),
+        ("an error code follows", {"then_line": {"code": 45000010, "message": "boom"}}, ProviderInvalidResponseError),
+        ("the connection drops", {"then": httpx.ReadError("dropped")}, ProviderUnavailableError),
+        ("the reply times out", {"then": httpx.ReadTimeout("slow")}, ProviderTimeoutError),
+    ],
+)
+def test_a_receipt_already_received_is_kept_when_the_reply_then_fails(  # type: ignore[no-untyped-def]
+    tmp_path, label, stream_after_receipt, error
+) -> None:
+    first = audio_line(81)
+    if "then_line" in stream_after_receipt:
+        first += (json.dumps(stream_after_receipt["then_line"]) + "\n").encode()
+    rig = Rig(
+        tmp_path,
+        lambda _r: httpx.Response(200, stream=BreaksOff(first, then=stream_after_receipt.get("then"))),
+    )
+
+    with pytest.raises(error):
+        run(rig)
+
+    assert len(rig.requests) == 1  # no retry
+    assert asyncio.run(rig.storage.get(rig.provider.cache_key(TEXT, []))) is None  # no audio stored
+    (event,) = rig.events()  # still exactly one final event
+    assert event.metadata["outcome"] == error.__name__, label
+    assert event.metadata["billed_characters"] == 81 and event.usage_characters == 81
+    assert event.metadata["estimated_cost_cny"] == pytest.approx(0.0243)
+    assert event.metadata["cost_basis"] == "reported_text_words"
+
+
+def test_a_reported_zero_survives_a_later_failure_and_no_receipt_stays_unknown(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    zero = Rig(tmp_path / "a", lambda _r: httpx.Response(200, stream=BreaksOff(audio_line(0), then=httpx.ReadError("x"))))
+    none = Rig(tmp_path / "b", lambda _r: httpx.Response(200, stream=BreaksOff(audio_line(None), then=httpx.ReadError("x"))))
+
+    for rig in (zero, none):
+        with pytest.raises(ProviderUnavailableError):
+            run(rig)
+
+    (zero_event,) = zero.events()
+    (none_event,) = none.events()
+    assert zero_event.metadata["billed_characters"] == 0 and zero_event.metadata["estimated_cost_cny"] == 0.0
+    assert none_event.metadata["billed_characters"] is None and none_event.metadata["estimated_cost_cny"] is None
+    assert none_event.metadata["cost_basis"] == "usage_missing"
+
+
+def test_a_cancellation_after_the_receipt_keeps_it_and_still_propagates(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    rig = Rig(tmp_path, lambda _r: httpx.Response(200, stream=BreaksOff(audio_line(81), hang=True)))
+
+    async def scenario() -> bool:
+        task = asyncio.create_task(rig.provider.synthesize(TEXT, cues=[]))
+        await asyncio.sleep(0.2)  # the first lines have been read; the reply now hangs
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return True
+        finally:
+            await rig.client.aclose()
+        return False
+
+    assert asyncio.run(scenario()) is True
+    (event,) = rig.events()
+    assert event.metadata["outcome"] == "cancelled"
+    assert event.metadata["billed_characters"] == 81
+    assert event.metadata["estimated_cost_cny"] == pytest.approx(0.0243)
+
+
+def test_a_reply_split_anywhere_is_read_the_same(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    whole = stream(pcm(1.0), pcm(0.5))
+
+    class Dribble(httpx.AsyncByteStream):
+        async def __aiter__(self):  # type: ignore[no-untyped-def]
+            for index in range(0, len(whole), 7):  # cuts through objects and through multi-byte text
+                yield whole[index : index + 7]
+
+    rig = Rig(tmp_path, lambda _r: httpx.Response(200, stream=Dribble()))
+
+    asset = run(rig)
+
+    assert asset.duration == 2
+    (event,) = rig.events()
+    assert event.metadata["outcome"] == "ok" and event.metadata["billed_characters"] == 81
