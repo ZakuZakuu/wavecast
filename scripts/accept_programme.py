@@ -51,6 +51,7 @@ OVERALL_TIMEOUT_SECONDS = float(os.environ.get("ACCEPT_TIMEOUT_SECONDS", 100 * 6
 RESERVE_EXA_USD = 0.015
 RESERVE_DOUBAO_CNY = 0.6
 RESERVE_MINIMAX_CNY = 0.05
+RESERVE_DOUBAO_TTS_CNY = 0.05
 MAX_DEEPSEEK_CALLS = 150
 
 
@@ -78,7 +79,7 @@ class Meter:
         price = metadata.get("estimated_cost_cny")
         if isinstance(price, (int, float)) and not isinstance(price, bool):
             self.cny += float(price)
-        elif event.provider in {"ark", "doubao_podcast"}:
+        elif event.provider in {"ark", "doubao_podcast", "doubao_tts"}:
             self.unknown_cost_events += 1
         if event.provider == "exa":
             if event.actual_cost_usd is not None:
@@ -135,6 +136,7 @@ def install_guards(meter: Meter, *, live: bool) -> None:
     from wavecast.providers.config import ProviderSettings
     from wavecast.providers.deepseek import DeepSeekLLMProvider
     from wavecast.providers.doubao_podcast import DoubaoPodcastSpeechProvider
+    from wavecast.providers.doubao_tts import DoubaoTTSProvider
     from wavecast.providers.minimax import MiniMaxTTSProvider
     from wavecast.providers.profiles import InferenceProfile
     from wavecast.providers.search import ExaSearchProvider
@@ -196,6 +198,14 @@ def install_guards(meter: Meter, *, live: bool) -> None:
             return await original_speech(self, request)
 
     DoubaoPodcastSpeechProvider.synthesize_dialogue = speech  # type: ignore[method-assign]
+
+    original_doubao_tts = DoubaoTTSProvider.synthesize
+
+    async def doubao_tts(self: Any, *args: Any, **kwargs: Any) -> Any:
+        async with meter.permit("doubao_tts", cny=RESERVE_DOUBAO_TTS_CNY):
+            return await original_doubao_tts(self, *args, **kwargs)
+
+    DoubaoTTSProvider.synthesize = doubao_tts  # type: ignore[method-assign]
 
     original_minimax = MiniMaxTTSProvider.synthesize
 

@@ -113,21 +113,19 @@ from wavecast.providers.contracts import (
 )
 from wavecast.providers.dialogue_voicing import build_dialogue_voicing
 from wavecast.providers.errors import (
-    ProviderConfigurationError,
     ProviderError,
     ProviderSchemaValidationError,
 )
 from wavecast.providers.factory import build_music_registry
 from wavecast.providers.fakes import (
     FakeSearchProvider,
-    MockTTSProvider,
 )
 from wavecast.providers.lastfm import LastFmArtistHints
 from wavecast.providers.llm_factory import build_llm
-from wavecast.providers.minimax import MiniMaxTTSProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.search import ExaSearchProvider, TavilySearchProvider
+from wavecast.providers.tts_factory import build_tts_provider
 from wavecast.providers.usage import (
     UsageLedger,
     UsageTotals,
@@ -4606,13 +4604,7 @@ def create_episode_assembly_service(
                 live_settings, ledger=ledger, search_depth="advanced"
             )
 
-    if settings.resolved_tts_provider == "mock":
-        tts: TTSProvider = MockTTSProvider(storage)
-    else:
-        live_settings.credential_for("minimax")
-        if not live_settings.minimax_tts_voice_id:
-            raise ProviderConfigurationError("minimax TTS requires MINIMAX_TTS_VOICE_ID")
-        tts = MiniMaxTTSProvider(live_settings, storage=storage, ledger=ledger)
+    tts: TTSProvider = build_tts_provider(settings, storage, ledger)
 
     research_label = "exa" if settings.search_backend == "exa" else "tavily"
     fast_research = FastResearchService(

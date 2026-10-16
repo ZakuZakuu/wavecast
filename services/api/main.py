@@ -91,13 +91,13 @@ from wavecast.providers.dialogue_voicing import build_dialogue_voicing
 from wavecast.providers.doubao_podcast import PodcastTransport
 from wavecast.providers.errors import ProviderConfigurationError, ProviderError
 from wavecast.providers.factory import build_music_registry
-from wavecast.providers.fakes import MockAudioProvider, MockTTSProvider
-from wavecast.providers.minimax import MiniMaxTTSProvider
+from wavecast.providers.fakes import MockAudioProvider
 from wavecast.providers.music_http import SidecarMusicProvider
 from wavecast.providers.netease import NeteaseMusicProvider
 from wavecast.providers.playback import ResolvedPlaybackRequest
 from wavecast.providers.qqmusic import QQMusicProvider
 from wavecast.providers.retrieval import MusicRetrievalService
+from wavecast.providers.tts_factory import build_tts_provider
 from wavecast.providers.usage import (
     UsageEvent,
     UsageLedger,
@@ -474,17 +474,11 @@ repository: EpisodeRepository = (
 
 def _build_tts_provider(
     settings: ProviderSettings, storage: ObjectStorageProvider, ledger: UsageLedger
-) -> MiniMaxTTSProvider | MockTTSProvider:
+) -> TTSProvider:
     """``ledger`` is the shared one the usage endpoint reads; a provider with a ledger of its own
     keeps the opening host's voice out of the episode's report."""
 
-    if settings.resolved_tts_provider == "mock":
-        return MockTTSProvider(storage)
-    live_settings = settings.for_live_capability()
-    live_settings.credential_for("minimax")
-    if not live_settings.minimax_tts_voice_id:
-        raise ProviderConfigurationError("minimax TTS requires MINIMAX_TTS_VOICE_ID")
-    return MiniMaxTTSProvider(live_settings, storage=storage, ledger=ledger)
+    return build_tts_provider(settings, storage, ledger)
 
 
 class BrowserProxyAudioProvider:

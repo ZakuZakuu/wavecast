@@ -38,7 +38,7 @@ ResearchCapabilitySelector = Literal["inherit", "mock", "live"]
 # default), or Exa alone - then Tavily is never asked and its key is not required.
 SearchBackend = Literal["exa_tavily", "exa"]
 MusicCapabilitySelector = Literal["inherit", "mock", "auto", "netease", "qqmusic", "audius"]
-TTSCapabilitySelector = Literal["inherit", "mock", "minimax"]
+TTSCapabilitySelector = Literal["inherit", "mock", "minimax", "doubao"]
 
 
 @dataclass(frozen=True)
@@ -92,6 +92,10 @@ class ProviderSettings:
     # text key) and a resource id; the resource id below is the one the verified run used.
     doubao_podcast_api_key: str | None = field(default=None, repr=False)
     doubao_podcast_resource_id: str = "volc.service_type.10050"
+    # Single-voice speech (host opening, bridges, outro) from Doubao's ordinary TTS, selected with
+    # WAVECAST_TTS_PROVIDER=doubao.  Its own API key, not the podcast one.
+    doubao_tts_api_key: str | None = field(default=None, repr=False)
+    doubao_tts_voice_id: str = "zh_male_liufei_uranus_bigtts"
     # ADR 0022: build a verified-playable catalog pool before the Curator chooses tracks.
     catalog_pool: bool = True
     # Size the route (tracks and chapters) from the requested duration instead of a fixed cap.
@@ -209,7 +213,7 @@ class ProviderSettings:
                 TTSCapabilitySelector,
                 _selector_from_env(
                     "WAVECAST_TTS_PROVIDER",
-                    {"inherit", "mock", "minimax"},
+                    {"inherit", "mock", "minimax", "doubao"},
                 ),
             ),
             dialogue_radio=_flag_from_env("WAVECAST_DIALOGUE_RADIO", default="off"),
@@ -223,6 +227,8 @@ class ProviderSettings:
             doubao_podcast_resource_id=(
                 getenv("DOUBAO_PODCAST_RESOURCE_ID") or "volc.service_type.10050"
             ),
+            doubao_tts_api_key=getenv("DOUBAO_TTS_API_KEY") or None,
+            doubao_tts_voice_id=getenv("DOUBAO_TTS_VOICE_ID") or "zh_male_liufei_uranus_bigtts",
             catalog_pool=_flag_from_env("WAVECAST_CATALOG_POOL", default="on"),
             duration_scaling=_flag_from_env("WAVECAST_DURATION_SCALING", default="on"),
             track_research=_flag_from_env("WAVECAST_TRACK_RESEARCH", default="on"),
@@ -353,7 +359,7 @@ class ProviderSettings:
         return model
 
     @property
-    def resolved_tts_provider(self) -> Literal["mock", "minimax"]:
+    def resolved_tts_provider(self) -> Literal["mock", "minimax", "doubao"]:
         if self.tts_provider == "inherit":
             return "mock" if self.mode == "mock" else "minimax"
         return self.tts_provider
@@ -388,7 +394,7 @@ class ProviderSettings:
         return replace(self, mode="live")
 
     def credential_for(
-        self, provider: Literal["deepseek", "exa", "tavily", "minimax", "ark"]
+        self, provider: Literal["deepseek", "exa", "tavily", "minimax", "ark", "doubao_tts"]
     ) -> str:
         if self.mode != "live":
             raise ProviderConfigurationError(
@@ -400,6 +406,7 @@ class ProviderSettings:
             "tavily": self.tavily_api_key,
             "minimax": self.minimax_api_key,
             "ark": self.ark_api_key,
+            "doubao_tts": self.doubao_tts_api_key,
         }[provider]
         if not key:
             raise ProviderConfigurationError(f"{provider} requires its API key in live mode")
