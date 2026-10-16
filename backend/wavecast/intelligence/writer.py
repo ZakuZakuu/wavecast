@@ -6,13 +6,7 @@ import json
 import logging
 from collections.abc import Sequence
 
-from wavecast.narration_quality import (
-    CHARS_PER_SECOND,
-    FILLER,
-    check_block,
-    rewrite_reasons,
-    years_in,
-)
+from wavecast.narration_quality import CHARS_PER_SECOND, check_block
 from wavecast.presentation import HostMode, host_mode_prompt_guidance
 from wavecast.programme_date import programme_date
 from wavecast.providers.errors import ProviderInvalidResponseError
@@ -20,13 +14,6 @@ from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.spoken_form import KnownTrack, has_unspeakable_script, to_spoken_form
 from wavecast.stations import StationId, compose_signoff
 
-from .fact_support import (
-    FactChecker,
-    FactReport,
-    split_sentences,
-    with_carried_risks,
-    without_flagged_sentences,
-)
 from .fast_start import FastStructuredProvider
 from .models import (
     ChapterPlan,
@@ -39,6 +26,7 @@ from .models import (
     RadioScriptBlockKind,
     resolve_output_language,
 )
+from .time_guard import has_relative_time, invents_experience
 from .track_research import TalkingPoint
 from .voice import voice_instructions, window_for
 
@@ -47,7 +35,7 @@ logger = logging.getLogger(__name__)
 ZH_CN_RADIO_WRITING_GUIDANCE = (
     "For zh-CN narration only, apply these constraints: "
     "说人话：口语、短分句、日常动词，一句话只说一件事，不用论文腔和名词化。"
-    "要具体：用人名、年份、版本、谁演奏，不要堆形容词；证据不足时宁可简单准确，"
+    "要具体：讲一个值得听的细节，不要堆形容词或不必要的日期；证据不足时宁可简单准确，"
     "不要编造听觉或事实细节。区分事实、听感和编辑判断，文化描述具体克制，避免宽泛的族群化概括。"
     "一个 block 只完成一个主要动作，完成就停；时长服从 presentation mode 和 application 给出的 target。"
     "OUTRO 回扣本期 thesis 或前面真实听到的细节；如果上下文提供了已经听过的中间 "
@@ -55,22 +43,14 @@ ZH_CN_RADIO_WRITING_GUIDANCE = (
     "不要为了高级感强造比喻、大词或结论。"
     "口播里不要交代依据或确定程度，例如“不是证据上的结论”“资料显示”“据说”；没有把握的内容直接不说，"
     "或只说你在听感上确实能描述的部分。"
+    "把材料内化成自己的讲述，不逐条报资料；具体评论、引语或有争议的说法保留必要归属。"
+    "个人生活信息只有确实帮助理解音乐时才讲；与本段无关就不用，不要硬凑联系。"
 )
 
 
 class WriterService:
-    def __init__(
-        self,
-        llm: FastStructuredProvider,
-        *,
-        max_revisions: int = 1,
-        fact_checker: FactChecker | None = None,
-    ) -> None:
+    def __init__(self, llm: FastStructuredProvider) -> None:
         self.llm = llm
-        self.fact_checker = fact_checker
-        # Bounded cost: at most this many extra Writer calls when a draft has the problems
-        # narration_quality can detect (stock phrasing, invented memories, too long...).
-        self.max_revisions = max_revisions
 
     async def write(
         self,
@@ -187,7 +167,7 @@ class WriterService:
                 "programme covers, includes, or is heading to them, and never describe the "
                 "programme as a route that reaches them.\n"
             )
-        if track_points is not None:
+        if track_points is not None and not any(slot.is_final for slot in slots):
             if track_points:
                 route_line += (
                     "Verified points about this chapter's track (each one is stated by a source and "
@@ -197,7 +177,8 @@ class WriterService:
                         if point.scope == "track"
                         else (
                             f"(programme background about the person or the period, not about the song "
-                            f"that plays: tell it as a story and never call it 这首歌) {point.text}"
+                            f"that plays: use it only when it helps explain the music or programme topic, "
+                            f"tell why it belongs here, and never call it 这首歌) {point.text}"
                             if point.scope == "background"
                             else f"(about the album or film, not the song) {point.text}"
                         )
@@ -239,8 +220,8 @@ class WriterService:
             "or guess a numeric `track_index`; the application places every block. "
             "Each block must make sense on its own: the listener may not have heard the "
             "host's earlier lines (they can be skipped), so never refer back to something "
-            "said before (‘这种…’, ‘刚才说到的…’, ‘前面提到的…’). The only earlier thing you may "
-            "assume is the track in `just_played_track`. "
+            "said before without briefly grounding it. Use earlier host lines for a continuous "
+            "story, but make this block understandable even if an earlier passage was skipped. "
             "For each returned block, use only a kind listed in exactly one matching "
             "slot's `allowed_block_kinds`; a block kind is the typed placement contract, "
             "not a free editorial hint. Distinguish fact, correlation, causal claim, "
@@ -282,9 +263,16 @@ class WriterService:
             f"{station_line}"
             f"{route_line}"
             f"Programme date: {programme_date()}. Publication dates are in each evidence item's published_at when "
-            "known; the retrieval time is not one. Do not use words that depend on when it is now (最近, 上个月, "
-            "目前, 如今, 新专辑, 最新...): say when something happened, or say nothing about when. A person who has "
-            "died (when the evidence or the previous context says so) is spoken of in the past tense.\n"
+            "known; the retrieval time is not one. A publication date is not an event date. "
+            "Resolve relative time from old sources before writing; never carry 最近, 上个月, 今年, "
+            "目前, 如今 or a claim of a new/latest release into the present. Use a supported event "
+            "year only when it helps the listener; otherwise give a supported historical account, "
+            "or omit the uncertain claim. Removing 'recently' alone does not make 'new album' safe. "
+            "Do not read source names or publication dates aloud unless attribution itself matters. "
+            "When reliable evidence establishes that someone has died, never describe them as "
+            "currently creating or undertaking activities; posthumous releases need their own evidence. "
+            "Earlier narration is for continuity, never a source of facts. Do not invent a host's "
+            "personal memories or research experiences.\n"
             "Previous host lines of this programme, verbatim and in order (the text is for continuing the story "
             "smoothly and for not repeating or contradicting it; every fact you state must still come from the "
             f"evidence below): {previous_committed_context or '(none yet: the programme has just begun)'}\n"
@@ -310,106 +298,11 @@ class WriterService:
                 if title and (artist, title) not in known:
                     known.add((artist, title))
                     known_tracks.append(KnownTrack(artist=artist, title=title))
-        route_titles = [label.split(" - ", 1)[-1] for label in route_tracks]
-        # The tracks this slot is about, and the other songs of the programme: a statement may
-        # not rest on material about one of the latter (the final slot may refer to any).
-        focus_known: list[KnownTrack] = []
-        other_known: list[KnownTrack] = []
-        if slots and not any(slot.is_final for slot in slots):
-            focus_known = [
-                KnownTrack(artist=track.canonical_artist, title=track.canonical_title, spoken_title=track.spoken_title)
-                for slot in slots
-                for track in (slot.chapter_track, slot.just_played_track, slot.upcoming_track)
-                if track is not None
-            ]
-            focus_titles_now = {track.title for track in focus_known}
-            for label in route_tracks:
-                artist, _sep, title = label.partition(" - ")
-                if title and title not in focus_titles_now:
-                    other_known.append(KnownTrack(artist=artist, title=title))
-        supported = _supported_years(scoped, previous_committed_context, known_tracks)
-        # The Writer is not given the played file's length, and a length found in the evidence is
-        # usually the album version's; a wrong length is plain to the listener on the progress
-        # bar.  So no length may be stated.
-        supported_durations: set[str] = set()
+        # One complete telling. Do not cut individual sentences or ask a model to review
+        # and rewrite it: material selection and the first Writer call own its coherence.
         result = await self._attempt(prompt, chapter, evidence, known_tracks, inference_profile)
-        report: FactReport | None = None
-
-        rule_problem_count = [0]  # problems of the last review that a rewrite can fix (not unsupported facts)
-
-        async def review(draft: RadioScript) -> tuple[dict[int, list[str]], FactReport | None]:
-            found = _problems(
-                draft,
-                writer_window,
-                known_tracks,
-                slots,
-                supported_years=supported,
-                supported_durations=supported_durations,
-                unplayed_names=unplayed_artists,
-                route_titles=route_titles,
-                earlier=previous_committed_context,
-            )
-            rule_problem_count[0] = sum(len(item) for item in found.values())
-            fact_report = None
-            if self.fact_checker is not None:
-                fact_report = await self.fact_checker.review(
-                    draft,
-                    scoped,
-                    tracks=known_tracks,
-                    route_labels=route_tracks,
-                    context=previous_committed_context,
-                    known_text=evidence,
-                    focus_tracks=focus_known,
-                    other_tracks=other_known,
-                )
-                for issue in fact_report.issues:
-                    found.setdefault(issue.block, []).append(issue.message)
-            return found, fact_report
-
-        for _ in range(self.max_revisions):
-            if not isinstance(result, RadioScript):
-                break
-            problems, report = await review(result)
-            if not problems:
-                break
-            if rule_problem_count[0] == 0:
-                # Only unsupported facts are left: the evidence does not say them, so another wording
-                # cannot make them supported. The sentences are removed below instead of rewritten.
-                break
-            revised = await self._attempt(
-                _revision_prompt(prompt, result, problems),
-                chapter,
-                evidence,
-                known_tracks,
-                inference_profile,
-            )
-            if not isinstance(revised, RadioScript):
-                break
-            revised_problems, revised_report = await review(revised)
-            logger.info(
-                "writer_revision problems_before=%d problems_after=%d",
-                sum(len(item) for item in problems.values()),
-                sum(len(item) for item in revised_problems.values()),
-            )
-            if sum(len(item) for item in revised_problems.values()) < sum(
-                len(item) for item in problems.values()
-            ):
-                result, report = revised, revised_report
-            elif report is not None and revised_report is not None:
-                # The earlier draft stays, but what the rewrite's check found wrong in the same
-                # claims must not be forgotten (the two checks may disagree about one sentence).
-                report = with_carried_risks(result, report, revised_report)
-            break
-        if report is None and isinstance(result, RadioScript) and self.fact_checker is not None:
-            # No rewrite round ran (none allowed), so the draft has not been checked yet.
-            _problems_unused, report = await review(result)
-        if isinstance(result, RadioScript) and report is not None:
-            result = without_flagged_sentences(result, report, known_tracks)
         if isinstance(result, RadioScript):
-            result = _without_misplaced(result, known_tracks, slots, route_titles)
-            result = _without_filler(result)
             result = _without_identity_conflicts(result, known_tracks, unplayed_artists)
-            result = _without_unspeakable(result, known_tracks)
             if signoff:
                 result = _with_signoff(
                     result, signoff, writer_window, closing=_route_closing(known_tracks, route_tracks)
@@ -435,13 +328,15 @@ class WriterService:
             raise TypeError("writer returned an unexpected output model")
         _validate_evidence_references(result, chapter, evidence)
         if isinstance(result, RadioScript):
+            # Check the authored display / optional speech copy, before spoken-form
+            # conversion removes title delimiters. A song named 《最近比较烦》 is not
+            # a present-day claim; generated TTS copy must not turn it into one.
+            result = _without_invalid_speech(result, known_tracks)
             # Numeric playback placement is application-owned.  Strip any
             # compatibility field emitted by an older/faulty structured model
             # before assembly normalizes the parsed blocks into this slot.
             blocks = []
             for block in result.blocks:
-                # A block the voice cannot read is kept here: the rewrite step can still ask
-                # for it in Chinese, and only what is still unreadable after that is dropped.
                 spoken = to_spoken_form(block.text, known_tracks, tts_text=block.tts_text)
                 blocks.append(
                     block.model_copy(
@@ -463,12 +358,7 @@ class WriterService:
 def _without_identity_conflicts(
     script: RadioScript, tracks: Sequence[KnownTrack], unplayed_names: Sequence[str]
 ) -> RadioScript:
-    """Drop the blocks that still talk about an artist the listener will not hear.
-
-    The one bounded rewrite either fixed it or did not.  A host that names an artist the
-    programme does not play is wrong in a way no style fix repairs, so the block goes and the
-    music plays on; music continuity wins over optional narration.
-    """
+    """Omit a whole block that promises an artist the programme cannot play."""
 
     if not unplayed_names:
         return script
@@ -494,66 +384,33 @@ def _without_identity_conflicts(
     return script.model_copy(update={"blocks": kept})
 
 
-def _without_filler(script: RadioScript) -> RadioScript:
-    """Remove sentences that only say songs sit together or follow each other."""
+def _without_invalid_speech(script: RadioScript, tracks: Sequence[KnownTrack]) -> RadioScript:
+    """Reject an unusable block intact, leaving all other narration untouched.
 
-    blocks = []
-    for block in script.blocks:
-        sentences = split_sentences(block.text)
-        kept = [item for item in sentences if not FILLER.search(item)]
-        if len(kept) == len(sentences):
-            blocks.append(block)
-            continue
-        logger.info("writer_filler_removed kind=%s removed=%d", block.kind.value, len(sentences) - len(kept))
-        text = "".join(kept).strip()
-        if not text:
-            continue
-        blocks.append(block.model_copy(update={"text": text, "tts_text": None}))
-    return script.model_copy(update={"blocks": blocks})
-
-
-def _without_misplaced(
-    script: RadioScript,
-    tracks: Sequence[KnownTrack],
-    slots: Sequence[NarrationSlotContext],
-    route_titles: Sequence[str],
-) -> RadioScript:
-    """Drop the blocks that still talk about another song of the route after the rewrite."""
-
-    if any(slot.is_final for slot in slots):
-        return script
-    focus = [
-        track.canonical_title
-        for slot in slots
-        for track in (slot.just_played_track, slot.upcoming_track)
-        if track is not None
-    ]
-    kept = []
-    for block in script.blocks:
-        check = check_block(
-            block.text, tracks=tracks, route_titles=route_titles, focus_titles=focus
-        )
-        if any(issue.startswith("names_other_track") for issue in check.issues):
-            logger.warning("writer_block_dropped reason=names_other_track kind=%s", block.kind.value)
-            continue
-        kept.append(block)
-    if len(kept) == len(script.blocks):
-        return script
-    return script.model_copy(update={"blocks": kept})
-
-
-def _without_unspeakable(script: RadioScript, tracks: Sequence[KnownTrack]) -> RadioScript:
-    """Drop the blocks the voice still cannot read after the rewrite."""
+    These are deliberately narrow code checks, not a semantic fact checker. Historical
+    accuracy and relevance are primarily the material's and Writer's responsibility.
+    """
 
     kept = []
     for block in script.blocks:
-        if to_spoken_form(block.text, tracks, tts_text=block.tts_text).ok:
-            kept.append(block)
+        spoken = block.tts_text or block.text
+        if block.tts_text == to_spoken_form(block.text, tracks).tts_text:
+            # An explicitly supplied normal pronunciation has the same content as
+            # the display copy, including any literal work titles. Only a distinct
+            # authored override needs its own temporal / experience check.
+            spoken = block.text
+        reason = None
+        if has_relative_time(block.text) or has_relative_time(spoken):
+            reason = "unanchored_time"
+        elif invents_experience(block.text) or invents_experience(spoken):
+            reason = "invented_experience"
+        elif not to_spoken_form(block.text, tracks, tts_text=block.tts_text).ok:
+            reason = "unspeakable_script"
+        if reason:
+            logger.warning("writer_block_dropped reason=%s kind=%s", reason, block.kind.value)
         else:
-            logger.warning("writer_block_dropped reason=unspeakable_script kind=%s", block.kind.value)
-    if len(kept) == len(script.blocks):
-        return script
-    return script.model_copy(update={"blocks": kept})
+            kept.append(block)
+    return script if len(kept) == len(script.blocks) else script.model_copy(update={"blocks": kept})
 
 
 def fallback_closing(
@@ -581,7 +438,7 @@ def fallback_closing(
 def _route_closing(known_tracks: Sequence[KnownTrack], route_tracks: Sequence[str]) -> str:
     """A closing that states only what the application knows: where the route began and ended.
 
-    Used when the Writer's closing did not survive the fact check, so a programme still ends on
+    Used when the Writer could not supply a usable closing, so a programme still ends on
     the route rather than on the station's name alone.  Songs whose names the voice cannot read
     are not named.
     """
@@ -638,88 +495,6 @@ def _with_signoff(
         tts += signoff
     closed = last.model_copy(update={"text": text + signoff, "tts_text": tts})
     return script.model_copy(update={"blocks": [*rest, closed]})
-
-
-def _problems(
-    script: RadioScript,
-    window_seconds: float | None,
-    tracks: Sequence[KnownTrack],
-    slots: Sequence[NarrationSlotContext],
-    *,
-    supported_years: set[str] | None = None,
-    supported_durations: set[str] | None = None,
-    unplayed_names: Sequence[str] = (),
-    route_titles: Sequence[str] = (),
-    earlier: str = "",
-) -> dict[int, list[str]]:
-    """Per-block reasons a rewrite is worth asking for (empty when the draft is fine)."""
-
-    is_final = any(slot.is_final for slot in slots)
-    focus_titles = [
-        track.canonical_title
-        for slot in slots
-        for track in (slot.just_played_track, slot.upcoming_track)
-        if track is not None
-    ]
-    found: dict[int, list[str]] = {}
-    for index, block in enumerate(script.blocks):
-        reasons = rewrite_reasons(
-            check_block(
-                block.text,
-                tts_text=block.tts_text,
-                window_seconds=window_seconds,
-                tracks=tracks,
-                is_final=is_final,
-                supported_years=supported_years,
-                supported_durations=supported_durations,
-                unplayed_names=unplayed_names,
-                route_titles=route_titles,
-                focus_titles=focus_titles,
-                earlier=earlier,
-            )
-        )
-        spoken = to_spoken_form(block.text, tracks, tts_text=block.tts_text)
-        if not spoken.ok:
-            reasons = [
-                *reasons,
-                "The voice cannot read "
-                + ", ".join(spoken.unspeakable[:4])
-                + " (Japanese, Korean or another script). Say it in Chinese: the established "
-                "Chinese name of the film, work or person; for a song title with none, say once "
-                "“这首歌的名字，中文意思是……” if you are sure of the meaning, otherwise just "
-                "这首歌 / 这位艺人; never write kana or hangul.",
-            ]
-        if reasons:
-            found[index] = reasons
-    return found
-
-
-def _supported_years(
-    evidence: Sequence[Evidence], previous_context: str, tracks: Sequence[KnownTrack]
-) -> set[str]:
-    """Years the Writer may state: those in its scoped evidence, earlier narration or titles."""
-
-    texts = [item.claim_or_excerpt for item in evidence]
-    texts.append(previous_context)
-    texts.extend(f"{track.artist} {track.title}" for track in tracks)
-    years: set[str] = set()
-    for text in texts:
-        years |= years_in(text)
-    return years
-
-
-def _revision_prompt(prompt: str, draft: RadioScript, problems: dict[int, list[str]]) -> str:
-    lines = [
-        prompt,
-        "",
-        "Your previous draft had these problems. Rewrite the blocks, keeping the same block "
-        "kinds and the same facts, and fix every problem below. Do not add new problems.",
-    ]
-    for index, reasons in problems.items():
-        block = draft.blocks[index]
-        lines.append(f"Block {index + 1} ({block.kind.value}): {block.text}")
-        lines.extend(f"  - {reason}" for reason in reasons)
-    return "\n".join(lines)
 
 
 def _known_tracks(slot_contexts: Sequence[NarrationSlotContext] | None) -> list[KnownTrack]:

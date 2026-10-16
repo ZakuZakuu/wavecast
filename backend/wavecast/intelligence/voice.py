@@ -91,8 +91,9 @@ STATION_VOICES: dict[StationId, StationVoice] = {
     ),
     StationId.PORTRAIT: StationVoice(
         StationId.PORTRAIT,
-        "Steady and exact, like a well-written profile: dates, albums, turning points, who "
-        "worked with whom. No flattery, no biography dump; one point per block.",
+        "Warm and thoughtful, like someone sharing an artist's music: creative choices, "
+        "collaborations and turning points. Dates only when they help the story, no biography "
+        "dump; develop one point per block.",
         {Move.FACT: 5, Move.LINK: 3, Move.REASON: 2, Move.LISTEN: 1},
         (
             "一九九八年她出了第二张专辑，这首是里面的主打。那一年她刚搬去台北。",
@@ -211,8 +212,7 @@ def voice_instructions(
 ) -> str:
     """The voice section of the Writer prompt for one block.
 
-    ``has_points``: the application hands the Writer checked points for the last song, so the
-    closing may tell one of them before it gathers the route (every sentence is still checked).
+    ``has_points`` is retained for callers; a closing still recaps only what was played.
     """
 
     voice = _voice(station)
@@ -269,8 +269,9 @@ def voice_instructions(
         "sentences, everyday verbs, one idea per sentence, ordinary connectives (其实, 不过, "
         "因为, 所以) used sparingly. Concrete things (names, years, versions, who played) "
         "instead of adjectives. Every factual statement must come from the evidence or the "
-        "track names; do not describe tempo, mood, volume or instrumentation unless the "
-        "evidence says so. Do not claim personal memories or feelings you cannot have. Do not "
+        "track names. Listening impressions and editorial interpretations may develop that "
+        "material naturally; do not invent instruments, musical techniques, credits or an "
+        "artist's intentions. Do not claim personal memories you cannot have. Do not "
         "talk about evidence or certainty. If the evidence is about another artist's song with "
         "the same title, or about a different work, leave it out: it is not about what is playing."
     )

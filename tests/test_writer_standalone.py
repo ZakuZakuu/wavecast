@@ -15,5 +15,6 @@ def test_the_writer_is_told_earlier_host_lines_may_not_have_been_heard() -> None
 
     prompt = llm.prompts[0]
     assert "Each block must make sense on its own" in prompt
-    assert "never refer back to something said before" in prompt
+    assert "Use earlier host lines for a continuous story" in prompt
+    assert "understandable even if an earlier passage was skipped" in prompt
     assert "just_played_track" in prompt  # the one thing it may assume was heard

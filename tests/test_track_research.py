@@ -203,6 +203,39 @@ def test_points_survive_only_when_the_quote_is_in_the_source() -> None:
     assert invented == [] and wrong_role == [] and wrong_source == [] and other_work == []
 
 
+def test_old_relative_times_are_removed_from_material_before_writing_not_cut_from_scripts() -> None:
+    source = "2006年他发行了新专辑。报道说，他上个月发行了新专辑。"
+    points = [
+        _point("他上个月发行了新专辑", "e", "他上个月发行了新专辑"),
+        _point("2006年他发行了新专辑", "e", "2006年他发行了新专辑"),
+    ]
+
+    assert [p.text for p in verified_points(points, {"e": source})] == ["2006年他发行了新专辑"]
+    assert [p.text for p in verified_stories(points, {"e": source})] == ["2006年他发行了新专辑"]
+
+
+def test_track_and_background_briefing_receive_publication_dates_without_changing_quotes() -> None:
+    class Capture:
+        def __init__(self):
+            self.prompts = []
+
+        async def structured(self, prompt, output_type, **_kwargs):
+            self.prompts.append(prompt)
+            return output_type()
+
+    llm = Capture()
+    service = _service(Searcher(), llm)  # type: ignore[arg-type]
+    source = _evidence("dated", BIO).model_copy(update={"published_at": "2025-03-10"})
+
+    asyncio.run(service._brief(SUMMER, "久石让", [source]))
+    asyncio.run(service._stories("久石让", ["久石让"], [source]))
+
+    assert len(llm.prompts) == 2
+    for prompt in llm.prompts:
+        assert "[evidence-dated] (published 2025-03-10): " + BIO in prompt
+        assert "Programme date:" in prompt
+
+
 def test_a_japanese_source_line_backs_a_chinese_credit_when_the_page_is_about_the_work() -> None:
     line = "覚 和歌子が作詞、木村 弓が作曲および歌唱を担当し、編曲も木村 弓による。"
     sources = {"evidence-j": f"いつも何度でも - Wikipedia\n{line}"}
@@ -367,7 +400,8 @@ def test_with_no_verified_point_the_closing_is_still_written() -> None:
         )
     )
 
-    assert len(llm.prompts) == 1 and "state no facts about the song" in llm.prompts[0]
+    assert len(llm.prompts) == 1
+    assert "a closing introduces no new fact" in llm.prompts[0]
     assert result.blocks
 
 

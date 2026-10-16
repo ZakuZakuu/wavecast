@@ -30,6 +30,7 @@ from hashlib import sha1
 from pydantic import BaseModel, Field, field_validator
 
 from wavecast.narration_quality import durations_in, years_in
+from wavecast.programme_date import programme_date
 from wavecast.providers.contracts import SearchProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.stations import StationId
@@ -55,6 +56,7 @@ from .research import (
     canonicalize_url,
     normalize_results,
 )
+from .time_guard import has_relative_time
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +216,11 @@ your own knowledge. If the sources do not say it, it is not a point.
 Recording: “{title}”{zh}{album}. The catalog credits {artist} as performer on this recording; that is a \
 performer credit, not a statement about who composed, wrote or arranged the piece.
 Programme subject: {subject}.
+Programme date: {today}. Source publication dates, when known, are metadata, not event dates.
+Resolve old relative times into supported historical statements. Do not call an old release \
+"new" or "latest" today; if its timing cannot be established, leave that claim out. Dates are \
+not required in a point. Source attribution belongs in source/quote, not in the spoken statement, \
+except where a specific opinion or quotation needs attribution.
 
 Sources (id: text):
 {sources}
@@ -370,8 +377,9 @@ class TrackResearchService:
             return []
         sources = {item.id: item.claim_or_excerpt[:_STORY_SOURCE_CHARS] for item in general}
         prompt = _STORY_PROMPT.format(
+            today=programme_date(),
             subject=subject or "(none)",
-            sources="\n".join(f"[{source_id}]: {text}" for source_id, text in sources.items()),
+            sources=_source_lines(general, sources),
             limit=_MAX_STORIES,
         )
         try:
@@ -435,12 +443,13 @@ class TrackResearchService:
         sources = {item.id: item.claim_or_excerpt for item in chosen}
         leads = {item.id: f"{item.source_title}\n{item.claim_or_excerpt[:150]}" for item in chosen}
         prompt = _PROMPT.format(
+            today=programme_date(),
             title=track.canonical_title,
             zh=f" (Chinese title in the catalog: {track.spoken_title})" if track.spoken_title else "",
             album=f", on the album “{track.album}”" if track.album else "",
             artist=track.canonical_artist,
             subject=subject or "(none)",
-            sources="\n".join(f"[{source_id}]: {text}" for source_id, text in sources.items()),
+            sources=_source_lines(chosen, sources),
             limit=_MAX_POINTS,
         )
         try:
@@ -463,15 +472,29 @@ class _Stories(BaseModel):
     stories: list[_RawPoint] = Field(default_factory=list, max_length=6)
 
 
+def _source_lines(evidence: Sequence[Evidence], sources: dict[str, str]) -> str:
+    return "\n".join(
+        f"[{item.id}]{f' (published {item.published_at})' if item.published_at else ''}: {sources[item.id]}"
+        for item in evidence
+    )
+
+
 _STORY_PROMPT = """You prepare background stories for a radio programme about: {subject}. Use ONLY the \
 sources below; never use your own knowledge.
+Programme date: {today}. Publication dates are metadata, not event dates. Resolve old relative \
+times into supported historical statements; never describe an old release or activity as recent \
+today. If the timing cannot be established, leave that claim out. Do not narrate source names or \
+publication dates unless attribution itself matters.
 
 Sources (id: text):
 {sources}
 
 Give up to {limit} DIFFERENT stories a host could tell in two or three short sentences about the \
 person or the period: something that happened to them, a working relationship, a turning point, how a \
-famous collaboration or work came about. Each story is about a different event (not the same event in \
+famous collaboration or work came about. Every story must help explain the person's music or the \
+programme's musical question. Exclude private-life trivia, romantic or religious views unless \
+the evidence directly connects them to the music; do not invent that connection. It is fine to \
+return no stories. Each story is about a different event (not the same event in \
 other words, and not three facts about one moment) and, where possible, comes from a different source. \
 Each is one self-contained statement in Simplified Chinese (at most 120 characters) with the source id \
 and a quote copied word for word, in the source's own script and without translating (at most 80 \
@@ -502,7 +525,7 @@ def verified_stories(
         source = sources.get(source_id, "")
         if not text or not source or not quote_in_source(quote, source):
             continue
-        if _ABOUT_A_SONG.search(text) or _CATALOGUE_TRIVIA.search(text) or durations_in(text):
+        if _ABOUT_A_SONG.search(text) or _CATALOGUE_TRIVIA.search(text) or durations_in(text) or has_relative_time(text):
             continue
         roles = roles_in(text)
         if roles and not quote_backs_roles(quote, roles):
@@ -554,7 +577,7 @@ def verified_points(
         source = sources.get(source_id, "")
         if not text or not source or not quote_in_source(quote, source):
             continue
-        if _CATALOGUE_TRIVIA.search(text) or durations_in(text):
+        if _CATALOGUE_TRIVIA.search(text) or durations_in(text) or has_relative_time(text):
             continue  # track numbers and running times are catalogue data, not a story
         roles = roles_in(text)
         if roles and not quote_backs_roles(quote, roles):

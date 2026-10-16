@@ -86,11 +86,23 @@ recording or release it holds for, or null when it is not tied to one.
 - do_not_infer: relations or claims the evidence does NOT establish and the hosts must not make.
 - backstage: housekeeping that must never be spoken (catalogue numbers, source remarks).
 
+Select material that helps the listener understand the music, the programme subject or the \
+connection to the focus recordings. Prefer a creative decision, a collaboration, a turning point \
+or a concrete musical detail. Leave out personal-life trivia with no clear musical relevance. \
+Each fact should add something distinct; do not collect several articles saying a song is a classic.
+Write statements as the content itself, in natural Simplified Chinese, not as a digest of articles. \
+Source identity and publication dates belong in backstage, not in statements. Retain attribution \
+when it matters: an artist's own words, a critic's particular interpretation or a disputed claim \
+must not become an undisputed fact. Ordinary established facts need no "an article says" wrapper.
+
 Programme date: {today}. An evidence item may carry its publication date in parentheses; the time a page \
-was fetched is not a publication date. No statement may use words that depend on when it is said \
-(最近, 近日, 上个月, 目前, 如今, 今年, 新专辑, 新发行, 最新, "recently", "last month"...). When the quote gives a \
-relative time and the item shows a publication date, write the absolute date; otherwise state the fact \
-without any time wording, or leave the fact out. Whether the subject is alive or has died is only what \
+was fetched is not a publication date. Resolve relative time (最近, 上个月, 今年, "last month"...) \
+against the source's publication date, not today's date. Write a supported historical statement \
+without implying present-day recency, or leave the fact out. Historical wording such as \
+"2006年发行的新专辑" is fine when the evidence supports it. Do not merely \
+delete "recently" while retaining "new" or "latest". A source's publication date is not the date \
+of the event it describes; use an event date only when supported, and only if it helps the story. \
+Whether the subject is alive or has died is only what \
 the evidence says; if it does not say, do not state it either way, and speak of a person who has died in \
 the past tense.
 

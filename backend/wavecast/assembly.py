@@ -37,7 +37,6 @@ from wavecast.coverage import (
 from wavecast.intelligence.background import BackgroundIntelligencePipeline
 from wavecast.intelligence.curation import CuratorContractError, CuratorService
 from wavecast.intelligence.dialogue_pipeline import create_dialogue_stack
-from wavecast.intelligence.fact_support import FactChecker
 from wavecast.intelligence.fast_start import FastPathCoordinator, FastPathResult, FastStartPlanner
 from wavecast.intelligence.models import (
     ChapterPlan,
@@ -4575,13 +4574,13 @@ def create_episode_assembly_service(
     mock_llm = MockEpisodeAssemblyLLM()
 
     # One model per role.  Unconfigured roles keep the model they always had (see
-    # ``ProviderSettings.resolved_llm``); an Ark Writer does not change the fact checker or the
-    # per-track research.
+    # ``ProviderSettings.resolved_llm``); an Ark Writer does not change per-track research.
+    # The legacy fact_check selector is accepted for configuration compatibility, but no
+    # post-writing review client is built.
     fast_llm = build_llm(settings, "fast_start", ledger=ledger, mock=mock_llm)
     research_llm = build_llm(settings, "research_plan", ledger=ledger, mock=mock_llm)
     curator_llm = build_llm(settings, "curator", ledger=ledger, mock=mock_llm)
     writer_llm = build_llm(settings, "writer", ledger=ledger, mock=mock_llm)
-    fact_check_llm = build_llm(settings, "fact_check", ledger=ledger, mock=mock_llm)
     track_research_llm = (
         build_llm(settings, "track_research", ledger=ledger, mock=mock_llm)
         if settings.track_research and settings.resolved_research_provider != "mock"
@@ -4627,7 +4626,7 @@ def create_episode_assembly_service(
     background_pipeline = BackgroundIntelligencePipeline(
         research=background_research,
         curator=CuratorService(curator_llm),
-        writer=WriterService(writer_llm, fact_checker=FactChecker(fact_check_llm)),
+        writer=WriterService(writer_llm),
     )
     retrieval = MusicRetrievalService(music_registry)
 
@@ -4687,7 +4686,6 @@ def create_episode_assembly_service(
             research_llm,
             curator_llm,
             writer_llm,
-            fact_check_llm,
             track_research_llm,
             discovery,
             research,
