@@ -328,6 +328,8 @@ class WriterService:
         result = await self._attempt(prompt, chapter, evidence, known_tracks, inference_profile)
         report: FactReport | None = None
 
+        rule_problem_count = [0]  # problems of the last review that a rewrite can fix (not unsupported facts)
+
         async def review(draft: RadioScript) -> tuple[dict[int, list[str]], FactReport | None]:
             found = _problems(
                 draft,
@@ -340,6 +342,7 @@ class WriterService:
                 route_titles=route_titles,
                 earlier=previous_committed_context,
             )
+            rule_problem_count[0] = sum(len(item) for item in found.values())
             fact_report = None
             if self.fact_checker is not None:
                 fact_report = await self.fact_checker.review(
@@ -361,6 +364,10 @@ class WriterService:
                 break
             problems, report = await review(result)
             if not problems:
+                break
+            if rule_problem_count[0] == 0:
+                # Only unsupported facts are left: the evidence does not say them, so another wording
+                # cannot make them supported. The sentences are removed below instead of rewritten.
                 break
             revised = await self._attempt(
                 _revision_prompt(prompt, result, problems),

@@ -411,23 +411,9 @@ GOOD = "听听这段钢琴和人声。"
 BAD = "这首歌作曲是久石让，唱的是木村弓。"
 
 
-def test_an_unsupported_sentence_is_sent_back_once_and_the_rewrite_is_used() -> None:
-    llm = Dispatch(
-        [_script(f"{BAD}{GOOD}"), _script(f"久石让的电影配乐主要是与宫崎骏合作的。{GOOD}")],
-        [
-            FactCheck(findings=[_finding(0, "insufficient")]),
-            FactCheck(findings=[_finding(0, "supported", "e1", "久石让的电影配乐主要是与宫崎骏和北野武两位导演")]),
-        ],
-    )
+def test_an_unsupported_sentence_is_removed_without_asking_for_a_rewrite() -> None:
+    """The evidence does not say it, so another wording cannot make it supported: it is cut."""
 
-    result = _write(llm)
-
-    assert len(llm.prompts) == 2 and len(llm.check_prompts) == 2
-    assert "is not supported by the evidence" in llm.prompts[1]
-    assert [block.text for block in result.blocks] == [f"久石让的电影配乐主要是与宫崎骏合作的。{GOOD}"]
-
-
-def test_a_sentence_still_unsupported_after_the_rewrite_is_left_out_not_the_block() -> None:
     llm = Dispatch(
         [_script(f"{BAD}{GOOD}")],
         [FactCheck(findings=[_finding(0, "insufficient")])],
@@ -435,7 +421,19 @@ def test_a_sentence_still_unsupported_after_the_rewrite_is_left_out_not_the_bloc
 
     result = _write(llm)
 
-    assert len(llm.prompts) == 2
+    assert len(llm.prompts) == 1 and len(llm.check_prompts) == 1  # no rewrite round, no second check
+    assert [block.text for block in result.blocks] == [GOOD]
+
+
+def test_an_unsupported_sentence_is_left_out_not_the_block() -> None:
+    llm = Dispatch(
+        [_script(f"{BAD}{GOOD}")],
+        [FactCheck(findings=[_finding(0, "insufficient")])],
+    )
+
+    result = _write(llm)
+
+    assert len(llm.prompts) == 1
     assert [block.text for block in result.blocks] == [GOOD]
     assert "久石让" not in (result.blocks[0].tts_text or "")
 
@@ -731,26 +729,6 @@ def test_a_sentence_after_a_removed_one_that_starts_with_this_piece_goes_with_it
 KIKI_FIRST = "琪琪从火车顶飞向城市的那个场景里，响起的就是它。"
 KIKI_REWRITTEN = "琪琪从火车顶飞向城市的那一段，用的就是它。"
 SOURCE_QUOTE = "久石让的电影配乐主要是与宫崎骏和北野武两位导演"
-
-
-def test_a_claim_the_rejected_rewrite_found_contradicted_is_not_kept_from_the_old_draft() -> None:
-    # Draft 1: one unsupported sentence + a scene claim the first check accepted.  The rewrite fixes the
-    # first but its check finds the scene claim contradicted: equal problem counts, so draft 1 stays.
-    llm = Dispatch(
-        [
-            _script(f"{BAD}{KIKI_FIRST}{GOOD}"),
-            _script(f"{KIKI_REWRITTEN}{GOOD}"),
-        ],
-        [
-            FactCheck(findings=[_finding(0, "insufficient"), _finding(1, "supported", "e1", SOURCE_QUOTE)]),
-            FactCheck(findings=[_finding(0, "contradicted", "e1", SOURCE_QUOTE)]),
-        ],
-    )
-
-    result = _write(llm)
-
-    assert len(llm.prompts) == 2
-    assert [block.text for block in result.blocks] == [GOOD]
 
 
 def test_what_the_rewrite_found_is_matched_by_what_is_said_not_by_sentence_number() -> None:

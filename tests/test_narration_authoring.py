@@ -383,3 +383,74 @@ def test_writer_degradation_marks_chapter_authored_without_crashing() -> None:
     ]
     assert [segment.id for segment in chapter] == ["chapter-2:music:0"]
     assert chapter[0].state is SegmentState.AUDIO_READY
+
+
+def _pending_episode() -> tuple[InMemoryEpisodeRepository, LiveEpisode]:
+    repository = InMemoryEpisodeRepository()
+    episode = _episode()
+    episode.segments.insert(
+        1,
+        NarrationSegment(
+            id="chapter-2:narration:pending",
+            chapter_id="chapter-2",
+            order=1,
+            state=SegmentState.PLANNED,
+            planned_duration_seconds=8,
+            title="Pending host bridge",
+        ),
+    )
+    episode.segment("chapter-2:music:0").order = 2
+    episode.segment("chapter-3:music:0").order = 3
+    episode.progressive_session = ProgressiveAssemblySession.model_construct(
+        narration_authored_chapter_ids=[],
+        chapters=[
+            ProgressiveAssemblyChapter.model_construct(
+                chapter_id="chapter-2",
+                chapter=ChapterPlan.model_construct(track=None),
+                resolved_track=None,
+                slot_contexts=[NarrationSlotContext.model_construct()],
+                target_narration_seconds=8,
+            )
+        ],
+    )
+    repository.save(episode)
+    return repository, episode
+
+
+class _SlowCountingRuntime:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def author_narration(self, episode: LiveEpisode, chapter_id: str) -> GeneratedChapter | None:
+        del episode, chapter_id
+        self.calls += 1
+        await asyncio.sleep(0.05)
+        return None
+
+
+def test_two_authoring_runs_for_the_same_chapter_write_it_once() -> None:
+    """The generation job and the detached enrichment both author the next chapter (seen live)."""
+
+    repository, episode = _pending_episode()
+    runtime = _SlowCountingRuntime()
+    host = _Host(repository)
+    host.progressive_runtime = runtime  # type: ignore[assignment]
+
+    async def both() -> None:
+        await asyncio.gather(
+            author_pending_narration(host, episode.id, max_chapters=1),
+            author_pending_narration(host, episode.id, max_chapters=1),
+        )
+
+    asyncio.run(both())
+
+    assert runtime.calls == 1
+
+
+def test_a_failed_authoring_run_releases_the_chapter_for_the_next_one() -> None:
+    from wavecast.orchestration import narration_enrichment
+
+    repository, episode = _pending_episode()
+    asyncio.run(author_pending_narration(_ExplodingHost(repository), episode.id, max_chapters=1))
+
+    assert narration_enrichment._AUTHORING_IN_FLIGHT == set()

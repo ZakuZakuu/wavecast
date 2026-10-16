@@ -32,6 +32,10 @@ class NarrationAuthoringHost(Protocol):
     now: Callable[[], datetime]
 
 
+# (episode id, chapter id) of the chapters being authored right now in this process.
+_AUTHORING_IN_FLIGHT: set[tuple[str, str]] = set()
+
+
 async def author_pending_narration(
     host: NarrationAuthoringHost,
     episode_id: str,
@@ -121,6 +125,17 @@ async def author_pending_narration(
                 reason,
             )
         else:
+            key = (episode_id, chapter_id)
+            if key in _AUTHORING_IN_FLIGHT:
+                # The generation job and the detached enrichment both author the next chapter;
+                # the one that got here first finishes it, the other must not write it again.
+                logger.info(
+                    "narration_authoring_skipped episode_id=%s chapter_id=%s reason=in_flight",
+                    episode_id,
+                    chapter_id,
+                )
+                break
+            _AUTHORING_IN_FLIGHT.add(key)
             try:
                 with authoring_gate(partial(_chapter_still_open, host, episode_id, chapter_id)):
                     generated = await runtime.author_narration(
@@ -138,6 +153,9 @@ async def author_pending_narration(
                     type(error).__name__,
                 )
                 generated = None
+            finally:
+                # Failure and cancellation release the chapter too, so a later run can author it.
+                _AUTHORING_IN_FLIGHT.discard(key)
             if generated is None:
                 logger.info(
                     "narration_authoring_degraded episode_id=%s chapter_id=%s "
