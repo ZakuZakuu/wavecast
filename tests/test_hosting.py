@@ -248,3 +248,102 @@ def test_assembly_persists_the_discussion_plan_and_reserves_music_time(seconds, 
         == plan
     )
     assert _session().discussion_plan is None  # durable older sessions retain legacy selection
+
+
+@pytest.mark.parametrize("tts_failures,delivered,backup_calls", [(0, 3, 0), (2, 2, 1), (3, 1, 1)])
+def test_full_lifecycle_settles_primary_audio_then_attempts_one_backup_and_closes(
+    tts_failures, delivered, backup_calls
+):
+    from wavecast.models.episode import MusicSegment
+    from wavecast.orchestration.generation import GeneratedChapter
+
+    repository, episode = _pending_episode()
+    session = episode.progressive_session
+    session.chapters = _chapters([180] * 6)
+    for chapter in session.chapters:
+        chapter.chapter = ChapterPlan.model_construct(track=None)
+    session.discussion_plan = DiscussionPlan(
+        target=3,
+        minimum=2,
+        chapter_ids=["chapter-3", "chapter-4", "chapter-5"],
+        backup_chapter_id="chapter-6",
+    )
+    episode.segments = [episode.segments[0]]
+    for index, chapter in enumerate(session.chapters):
+        episode.segments.extend(
+            [
+                NarrationSegment(
+                    id=f"{chapter.chapter_id}:pending",
+                    chapter_id=chapter.chapter_id,
+                    order=index * 2 + 1,
+                    state=SegmentState.PLANNED,
+                    planned_duration_seconds=60,
+                    title="Pending",
+                ),
+                MusicSegment(
+                    id=f"{chapter.chapter_id}:music",
+                    chapter_id=chapter.chapter_id,
+                    order=index * 2 + 2,
+                    state=SegmentState.AUDIO_READY,
+                    planned_duration_seconds=180,
+                    actual_duration_seconds=180,
+                    audio_source_url="/api/audio/mock/music",
+                    track_ref=chapter.resolved_track.track_ref,
+                    artist="A",
+                    title=chapter.resolved_track.canonical_title,
+                ),
+            ]
+        )
+    events = []
+
+    class Runtime:
+        def create_generator(self, session):
+            return self
+
+        async def generate_next(self, episode):
+            return None
+
+        async def author_narration(self, episode, chapter_id):
+            events.append(f"write:{chapter_id}")
+            music = next(
+                s
+                for s in episode.segments
+                if s.chapter_id == chapter_id and isinstance(s, MusicSegment)
+            )
+            if chapter_id in {"chapter-2", "chapter-7"}:
+                narration = NarrationSegment(
+                    id=f"{chapter_id}:single",
+                    chapter_id=chapter_id,
+                    order=music.order - 1,
+                    state=SegmentState.SCRIPT_READY,
+                    title="Opening/closing",
+                    planned_duration_seconds=20,
+                    narration_text="An opening or closing.",
+                )
+            else:
+                narration = _discussion(chapter_id, SegmentState.SCRIPT_READY)
+            return GeneratedChapter(chapter_id=chapter_id, segments=[narration, music])
+
+        async def materialize_narration(self, segment):
+            events.append(f"voice:{segment.chapter_id}")
+            failed = segment.chapter_id in [f"chapter-{i + 3}" for i in range(tts_failures)]
+            return segment.model_copy(
+                update={
+                    "state": SegmentState.SKIPPED if failed else SegmentState.AUDIO_READY,
+                    "actual_duration_seconds": 60,
+                    "asset_ref": "voice",
+                    "audio_source_url": "/api/audio/mock/voice",
+                }
+            )
+
+    orchestrator = EpisodeOrchestrator(repository, progressive_runtime=Runtime())
+    completed = asyncio.run(orchestrator.materialize_all_async(episode.id))
+    assert completed.state is EpisodeState.MATERIALIZED
+    assert completed.hosting_coverage.delivered == delivered
+    assert completed.hosting_coverage.status == ("shortfall" if delivered < 2 else "met")
+    assert events.count("write:chapter-6") == backup_calls
+    assert events.index("write:chapter-7") > events.index("voice:chapter-5")
+    if backup_calls:
+        assert events.index("write:chapter-6") > events.index("voice:chapter-5")
+        assert events.index("write:chapter-7") > events.index("write:chapter-6")
+    assert sum(isinstance(s, MusicSegment) for s in completed.timeline_segments) == 7
