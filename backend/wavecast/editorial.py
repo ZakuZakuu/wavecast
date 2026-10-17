@@ -25,12 +25,43 @@ _STATION_APPROACH = {
 }
 
 
+def material_editorial_context(programme_brief: str, editorial_goal: str = "") -> str:
+    """The same editorial assignment for song facts and story material, never extra evidence."""
+    if not programme_brief and not editorial_goal:
+        return ""
+    return (
+        f"Programme editorial direction (not evidence): {programme_brief or '(unspecified)'}\n"
+        f"This passage's job (not evidence): {editorial_goal or '(choose a useful angle)'}\n"
+        "Use this assignment to select the question and material, not to prove a claim. "
+        "Prioritize what helps explain the requested musical angle. Artist identity alone "
+        "does not establish a recording's genre, harmony or instrumentation. "
+        "Use biography, compilation/reissue details or track-list positions only when they "
+        "illuminate this angle; do not replace a focused programme with a general discography. "
+        "If sources offer less, return less rather than inventing a musical connection.\n"
+    )
+
+
 def editorial_station_guidance(station: StationId | None) -> str:
     if station is None:
         return ""
     return (
         f"Station: {STATION_PROFILES[station].name}. {_STATION_APPROACH[station]} "
         "This is a default approach, not a required structure; the listener's explicit request wins.\n"
+    )
+
+
+def closing_passage_guidance() -> str:
+    return (
+        "This is the programme's substantive closing, not a track introduction. "
+        "Return to the opening's listening question or direction, using only the actual route "
+        "and earlier host passages below. Explain what those examples add to our understanding; "
+        "leave room for a nuanced or open answer. Do not just list songs or repeat the opening. "
+        "Introduce no new biography, research or factual claim, and promise nothing to come. "
+        "The route and earlier script describe what aired; they are not independent factual evidence. "
+        "Give the final outro the main space, aiming at 30–45 seconds including the sign-off; "
+        "any before-track handoff in the same request is optional and brief. "
+        "Use your own natural structure, without a required sentence count or padding. "
+        "Do not add a farewell or station name: the application appends the sign-off.\n"
     )
 
 

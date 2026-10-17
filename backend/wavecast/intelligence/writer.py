@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import Sequence
 
-from wavecast.editorial import opening_passage_guidance
+from wavecast.editorial import closing_passage_guidance, opening_passage_guidance
 from wavecast.narration_quality import CHARS_PER_SECOND, check_block
 from wavecast.presentation import HostMode, host_mode_prompt_guidance
 from wavecast.programme_date import programme_date
@@ -43,6 +43,7 @@ ZH_CN_RADIO_WRITING_GUIDANCE = (
     "说人话：口语、短分句、日常动词，一句话只说一件事，不用论文腔和名词化。"
     "要具体：讲一个值得听的细节，不要堆形容词或不必要的日期；证据不足时宁可简单准确，"
     "不要编造听觉或事实细节。区分事实、听感和编辑判断，文化描述具体克制，避免宽泛的族群化概括。"
+    "节目主题不证明每首歌的曲风、和声或乐器；不要为了扣题给歌曲强加未经证据支持的音乐特征。"
     "一个 block 只完成一个主要动作，完成就停；时长服从 presentation mode 和 application 给出的 target。"
     "OUTRO 回扣本期 thesis 或前面真实听到的细节；如果上下文提供了已经听过的中间 "
     "artist/track/listen-for detail，至少具体回扣其中一个再落回 thesis，不要用模板式总结。"
@@ -77,6 +78,7 @@ class WriterService:
         unfulfilled_artists: Sequence[str] = (),
         topic: str = "",
         opening_brief: str | None = None,
+        closing_brief: str | None = None,
         slot_context: NarrationSlotContext | None = None,
         slot_contexts: Sequence[NarrationSlotContext] | None = None,
         inference_profile: InferenceProfile = InferenceProfile.SYNTHESIS,
@@ -116,6 +118,7 @@ class WriterService:
         slots = list(slot_contexts or ())
         if (
             track_points is not None
+            and opening_brief is None
             and not track_points
             and slots
             and not any(slot.is_final or slot.is_opening for slot in slots)
@@ -124,9 +127,14 @@ class WriterService:
             # have nothing to say but filler ("接着听", "也一样"), which is worse than the music.
             logger.info("writer_skipped reason=no_verified_points")
             return RadioScript(blocks=[], intended_duration_seconds=1)
+        substantive_bookend = (
+            host_mode is HostMode.FULL
+            and station in {StationId.PORTRAIT, StationId.LINEAGE}
+            and (opening_brief is not None or closing_brief is not None)
+        )
         spoken_window = (
             window_for(station, target_duration_seconds)
-            if selected_language is OutputLanguage.ZH_CN
+            if selected_language is OutputLanguage.ZH_CN and not substantive_bookend
             else target_duration_seconds
         )
         # The closing's sign-off is added by the application after the Writer's text, so the
@@ -142,7 +150,10 @@ class WriterService:
         # Supplying an opening brief selects an editorial task, not a physical INTRO slot.
         # Replace ordinary random moves, style samples and minimum-fill instructions here.
         station_line = (
-            opening_passage_guidance(station, host_mode)
+            closing_passage_guidance()
+            + f"Programme editorial direction (not evidence): {closing_brief}\n"
+            if closing_brief is not None
+            else opening_passage_guidance(station, host_mode)
             if opening_brief is not None
             else (
                 voice_instructions(

@@ -184,7 +184,11 @@ def _required_artists_context(required: Sequence[str]) -> str:
 _POOL_INSTRUCTIONS = (
     "Available catalog tracks were verified playable just now. Choose each TrackProposal "
     "from this list whenever it fits the topic, copying artist and title exactly as written; "
-    "propose a track outside the list only when the list cannot serve the topic. Prefer "
+    "propose a track outside the list only when the list cannot serve the topic. "
+    "Fit to the programme's specific angle takes priority over popularity or catalog source. "
+    "Use the existing reason and evidence_ids to explain each recording's role in that angle; "
+    "an artist's identity or a compilation credit is not evidence of a track's musical style. "
+    "Among equally suitable tracks, prefer "
     "source llm_candidate, then artist_search, then keyword_search; inside a source the order "
     "means nothing, so when several tracks fit equally well do not favour the first ones. "
     "Never propose a track named in Unavailable.\n"

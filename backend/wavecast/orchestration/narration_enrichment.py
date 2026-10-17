@@ -9,7 +9,7 @@ from datetime import datetime
 from functools import partial
 from typing import Protocol
 
-from wavecast.hosting import backup_ready, delivered_discussions
+from wavecast.hosting import backup_ready, delivered_discussions, needs_programme_opening
 from wavecast.models.episode import (
     GenerationMode,
     LiveEpisode,
@@ -88,6 +88,28 @@ async def author_pending_narration(
         session_chapter = next(
             item for item in session.chapters if item.chapter_id == chapter_id
         )
+        plan = session.discussion_plan
+        if (
+            plan is not None
+            and plan.opening_chapter_ids is not None
+            and (
+                chapter_id == session.chapters[-1].chapter_id
+                or chapter_id in plan.opening_chapter_ids[1:]
+            )
+        ):
+            # Reuse ordinary TTS/save coordination: settle the opening before its one
+            # takeover, and settle body audio before describing what actually made the show.
+            voice = getattr(host, "materialize_pending_narration_async", None)
+            if callable(voice):
+                episode = await voice(episode_id, max_segments=64)
+                session = episode.progressive_session
+                if session is None:
+                    break
+                chapter_segments = [
+                    segment
+                    for segment in episode.ordered_segments
+                    if segment.chapter_id == chapter_id
+                ]
         exposed = (
             episode.current_segment_id in {segment.id for segment in chapter_segments}
             or any(segment.is_committed for segment in chapter_segments)
@@ -114,6 +136,7 @@ async def author_pending_narration(
             plan is not None
             and chapter_id not in plan.chapter_ids
             and chapter_id != plan.backup_chapter_id
+            and not needs_programme_opening(episode, chapter_id)
             and chapter_id not in {session.chapters[0].chapter_id, session.chapters[-1].chapter_id}
         )
         should_degrade = (

@@ -1252,13 +1252,15 @@ class EpisodeOrchestrator:
         coverage = saved.hosting_coverage
         if coverage is not None:
             logger.info(
-                "hosting_coverage episode_id=%s status=%s delivered=%d minimum=%d target=%d reason=%s",
+                "hosting_coverage episode_id=%s status=%s delivered=%d minimum=%d target=%d reason=%s opening=%s closing=%s",
                 saved.id,
                 coverage.status,
                 coverage.delivered,
                 coverage.minimum,
                 coverage.target,
                 coverage.reason,
+                coverage.opening,
+                coverage.closing,
             )
         return saved
 

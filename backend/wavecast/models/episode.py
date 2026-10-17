@@ -157,6 +157,8 @@ class NarrationSegment(Segment):
     tts_text: str | None = Field(default=None, min_length=1)
     tts_cues: list[str] = Field(default_factory=list)
     narration_role: NarrationRole = NarrationRole.GENERAL
+    # Editorial task, independent of physical placement / mix narration_role.
+    hosting_role: Literal["opening", "closing"] | None = None
     # A fact-checked two-host passage.  When present it is the source of ``narration_text`` (the
     # visible copy is derived from it and may not differ) and of what is voiced; ``tts_text`` and
     # cues belong to the one-voice path and are refused beside it.  ``dialogue_audio`` is the

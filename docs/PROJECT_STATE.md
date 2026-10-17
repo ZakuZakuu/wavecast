@@ -4,21 +4,27 @@ Updated: 2026-10-17（北京时间）。唯一当前状态入口。旧过程记�
 
 ## 当前任务
 
-已通过[#314](https://github.com/ZakuZakuu/wavecast/pull/314)合入integration `5f1b0f8`，测试API与网页部署成功、只读冒烟通过。用户已授权本轮测试部署，未授权发布main；#312/#313/#314均在integration，正式仍为`6be4919`。
+#315中文口播名修复已合入integration `c3cb95a4964be02010f2e2d9b8f24f42b54141e8`；head `c3ce241` CI全绿。Railway测试部署`ea66ff73-a2e1-42fe-922d-8803ddda10ed` SUCCESS、Vercel `dpl_4frX6YPFaTbojRv599hysP92BpU5` READY，两端同SHA；API公开读/未知404、预览同源health通过。用户已明确授权本次合入测试；正式仍为`6be4919`。
 
-用户正试听#314；本次 `fix/spoken-track-titles` 补口播中文歌名（[ADR 0034](adr/0034-grounded-spoken-song-titles.md)）：保留曲库明确译名到提案/Seed/音乐片段/快速开篇，在已有素材整理调用中顺带提取带双语引文及来源的中文名，单双人写稿和后续章节复用；缺名写自然指代，兜底避免“这首这首歌”。不新增模型调用、不改播放和已发布音频。本分支先提交PR/离线检查，当前试听结束前不更新测试服务；正式环境不变。
+用户试听#314最新节目`db15f6cb-2e47-434c-b387-096ddd4f33b1`：31:37，三段双人共3:09，正文认可；开篇19.4秒单人、完整双人来得晚，结尾14.8秒。全部TTS估价¥0.565（完整用量回执，非实付），本轮不以demo成本限制口播。
+
+当前PR [#316](https://github.com/ZakuZakuu/wavecast/pull/316)（[ADR 0035](adr/0035-substantive-opening-and-closing.md)）包含已同意的完整开篇/收尾与素材角度补齐。原head `ba944fa` CI全绿，新增补丁待新head CI。前两首独立开篇60–90秒、结尾30–45秒；编辑方向/章节任务在曲目要点、背景和双人素材选择时就传入，不只在Writer出现。Curator主题贴合优先，防止用爵士措辞强接一般作品介绍；无新模型调用或复审。
+
+用户最新试听`b3acf873-35f5-4082-81ad-de34bb860ccd`为#315（28:02、两段双人），并未验收#316。现已明确授权将素材修补与#316一起部署测试，需等待最新head完整CI通过后一次合入integration，并观察部署终态/冒烟；正式与旧节目不改。
+
 
 **本轮实现**见[ADR 0033](adr/0033-hosted-programme-delivery.md)：FULL等待在途Writer/TTS及保存，快速开篇共用防重；人物志/来龙去脉FULL主持新节目按时长安排讨论，约30分钟计划3段/交付最低2段、60分钟5/4，按音乐时间分散，预留口播时间。只计实际配音进入时间线、双方参与且有事实支持的讨论；非讨论缝隙可纯音乐。主要段落结束后最多尝试一个未发布补位；不足时返回hosting_coverage短缺并正常保留可播音乐。轻文本台/旧session沿用原策略。开篇复用已有FastStart证据，失败由下一段接过导入任务；提案方向传给Curator，章节任务传给双人Writer。窄切口首曲按精确候选顺序找，不任取同艺人歌曲兜底。无新复审/翻译/摘要调用，不修改已发布前缀。
 
-**实现和测试部署已完成，待用户新节目试听。** 最终CI基于head `f4576bc`全绿，后端1709通过/3跳过；先前发现的旧API夹具污染和旧首曲提示词断言均已修正。试听需新建节目，旧卡片不会重新选首曲、旧音频不会补口播。重点验收：前两首附近建立具体主题、半小时至少两段实质双人讨论、无晚到稿丢失、收尾与实际内容对应；文笔与首曲风格仍以真听为准。开场方法论保存在[设计文档](design/programme-editorial-method-and-opening.md)，台标音乐仍留后续。
+开场方法论保存在[设计文档](design/programme-editorial-method-and-opening.md)，台标音乐仍留后续。新一轮需新建节目验收完整开篇、三段正文与实际收束；旧节目不补稿。
 
 ## 已发布基线
 
-- 正式站：**https://wavecast.space**。#299–#310 经 [#311](https://github.com/ZakuZakuu/wavecast/pull/311) 发布；main 发布提交 `6be49197cce31a5a87afe7f5c1cd4d184babc083`；integration已在此基础上合入#312、#313、#314。
+- 正式站：**https://wavecast.space**。#299–#310 经 [#311](https://github.com/ZakuZakuu/wavecast/pull/311) 发布；main 发布提交 `6be49197cce31a5a87afe7f5c1cd4d184babc083`；integration已在此基础上合入#312至#315。
 - [release CI](https://github.com/ZakuZakuu/wavecast/actions/runs/38898753313)：1660 通过、3 跳过；Web／Docker 冒烟通过。[main CI](https://github.com/ZakuZakuu/wavecast/actions/runs/38907140961) 全绿。
 - Vercel正式部署仍为`dpl_2fzNxTHMXzm4LMUWktEzjgtcimFd`；正式API随后仅做配置重部署，见下。
 - 2026-10-17北京时间约00:50，用户授权修正正式API变量`WAVECAST_TRACK_RESEARCH_PROVIDER=deepseek`；新API部署`a9910361-5488-4483-9459-17cc89082f73`已观测SUCCESS，启动和健康检查200。该次只改正式API配置，源码仍固定在上述main发布SHA；随后测试服务的变化见下。新变量名称已回读确认；OAuth不提供变量值读回，写入工具确认设置成功。新节目素材整理的付费调用尚未验收，不能据部署成功断言整期生成质量已恢复。
-- 最新测试检查点：#314合并提交`5f1b0f86610e746835f1199eb7b113936465636a`；[最终CI](https://github.com/ZakuZakuu/wavecast/actions/runs/39013104444)基于head `f4576bc`全绿，后端1709通过/3跳过，ruff/mypy（141文件）、Web与Docker启动/持久化冒烟通过。Railway测试部署`7834e781-f730-4382-b17b-46744e1630a8` SUCCESS（访客额度配置重部署，源码不变），Vercel预览`dpl_GrkEsYp84gRBL1Xbsyh6qahUorS2` READY、已分配稳定测试别名，两端SHA一致。API health/公开节目/未知路由以及经认证的预览网页、同源API均通过；预览保护保留，没有启动付费节目。正式API部署ID与main SHA均未变化。
+- 最新测试检查点为上面的#315（中文歌名沿素材、持久化、单双人写稿复用，见[ADR 0034](adr/0034-grounded-spoken-song-titles.md)）。#314的[完整CI](https://github.com/ZakuZakuu/wavecast/actions/runs/39013104444)1709通过/3跳过；#315的[完整CI](https://github.com/ZakuZakuu/wavecast/actions/runs/39018855425)后端/Web/Docker均通过。预览保护保留；未启动额外付费节目，正式API与main未变。
+
 
 - 当前链路：Pro 研究规划／素材、Lite 写稿，豆包单人 TTS 与双人播客，Exa 检索。单人取消常规模型核对、改写和逐句删减；完整前文、来源、日期／人物状态约束和必要代码检查保留。见 [ADR 0031](adr/0031-one-pass-radio-writing.md)。
 - 已发布播放器恢复、主持词窗口、旁白时长取整、响度和旧清单兼容、写稿防重复、按节目用量持久化。旧稿和已发布音频不重写；没有新增数据库迁移。上一轮用户确认播放无硬性阻塞，接受文笔剩余问题后发布。

@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
-from wavecast.models.dialogue import DialogueBlock, DialogueDraft, DialogueIssue
+from wavecast.models.dialogue import DialogueBlock, DialogueDraft, DialogueIssue, DialoguePurpose
 from wavecast.models.story_material import StoryMaterial
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import ProgressiveLLMProvider
@@ -108,6 +108,11 @@ class DialoguePipeline:
             outcome.status = DialogueStatus.SKIPPED
             outcome.reason = "station_has_no_dialogue"
             return outcome
+        if slot.purpose is DialoguePurpose.OPENING and slot.station in {
+            StationId.PORTRAIT,
+            StationId.LINEAGE,
+        }:
+            budget = replace(budget, target_min_seconds=60, target_max_seconds=90)
         outcome.calls = 1
         try:
             draft = await self._writer.write(material, slot, budget)
