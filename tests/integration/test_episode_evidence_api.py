@@ -29,6 +29,7 @@ def _session(*, cited: list[str]) -> SimpleNamespace:
 
     return SimpleNamespace(
         unfulfilled_artists=[],
+        discussion_plan=None,
         chapters=[
             SimpleNamespace(chapter_id="chapter-1", chapter=SimpleNamespace(evidence_ids=cited)),
             SimpleNamespace(chapter_id="chapter-2", chapter=SimpleNamespace(evidence_ids=[])),
@@ -50,7 +51,7 @@ def test_an_episode_without_a_stored_plan_has_no_evidence() -> None:
 def test_only_cited_evidence_is_listed_without_urls_or_queries(monkeypatch) -> None:
     client = TestClient(app)
     created = _create(client)
-    episode = api_module.orchestrator.get(created["id"])
+    episode = api_module.orchestrator.get(created["id"]).model_copy(deep=True)
     episode.progressive_session = _session(cited=["e1", "e3"])
     monkeypatch.setattr(api_module.orchestrator, "get", lambda _id: episode)
 
