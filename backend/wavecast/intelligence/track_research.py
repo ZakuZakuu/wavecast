@@ -29,6 +29,7 @@ from hashlib import sha1
 
 from pydantic import BaseModel, Field, field_validator
 
+from wavecast.editorial import material_editorial_context
 from wavecast.narration_quality import durations_in, years_in
 from wavecast.programme_date import programme_date
 from wavecast.providers.contracts import SearchProvider
@@ -226,6 +227,7 @@ your own knowledge. If the sources do not say it, it is not a point.
 Recording: “{title}”{zh}{album}. The catalog credits {artist} as performer on this recording; that is a \
 performer credit, not a statement about who composed, wrote or arranged the piece.
 Programme subject: {subject}.
+{editorial_context}
 Programme date: {today}. Source publication dates, when known, are metadata, not event dates.
 Resolve old relative times into supported historical statements. Do not call an old release \
 "new" or "latest" today; if its timing cannot be established, leave that claim out. Dates are \
@@ -293,6 +295,8 @@ class TrackResearchService:
         station: StationId | None,
         subject: str,
         subject_names: Sequence[str] = (),
+        programme_brief: str = "",
+        editorial_goal: str = "",
     ) -> TrackResearch | None:
         """None when this station does not research tracks; otherwise what the chapter may use."""
 
@@ -325,7 +329,9 @@ class TrackResearchService:
         for round_number in range(budget + 1):
             candidates = about_track()
             if candidates:
-                brief = await self._brief(track, subject, candidates, subject_names)
+                brief = await self._brief(
+                    track, subject, candidates, subject_names, programme_brief, editorial_goal
+                )
                 outcome.points = brief.points
                 if outcome.spoken_title is None and brief.spoken_title is not None:
                     outcome.spoken_title = brief.spoken_title
@@ -352,7 +358,9 @@ class TrackResearchService:
             # the talk is not only catalogue notes on the songs.
             number = self._chapters[episode_id] = self._chapters.get(episode_id, 0) + 1
             if number % 2 == 0 or not outcome.points:
-                story = await self._next_background(episode_id, subject, subject_names, evidence)
+                story = await self._next_background(
+                    episode_id, subject, subject_names, evidence, programme_brief
+                )
                 if story is not None:
                     outcome.points = [story]
         outcome.evidence_ids = [item.id for item in used]
@@ -370,27 +378,47 @@ class TrackResearchService:
         return outcome
 
     async def background_story(
-        self, *, episode_id: str, station: StationId | None, subject: str, subject_names: Sequence[str], evidence: Sequence[Evidence]
+        self,
+        *,
+        episode_id: str,
+        station: StationId | None,
+        subject: str,
+        subject_names: Sequence[str],
+        evidence: Sequence[Evidence],
+        programme_brief: str = "",
     ) -> TalkingPoint | None:
         """An untold background story for a chapter whose own material came to nothing."""
 
         if station not in BACKGROUND_STATIONS:
             return None
-        return await self._next_background(episode_id, subject, subject_names, evidence)
+        return await self._next_background(
+            episode_id, subject, subject_names, evidence, programme_brief
+        )
 
     async def _next_background(
-        self, episode_id: str, subject: str, names: Sequence[str], evidence: Sequence[Evidence]
+        self,
+        episode_id: str,
+        subject: str,
+        names: Sequence[str],
+        evidence: Sequence[Evidence],
+        programme_brief: str = "",
     ) -> TalkingPoint | None:
         """The next story about the person or period that this programme has not told yet."""
 
         if episode_id not in self._background:
-            self._background[episode_id] = await self._stories(subject, names, evidence)
+            self._background[episode_id] = await self._stories(
+                subject, names, evidence, programme_brief
+            )
             logger.info("background_stories found=%d", len(self._background[episode_id]))
         remaining = self._background[episode_id]
         return remaining.pop(0) if remaining else None
 
     async def _stories(
-        self, subject: str, names: Sequence[str], evidence: Sequence[Evidence]
+        self,
+        subject: str,
+        names: Sequence[str],
+        evidence: Sequence[Evidence],
+        programme_brief: str = "",
     ) -> list[TalkingPoint]:
         general = [item for item in evidence if not item.track_refs][:_STORY_SOURCES]
         if not general:
@@ -399,6 +427,7 @@ class TrackResearchService:
         prompt = _STORY_PROMPT.format(
             today=programme_date(),
             subject=subject or "(none)",
+            editorial_context=material_editorial_context(programme_brief),
             sources=_source_lines(general, sources),
             limit=_MAX_STORIES,
         )
@@ -458,6 +487,8 @@ class TrackResearchService:
         subject: str,
         candidates: Sequence[Evidence],
         people: Sequence[str] = (),
+        programme_brief: str = "",
+        editorial_goal: str = "",
     ) -> TrackResearch:
         chosen = list(candidates[:6])
         sources = {item.id: item.claim_or_excerpt for item in chosen}
@@ -465,10 +496,13 @@ class TrackResearchService:
         prompt = _PROMPT.format(
             today=programme_date(),
             title=track.canonical_title,
-            zh=f" (Chinese title in the catalog: {track.spoken_title})" if track.spoken_title else "",
+            zh=f" (Chinese title in the catalog: {track.spoken_title})"
+            if track.spoken_title
+            else "",
             album=f", on the album “{track.album}”" if track.album else "",
             artist=track.canonical_artist,
             subject=subject or "(none)",
+            editorial_context=material_editorial_context(programme_brief, editorial_goal),
             sources=_source_lines(chosen, sources),
             limit=_MAX_POINTS,
         )
@@ -519,6 +553,7 @@ def _source_lines(evidence: Sequence[Evidence], sources: dict[str, str]) -> str:
 
 _STORY_PROMPT = """You prepare background stories for a radio programme about: {subject}. Use ONLY the \
 sources below; never use your own knowledge.
+{editorial_context}
 Programme date: {today}. Publication dates are metadata, not event dates. Resolve old relative \
 times into supported historical statements; never describe an old release or activity as recent \
 today. If the timing cannot be established, leave that claim out. Do not narrate source names or \

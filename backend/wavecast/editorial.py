@@ -25,6 +25,22 @@ _STATION_APPROACH = {
 }
 
 
+def material_editorial_context(programme_brief: str, editorial_goal: str = "") -> str:
+    """The same editorial assignment for song facts and story material, never extra evidence."""
+    if not programme_brief and not editorial_goal:
+        return ""
+    return (
+        f"Programme editorial direction (not evidence): {programme_brief or '(unspecified)'}\n"
+        f"This passage's job (not evidence): {editorial_goal or '(choose a useful angle)'}\n"
+        "Use this assignment to select the question and material, not to prove a claim. "
+        "Prioritize what helps explain the requested musical angle. Artist identity alone "
+        "does not establish a recording's genre, harmony or instrumentation. "
+        "Use biography, compilation/reissue details or track-list positions only when they "
+        "illuminate this angle; do not replace a focused programme with a general discography. "
+        "If sources offer less, return less rather than inventing a musical connection.\n"
+    )
+
+
 def editorial_station_guidance(station: StationId | None) -> str:
     if station is None:
         return ""

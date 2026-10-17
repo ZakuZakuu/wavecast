@@ -3996,6 +3996,8 @@ class StagedProgressiveChapterGenerator:
                 station=self.session.station,
                 subject=self.session.topic,
                 subject_names=self.session.required_artists,
+                programme_brief=episode.editorial_brief or self.session.topic,
+                editorial_goal=writer_chapter.narration_goal,
             )
             if researched is not None:
                 track_points = researched.points
@@ -4200,13 +4202,16 @@ class StagedProgressiveChapterGenerator:
                     and not script.blocks
                     and not is_final_chapter
                     and self.track_research is not None
-                    and (story := await self.track_research.background_story(
-                        episode_id=episode.id,
-                        station=self.session.station,
-                        subject=self.session.topic,
-                        subject_names=self.session.required_artists,
-                        evidence=self.session.research.evidence,
-                    ))
+                    and (
+                        story := await self.track_research.background_story(
+                            episode_id=episode.id,
+                            station=self.session.station,
+                            subject=self.session.topic,
+                            subject_names=self.session.required_artists,
+                            evidence=self.session.research.evidence,
+                            programme_brief=episode.editorial_brief or self.session.topic,
+                        )
+                    )
                     is not None
                 ):
                     # What was written about this song did not survive the checks; tell one of the

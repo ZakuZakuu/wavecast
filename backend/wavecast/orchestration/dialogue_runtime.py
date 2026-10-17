@@ -158,6 +158,8 @@ class DialogueRuntime:
                     story_id=story_id,
                     subject=track_label or subject,
                     recording_refs=[track_ref],
+                    programme_brief=programme_brief or subject,
+                    editorial_goal=editorial_goal,
                 )
                 if material is None:
                     logger.info("dialogue_skipped slot_id=%s reason=thin_material", context.slot_id)

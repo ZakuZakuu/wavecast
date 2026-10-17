@@ -1177,6 +1177,22 @@ def test_planned_discussion_gets_the_editorial_goal_and_original_earlier_context
             narration_text="DO_NOT_INCLUDE_LATER_HOST",
         )
     )
+    material_prompts = []
+    material_call = rig.material_llm.structured
+
+    async def capture_material(prompt, output_type, **kwargs):
+        material_prompts.append(prompt)
+        return await material_call(prompt, output_type, **kwargs)
+
+    monkeypatch.setattr(rig.material_llm, "structured", capture_material)
+    research_assignments = []
+    research_call = rig.generator.track_research.prepare
+
+    async def capture_research(**kwargs):
+        research_assignments.append(kwargs)
+        return await research_call(**kwargs)
+
+    monkeypatch.setattr(rig.generator.track_research, "prepare", capture_research)
     prompts = []
     original = rig.writer_llm.structured
 
@@ -1191,6 +1207,16 @@ def test_planned_discussion_gets_the_editorial_goal_and_original_earlier_context
     assert "用这首歌比较靠近与退让" in prompt
     assert "爱情表达里的不同选择" in prompt
     assert "DO_NOT_INCLUDE_LATER_HOST" not in prompt
+
+    assert len(material_prompts) == len(research_assignments) == 1
+    assert "用这首歌比较靠近与退让" in material_prompts[0]
+    assert "爱情表达里的不同选择" in material_prompts[0]
+    assert "not evidence" in material_prompts[0]
+    assert research_assignments[0]["programme_brief"] == episode.editorial_brief
+    assert (
+        research_assignments[0]["editorial_goal"] == rig.session.chapters[0].chapter.narration_goal
+    )
+    assert len(rig.material_llm.calls) == len(rig.writer_llm.calls) == 1
 
 
 def test_next_available_discussion_takes_up_a_failed_opening(tmp_path, monkeypatch):

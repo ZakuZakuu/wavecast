@@ -16,6 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from wavecast.editorial import material_editorial_context
 from wavecast.models.story_material import (
     MAX_MATERIAL_FACTS,
     StoryMaterial,
@@ -108,6 +109,7 @@ the past tense.
 
 Focus recordings: {recordings}
 Subject hint: {subject}
+{editorial_context}
 
 Evidence (id: text):
 {evidence}"""
@@ -127,6 +129,8 @@ class StoryMaterialService:
         story_id: str,
         subject: str,
         recording_refs: Sequence[str] = (),
+        programme_brief: str = "",
+        editorial_goal: str = "",
     ) -> StoryMaterial | None:
         """The verified material, or ``None`` when too little of it survives verification.
 
@@ -137,19 +141,25 @@ class StoryMaterialService:
         usable = [item for item in evidence if item.claim_or_excerpt.strip()][:_MAX_EVIDENCE_ITEMS]
         if not usable:
             return None
-        draft = await self._ask(usable, subject, recording_refs)
+        draft = await self._ask(usable, subject, recording_refs, programme_brief, editorial_goal)
         return verify_material(
             draft, usable, story_id=story_id, recording_refs=recording_refs
         )
 
     async def _ask(
-        self, evidence: Sequence[Evidence], subject: str, recording_refs: Sequence[str]
+        self,
+        evidence: Sequence[Evidence],
+        subject: str,
+        recording_refs: Sequence[str],
+        programme_brief: str = "",
+        editorial_goal: str = "",
     ) -> StoryMaterialDraft:
         prompt = _PROMPT.format(
             today=programme_date(),
             max_facts=MAX_MATERIAL_FACTS,
             recordings=", ".join(recording_refs) or "(none given)",
             subject=subject,
+            editorial_context=material_editorial_context(programme_brief, editorial_goal),
             evidence="\n".join(
                 f"[{item.id}]{f' (published {item.published_at})' if item.published_at else ''}: "
                 f"{item.claim_or_excerpt[:_MAX_EVIDENCE_CHARS]}"

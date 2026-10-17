@@ -346,6 +346,14 @@ def test_fast_opening_prefers_real_dialogue_and_reuses_the_single_writer_fallbac
     from tests.test_dialogue_runtime import TRACK, Rig, evidence
 
     rig = Rig(tmp_path)
+    material_prompts = []
+    original_material = rig.material_llm.structured
+
+    async def capture_material(prompt, output_type, **kwargs):
+        material_prompts.append(prompt)
+        return await original_material(prompt, output_type, **kwargs)
+
+    rig.material_llm.structured = capture_material
     bootstrap = _PlaceholderBootstrapRuntime()
     bootstrap.fast_track = TRACK
     repository = InMemoryEpisodeRepository()
@@ -378,7 +386,9 @@ def test_fast_opening_prefers_real_dialogue_and_reuses_the_single_writer_fallbac
     if available:
         assert speech.dialogue.purpose is DialoguePurpose.OPENING
         assert rig.writer.calls == 0
-        assert len(rig.writer_llm.calls) == 1
+        assert len(rig.writer_llm.calls) == len(material_prompts) == 1
+        assert episode.editorial_brief in material_prompts[0]
+        assert "Develop the programme's opening" in material_prompts[0]
     else:
         assert speech.dialogue is None
         assert rig.writer.calls == 1
