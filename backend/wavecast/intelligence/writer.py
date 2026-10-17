@@ -6,6 +6,7 @@ import json
 import logging
 from collections.abc import Sequence
 
+from wavecast.editorial import opening_passage_guidance
 from wavecast.narration_quality import CHARS_PER_SECOND, check_block
 from wavecast.presentation import HostMode, host_mode_prompt_guidance
 from wavecast.programme_date import programme_date
@@ -75,6 +76,7 @@ class WriterService:
         unplayed_artists: Sequence[str] = (),
         unfulfilled_artists: Sequence[str] = (),
         topic: str = "",
+        opening_brief: str | None = None,
         slot_context: NarrationSlotContext | None = None,
         slot_contexts: Sequence[NarrationSlotContext] | None = None,
         inference_profile: InferenceProfile = InferenceProfile.SYNTHESIS,
@@ -137,19 +139,25 @@ class WriterService:
         writer_window = spoken_window
         if signoff and spoken_window is not None:
             writer_window = max(4.0, spoken_window - len(signoff) / CHARS_PER_SECOND)
+        # Supplying an opening brief selects an editorial task, not a physical INTRO slot.
+        # Replace ordinary random moves, style samples and minimum-fill instructions here.
         station_line = (
-            voice_instructions(
-                station=station,
-                seed=voice_seed or topic or chapter.reason,
-                index=chapter.index,
-                window_seconds=writer_window,
-                used_openers=used_openers,
-                is_opening=any(slot.is_opening for slot in slots),
-                is_final=any(slot.is_final for slot in slots),
-                has_points=bool(track_points),
+            opening_passage_guidance(station, host_mode)
+            if opening_brief is not None
+            else (
+                voice_instructions(
+                    station=station,
+                    seed=voice_seed or topic or chapter.reason,
+                    index=chapter.index,
+                    window_seconds=writer_window,
+                    used_openers=used_openers,
+                    is_opening=any(slot.is_opening for slot in slots),
+                    is_final=any(slot.is_final for slot in slots),
+                    has_points=bool(track_points),
+                )
+                if selected_language is OutputLanguage.ZH_CN and (station is not None or voice_seed)
+                else (f"Station: {station.value}\n" if station is not None else "")
             )
-            if selected_language is OutputLanguage.ZH_CN and (station is not None or voice_seed)
-            else (f"Station: {station.value}\n" if station is not None else "")
         )
         route_line = ""
         if route_tracks:
@@ -207,6 +215,12 @@ class WriterService:
             else ""
         )
         presentation_guidance = host_mode_prompt_guidance(host_mode)
+        opening_context = (
+            f"Listener request: {topic}\n"
+            f"Programme editorial intention (not evidence): {opening_brief}\n"
+            if opening_brief is not None
+            else ""
+        )
         prompt = (
             "Write a structured radio script for this chapter, not an article. Use only the "
             "scoped evidence; keep factual claims separately identified by evidence IDs, avoid "
@@ -269,6 +283,7 @@ class WriterService:
             "currently creating or undertaking activities; posthumous releases need their own evidence. "
             "Earlier narration is for continuity, never a source of facts. Do not invent a host's "
             "personal memories or research experiences.\n"
+            f"{opening_context}"
             "Previous host lines of this programme, verbatim and in order (the text is for continuing the story "
             "smoothly and for not repeating or contradicting it; every fact you state must still come from the "
             f"evidence below): {previous_committed_context or '(none yet: the programme has just begun)'}\n"

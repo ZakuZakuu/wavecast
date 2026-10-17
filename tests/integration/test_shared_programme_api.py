@@ -125,7 +125,7 @@ COPIED_AS_IS = {
     "opening_track_title", "opening_track_artist", "opening_track_duration_seconds",
     "opening_track_timing_profile", "cover", "editorial_route", "genre_tags", "mood_tags",
     "anchor_artists", "presentation_intent", "output_language", "station", "required_artists",
-    "generation_profile",
+    "generation_profile", "opening_host_note",
 }
 MADE_AGAIN = {"id", "topic", "opening_narration_text", "created_at"}
 

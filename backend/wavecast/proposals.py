@@ -19,19 +19,30 @@ from wavecast.catalog_pool import (
     primary_artist,
     split_artists,
 )
+from wavecast.editorial import EDITORIAL_METHOD, editorial_station_guidance
 from wavecast.intelligence.models import ResolvedTrack, TrackProposal
 from wavecast.intelligence.resolution import resolve_track_proposal_across_providers
+from wavecast.intelligence.time_guard import has_relative_time, invents_experience
 from wavecast.language import OutputLanguage
 from wavecast.models.episode import CoverParams, EpisodeSeed, utc_now
+from wavecast.narration_quality import estimate_seconds
 from wavecast.presentation import PresentationIntent
 from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError, ProviderSchemaValidationError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.providers.usage import usage_scope
-from wavecast.spoken_form import catalog_album, chinese_title, spoken_artist, spoken_title
+from wavecast.spoken_form import (
+    SPOKEN_NAME_GUIDANCE,
+    KnownTrack,
+    catalog_album,
+    chinese_title,
+    spoken_artist,
+    spoken_title,
+    to_spoken_form,
+)
 from wavecast.stations import (
-    STATION_PROFILES,
+    STATION_TAGS,
     StationId,
     compose_opening,
     resolve_presentation_intent,
@@ -83,6 +94,8 @@ class ProgramProposal(BaseModel):
     opening_track_duration_seconds: int | None = Field(default=None, gt=0)
     opening_track_timing_profile: TrackTimingProfile | None = None
     opening_narration_text: str | None = Field(default=None, max_length=320)
+    # A reusable, already speakable topic lead. Older proposals retain the template fallback.
+    opening_host_note: str | None = Field(default=None, max_length=220)
     cover: CoverParams
     editorial_route: list[str] = Field(min_length=2, max_length=8)
     genre_tags: list[str] = Field(default_factory=list, max_length=8)
@@ -413,13 +426,6 @@ def _prompt_excerpt(prompt: str, *, limit: int = 26) -> str:
     return compact if len(compact) <= limit else compact[: limit - 1] + "…"
 
 
-def _station_line(station: StationId | None) -> str:
-    """The station the listener tuned says what kind of programme they expect."""
-
-    profile = STATION_PROFILES.get(station) if station is not None else None
-    return f"Station: {profile.name}, {profile.positioning}\n" if profile else ""
-
-
 def _proposal_catalog_name(value: str) -> str:
     return canonical_name(value)
 
@@ -534,6 +540,7 @@ def shared_copy(original: ProgramProposal, *, new_id: str) -> ProgramProposal:
         opening_track_duration_seconds=original.opening_track_duration_seconds,
         opening_track_timing_profile=original.opening_track_timing_profile,
         opening_narration_text=_shared_opening(original, seed=new_id),
+        opening_host_note=original.opening_host_note,
         cover=original.cover,
         editorial_route=list(original.editorial_route),
         genre_tags=list(original.genre_tags),
@@ -555,6 +562,8 @@ def _shared_opening(original: ProgramProposal, *, seed: str) -> str | None:
             f'Let\'s start with "{original.opening_track_title}" by {original.opening_track_artist}. '
             "Give it a moment and listen for how it sets the direction for this programme."
         )
+    if original.opening_host_note:
+        return _noted_opening(original.opening_host_note, original.station)
     opening = compose_opening(
         original.station,
         artist=spoken_artist(original.opening_track_artist) or "这位艺人",
@@ -565,17 +574,49 @@ def _shared_opening(original: ProgramProposal, *, seed: str) -> str | None:
     return opening.replace("《这首歌》", "这首歌")
 
 
-def _opening_narration_text(
+def _noted_opening(note: str, station: StationId | None) -> str:
+    tag = STATION_TAGS.get(station) if station is not None else None
+    return f"{note}{tag}。" if tag else note
+
+
+def _usable_opening_note(
+    draft: ProgramProposalDraft, resolved: ResolvedTrack, station: StationId | None
+) -> str | None:
+    """Keep a complete short lead, or fall back; never trim sentences to fit a window."""
+
+    if not draft.opening_host_note or not _uses_cjk(draft.opening_host_note):
+        return None
+    spoken = to_spoken_form(
+        draft.opening_host_note.strip(),
+        [KnownTrack(resolved.canonical_artist, resolved.canonical_title, resolved.spoken_title)],
+    )
+    note = spoken.tts_text
+    if not note.endswith(("。", "！", "？", ".", "!", "?")):
+        note += "。"
+    if (
+        not spoken.ok
+        or has_relative_time(note)
+        or invents_experience(note)
+        or estimate_seconds(_noted_opening(note, station)) > 12
+    ):
+        return None
+    return note
+
+
+def _opening_copy(
     request: ProposalGenerationRequest,
     draft: ProgramProposalDraft,
     resolved: ResolvedTrack,
-) -> str:
+) -> tuple[str, str | None]:
+    """The full spoken opening and its reusable lead, when one is usable."""
     note = draft.opening_host_note
     if request.output_language is OutputLanguage.ZH_CN or (
         request.output_language is not OutputLanguage.EN_US and _uses_cjk(request.prompt)
     ):
-        # The model's note is not spoken in Chinese; the opening says what we begin with, a true
-        # reason when the request names the artist, and the station.
+        usable_note = _usable_opening_note(draft, resolved, request.station)
+        if usable_note:
+            return _noted_opening(usable_note, request.station), usable_note
+        # Missing/unusable notes retain the complete, verified track/station fallback.
         # The voice speaks Chinese and English only: a title or an artist in another script is
         # said by its catalog Chinese title, or as 这首歌 / 这位艺人.
         title = resolved.spoken_title or spoken_title(resolved.canonical_title)
@@ -586,14 +627,14 @@ def _opening_narration_text(
             names_artist=_request_names_artist(request.prompt, resolved.canonical_artist),
             seed=f"{request.prompt}|{resolved.track_ref}",
         )
-        return opening.replace("《这首歌》", "这首歌")
+        return opening.replace("《这首歌》", "这首歌"), None
     else:
         identity = (
             f'Let\'s start with "{resolved.canonical_title}" by '
             f"{resolved.canonical_artist}. "
         )
         fallback = "Give it a moment and listen for how it sets the direction for this programme."
-    return f"{identity}{note or fallback}".strip()
+    return f"{identity}{note or fallback}".strip(), None
 
 
 def _cover_for(proposal_id: str, title: str) -> CoverParams:
@@ -667,6 +708,7 @@ class LLMProgramProposalGenerator:
             )
             if resolved is None or opening_duration_seconds is None:
                 raise ProgramProposalGenerationError(await self._classify_unresolved(draft))
+            opening_text, opening_note = _opening_copy(request, draft, resolved)
 
             proposals.append(
                 ProgramProposal(
@@ -681,11 +723,8 @@ class LLMProgramProposalGenerator:
                     opening_track_artist=resolved.canonical_artist,
                     opening_track_duration_seconds=opening_duration_seconds,
                     opening_track_timing_profile=opening_timing_profile,
-                    opening_narration_text=_opening_narration_text(
-                        request,
-                        draft,
-                        resolved,
-                    ),
+                    opening_narration_text=opening_text,
+                    opening_host_note=opening_note,
                     cover=_cover_for(proposal_id, draft.title),
                     editorial_route=list(draft.editorial_route),
                     genre_tags=list(draft.genre_tags),
@@ -898,19 +937,26 @@ class LLMProgramProposalGenerator:
             "identity and may reject the proposal. Duration is application-owned; do not emit "
             "duration numbers. Prefer an opening track that can immediately establish the "
             "requested listening direction while leaving room for later research and curation. "
+            f"{EDITORIAL_METHOD} "
             "Also provide one short opening_host_note in the listener's language. It will be "
-            "spoken over the opening song after the application inserts the verified artist/title. "
-            "Keep it to one concise sentence of plain spoken language, conversational rather than "
-            "announcer-like, saying only why this is a good place to begin. Do not describe how "
-            "it sounds, use no figurative wording (for example 铺开, 一层层, 夜色, 霓虹, 画出), "
-            "and do not start with 先从 or 我们先. Do not repeat artist or track names and do "
-            "not make release-date, biography, chart, causal, or other factual claims that "
-            "would require research. Also list in required_artists, in the listener's own "
+            "the episode-specific lead, spoken over the first song, with a short station ID "
+            "added by the application. Use one concise, complete conversational sentence "
+            "(about 20–35 Chinese characters for zh-CN): introduce this particular listening "
+            "interest rather than a generic welcome or handoff. No greeting, station name or "
+            "frequency in the note. Do not address the original requester's private situation "
+            "or say 'you requested': the note must also work for someone opening a shared copy. "
+            "The actual opening is selected later among the candidates and may use a catalog "
+            "fallback: make the note valid whichever candidate plays. Do not name songs, "
+            "describe their sound or lyrics, announce a future playlist, or make release-date, "
+            "biographical, chart or causal claims requiring research. Frame a specific interest "
+            "without declaring an unresearched answer. No required sentence pattern or question. "
+            f"{SPOKEN_NAME_GUIDANCE} "
+            "Also list in required_artists, in the listener's own "
             "spelling, the artists the request names or clearly requires the programme to "
             "play (for example “from Mogwai to Explosions in the Sky” requires both); leave it "
             "empty when the request names no artist.\n"
             f"Duration intent: {request.duration_intent.value}\n"
-            f"{_station_line(request.station)}"
+            f"{editorial_station_guidance(request.station)}"
             f"{_variety_lens(variety_seed)}"
             f"Taste context: {taste_context}\n"
             f"Listener request: {request.prompt.strip()}"
