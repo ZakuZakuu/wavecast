@@ -111,7 +111,7 @@ class StagedProgressiveRuntimeAdapter:
     async def author_fast_successor_narration(
         self, episode: LiveEpisode
     ) -> GeneratedChapter | None:
-        """Write the first A -> B host bridge from durable playback identity only."""
+        """Establish the programme's direction using the durable opening and first pair."""
 
         from wavecast.assembly import (
             EpisodeAssemblyError,
@@ -205,10 +205,10 @@ class StagedProgressiveRuntimeAdapter:
                 confidence=1.0,
             ),
             narrative_role=NarrativeRole.BRIDGE,
-            reason="Connect the opening to the already prepared successor.",
+            reason="Establish the programme's listening direction after its first song.",
             narration_goal=(
-                "Give one concise spoken bridge from the track just heard to the "
-                "already prepared next track without unsupported factual claims."
+                "Develop the programme's opening: connect the confirmed first pair to a "
+                "specific listening direction, without treating editorial intention as fact."
             ),
         )
         slot = NarrationSlotContext(
@@ -221,7 +221,7 @@ class StagedProgressiveRuntimeAdapter:
             upcoming_track=successor_track,
         )
         target_seconds = (
-            24
+            30
             if episode.presentation_intent.host_mode is HostMode.FULL
             else 12
         )
@@ -239,6 +239,16 @@ class StagedProgressiveRuntimeAdapter:
                 station=episode.station,
                 voice_seed=episode.seed_id,
                 topic=episode.topic,
+                opening_brief=episode.editorial_brief or episode.topic,
+                previous_committed_context="\n".join(
+                    segment.narration_text
+                    for segment in episode.ordered_segments
+                    if isinstance(segment, NarrationSegment)
+                    and segment.order < pending.order
+                    and segment.is_audio_ready
+                    and segment.state is not SegmentState.SKIPPED
+                    and segment.narration_text
+                ),
                 slot_contexts=[slot],
                 inference_profile=InferenceProfile.FAST,
             )

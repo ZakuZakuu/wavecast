@@ -185,6 +185,7 @@ class EpisodeOrchestrator:
             title=seed.title,
             cover_title=seed.cover_title,
             topic=seed.topic,
+            editorial_brief=seed.short_description,
             program_estimated_duration_seconds=seed.estimated_duration_seconds,
             presentation_intent=seed.presentation_intent,
             output_language=seed.output_language,

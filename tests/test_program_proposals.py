@@ -182,10 +182,8 @@ def test_llm_generator_resolves_opening_track_before_creating_proposal() -> None
     assert proposal.opening_track_duration_seconds == 24
     assert proposal.to_episode_seed().opening_track_duration_seconds == 24
     assert proposal.opening_narration_text is not None
-    assert "Signal Garden" in proposal.opening_narration_text
-    assert "Midnight Transfer" in proposal.opening_narration_text
-    # The model's note is not spoken in a Chinese programme; the request names no artist here.
-    assert "这首适合先开场" not in proposal.opening_narration_text
+    assert proposal.opening_narration_text == "这首适合先开场，慢慢进入今天的路线。"
+    assert proposal.opening_host_note == proposal.opening_narration_text
     assert proposal.anchor_artists == ["Signal Garden"]
     assert proposal.estimated_duration_seconds == 60 * 60
     assert "Taste context:" in llm.prompt
@@ -676,12 +674,13 @@ def test_the_opening_wording_varies_between_programmes() -> None:
 @pytest.mark.parametrize(
     "note",
     [
-        "让鼓机和贝斯线把夜晚的街道铺开，注意合成器如何画出霓虹。",
-        "这首歌能一下子把后摇的张力立住。",
-        "先放这首，因为它是个不错的起点。",
+        "上个月的新专辑带来了新的答案。",
+        "这次会听到テスト巡演里的作品。",
+        "爱情的不同处境都值得听听。" * 12,
+        "我记得第一次听的时候很喜欢。",
     ],
 )
-def test_the_models_host_note_is_never_spoken_in_a_chinese_programme(note: str) -> None:
+def test_an_unusable_opening_note_falls_back_without_cutting_sentences(note: str) -> None:
     from wavecast.stations import StationId
 
     generator, _llm = _live_generator(
@@ -711,6 +710,7 @@ def test_the_models_host_note_is_never_spoken_in_a_chinese_programme(note: str) 
     assert proposal.opening_narration_text is not None
     assert note.rstrip("。") not in proposal.opening_narration_text
     assert "Midnight Transfer" in proposal.opening_narration_text
+    assert proposal.opening_host_note is None
 
 
 def test_the_english_opening_still_uses_the_models_note() -> None:
@@ -753,13 +753,14 @@ def test_a_credit_with_several_artists_counts_when_any_of_them_is_named() -> Non
     assert not _request_names_artist("下雨天的爵士", "Bill Evans")
 
 
-def test_the_prompt_asks_for_a_plain_host_note() -> None:
+def test_the_prompt_asks_for_a_specific_candidate_independent_opening() -> None:
     generator, llm = _live_generator(_english_request_draft_batch())
 
     asyncio.run(generator.generate(ProposalGenerationRequest(prompt="夜里开车", output_language=OutputLanguage.ZH_CN)))
 
-    assert "use no figurative wording" in llm.prompt
-    assert "do not start with 先从 or 我们先" in llm.prompt
+    assert "make the note valid whichever candidate plays" in llm.prompt
+    assert "No required sentence pattern or question" in llm.prompt
+    assert "do not decide a conclusion and force songs to prove it" in llm.prompt
 
 
 class _FlakyLLM(_ProposalLLM):

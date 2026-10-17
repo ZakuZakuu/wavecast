@@ -214,6 +214,8 @@ class LiveEpisode(BaseModel):
     # Short cover label of the seed, so the player draws the same cover as the home page.
     cover_title: str | None = Field(default=None, max_length=40)
     topic: str | None = None
+    # The proposal's listening intention, not researched facts. Optional for older episodes.
+    editorial_brief: str | None = None
     listener_id: str = "test-listener"
     # Account ownership is separate from immutable runtime listener identity.
     owner_user_id: str | None = Field(default=None, exclude=True)

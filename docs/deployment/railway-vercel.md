@@ -106,10 +106,10 @@ WAVECAST_WRITER_PROVIDER=inherit    # mock | deepseek
 WAVECAST_TTS_PROVIDER=inherit       # mock | minimax
 ~~~
 
-`inherit` follows the global mode, so the current production environment keeps
-all of these mock until an explicit selector is changed. A live selector is
-fail-closed: missing credentials or a missing music endpoint should block that
-deployment instead of silently calling a mock provider.
+Under global `mock`, `inherit` keeps an unconfigured capability mocked. Enable
+each intended live capability explicitly. An explicitly selected live adapter
+requires its credentials or music endpoint rather than silently using a mock.
+This describes inheritance, not the current production service's live selectors.
 
 When using an Ark Writer with global `mock`, explicitly set
 `WAVECAST_TRACK_RESEARCH_PROVIDER=deepseek` on each live/test API that researches
