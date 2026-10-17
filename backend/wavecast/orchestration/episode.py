@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from time import monotonic
@@ -33,13 +33,18 @@ from wavecast.storage.episodes import (
     EpisodeRepository,
 )
 
+from .authoring_gate import finish_save
 from .buffer import buffer_decision
 from .generation import (
     DeterministicMockProgressiveGenerator,
     GeneratedChapter,
     ProgressiveChapterGenerator,
 )
-from .narration_enrichment import author_pending_narration
+from .narration_enrichment import (
+    _AUTHORING_IN_FLIGHT,
+    _next_authoring_chapter_id,
+    author_pending_narration,
+)
 from .runtime import ProgressivePlanningDeferred, StagedProgressiveRuntime
 
 SESSION_TTL = timedelta(seconds=30)
@@ -47,6 +52,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BUFFER_CHAPTERS = 2
 DEFAULT_BUFFER_AHEAD_SECONDS = 5 * 60
+
+# Writer and detached enrichment can reach the same TTS seam. Keep the claim until save.
+_TTS_IN_FLIGHT: dict[tuple[str, str], asyncio.Future[None]] = {}
 
 
 def _is_wavecast_owned_audio_url(value: str) -> bool:
@@ -419,6 +427,8 @@ class EpisodeOrchestrator:
             for index, segment in enumerate(chapter.segments)
         ]
         latest.segments.extend(normalized)
+        if chapter.chapter_id == "chapter-2" and chapter.research_evidence:
+            latest.opening_evidence = list(chapter.research_evidence)
         latest.last_activity_at = self.now()
         return self.repository.save(latest)
 
@@ -456,13 +466,7 @@ class EpisodeOrchestrator:
             # eventually catch up so Writer/TTS can resume.
             return self._has_fast_successor(episode)
 
-        persisted_chapters = {segment.chapter_id for segment in episode.ordered_segments}
-        authored = set(session.narration_authored_chapter_ids)
-        if any(
-            chapter.chapter_id in persisted_chapters
-            and chapter.chapter_id not in authored
-            for chapter in session.chapters
-        ):
+        if _next_authoring_chapter_id(episode, include_backup=True) is not None:
             return True
 
         return any(
@@ -860,6 +864,23 @@ class EpisodeOrchestrator:
         if not pending:
             return episode
 
+        key = (episode_id, "chapter-2")
+        if key in _AUTHORING_IN_FLIGHT:
+            if episode.generation_mode is GenerationMode.FULL:
+                await asyncio.shield(_AUTHORING_IN_FLIGHT[key])
+            return await asyncio.to_thread(self.repository.get, episode_id)
+        _AUTHORING_IN_FLIGHT[key] = asyncio.get_running_loop().create_future()
+        try:
+            return await self._author_fast_successor(episode_id, episode, author_fast)
+        finally:
+            _AUTHORING_IN_FLIGHT.pop(key).set_result(None)
+
+    async def _author_fast_successor(
+        self,
+        episode_id: str,
+        episode: LiveEpisode,
+        author_fast: Callable[[LiveEpisode], Awaitable[GeneratedChapter | None]],
+    ) -> LiveEpisode:
         try:
             generated = await author_fast(episode.model_copy(deep=True))
         except asyncio.CancelledError:
@@ -872,10 +893,12 @@ class EpisodeOrchestrator:
                 type(error).__name__,
             )
             generated = None
-        return await asyncio.to_thread(
-            self._finish_fast_successor_narration,
-            episode_id,
-            generated,
+        return await finish_save(
+            asyncio.to_thread(
+                self._finish_fast_successor_narration,
+                episode_id,
+                generated,
+            )
         )
 
     def _finish_fast_successor_narration(
@@ -973,6 +996,16 @@ class EpisodeOrchestrator:
                     segment = segment.model_copy(update={"order": segment.order + delta})
                 retained.append(segment)
             episode.segments = retained + replacement
+            session = episode.progressive_session
+            if session is not None and "chapter-2" not in session.narration_authored_chapter_ids:
+                episode.progressive_session = session.model_copy(
+                    update={
+                        "narration_authored_chapter_ids": [
+                            *session.narration_authored_chapter_ids,
+                            "chapter-2",
+                        ]
+                    }
+                )
             episode.last_activity_at = self.now()
             try:
                 return self.repository.save(episode)
@@ -985,13 +1018,25 @@ class EpisodeOrchestrator:
         episode_id: str,
         *,
         max_chapters: int = 2,
+        include_backup: bool = False,
     ) -> LiveEpisode:
         """Run optional Writer enrichment after playable music is durable."""
         return await author_pending_narration(
             self,
             episode_id,
             max_chapters=max_chapters,
+            include_backup=include_backup,
         )
+
+    async def complete_hosting_async(self, episode_id: str) -> LiveEpisode:
+        """One reserved, unpublished backup after primary discussions have settled."""
+        from wavecast.hosting import backup_ready
+
+        episode = await asyncio.to_thread(self.repository.get, episode_id)
+        if not backup_ready(episode):
+            return episode
+        await self.author_pending_narration_async(episode_id, max_chapters=64, include_backup=True)
+        return await self.materialize_pending_narration_async(episode_id, max_segments=64)
 
     async def materialize_pending_narration_async(
         self,
@@ -1028,6 +1073,13 @@ class EpisodeOrchestrator:
             if candidate is None:
                 break
             candidate_id = candidate.id
+            key = (episode_id, candidate_id)
+            if key in _TTS_IN_FLIGHT:
+                if episode.generation_mode is GenerationMode.FULL:
+                    await asyncio.shield(_TTS_IN_FLIGHT[key])
+                    continue
+                break
+            _TTS_IN_FLIGHT[key] = asyncio.get_running_loop().create_future()
             detached = candidate.model_copy(deep=True)
             try:
                 # Whatever voicing costs belongs to this programme's usage, however it ends.
@@ -1043,20 +1095,27 @@ class EpisodeOrchestrator:
                     candidate_id,
                     type(error).__name__,
                 )
-                await asyncio.to_thread(
-                    self._finish_narration_enrichment,
-                    episode_id,
-                    candidate_id,
-                    None,
+                await finish_save(
+                    asyncio.to_thread(
+                        self._finish_narration_enrichment,
+                        episode_id,
+                        candidate_id,
+                        None,
+                    )
                 )
             else:
                 await self._record_dialogue_audio(runtime, episode_id, materialized)
-                await asyncio.to_thread(
-                    self._finish_narration_enrichment,
-                    episode_id,
-                    candidate_id,
-                    materialized,
+                await finish_save(
+                    asyncio.to_thread(
+                        self._finish_narration_enrichment,
+                        episode_id,
+                        candidate_id,
+                        materialized,
+                    )
                 )
+            finally:
+                done = _TTS_IN_FLIGHT.pop(key)
+                done.set_result(None)
             processed += 1
         return await asyncio.to_thread(self.repository.get, episode_id)
 
@@ -1159,6 +1218,7 @@ class EpisodeOrchestrator:
             episode_id,
             max_segments=64,
         )
+        await self.complete_hosting_async(episode_id)
         episode = await asyncio.to_thread(self.repository.get, episode_id)
         for segment in episode.timeline_segments:
             if segment.is_audio_ready:
@@ -1185,6 +1245,17 @@ class EpisodeOrchestrator:
                 if item.kind is SegmentKind.NARRATION and item.state is SegmentState.SKIPPED
             ),
         )
+        coverage = saved.hosting_coverage
+        if coverage is not None:
+            logger.info(
+                "hosting_coverage episode_id=%s status=%s delivered=%d minimum=%d target=%d reason=%s",
+                saved.id,
+                coverage.status,
+                coverage.delivered,
+                coverage.minimum,
+                coverage.target,
+                coverage.reason,
+            )
         return saved
 
     def prepare_materialization(self, episode_id: str) -> LiveEpisode:

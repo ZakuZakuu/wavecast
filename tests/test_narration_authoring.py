@@ -454,7 +454,7 @@ def test_a_failed_authoring_run_releases_the_chapter_for_the_next_one() -> None:
     repository, episode = _pending_episode()
     asyncio.run(author_pending_narration(_ExplodingHost(repository), episode.id, max_chapters=1))
 
-    assert narration_enrichment._AUTHORING_IN_FLIGHT == set()
+    assert narration_enrichment._AUTHORING_IN_FLIGHT == {}
 
 
 def test_a_second_path_cannot_start_a_chapter_while_the_first_ones_result_is_still_being_saved(
@@ -487,7 +487,7 @@ def test_a_second_path_cannot_start_a_chapter_while_the_first_ones_result_is_sti
     asyncio.run(both())
 
     assert runtime.calls == 1
-    assert narration_enrichment._AUTHORING_IN_FLIGHT == set()
+    assert narration_enrichment._AUTHORING_IN_FLIGHT == {}
 
 
 def test_a_cancelled_authoring_run_releases_the_chapter() -> None:
@@ -513,4 +513,146 @@ def test_a_cancelled_authoring_run_releases_the_chapter() -> None:
 
     asyncio.run(run())
 
-    assert narration_enrichment._AUTHORING_IN_FLIGHT == set()
+    assert narration_enrichment._AUTHORING_IN_FLIGHT == {}
+
+
+@pytest.mark.parametrize("fast_opening", [False, True])
+def test_full_generation_joins_the_writer_and_voices_its_result_once(fast_opening) -> None:
+    """Real FULL lifecycle must not close seams while detached authoring is pending."""
+    from wavecast.orchestration.episode import EpisodeOrchestrator
+
+    class Runtime:
+        def __init__(self):
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+            self.calls = 0
+            self.tts_calls = 0
+
+        def create_generator(self, session):
+            return self
+
+        async def generate_next(self, episode):
+            return None
+
+        async def author_narration(self, episode, chapter_id):
+            self.calls += 1
+            self.entered.set()
+            await self.release.wait()
+            return _authored_chapter()
+
+        async def author_fast_successor_narration(self, episode):
+            return await self.author_narration(episode, "chapter-2")
+
+        async def materialize_narration(self, segment):
+            self.tts_calls += 1
+            return segment.model_copy(
+                update={
+                    "state": SegmentState.AUDIO_READY,
+                    "actual_duration_seconds": 8,
+                    "audio_source_url": "/api/audio/mock/voice",
+                    "asset_ref": "voice",
+                }
+            )
+
+    async def run():
+        repository, episode = _pending_episode()
+        runtime = Runtime()
+        orchestrator = EpisodeOrchestrator(repository, progressive_runtime=runtime)
+        detached = asyncio.create_task(
+            orchestrator.author_fast_successor_narration_async(episode.id)
+            if fast_opening
+            else orchestrator.author_pending_narration_async(episode.id)
+        )
+        await runtime.entered.wait()
+        full = asyncio.create_task(orchestrator.materialize_all_async(episode.id))
+        await asyncio.sleep(0.05)
+        assert not full.done()
+        assert (
+            repository.get(episode.id).segment("chapter-2:narration:pending").state
+            is SegmentState.PLANNED
+        )
+        runtime.release.set()
+        await detached
+        completed = await full
+        assert completed.state is EpisodeState.MATERIALIZED
+        assert completed.segment("chapter-2:narration:0").state is SegmentState.AUDIO_READY
+        assert (runtime.calls, runtime.tts_calls) == (1, 1)
+
+    asyncio.run(run())
+
+
+def test_full_generation_joins_inflight_tts_without_requesting_it_twice() -> None:
+    from wavecast.models.episode import GenerationMode
+    from wavecast.orchestration.episode import _TTS_IN_FLIGHT, EpisodeOrchestrator
+
+    class Runtime:
+        def __init__(self):
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+            self.calls = 0
+
+        async def materialize_narration(self, segment):
+            self.calls += 1
+            self.entered.set()
+            await self.release.wait()
+            return segment.model_copy(
+                update={
+                    "state": SegmentState.AUDIO_READY,
+                    "actual_duration_seconds": 8,
+                    "audio_source_url": "/api/audio/mock/voice",
+                    "asset_ref": "voice",
+                }
+            )
+
+    async def run():
+        repository, episode = _pending_episode()
+        episode.generation_mode = GenerationMode.FULL
+        episode = _finish_authoring(_Host(repository), episode.id, "chapter-2", _authored_chapter())
+        runtime = Runtime()
+        orchestrator = EpisodeOrchestrator(repository, progressive_runtime=runtime)
+        first = asyncio.create_task(orchestrator.materialize_pending_narration_async(episode.id))
+        await runtime.entered.wait()
+        second = asyncio.create_task(orchestrator.materialize_pending_narration_async(episode.id))
+        await asyncio.sleep(0.05)
+        assert not second.done()
+        runtime.release.set()
+        await asyncio.gather(first, second)
+        assert runtime.calls == 1
+        assert repository.get(episode.id).segment("chapter-2:narration:0").is_audio_ready
+        assert not _TTS_IN_FLIGHT
+
+    asyncio.run(run())
+
+
+def test_cancellation_during_save_keeps_the_authoring_claim_until_the_thread_finishes(monkeypatch):
+    import threading
+
+    from wavecast.orchestration import narration_enrichment
+
+    repository, episode = _pending_episode()
+    entered, release = threading.Event(), threading.Event()
+    original = narration_enrichment._finish_authoring
+
+    def blocked_save(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(narration_enrichment, "_finish_authoring", blocked_save)
+    host = _Host(repository)
+    host.progressive_runtime = _SlowCountingRuntime()
+
+    async def run():
+        first = asyncio.create_task(author_pending_narration(host, episode.id))
+        await asyncio.to_thread(entered.wait, 5)
+        first.cancel()
+        await asyncio.sleep(0.01)
+        assert narration_enrichment._AUTHORING_IN_FLIGHT
+        await author_pending_narration(host, episode.id)
+        assert host.progressive_runtime.calls == 1
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert not narration_enrichment._AUTHORING_IN_FLIGHT
+
+    asyncio.run(run())

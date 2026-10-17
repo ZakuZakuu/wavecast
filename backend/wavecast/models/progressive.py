@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from wavecast.hosting import DiscussionPlan
 from wavecast.intelligence.models import (
     ChapterPlan,
     FastStartPlan,
@@ -67,6 +68,7 @@ class ProgressiveAssemblySession(BaseModel):
     research: ResearchBundle
     skeleton: ProgramSkeleton
     chapters: list[ProgressiveAssemblyChapter] = Field(min_length=1, max_length=32)
+    discussion_plan: DiscussionPlan | None = None
     timing_plan: ProgramTimingPlan
     narration_authored_chapter_ids: list[str] = Field(default_factory=list, max_length=32)
     diagnostics: list[ProgressiveSessionDiagnostic] = Field(default_factory=list, max_length=64)

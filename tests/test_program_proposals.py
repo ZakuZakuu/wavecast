@@ -820,3 +820,19 @@ def test_other_provider_failures_are_not_retried_here() -> None:
     with pytest.raises(ProviderUnavailableError):
         asyncio.run(generator.generate(ProposalGenerationRequest(prompt="夜色")))
     assert llm.calls == 1
+
+
+def test_specific_angle_keeps_candidate_order_and_cannot_fall_back_to_any_same_artist_song():
+    batch = _hisaishi_draft(
+        OpeningTrackCandidate(artist="久石让", title="missing exact title"),
+        OpeningTrackCandidate(artist="久石让", title="娜乌西卡安魂曲"),
+    )
+    draft = batch.proposals[0]
+    draft.allow_artist_fallback = False
+    generator = _variant_generator(batch)
+    resolved, _, _ = asyncio.run(generator._resolve_opening_track(draft, seed="variety"))
+    assert resolved.track_ref == "netease:28457548"
+    draft.opening_track_candidates = draft.opening_track_candidates[:1]
+    # The catalog has playable Hisaishi tracks, but none of the editor's valid candidates.
+    resolved, _, _ = asyncio.run(generator._resolve_opening_track(draft, seed="variety"))
+    assert resolved is None

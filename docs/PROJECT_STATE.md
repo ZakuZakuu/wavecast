@@ -4,21 +4,17 @@ Updated: 2026-10-17（北京时间）。唯一当前状态入口。旧过程记�
 
 ## 当前任务
 
-开场优化已通过 [#313](https://github.com/ZakuZakuu/wavecast/pull/313) 合入 integration（`815f0a0`），CI全绿，测试API/网页部署与只读冒烟均通过。main仍是`6be4919`，#312外文口播修复和#313开场均未发布正式环境。当前分支 `docs/opening-test-checkpoint-20261017` 仅保存验收交接，不为状态文档再触发部署；下一轮从integration开发时带入此文档更新。
+当前开发分支 `fix/hosted-programme-delivery`，基于integration `815f0a0`。用户已授权实现并直接部署测试，未授权本轮发布main。#312外文口播修复与#313开场均在integration，正式仍为`6be4919`。
 
-旧案《椎名林檎的两套呼吸》（`701677ba-5d95-4e59-94d6-c3b3b208ba92`）约28分29秒，仅47秒单人口播；素材整理反复TypeError，唯一双人稿因日文假名整段跳过，均已离线复现。旧音频不回填，应新建节目验证修复。
+最新试听《林檎的爵士切面》`51a4e2b8-4e85-4056-8001-43771256786f`，约27分18秒，仅两段单人音频合计21.173秒。曲目素材整理已正常；FULL生成遇到在途Writer便停止写稿并将余下槽位SKIPPED，随后有效3轮/61秒双人稿到达也无法挂入。这是主要根因，不是本轮所有口播都被日文检查拒绝。另有一段单人稿被unspeakable_script拒绝，原稿未留存，不能推断具体外文词。旧节目不回填。
 
-正式/测试API都曾缺少独立的曲目素材整理provider变量。Ark Writer＋全局mock会让该角色绑定不支持brief schema的mock，已离线复现相同TypeError；Railway OAuth不返回变量值，所以实际生产全局模式未直接核实。用户授权后，正式API与测试API均显式设置 `WAVECAST_TRACK_RESEARCH_PROVIDER=deepseek`；测试变量随#312同一次部署生效，未另外重启。
+**本轮实现**见[ADR 0033](adr/0033-hosted-programme-delivery.md)：FULL等待在途Writer/TTS及保存，快速开篇共用防重；人物志/来龙去脉FULL主持新节目按时长安排讨论，约30分钟计划3段/交付最低2段、60分钟5/4，按音乐时间分散，预留口播时间。只计实际配音进入时间线、双方参与且有事实支持的讨论；非讨论缝隙可纯音乐。主要段落结束后最多尝试一个未发布补位；不足时返回hosting_coverage短缺并正常保留可播音乐。轻文本台/旧session沿用原策略。开篇复用已有FastStart证据，失败由下一段接过导入任务；提案方向传给Curator，章节任务传给双人Writer。窄切口首曲按精确候选顺序找，不任取同艺人歌曲兜底。无新复审/翻译/摘要调用，不修改已发布前缀。
 
-#312保留语音检查，单人/双人共用名称指导；双人确定性转换可读名称、保留原文与引用，无法处理的外文在存稿前拒绝并由单人回退。只省略明确“原名”注释，不裁其他括号说明、不加翻译/复审；空叙述章节返回无旁白。实现已在 integration，尚未主动付费生成或真机验收。
-
-**开篇实现与代码验证完成，待新节目试听。** 见 [ADR 0032](adr/0032-editorial-opening.md)：中文采用提案本期导入＋短台呼，缺失/超长/不可读仍用完整旧兜底；分享复用可选导入字段。LiveEpisode保存已有简介，首个A→B Writer收到需求、编辑意图、可播开场原文和确认曲目，用开篇任务替代普通move/口吻样例/字数下限。FULL/LIGHT目标30/12秒，NONE不写，槽位仍是before-track。方法共享，五台各一句默认，不喂完整范文、不增加模型调用，事实/日期/配音检查和正文不改。
-
-下一步：重新提交选题生成新提案/节目，试听一份人物志重文本、一份轻文本。听前两首是否建立具体方向、两处开场是否重复、短开场是否压主唱；旧卡片/旧稿不会自动更新。短导入含台呼估时上限12秒，既有混音无合适窗口可能第6秒叠播。不开新研究/摘要/翻译/复审/选曲调用，不改worker/播放器/混音；台标音乐留后续。用户认可试听后再发布main，本轮尚未获得这次生产发布授权。
+正在做离线验证、自审和PR/CI，完成后一次合入integration并核实部署；状态不能当成已部署。试听需新建节目，旧卡片不会重新选首曲、旧音频不会补口播。重点验收：前两首附近建立具体主题、半小时至少两段实质双人讨论、无晚到稿丢失、收尾与实际内容对应；文笔与首曲风格仍以真听为准。开场方法论保存在[设计文档](design/programme-editorial-method-and-opening.md)，台标音乐仍留后续。
 
 ## 已发布基线
 
-- 正式站：**https://wavecast.space**。#299–#310 经 [#311](https://github.com/ZakuZakuu/wavecast/pull/311) 发布；main 发布提交 `6be49197cce31a5a87afe7f5c1cd4d184babc083`；integration已在此基础上合入#312、#313。最新验收记录在当前文档分支。
+- 正式站：**https://wavecast.space**。#299–#310 经 [#311](https://github.com/ZakuZakuu/wavecast/pull/311) 发布；main 发布提交 `6be49197cce31a5a87afe7f5c1cd4d184babc083`；integration已在此基础上合入#312、#313。当前修复尚在功能分支。
 - [release CI](https://github.com/ZakuZakuu/wavecast/actions/runs/38898753313)：1660 通过、3 跳过；Web／Docker 冒烟通过。[main CI](https://github.com/ZakuZakuu/wavecast/actions/runs/38907140961) 全绿。
 - Vercel正式部署仍为`dpl_2fzNxTHMXzm4LMUWktEzjgtcimFd`；正式API随后仅做配置重部署，见下。
 - 2026-10-17北京时间约00:50，用户授权修正正式API变量`WAVECAST_TRACK_RESEARCH_PROVIDER=deepseek`；新API部署`a9910361-5488-4483-9459-17cc89082f73`已观测SUCCESS，启动和健康检查200。该次只改正式API配置，源码仍固定在上述main发布SHA；随后测试服务的变化见下。新变量名称已回读确认；OAuth不提供变量值读回，写入工具确认设置成功。新节目素材整理的付费调用尚未验收，不能据部署成功断言整期生成质量已恢复。

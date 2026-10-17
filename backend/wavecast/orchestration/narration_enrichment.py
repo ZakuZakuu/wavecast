@@ -9,6 +9,7 @@ from datetime import datetime
 from functools import partial
 from typing import Protocol
 
+from wavecast.hosting import backup_ready, delivered_discussions
 from wavecast.models.episode import (
     GenerationMode,
     LiveEpisode,
@@ -17,7 +18,7 @@ from wavecast.models.episode import (
     SegmentState,
 )
 from wavecast.models.progressive import ProgressiveAssemblySession
-from wavecast.orchestration.authoring_gate import authoring_gate
+from wavecast.orchestration.authoring_gate import authoring_gate, finish_save
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.runtime import StagedProgressiveRuntime
 from wavecast.presentation import HostMode
@@ -33,7 +34,7 @@ class NarrationAuthoringHost(Protocol):
 
 
 # (episode id, chapter id) of the chapters being authored right now in this process.
-_AUTHORING_IN_FLIGHT: set[tuple[str, str]] = set()
+_AUTHORING_IN_FLIGHT: dict[tuple[str, str], asyncio.Future[None]] = {}
 
 
 async def author_pending_narration(
@@ -41,6 +42,7 @@ async def author_pending_narration(
     episode_id: str,
     *,
     max_chapters: int = 2,
+    include_backup: bool = False,
 ) -> LiveEpisode:
     """Run Writer only for already-persisted, still-speculative music chapters."""
     if max_chapters < 1:
@@ -73,7 +75,7 @@ async def author_pending_narration(
         session = episode.progressive_session
         if session is None:
             break
-        chapter_id = _next_authoring_chapter_id(episode)
+        chapter_id = _next_authoring_chapter_id(episode, include_backup=include_backup)
         if chapter_id is None:
             break
 
@@ -101,8 +103,22 @@ async def author_pending_narration(
         # A SKIPPED host seam is a final editorial decision (continuity
         # deadline, exposure, earlier failure). Do not spend Writer/TTS on it.
         seam_skipped = _has_skipped_narration(chapter_segments)
+        plan = session.discussion_plan
+        backup_unneeded = bool(
+            plan is not None
+            and chapter_id == plan.backup_chapter_id
+            and delivered_discussions(episode) >= plan.minimum
+        )
+        unplanned = bool(
+            plan is not None
+            and chapter_id not in plan.chapter_ids
+            and chapter_id != plan.backup_chapter_id
+            and chapter_id not in {session.chapters[0].chapter_id, session.chapters[-1].chapter_id}
+        )
         should_degrade = (
-            exposed
+            backup_unneeded
+            or unplanned
+            or exposed
             or seam_skipped
             or not session_chapter.slot_contexts
             or unresolved_music_slot
@@ -114,7 +130,9 @@ async def author_pending_narration(
         try:
             generated: GeneratedChapter | None = None
             if should_degrade:
-                if exposed:
+                if backup_unneeded or unplanned:
+                    reason = "discussion_plan"
+                elif exposed:
                     reason = "exposed"
                 elif seam_skipped:
                     reason = "seam_skipped"
@@ -138,13 +156,18 @@ async def author_pending_narration(
                         episode_id,
                         chapter_id,
                     )
+                    if episode.generation_mode is GenerationMode.FULL:
+                        # A full render must join the existing Writer, including its save,
+                        # before deciding that the remaining host seams can be closed.
+                        await asyncio.shield(_AUTHORING_IN_FLIGHT[key])
+                        continue
                     break
-                _AUTHORING_IN_FLIGHT.add(key)
+                _AUTHORING_IN_FLIGHT[key] = asyncio.get_running_loop().create_future()
                 held_key = key
                 # The state may have moved on while this run waited its turn: look again, inside the
                 # protected range, before spending anything.
                 latest = await asyncio.to_thread(host.repository.get, episode_id)
-                if _next_authoring_chapter_id(latest) != chapter_id:
+                if _next_authoring_chapter_id(latest, include_backup=include_backup) != chapter_id:
                     logger.info(
                         "narration_authoring_skipped episode_id=%s chapter_id=%s reason=already_authored",
                         episode_id,
@@ -189,12 +212,14 @@ async def author_pending_narration(
                     )
 
             try:
-                await asyncio.to_thread(
-                    _finish_authoring,
-                    host,
-                    episode_id,
-                    chapter_id,
-                    generated,
+                await finish_save(
+                    asyncio.to_thread(
+                        _finish_authoring,
+                        host,
+                        episode_id,
+                        chapter_id,
+                        generated,
+                    )
                 )
             except ValueError as error:
                 logger.warning(
@@ -204,17 +229,20 @@ async def author_pending_narration(
                     chapter_id,
                     type(error).__name__,
                 )
-                await asyncio.to_thread(
-                    _finish_authoring,
-                    host,
-                    episode_id,
-                    chapter_id,
-                    None,
+                await finish_save(
+                    asyncio.to_thread(
+                        _finish_authoring,
+                        host,
+                        episode_id,
+                        chapter_id,
+                        None,
+                    )
                 )
             processed += 1
         finally:
             if held_key is not None:
-                _AUTHORING_IN_FLIGHT.discard(held_key)
+                done = _AUTHORING_IN_FLIGHT.pop(held_key)
+                done.set_result(None)
 
     final = await asyncio.to_thread(host.repository.get, episode_id)
     await _settle_dialogue(runtime, final)
@@ -224,6 +252,8 @@ async def author_pending_narration(
 async def _settle_dialogue(runtime: StagedProgressiveRuntime, episode: LiveEpisode) -> None:
     """Return stories whose passage did not make it into the programme; best effort."""
 
+    if any(key[0] == episode.id for key in _AUTHORING_IN_FLIGHT):
+        return
     settle = getattr(runtime, "settle_dialogue", None)
     if not callable(settle):
         return
@@ -296,17 +326,29 @@ def _has_skipped_narration(segments: Sequence[object]) -> bool:
     )
 
 
-def _next_authoring_chapter_id(episode: LiveEpisode) -> str | None:
+def _next_authoring_chapter_id(episode: LiveEpisode, *, include_backup: bool = False) -> str | None:
     session = episode.progressive_session
     if session is None:
         return None
     authored = set(session.narration_authored_chapter_ids)
     persisted = {segment.chapter_id for segment in episode.ordered_segments}
+    backup = session.discussion_plan.backup_chapter_id if session.discussion_plan else None
+    # Hold the closing behind the reserved seam too, so its context can include the backup.
+    backup_index = next(
+        (i for i, item in enumerate(session.chapters) if item.chapter_id == backup), None
+    )
     return next(
         (
             chapter.chapter_id
-            for chapter in session.chapters
-            if chapter.chapter_id in persisted and chapter.chapter_id not in authored
+            for index, chapter in enumerate(session.chapters)
+            if chapter.chapter_id in persisted
+            and chapter.chapter_id not in authored
+            and (
+                backup_index is None
+                or backup in authored
+                or index < backup_index
+                or (include_backup and backup_ready(episode))
+            )
         ),
         None,
     )

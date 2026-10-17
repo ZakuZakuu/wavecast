@@ -389,6 +389,9 @@ class GenerationWorker:
                 episode_id,
                 max_segments=limit,
             )
+            complete_hosting = getattr(self.orchestrator, "complete_hosting_async", None)
+            if callable(complete_hosting):
+                materialized = await complete_hosting(episode_id)
         except Exception as error:
             logger.warning(
                 "narration_enrichment_failed episode_id=%s stage=tts error_type=%s",

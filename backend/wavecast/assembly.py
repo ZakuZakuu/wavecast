@@ -34,6 +34,7 @@ from wavecast.coverage import (
     ensure_required_coverage,
     unfulfilled_artists,
 )
+from wavecast.hosting import discussion_counts, discussion_seconds, plan_discussions
 from wavecast.intelligence.background import BackgroundIntelligencePipeline
 from wavecast.intelligence.curation import CuratorContractError, CuratorService
 from wavecast.intelligence.dialogue_pipeline import create_dialogue_stack
@@ -167,6 +168,7 @@ from wavecast.text_identity import (
     strip_latin_accents,
 )
 from wavecast.timing import (
+    ChapterNarrationBudget,
     ProgramTimingPlan,
     ProgramTimingSummary,
     build_program_timing_plan,
@@ -201,6 +203,7 @@ class LiveEpisodeAssemblyRequest(BaseModel):
     """Provider-neutral input for one bounded episode assembly run."""
 
     topic: str = Field(min_length=1, max_length=300)
+    editorial_brief: str | None = Field(default=None, max_length=500)
     anchor_tracks: list[str] = Field(default_factory=list, max_length=8)
     desired_duration_seconds: int = Field(default=900, gt=0)
     max_tracks: int = Field(default=4, ge=2, le=16)
@@ -731,11 +734,13 @@ class LiveEpisodeAssemblyService:
                     )
                 )
             segments.extend(music)
-            return _generated_runtime_chapter(
+            chapter = _generated_runtime_chapter(
                 "chapter-2",
                 segments,
                 base_order=1,
             )
+            chapter.research_evidence = list(fast_result.research.bundle.evidence)
+            return chapter
 
         # Prefer the actual FastStart route when it produced a usable exact
         # catalog identity.
@@ -1008,6 +1013,7 @@ class LiveEpisodeAssemblyService:
                     request.topic,
                 ),
                 topic=request.topic,
+                editorial_brief=request.editorial_brief,
                 trace=trace,
                 catalog_pool=catalog_pool,
                 required_artists=request.required_artists,
@@ -1490,6 +1496,7 @@ class LiveEpisodeAssemblyService:
                 max_chapters=request.max_chapters,
                 output_language=resolve_output_language(request.output_language, request.topic),
                 topic=request.topic,
+                editorial_brief=request.editorial_brief,
                 trace=trace,
                 catalog_pool=catalog_pool,
                 required_artists=request.required_artists,
@@ -2934,6 +2941,19 @@ def _build_progressive_session(
 ) -> ProgressiveAssemblySession:
     """Build the pre-Writer session from route identities and slot contexts."""
 
+    counts = discussion_counts(
+        request.station, request.presentation_intent.host_mode, request.desired_duration_seconds
+    )
+    if counts is not None and request.station is not None:
+        # Reserve discussion time before music consumes the route budget.
+        narration_ratio = max(
+            narration_ratio,
+            min(
+                0.3,
+                (counts[0] * discussion_seconds(request.station) + 50)
+                / request.desired_duration_seconds,
+            ),
+        )
     normalized = _fit_route_to_time_budget(
         _normalize_progressive_route(
             request=request,
@@ -3053,7 +3073,42 @@ def _build_progressive_session(
         )
         for index, item in enumerate(future)
     ]
+    discussion_plan = None
+    if counts is not None and request.station is not None:
+        discussion_plan = plan_discussions(session_chapters, target=counts[0], minimum=counts[1])
+        for index, chapter in enumerate(session_chapters):
+            chapter.target_narration_seconds = (
+                discussion_seconds(request.station)
+                if chapter.chapter_id in discussion_plan.chapter_ids
+                else 30
+                if index == 0
+                else 20
+                if index == len(session_chapters) - 1
+                else 0
+            )
+        music_seconds = sum(track_seconds(length) for length in resolved_lengths)
+        allocated = sum(chapter.target_narration_seconds for chapter in session_chapters)
+        available = max(0, request.desired_duration_seconds - music_seconds)
+        timing_plan = ProgramTimingPlan(
+            desired_total_seconds=request.desired_duration_seconds,
+            target_narration_ratio=target_narration_ratio,
+            resolved_music_seconds=music_seconds,
+            requested_narration_seconds=counts[0] * discussion_seconds(request.station) + 50,
+            available_narration_seconds=available,
+            allocated_narration_seconds=allocated,
+            duration_target_feasible=allocated <= available
+            and music_seconds < request.desired_duration_seconds,
+            chapter_budgets=[
+                ChapterNarrationBudget(
+                    chapter_index=index,
+                    slot_count=len(chapter.slot_contexts),
+                    target_narration_seconds=chapter.target_narration_seconds,
+                )
+                for index, chapter in enumerate(session_chapters)
+            ],
+        )
     return ProgressiveAssemblySession(
+        discussion_plan=discussion_plan,
         topic=request.topic,
         listener_taste_context=request.listener_taste_context,
         desired_duration_seconds=request.desired_duration_seconds,
@@ -3763,6 +3818,16 @@ class StagedProgressiveChapterGenerator:
         if (
             self.session.presentation_intent.host_mode is not HostMode.NONE
             and chapter.slot_contexts
+            and (
+                self.session.discussion_plan is None
+                or chapter.chapter_id
+                in {
+                    *self.session.discussion_plan.chapter_ids,
+                    self.session.discussion_plan.backup_chapter_id,
+                    self.session.chapters[0].chapter_id,
+                    self.session.chapters[-1].chapter_id,
+                }
+            )
         ):
             segments.append(
                 _pending_narration_placeholder(
@@ -3796,6 +3861,15 @@ class StagedProgressiveChapterGenerator:
             )
         ):
             return None
+
+        if (
+            self.session.discussion_plan is not None
+            and chapter_id == self.session.discussion_plan.backup_chapter_id
+            and self.session.station is not None
+        ):
+            chapter = chapter.model_copy(
+                update={"target_narration_seconds": discussion_seconds(self.session.station)}
+            )
 
         chapter_segments = [
             segment
@@ -3855,6 +3929,7 @@ class StagedProgressiveChapterGenerator:
             for segment in episode.ordered_segments
             if (
                 isinstance(segment, NarrationSegment)
+                and segment.order < chapter_start_order
                 and segment.state is not SegmentState.SKIPPED
                 and segment.narration_text
             )
@@ -3938,6 +4013,26 @@ class StagedProgressiveChapterGenerator:
             _assert_narration_blocks_materialized(radio_script, composed)
             return composed
 
+        needs_opening = bool(
+            self.session.discussion_plan is not None
+            and not is_final_chapter
+            and not any(
+                isinstance(segment, NarrationSegment)
+                and segment.chapter_id != "chapter-1"
+                and (segment.is_audio_ready or segment.state is SegmentState.SCRIPT_READY)
+                for segment in episode.timeline_segments
+            )
+            and "chapter-2" in self.session.narration_authored_chapter_ids
+        )
+        editorial_goal = writer_chapter.narration_goal
+        if needs_opening:
+            editorial_goal = (
+                "The first opening could not air. Briefly establish the programme's specific "
+                "listening question and use this song/material to begin exploring it. "
+                "Do not repeat the station welcome or promise unconfirmed tracks. " + editorial_goal
+            )
+            writer_chapter = writer_chapter.model_copy(update={"narration_goal": editorial_goal})
+
         # A researched two-host passage is offered first; whenever it is not made, the chapter is
         # authored by the Writer exactly as before.
         dialogue_offer: DialogueOffer | None = None
@@ -3947,10 +4042,23 @@ class StagedProgressiveChapterGenerator:
                 episode_id=episode.id,
                 station=self.session.station,
                 context=chapter.slot_contexts[0],
-                chosen_slot_ids=self.dialogue.eligible_slot_ids(
-                    self.session.station,
-                    [item.slot_contexts for item in self.session.chapters],
-                    episode.seed_id,
+                chosen_slot_ids=(
+                    {
+                        context.slot_id
+                        for item in self.session.chapters
+                        if item.chapter_id
+                        in {
+                            *self.session.discussion_plan.chapter_ids,
+                            self.session.discussion_plan.backup_chapter_id,
+                        }
+                        for context in item.slot_contexts
+                    }
+                    if self.session.discussion_plan is not None
+                    else self.dialogue.eligible_slot_ids(
+                        self.session.station,
+                        [item.slot_contexts for item in self.session.chapters],
+                        episode.seed_id,
+                    )
                 ),
                 chapter_id=chapter.chapter_id,
                 order=chapter_start_order,
@@ -3958,6 +4066,8 @@ class StagedProgressiveChapterGenerator:
                 subject=self.session.topic,
                 track_ref=research_track.track_ref,
                 previous_context=previous_context,
+                editorial_goal=writer_chapter.narration_goal,
+                programme_brief=episode.editorial_brief or self.session.topic,
                 track_label=f"{research_track.canonical_artist} - {research_track.canonical_title}",
             )
 
@@ -4018,6 +4128,9 @@ class StagedProgressiveChapterGenerator:
                     unplayed_artists=unplayed_artists,
                     unfulfilled_artists=self.session.unfulfilled_artists,
                     topic=self.session.topic,
+                    opening_brief=(episode.editorial_brief or self.session.topic)
+                    if needs_opening
+                    else None,
                     slot_contexts=chapter.slot_contexts,
                     track_points=track_points,
                 )

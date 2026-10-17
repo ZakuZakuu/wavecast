@@ -253,3 +253,34 @@ def test_missing_short_opening_and_legacy_brief_do_not_require_waiting(
         assert episode.topic in fixture.prompts[0]
         assert "none yet: the programme has just begun" in fixture.prompts[0]
         assert "if that short opening was absent or skipped" in fixture.prompts[0]
+
+
+def test_fast_opening_reuses_existing_research_without_exposing_it_in_episode_json(tmp_path):
+    from tests.dialogue_fixtures import evidence
+
+    orchestrator = EpisodeOrchestrator(
+        InMemoryEpisodeRepository(), progressive_runtime=_PlaceholderBootstrapRuntime()
+    )
+    episode = orchestrator.start(_seed())
+    episode = asyncio.run(orchestrator.ensure_fast_start_async(episode.id))
+    episode.opening_evidence = evidence()
+    fixture = StructuredFixture(
+        RadioScript(
+            blocks=[
+                RadioScriptBlock(
+                    kind=RadioScriptBlockKind.TRACK_INTRO,
+                    text="从这两首歌出发，听听不同的表达。",
+                    duration_seconds=10,
+                )
+            ]
+        )
+    )
+    assembly = create_episode_assembly_service(ProviderSettings(mode="mock"))
+    assembly.background_pipeline.writer = WriterService(fixture)
+    generated = asyncio.run(
+        StagedProgressiveRuntimeAdapter(assembly).author_fast_successor_narration(episode)
+    )
+    assert generated is not None
+    assert len(fixture.prompts) == 1
+    assert episode.opening_evidence[0].claim_or_excerpt in fixture.prompts[0]
+    assert "opening_evidence" not in episode.model_dump(mode="json")
