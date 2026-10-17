@@ -284,3 +284,53 @@ def test_fast_opening_reuses_existing_research_without_exposing_it_in_episode_js
     assert len(fixture.prompts) == 1
     assert episode.opening_evidence[0].claim_or_excerpt in fixture.prompts[0]
     assert "opening_evidence" not in episode.model_dump(mode="json")
+
+
+def test_catalog_spoken_title_survives_saved_proposal_and_fast_opening():
+    from wavecast.models.episode import MusicSegment
+
+    seed = _seed().model_copy(
+        update={
+            "opening_track_artist": "椎名林檎",
+            "opening_track_title": "丸ノ内サディスティック",
+            "opening_track_spoken_title": "丸之内虐待狂",
+            "output_language": OutputLanguage.ZH_CN,
+        }
+    )
+    proposal = ProgramProposal.from_episode_seed(seed)
+    copied = shared_copy(
+        ProgramProposal.model_validate_json(proposal.model_dump_json()), new_id="copy"
+    )
+    assert copied.to_episode_seed().opening_track_spoken_title == "丸之内虐待狂"
+    orchestrator = EpisodeOrchestrator(
+        InMemoryEpisodeRepository(), progressive_runtime=_PlaceholderBootstrapRuntime()
+    )
+    episode = orchestrator.start(copied.to_episode_seed())
+    episode = asyncio.run(orchestrator.ensure_fast_start_async(episode.id))
+    episode = LiveEpisode.model_validate_json(episode.model_dump_json())
+    music = next(
+        s for s in episode.segments if isinstance(s, MusicSegment) and s.chapter_id == "chapter-1"
+    )
+    assert music.spoken_title == "丸之内虐待狂"
+    prefix = music.model_dump()
+    fixture = StructuredFixture(
+        RadioScript(
+            blocks=[
+                RadioScriptBlock(
+                    kind=RadioScriptBlockKind.TRACK_INTRO,
+                    text="刚才这首《丸ノ内サディスティック》留下的律动，我们继续听。",
+                    duration_seconds=10,
+                )
+            ]
+        )
+    )
+    assembly = create_episode_assembly_service(ProviderSettings(mode="mock"))
+    assembly.background_pipeline.writer = WriterService(fixture)
+    generated = asyncio.run(
+        StagedProgressiveRuntimeAdapter(assembly).author_fast_successor_narration(episode)
+    )
+    assert generated is not None
+    assert '"spoken_title": "丸之内虐待狂"' in fixture.prompts[0]
+    narration = next(s for s in generated.segments if isinstance(s, NarrationSegment))
+    assert "丸之内虐待狂" in narration.tts_text
+    assert music.model_dump() == prefix

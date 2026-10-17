@@ -22,6 +22,7 @@ from wavecast.orchestration.authoring_gate import authoring_gate, finish_save
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.runtime import StagedProgressiveRuntime
 from wavecast.presentation import HostMode
+from wavecast.spoken_form import with_spoken_track
 from wavecast.storage.episodes import EpisodeConcurrencyError, EpisodeRepository
 
 logger = logging.getLogger(__name__)
@@ -303,6 +304,23 @@ def _with_chapter_research(
     )
     chapters = []
     for item in session.chapters:
+        named = generated.researched_track
+        if named is not None and named.spoken_title:
+            updates: dict[str, object] = {
+                "slot_contexts": [with_spoken_track(slot, named) for slot in item.slot_contexts]
+            }
+            if (
+                item.resolved_track is not None
+                and item.resolved_track.track_ref == named.track_ref
+                and item.resolved_track.spoken_title is None
+            ):
+                updates["resolved_track"] = item.resolved_track.model_copy(
+                    update={
+                        "spoken_title": named.spoken_title,
+                        "spoken_title_evidence_id": named.spoken_title_evidence_id,
+                    }
+                )
+            item = item.model_copy(update=updates)
         if item.chapter_id == chapter_id:
             ids = list(item.chapter.evidence_ids)
             ids.extend(i for i in generated.research_evidence_ids if i not in ids)
@@ -433,7 +451,12 @@ def _finish_authoring(
                     if current_music is None:
                         raise ValueError("narration authoring introduced unexpected music")
                     replacement.append(
-                        current_music.model_copy(update={"order": segment.order})
+                        current_music.model_copy(
+                            update={
+                                "order": segment.order,
+                                "spoken_title": segment.spoken_title or current_music.spoken_title,
+                            }
+                        )
                     )
                 else:
                     if segment.state is not SegmentState.SCRIPT_READY:
@@ -457,8 +480,14 @@ def _finish_authoring(
                 chapter_id,
             ]
         }
-        if generated is not None and replacement is not None and (
-            generated.research_evidence or generated.research_evidence_ids
+        if (
+            generated is not None
+            and replacement is not None
+            and (
+                generated.research_evidence
+                or generated.research_evidence_ids
+                or generated.researched_track
+            )
         ):
             session_update.update(_with_chapter_research(session, chapter_id, generated))
         episode.progressive_session = session.model_copy(update=session_update)

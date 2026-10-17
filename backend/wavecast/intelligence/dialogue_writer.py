@@ -16,7 +16,7 @@ from wavecast.models.story_material import StoryMaterial
 from wavecast.programme_date import programme_date
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
-from wavecast.spoken_form import SPOKEN_NAME_GUIDANCE, KnownTrack, to_spoken_form
+from wavecast.spoken_form import SPOKEN_NAME_GUIDANCE, KnownTrack, spoken_artist, spoken_title
 from wavecast.stations import StationId
 
 from .dialogue_budget import DialogueStationBudget
@@ -132,9 +132,8 @@ class DialogueWriter:
                 [
                     {
                         "display": f"{track.artist} - {track.title}",
-                        "spoken": to_spoken_form(
-                            f"{track.artist} - {track.title}", [track]
-                        ).tts_text,
+                        "spoken_artist": spoken_artist(track.artist),
+                        "spoken_title": track.spoken_title or spoken_title(track.title),
                     }
                     for track in slot.tracks
                 ],

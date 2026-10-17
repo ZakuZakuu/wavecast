@@ -181,6 +181,7 @@ class EpisodeOrchestrator:
             track_ref=seed.opening_track_ref,
             audio_source_url=opening_source.source_url,
             title=seed.opening_track_title,
+            spoken_title=seed.opening_track_spoken_title,
             artist=seed.opening_track_artist,
             timing_profile=seed.opening_track_timing_profile,
             committed_at=now,

@@ -40,7 +40,7 @@ def test_the_sidecar_adapter_keeps_the_chinese_title() -> None:
                         "artist": "久石譲",
                         "title": "あの夏へ",
                         "duration_seconds": 190,
-                        "title_zh": "回到那个夏天",
+                        "tns": ["回到那个夏天"],
                     }
                 ]
             },
@@ -53,7 +53,7 @@ def test_the_sidecar_adapter_keeps_the_chinese_title() -> None:
 
     tracks = asyncio.run(provider.search("あの夏へ", limit=3))
 
-    assert tracks[0].metadata["title_zh"] == "回到那个夏天"
+    assert chinese_title(tracks[0].metadata) == "回到那个夏天"
 
 
 # --- it follows the song ---------------------------------------------------------------------

@@ -90,6 +90,7 @@ class ProgramProposal(BaseModel):
     estimated_duration_seconds: int = Field(gt=0)
     opening_track_ref: str = Field(min_length=1, max_length=500)
     opening_track_title: str = Field(min_length=1, max_length=300)
+    opening_track_spoken_title: str | None = Field(default=None, max_length=160)
     opening_track_artist: str = Field(min_length=1, max_length=300)
     opening_track_duration_seconds: int | None = Field(default=None, gt=0)
     opening_track_timing_profile: TrackTimingProfile | None = None
@@ -118,6 +119,7 @@ class ProgramProposal(BaseModel):
             estimated_duration_seconds=self.estimated_duration_seconds,
             opening_track_ref=self.opening_track_ref,
             opening_track_title=self.opening_track_title,
+            opening_track_spoken_title=self.opening_track_spoken_title,
             opening_track_artist=self.opening_track_artist,
             opening_track_duration_seconds=self.opening_track_duration_seconds,
             opening_track_timing_profile=self.opening_track_timing_profile,
@@ -142,6 +144,7 @@ class ProgramProposal(BaseModel):
             estimated_duration_seconds=seed.estimated_duration_seconds,
             opening_track_ref=seed.opening_track_ref,
             opening_track_title=seed.opening_track_title,
+            opening_track_spoken_title=seed.opening_track_spoken_title,
             opening_track_artist=seed.opening_track_artist,
             opening_track_duration_seconds=seed.opening_track_duration_seconds,
             opening_track_timing_profile=seed.opening_track_timing_profile,
@@ -538,6 +541,7 @@ def shared_copy(original: ProgramProposal, *, new_id: str) -> ProgramProposal:
         estimated_duration_seconds=original.estimated_duration_seconds,
         opening_track_ref=original.opening_track_ref,
         opening_track_title=original.opening_track_title,
+        opening_track_spoken_title=original.opening_track_spoken_title,
         opening_track_artist=original.opening_track_artist,
         opening_track_duration_seconds=original.opening_track_duration_seconds,
         opening_track_timing_profile=original.opening_track_timing_profile,
@@ -569,7 +573,9 @@ def _shared_opening(original: ProgramProposal, *, seed: str) -> str | None:
     opening = compose_opening(
         original.station,
         artist=spoken_artist(original.opening_track_artist) or "这位艺人",
-        title=spoken_title(original.opening_track_title) or "这首歌",
+        title=original.opening_track_spoken_title
+        or spoken_title(original.opening_track_title)
+        or "这首歌",
         names_artist=False,
         seed=f"{seed}|{original.opening_track_ref}",
     )
@@ -722,6 +728,7 @@ class LLMProgramProposalGenerator:
                     estimated_duration_seconds=_DURATION_SECONDS[request.duration_intent],
                     opening_track_ref=resolved.track_ref,
                     opening_track_title=resolved.canonical_title,
+                    opening_track_spoken_title=resolved.spoken_title,
                     opening_track_artist=resolved.canonical_artist,
                     opening_track_duration_seconds=opening_duration_seconds,
                     opening_track_timing_profile=opening_timing_profile,
@@ -732,7 +739,9 @@ class LLMProgramProposalGenerator:
                     genre_tags=list(draft.genre_tags),
                     mood_tags=list(draft.mood_tags),
                     anchor_artists=[resolved.canonical_artist],
-                    presentation_intent=resolve_presentation_intent(request.prompt, request.station),
+                    presentation_intent=resolve_presentation_intent(
+                        request.prompt, request.station
+                    ),
                     output_language=request.output_language,
                     station=request.station,
                     required_artists=_clean_artists(draft.required_artists),

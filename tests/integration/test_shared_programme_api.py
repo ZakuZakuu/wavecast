@@ -122,7 +122,7 @@ def test_a_short_code_matching_two_programmes_is_not_guessed(shared) -> None:
 # added to ProgramProposal fails the test below until someone decides which it is.
 COPIED_AS_IS = {
     "title", "short_description", "cover_title", "estimated_duration_seconds", "opening_track_ref",
-    "opening_track_title", "opening_track_artist", "opening_track_duration_seconds",
+    "opening_track_title", "opening_track_spoken_title", "opening_track_artist", "opening_track_duration_seconds",
     "opening_track_timing_profile", "cover", "editorial_route", "genre_tags", "mood_tags",
     "anchor_artists", "presentation_intent", "output_language", "station", "required_artists",
     "generation_profile", "opening_host_note",

@@ -245,3 +245,45 @@ def test_the_opening_host_line_is_spoken_in_a_readable_form() -> None:
 )
 def test_years_are_spelled_the_way_they_are_said(text: str, expected: str) -> None:
     assert to_spoken_form(text).tts_text == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("刚才这首《丸ノ内サディスティック》，听听节奏。", "刚才这首歌，听听节奏。"),
+        ("《丸ノ内サディスティック》这首歌很特别。", "这首歌很特别。"),
+        ("下一首《丸ノ内サディスティック》。", "下一首歌。"),
+        ("这支《丸ノ内サディスティック》的节奏。", "这支曲子的节奏。"),
+    ],
+)
+def test_unknown_song_is_substituted_with_its_whole_reference(text, expected):
+    assert (
+        to_spoken_form(text, [KnownTrack("椎名林檎", "丸ノ内サディスティック")]).tts_text
+        == expected
+    )
+
+
+def test_known_chinese_song_name_wins_over_generic_reference():
+    text = "刚才这首《丸ノ内サディスティック》，听听节奏。"
+    spoken = to_spoken_form(
+        text, [KnownTrack("椎名林檎", "丸ノ内サディスティック", "丸之内虐待狂")]
+    )
+    assert spoken.tts_text == "刚才这首丸之内虐待狂，听听节奏。"
+    assert spoken.ok
+
+
+@pytest.mark.parametrize(
+    "metadata,expected",
+    [
+        ({"title_zh": "丸之內虐待狂"}, "丸之内虐待狂"),
+        ({"tns": ["丸之内虐待狂"]}, "丸之内虐待狂"),
+        ({"transNames": ["not a Chinese title", "丸之内虐待狂"]}, "丸之内虐待狂"),
+        ({"alias": ["演唱会特别版"]}, None),
+        ({"title_zh": "この曲", "tns": ["丸之内虐待狂"]}, "丸之内虐待狂"),
+        ({"title_zh": "这首歌"}, None),
+    ],
+)
+def test_only_explicit_readable_catalog_translation_fields_are_used(metadata, expected):
+    from wavecast.spoken_form import chinese_title
+
+    assert chinese_title(metadata) == expected

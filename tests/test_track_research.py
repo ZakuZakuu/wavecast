@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from wavecast.intelligence.models import (
     ChapterPlan,
     Evidence,
@@ -623,3 +624,56 @@ def test_a_portrait_tells_a_background_story_on_every_other_chapter_even_with_so
         scopes.append([point.scope for point in result.points])
 
     assert scopes[0] == ["track"] and scopes[1] == ["background"] and scopes[2] == ["track"]
+
+
+def test_briefing_extracts_a_source_bound_title_without_an_extra_call():
+    from wavecast.intelligence.track_research import _TitleAlias
+
+    track = ResolvedTrack(
+        track_ref="n:rin", canonical_artist="椎名林檎", canonical_title="丸ノ内サディスティック"
+    )
+    quote = "椎名林檎的《丸ノ内サディスティック》，中文通常译作《丸之内虐待狂》。"
+    source = _evidence("alias-source", quote)
+    briefer = Briefer(
+        _Briefing(spoken_title=_TitleAlias(text="丸之内虐待狂", source=source.id, quote=quote))
+    )
+    service = _service(Searcher(), briefer)
+    outcome = asyncio.run(service._brief(track, "椎名林檎", [source]))
+    assert outcome.spoken_title == "丸之内虐待狂"
+    assert outcome.spoken_title_evidence_id == source.id
+    assert len(briefer.prompts) == 1
+    assert outcome.points == []  # a title is not forced into a spoken fact
+
+
+@pytest.mark.parametrize(
+    "title,source_id,quote",
+    [
+        ("丸之内虐待狂", "missing-source", "《丸ノ内サディスティック》中文名为《丸之内虐待狂》。"),
+        (
+            "丸之内虐待狂",
+            "evidence-alias-source",
+            "这是一句没有出现在来源中的丸ノ内サディスティック丸之内虐待狂",
+        ),
+        (
+            "另一首歌",
+            "evidence-alias-source",
+            "《丸ノ内サディスティック》中文名为《丸之内虐待狂》。",
+        ),
+        ("丸之内虐待狂", "evidence-alias-source", "《丸之内虐待狂》是一首歌曲。"),
+    ],
+)
+def test_unbound_or_invented_spoken_title_is_not_accepted(title, source_id, quote):
+    from wavecast.intelligence.track_research import _TitleAlias
+
+    track = ResolvedTrack(
+        track_ref="n:rin", canonical_artist="椎名林檎", canonical_title="丸ノ内サディスティック"
+    )
+    source = _evidence(
+        "alias-source",
+        "《丸ノ内サディスティック》中文名为《丸之内虐待狂》。另有《丸之内虐待狂》是一首歌曲。",
+    )
+    briefer = Briefer(
+        _Briefing(spoken_title=_TitleAlias(text=title, source=source_id, quote=quote))
+    )
+    outcome = asyncio.run(_service(Searcher(), briefer)._brief(track, "椎名林檎", [source]))
+    assert outcome.spoken_title is None
