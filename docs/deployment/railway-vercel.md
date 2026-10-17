@@ -36,7 +36,9 @@ Do not overwrite production selectors or secrets with those initial defaults.
   Check the release commit contains that fix; a Git branch SHA is not proof of
   the deployed SHA. If production gets skipped after an equivalent preview,
   Redeploy the intended production commit with **Skip Ignored Build Step**.
-  Do not add meaningless main commits to trigger deployment.
+  Do not add meaningless main commits to trigger deployment. If the release changes
+  no Web build inputs, keeping the existing READY production Web is valid: verify
+  the file diff and same-origin API routes instead of forcing matching API/Web SHAs.
 - Browser API/audio requests should stay under same-origin `/api/*`, with
   `WAVECAST_INTERNAL_API_URL` supplying server/build routing to Railway. Verify
   manifest/chunk requests as part of real-device acceptance.
