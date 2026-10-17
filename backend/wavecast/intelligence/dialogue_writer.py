@@ -37,6 +37,8 @@ class DialogueSlot:
     # nor repeats it; empty at the start of a programme.
     previous_context: str = ""
     tracks: tuple[KnownTrack, ...] = ()
+    editorial_goal: str = ""
+    programme_brief: str = ""
 
 
 _WRITER_PROMPT = """你为一档真实的音乐电台写一段两位主持人的对话。主持人 A 先开口，B 接话；\
@@ -50,6 +52,8 @@ do_not_infer 里的内容不能说。backstage 里的内容绝对不要念出来
 
 围绕 central_question 讲清一个有意思的点，素材是理解后的内容，不是逐条念的清单。\
 不要反复说「有文章指出」「某报道说」，不要念来源发表日期；只有具体评论、引语或有争议的说法才交代必要归属。\
+一般用三到八轮把这个点聊完整，具体展开由你决定，不要用空话凑数。\
+
 A、B 要接住对方的话：追问、补一个具体细节、换个理解角度，别轮流播报材料，也别用空泛赞同凑轮次。\
 个人生活信息只有确实帮助理解音乐时才讲，讲清它为什么值得放在这里；与主题无关就舍弃。\
 怎么说由你定：可以用一个真实的问题带出下一句，但问题里的事实前提也要在 fact_refs 里列出。\
@@ -69,6 +73,9 @@ A、B 要接住对方的话：追问、补一个具体细节、换个理解角�
 {previous}
 
 下面是这一段的任务和素材。
+本期编辑意图（不是事实证据）：{programme_brief}
+本段要推进的内容：{editorial_goal}
+把本段接到全期脉络里，不要每段都重新开场，也不要预告未经确认的后续曲目。
 这是一段 {purpose} 用途的对话，位置：{placement}。
 篇幅目标约 {min_s}–{max_s} 秒（约 {min_chars}–{max_chars} 字）。这是目标，不是下限：素材不够就写短，\
 不要为了凑长度重复或加料。
@@ -125,13 +132,17 @@ class DialogueWriter:
                 [
                     {
                         "display": f"{track.artist} - {track.title}",
-                        "spoken": to_spoken_form(f"{track.artist} - {track.title}", [track]).tts_text,
+                        "spoken": to_spoken_form(
+                            f"{track.artist} - {track.title}", [track]
+                        ).tts_text,
                     }
                     for track in slot.tracks
                 ],
                 ensure_ascii=False,
             ),
             today=programme_date(),
+            programme_brief=slot.programme_brief or "围绕本期主题展开",
+            editorial_goal=slot.editorial_goal or "讲清一个值得听的点",
             previous=slot.previous_context or "（无：节目刚开始）",
             max_turn_chars=1500,
             purpose=slot.purpose.value,

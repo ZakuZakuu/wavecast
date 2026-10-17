@@ -46,7 +46,9 @@ def opening_passage_guidance(station: StationId | None, host_mode: HostMode) -> 
         EDITORIAL_METHOD
         + "\n"
         + editorial_station_guidance(station)
-        + "This is the opening passage after the first song, before the second. "
+        + "This is the substantive opening passage at the supplied playback position, normally "
+        "after the first song and before the second. If an earlier opening was skipped, "
+        "establish the direction from the current pair instead of pretending this is the first gap. "
         "Use the confirmed pair and the editorial intention to establish what is worth "
         "following, and give the next song a natural place in that direction. "
         + density

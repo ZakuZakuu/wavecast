@@ -105,6 +105,8 @@ class DialogueRuntime:
         track_ref: str | None,
         track_label: str,
         previous_context: str = "",
+        editorial_goal: str = "",
+        programme_brief: str = "",
     ) -> DialogueOffer | None:
         """A validated, saved passage for this slot, or ``None`` (the Writer path then runs).
 
@@ -137,6 +139,8 @@ class DialogueRuntime:
                 else None
             ),
             previous_context=previous_context,
+            editorial_goal=editorial_goal,
+            programme_brief=programme_brief,
             tracks=tuple(
                 KnownTrack(track.canonical_artist, track.canonical_title, track.spoken_title)
                 for track in (context.just_played_track, context.upcoming_track)

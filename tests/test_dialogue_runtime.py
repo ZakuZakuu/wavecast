@@ -1153,3 +1153,78 @@ def test_the_api_materializer_records_into_the_runtime_ledger(tmp_path) -> None:
 
     assert materializer.dialogue_speech is not None and materializer.dialogue_speech._ledger is ledger  # type: ignore[attr-defined]
     assert api_module._build_narration_materializer(ProviderSettings(), MockTTSProvider(storage), storage, ledger).dialogue_speech is None
+
+
+def test_planned_discussion_gets_the_editorial_goal_and_original_earlier_context(
+    tmp_path, monkeypatch
+):
+    from wavecast.hosting import DiscussionPlan
+
+    rig = Rig(tmp_path, seed=_seed_choosing(SECOND_SLOT, FIRST_SLOT))
+    # The old hash would select the other slot. The durable heavy-station plan wins.
+    rig.session.discussion_plan = DiscussionPlan(target=3, minimum=2, chapter_ids=["chapter-2"])
+    rig.session.chapters[0].chapter.narration_goal = "用这首歌比较靠近与退让"
+    episode = rig.repository.get(EPISODE_ID)
+    episode.editorial_brief = "爱情表达里的不同选择"
+    episode.segments.append(
+        NarrationSegment(
+            id="later-host",
+            chapter_id="chapter-3",
+            order=100,
+            state=SegmentState.SCRIPT_READY,
+            title="Future",
+            planned_duration_seconds=10,
+            narration_text="DO_NOT_INCLUDE_LATER_HOST",
+        )
+    )
+    prompts = []
+    original = rig.writer_llm.structured
+
+    async def capture(prompt, output_type, **kwargs):
+        prompts.append(prompt)
+        return await original(prompt, output_type, **kwargs)
+
+    monkeypatch.setattr(rig.writer_llm, "structured", capture)
+    rig.author()
+    assert rig.narration()[0].dialogue is not None
+    prompt = prompts[-1]
+    assert "用这首歌比较靠近与退让" in prompt
+    assert "爱情表达里的不同选择" in prompt
+    assert "DO_NOT_INCLUDE_LATER_HOST" not in prompt
+
+
+def test_next_available_discussion_takes_up_a_failed_opening(tmp_path, monkeypatch):
+    from wavecast.hosting import DiscussionPlan
+
+    rig = Rig(tmp_path)
+    episode = rig.repository.get(EPISODE_ID)
+    # Move the fixture's available discussion after an earlier failed opening.
+    rig.session.chapters[1].chapter_id = "chapter-4"
+    rig.session.chapters[0].chapter_id = "chapter-3"
+    for segment in episode.segments:
+        if segment.chapter_id == "chapter-2":
+            segment.chapter_id = "chapter-3"
+            segment.order += 1
+    episode.segments.append(
+        NarrationSegment(
+            id="missed-opening",
+            chapter_id="chapter-2",
+            order=1,
+            state=SegmentState.SKIPPED,
+            title="Missed",
+            planned_duration_seconds=30,
+        )
+    )
+    rig.session.narration_authored_chapter_ids = ["chapter-2"]
+    rig.session.discussion_plan = DiscussionPlan(target=3, minimum=2, chapter_ids=["chapter-3"])
+    prompts = []
+    original = rig.writer_llm.structured
+
+    async def capture(prompt, output_type, **kwargs):
+        prompts.append(prompt)
+        return await original(prompt, output_type, **kwargs)
+
+    monkeypatch.setattr(rig.writer_llm, "structured", capture)
+    rig.author()
+    assert len(prompts) == 1
+    assert "The first opening could not air" in prompts[0]

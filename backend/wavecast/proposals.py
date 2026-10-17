@@ -209,6 +209,8 @@ class ProgramProposalDraft(BaseModel):
     mood_tags: list[str] = Field(default_factory=list, max_length=8)
     opening_host_note: str | None = Field(default=None, max_length=220)
     opening_track_candidates: list[OpeningTrackCandidate] = Field(min_length=1, max_length=4)
+    # A specific musical facet needs a checked candidate, not any song by the same artist.
+    allow_artist_fallback: bool = True
     # Artists the request names or clearly requires the programme to play; empty when none.
     required_artists: list[str] = Field(default_factory=list, max_length=4)
     # The model fills the schema in this order, so the title is written last, once the plan
@@ -744,7 +746,11 @@ class LLMProgramProposalGenerator:
         draft: ProgramProposalDraft,
         seed: str = "",
     ) -> tuple[ResolvedTrack | None, int | None, TrackTimingProfile | None]:
-        candidates = _rotated(draft.opening_track_candidates, seed)[: self.max_opening_candidates]
+        candidates = (
+            _rotated(draft.opening_track_candidates, seed)
+            if draft.allow_artist_fallback
+            else draft.opening_track_candidates
+        )[: self.max_opening_candidates]
 
         # First preserve the strongest contract: the model-proposed exact
         # artist/title must independently resolve to a playable catalog item.
@@ -759,6 +765,9 @@ class LLMProgramProposalGenerator:
             verified = await self._verified_playable_track(resolved)
             if verified is not None:
                 return verified
+
+        if not draft.allow_artist_fallback:
+            return None, None, None
 
         # Proposal generation is a pre-listening UX boundary, not a canonical
         # track-selection promise. If exact titles miss the catalog, keep the
@@ -928,8 +937,13 @@ class LLMProgramProposalGenerator:
             "route beats, and compact genre/mood tags. This is not a research stage: do not "
             "pretend to have searched the web and do not add factual claims that require "
             "evidence. For each proposal, provide one to four opening-track candidates. They are "
-            "not ranked: each should be a good, different way to begin (the application picks "
-            "among them so the same request does not always open the same way), differing in "
+            "ranked by how clearly they establish this proposal's specific angle. Each candidate "
+            "must itself fit that angle, rather than merely being by the named artist. Set "
+            "allow_artist_fallback=false for a particular style, musical facet or work: an "
+            "arbitrary same-artist song would break that promise. Give several suitable exact "
+            "alternatives in that case; the application tries them in order and rejects the "
+            "proposal if none plays. Only set it true when any song by the artist can reasonably "
+            "open this broad programme; those candidates may be rotated for variety. Differ in "
             "artist or era where the request allows, and need not be the single most famous "
             "song. Candidates are untrusted hypotheses only: use exact real artist and "
             "track titles you believe exist, never invent a catalog ID, URL, provider name, "

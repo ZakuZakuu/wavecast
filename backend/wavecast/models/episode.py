@@ -8,6 +8,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from wavecast.audio_timing import TrackTimingProfile
+from wavecast.hosting import HostingCoverage, hosting_coverage
 from wavecast.language import OutputLanguage
 from wavecast.models.dialogue import DialogueAudioSnapshot, DialogueBlock, VoiceRoleSnapshot
 from wavecast.presentation import PresentationIntent
@@ -216,6 +217,7 @@ class LiveEpisode(BaseModel):
     topic: str | None = None
     # The proposal's listening intention, not researched facts. Optional for older episodes.
     editorial_brief: str | None = None
+    opening_evidence: list[Evidence] = Field(default_factory=list, exclude=True, repr=False)
     listener_id: str = "test-listener"
     # Account ownership is separate from immutable runtime listener identity.
     owner_user_id: str | None = Field(default=None, exclude=True)
@@ -254,6 +256,11 @@ class LiveEpisode(BaseModel):
     @property
     def timeline_segments(self) -> list[Segment]:
         return [segment for segment in self.ordered_segments if segment.is_timeline_active]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def hosting_coverage(self) -> HostingCoverage | None:
+        return hosting_coverage(self)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -386,6 +393,7 @@ class LiveEpisode(BaseModel):
 
 # Deferred to the end of this module so the low-level durable contract can import
 # intelligence models without observing a partially initialized Episode model.
+from wavecast.intelligence.models import Evidence  # noqa: E402
 from wavecast.models.progressive import ProgressiveAssemblySession  # noqa: E402
 
 LiveEpisode.model_rebuild()

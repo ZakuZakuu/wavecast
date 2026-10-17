@@ -10,7 +10,7 @@ callers, tests) the answer is "yes": nothing changes for them.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -31,3 +31,15 @@ async def authoring_still_open() -> bool:
     if check is None:
         return True
     return await asyncio.to_thread(check)
+
+
+async def finish_save[T](work: Awaitable[T]) -> T:
+    """Keep the in-flight claim until a repository thread has actually finished."""
+    task = asyncio.ensure_future(work)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError as cancelled:
+        try:
+            await task
+        finally:
+            raise cancelled

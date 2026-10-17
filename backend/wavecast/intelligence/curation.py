@@ -6,6 +6,7 @@ import json
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from wavecast.editorial import EDITORIAL_METHOD
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.text_identity import canonical_name
 
@@ -56,6 +57,7 @@ class CuratorService:
         committed_chapters: list[ChapterPlan] | None = None,
         output_language: OutputLanguage = OutputLanguage.AUTO,
         topic: str = "",
+        editorial_brief: str | None = None,
         trace: GenerationTrace | None = None,
         catalog_pool: CatalogPool | None = None,
         required_artists: Sequence[str] = (),
@@ -108,8 +110,8 @@ class CuratorService:
             "novelty_distance may start at any supported "
             "distance; distances may be skipped, and repeated distances are allowed when "
             "intended. The sequence must never move backward: very_close <= close <= bridge "
-            "<= discovery <= surprise. For example, [\"close\", \"bridge\", \"discovery\"] "
-            "is valid, while [\"close\", \"surprise\", \"bridge\"] is invalid. Preserve "
+            '<= discovery <= surprise. For example, ["close", "bridge", "discovery"] '
+            'is valid, while ["close", "surprise", "bridge"] is invalid. Preserve '
             "committed chapters exactly and place speculative chapters after committed chapters. "
             "Define the distances semantically: very_close keeps the same core sonic identity; "
             "close introduces at least one new musical dimension; bridge connects anchor traits "
@@ -119,6 +121,11 @@ class CuratorService:
             "a single-artist deep dive, later bridge/discovery chapters should introduce new "
             "artists or scenes only when they answer the topic. Use each chapter reason as a concise "
             "topic-specific rationale.\n"
+            f"{EDITORIAL_METHOD}"
+            "Give narration_goal a distinct job in this route: develop the listening question "
+            "with an example, a contrast or a useful connection rather than repeating the theme "
+            "or announcing every song. Choose the progression freely; no fixed essay template. "
+            f"Programme intention (not factual evidence): {editorial_brief or topic}\n"
             f"Research context: {_compact_json(research_context)}\n"
             f"FastStart context: {_compact_json(fast_context)}\n"
             f"Committed: {_compact_json([item.model_dump(mode='json') for item in committed])}\n"

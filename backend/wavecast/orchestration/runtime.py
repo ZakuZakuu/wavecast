@@ -93,6 +93,7 @@ class StagedProgressiveRuntimeAdapter:
         )
         request = LiveEpisodeAssemblyRequest(
             topic=episode.topic,
+            editorial_brief=episode.editorial_brief,
             anchor_tracks=[opening.title],
             desired_duration_seconds=episode.program_estimated_duration_seconds,
             max_tracks=max_tracks,
@@ -205,6 +206,7 @@ class StagedProgressiveRuntimeAdapter:
                 confidence=1.0,
             ),
             narrative_role=NarrativeRole.BRIDGE,
+            evidence_ids=[item.id for item in episode.opening_evidence],
             reason="Establish the programme's listening direction after its first song.",
             narration_goal=(
                 "Develop the programme's opening: connect the confirmed first pair to a "
@@ -228,10 +230,9 @@ class StagedProgressiveRuntimeAdapter:
         try:
             script = await self.assembly.background_pipeline.writer.write(
                 chapter,
-                [],
+                episode.opening_evidence,
                 next_track_metadata=(
-                    f"{successor_track.canonical_artist} - "
-                    f"{successor_track.canonical_title}"
+                    f"{successor_track.canonical_artist} - {successor_track.canonical_title}"
                 ),
                 host_mode=episode.presentation_intent.host_mode,
                 target_duration_seconds=target_seconds,
@@ -339,6 +340,7 @@ class StagedProgressiveRuntimeAdapter:
         )
         request = LiveEpisodeAssemblyRequest(
             topic=episode.topic,
+            editorial_brief=episode.editorial_brief,
             anchor_tracks=[opening.title],
             desired_duration_seconds=episode.program_estimated_duration_seconds,
             max_tracks=max_tracks,
