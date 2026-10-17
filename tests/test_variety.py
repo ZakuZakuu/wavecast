@@ -110,7 +110,8 @@ def test_proposals_generated_one_after_another_do_not_all_open_alike() -> None:
     }
 
     assert len(openings) >= 2
-    assert "not ranked" in llm.prompt  # the model is told the candidates are interchangeable
+    assert "rotated for variety" in llm.prompt  # broad programmes retain opening variety
+    assert "allow_artist_fallback=false" in llm.prompt  # specific angles keep ranked candidates
 
 
 # --- the tracks the Curator sees first ---------------------------------------------------------
