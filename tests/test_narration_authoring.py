@@ -527,11 +527,13 @@ def test_full_generation_joins_the_writer_and_voices_its_result_once(fast_openin
             self.release = asyncio.Event()
             self.calls = 0
             self.tts_calls = 0
+            self.generation_calls = 0
 
         def create_generator(self, session):
             return self
 
         async def generate_next(self, episode):
+            self.generation_calls += 1
             return None
 
         async def author_narration(self, episode, chapter_id):

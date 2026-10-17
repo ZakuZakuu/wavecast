@@ -1189,6 +1189,9 @@ class EpisodeOrchestrator:
         episode.state = EpisodeState.MATERIALIZING
         episode = await asyncio.to_thread(self.repository.save, episode)
         episode = await self._ensure_progressive_session(episode_id, episode)
+        # Settle authoring of the durable prefix before taking structural snapshots for
+        # more music. A Writer inserting its saved passage must not stale those snapshots.
+        episode = await self.author_pending_narration_async(episode_id, max_chapters=64)
         while True:
             partial_chapter_id = self._next_partial_chapter_id(episode)
             if partial_chapter_id is not None:
