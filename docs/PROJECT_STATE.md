@@ -6,7 +6,7 @@ Updated: 2026-10-18（北京时间）。唯一当前状态入口。旧过程记�
 
 用户已完成#316版人物志试听并明确授权发布；[#318](https://github.com/ZakuZakuu/wavecast/pull/318)已合入main `485ea1252c070d090b57cf6bc3e1cc7814ca3d2f`，integration已快进到同SHA。应用代码与已试听测试版`e85241c`一致，发布分支只补状态文档，本轮没有实现额外修复。正式站 **https://wavecast.space** 已通过只读检查。
 
-本轮交付：外文名称可说形式及可靠中文歌名；节目编辑方法与首曲主题约束；人物志/来龙去脉FULL主持的正文讨论交付；首两个音乐间隙独立60–90秒完整开篇，结尾30–45秒；节目方向/章节任务进入曲目要点、背景与双人素材选择，Curator优先主题贴合。没有新增模型复审或摘要流水线，旧节目不补稿。见[ADR 0032](adr/0032-editorial-opening.md)、[0033](adr/0033-hosted-programme-delivery.md)、[0034](adr/0034-grounded-spoken-song-titles.md)、[0035](adr/0035-substantive-opening-and-closing.md)。
+已发布内容：可说外文/中文歌名、完整开篇/收尾、重文本台正文讨论和素材编辑方向传递。设计见[ADR 0032](adr/0032-editorial-opening.md)至[0035](adr/0035-substantive-opening-and-closing.md)；无新增模型复审或摘要流水线，旧节目不补稿。
 
 正式API部署`a96c34f9-82be-469d-93bf-c6ea2b37bffe` SUCCESS，源码固定为`485ea12`；启动日志无ERROR/Traceback。前端构建输入相对旧正式版没有变化，Vercel按ignore规则保留原READY构建`dpl_2fzNxTHMXzm4LMUWktEzjgtcimFd`（Web SHA `6be4919`），无需与API SHA强行相同。正式API和wavecast.space同源health/公开节目/未知404、节目页面OG标题及未知短链均通过。没有改模型、密钥、数据库或新增付费节目。
 
@@ -14,7 +14,7 @@ Updated: 2026-10-18（北京时间）。唯一当前状态入口。旧过程记�
 
 已知后续事项：和弦符号/乐理缩写的TTS读法（dim被拆成字母）记入[#317](https://github.com/ZakuZakuu/wavecast/issues/317)，优先由Writer口语化，准确保留音乐含义，不新增翻译/复审。此前Lite连续429由免费额度耗尽自动停用造成，用户已关闭；最新线上Lite成功，授权的临时key最小调用也200（212 token），未写仓库或更换部署密钥。渐进任务心跳失活取消后resume未观察到继续生成已记入[#319](https://github.com/ZakuZakuu/wavecast/issues/319)，根因待查；偶发编排/素材格式问题也留待后续。用户再次明确本轮只记issue并发布，不继续修复或重构租约。
 
-认可的#314节目`db15f6cb-2e47-434c-b387-096ddd4f33b1`为31:37、三段双人，TTS估价¥0.565（非实付）；本轮不以demo成本限制口播。开场方法论见[设计文档](design/programme-editorial-method-and-opening.md)，台标音乐仍留后续。
+**下一步只讨论UI，尚未授权实现。** 用户次日与Claude合作，本轮只读调研已记在[研究记录](design/ui-next-round-research-2026-10-18.md)和[35项辅助文案清单](design/ui-microcopy-inventory-2026-10-18.md)。[#320](https://github.com/ZakuZakuu/wavecast/issues/320)歌曲封面（网易云实测有图，需透传）；既有[#204](https://github.com/ZakuZakuu/wavecast/issues/204)已更新为快捷整期生成/调频后台生成及可选提醒；[#321](https://github.com/ZakuZakuu/wavecast/issues/321)跳转保留曲前口播/路线显示旁白；[#322](https://github.com/ZakuZakuu/wavecast/issues/322)小字仅盘点、不决定删改；[#323](https://github.com/ZakuZakuu/wavecast/issues/323)封面多版设计。未修改应用、开修复PR或新增付费节目。开场方法论仍见[原设计](design/programme-editorial-method-and-opening.md)，台标音乐留后续。
 
 ## 已发布基线
 
