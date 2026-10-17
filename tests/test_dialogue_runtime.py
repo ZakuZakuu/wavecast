@@ -1228,3 +1228,56 @@ def test_next_available_discussion_takes_up_a_failed_opening(tmp_path, monkeypat
     rig.author()
     assert len(prompts) == 1
     assert "The first opening could not air" in prompts[0]
+
+
+@pytest.mark.parametrize("station", [None, StationId.PORTRAIT])
+def test_researched_title_is_used_now_and_saved_for_later_host_passages(tmp_path, station):
+    rig = Rig(tmp_path, station=station)
+    named = TRACK.model_copy(
+        update={"spoken_title": "爱，爱，爱", "spoken_title_evidence_id": "E1"}
+    )
+
+    class NamedResearcher(_Researcher):
+        async def prepare(self, **kwargs):
+            result = await super().prepare(**kwargs)
+            result.spoken_title = named.spoken_title
+            result.spoken_title_evidence_id = named.spoken_title_evidence_id
+            return result
+
+    rig.generator.track_research = NamedResearcher()
+    prompts = []
+    if station is None:
+        original = rig.writer.write
+
+        async def capture(*args, **kwargs):
+            prompts.append(kwargs)
+            return await original(*args, **kwargs)
+
+        rig.writer.write = capture
+    else:
+        original = rig.writer_llm.structured
+
+        async def capture(prompt, *args, **kwargs):
+            prompts.append(prompt)
+            return await original(prompt, *args, **kwargs)
+
+        rig.writer_llm.structured = capture
+
+    episode = rig.author()
+    assert len(prompts) == 1
+    if station is None:
+        assert prompts[0]["slot_contexts"][0].chapter_track.spoken_title == named.spoken_title
+    else:
+        assert '"spoken_title": "爱，爱，爱"' in prompts[0]
+    # Reload persisted state: another seam can name the same recording without re-extracting it.
+    assert episode.progressive_session is not None
+    saved = ProgressiveAssemblySession.model_validate_json(episode.progressive_session.model_dump_json())
+    for chapter in saved.chapters:
+        assert chapter.resolved_track.spoken_title == named.spoken_title
+        assert chapter.resolved_track.spoken_title_evidence_id == "E1"
+        assert chapter.slot_contexts[0].upcoming_track.spoken_title == named.spoken_title
+    music = next(
+        s for s in episode.segments if isinstance(s, MusicSegment) and s.chapter_id == "chapter-2"
+    )
+    assert music.spoken_title == named.spoken_title
+    assert music.track_ref == TRACK.track_ref

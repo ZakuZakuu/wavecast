@@ -163,6 +163,7 @@ class EpisodeComposer:
                     track_ref=track.track_ref,
                     audio_source_url=asset.playback_url,
                     title=track.canonical_title,
+                    spoken_title=track.spoken_title,
                     artist=track.canonical_artist,
                     asset_ref=asset.asset_id,
                     timing_profile=_asset_timing_profile(asset),

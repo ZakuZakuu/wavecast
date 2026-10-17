@@ -156,7 +156,7 @@ from wavecast.route_work import (
     requested_work,
     scope_works,
 )
-from wavecast.spoken_form import catalog_album, chinese_title
+from wavecast.spoken_form import catalog_album, chinese_title, with_spoken_track
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
 from wavecast.storage.dialogue_artifacts import DialogueArtifactStore
@@ -3974,6 +3974,27 @@ class StagedProgressiveChapterGenerator:
                 track_points = researched.points
                 track_evidence = researched.evidence
                 track_evidence_ids = researched.evidence_ids
+                if researched.spoken_title is not None and research_track.spoken_title is None:
+                    research_track = research_track.model_copy(
+                        update={
+                            "spoken_title": researched.spoken_title,
+                            "spoken_title_evidence_id": researched.spoken_title_evidence_id,
+                        }
+                    )
+                    chapter = chapter.model_copy(
+                        update={
+                            "slot_contexts": [
+                                with_spoken_track(slot, research_track)
+                                for slot in chapter.slot_contexts
+                            ]
+                        }
+                    )
+                    prepared_tracks = [
+                        replace(asset, track=research_track)
+                        if asset.track.track_ref == research_track.track_ref
+                        else asset
+                        for asset in prepared_tracks
+                    ]
                 writer_evidence = [*self.session.research.evidence, *researched.evidence]
                 if chapter.resolved_track is not None:
                     scoped_ids = list(chapter.chapter.evidence_ids)
@@ -4213,6 +4234,9 @@ class StagedProgressiveChapterGenerator:
             update={
                 "research_evidence": track_evidence,
                 "research_evidence_ids": track_evidence_ids,
+                "researched_track": research_track
+                if research_track and research_track.spoken_title
+                else None,
             }
         )
 

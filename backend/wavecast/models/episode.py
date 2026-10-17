@@ -79,6 +79,7 @@ class EpisodeSeed(BaseModel):
     estimated_duration_seconds: int = Field(gt=0)
     opening_track_ref: str
     opening_track_title: str
+    opening_track_spoken_title: str | None = Field(default=None, max_length=160)
     opening_track_artist: str
     opening_track_duration_seconds: int | None = Field(default=None, gt=0)
     opening_track_timing_profile: TrackTimingProfile | None = None
@@ -143,6 +144,7 @@ class MusicSegment(Segment):
     track_ref: str
     audio_source_url: str | None = None
     timing_profile: TrackTimingProfile | None = None
+    spoken_title: str | None = Field(default=None, max_length=160)
 
 
 class NarrationSegment(Segment):

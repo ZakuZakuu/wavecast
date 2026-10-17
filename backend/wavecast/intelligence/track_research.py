@@ -33,6 +33,7 @@ from wavecast.narration_quality import durations_in, years_in
 from wavecast.programme_date import programme_date
 from wavecast.providers.contracts import SearchProvider
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
+from wavecast.spoken_form import chinese_title
 from wavecast.stations import StationId
 from wavecast.text_identity import base_title_key, to_simplified
 
@@ -117,8 +118,15 @@ class _RawPoint(BaseModel):
         return str(value or "")[:300]
 
 
+class _TitleAlias(BaseModel):
+    text: str = Field(min_length=1, max_length=80)
+    source: str = Field(min_length=1, max_length=160)
+    quote: str = Field(min_length=1, max_length=300)
+
+
 class _Briefing(BaseModel):
     points: list[_RawPoint] = Field(default_factory=list, max_length=6)
+    spoken_title: _TitleAlias | None = None
 
 
 @dataclass
@@ -129,6 +137,8 @@ class TrackResearch:
     evidence_ids: list[str] = field(default_factory=list)
     points: list[TalkingPoint] = field(default_factory=list)
     searches: int = 0
+    spoken_title: str | None = None
+    spoken_title_evidence_id: str | None = None
 
 
 # --- is this page about this recording? --------------------------------------------------------
@@ -242,7 +252,13 @@ remember (why it was made, what it was for, who it was made with, where it sits 
 catalogue data: give no track numbers, running times, catalogue numbers or release formats. Return an \
 empty list when nothing qualifies.
 
-Return JSON {{"points": [{{"text": "...", "source": "id", "quote": "...", "scope": "track|album"}}]}}."""
+Also return spoken_title only when a source explicitly gives a Chinese name for THIS recording.
+It must be an existing title/translation stated by the source, not your translation or memory,
+not an album title or a generic phrase. Copy a short verbatim quote that includes both this
+recording's original title and its Chinese name, and cite that source id. Otherwise return null.
+
+Return JSON {{"points": [{{"text": "...", "source": "id", "quote": "...", "scope": "track|album"}}],
+"spoken_title": null}}. When verified, replace null with {{"text": "Chinese title", "source": "id", "quote": "verbatim original and Chinese names"}}."""
 
 
 class TrackResearchService:
@@ -309,7 +325,11 @@ class TrackResearchService:
         for round_number in range(budget + 1):
             candidates = about_track()
             if candidates:
-                outcome.points = await self._brief(track, subject, candidates, subject_names)
+                brief = await self._brief(track, subject, candidates, subject_names)
+                outcome.points = brief.points
+                if outcome.spoken_title is None and brief.spoken_title is not None:
+                    outcome.spoken_title = brief.spoken_title
+                    outcome.spoken_title_evidence_id = brief.spoken_title_evidence_id
                 if outcome.points:
                     break
             if outcome.searches >= budget:
@@ -438,7 +458,7 @@ class TrackResearchService:
         subject: str,
         candidates: Sequence[Evidence],
         people: Sequence[str] = (),
-    ) -> list[TalkingPoint]:
+    ) -> TrackResearch:
         chosen = list(candidates[:6])
         sources = {item.id: item.claim_or_excerpt for item in chosen}
         leads = {item.id: f"{item.source_title}\n{item.claim_or_excerpt[:150]}" for item in chosen}
@@ -462,10 +482,28 @@ class TrackResearchService:
             )
         except Exception as error:  # noqa: BLE001 - a missing briefing means less to say
             logger.warning("track_brief_unavailable error_type=%s", type(error).__name__)
-            return []
+            return TrackResearch()
         if not isinstance(result, _Briefing):
-            return []
-        return verified_points(result.points, sources, track, leads, people)
+            return TrackResearch()
+        outcome = TrackResearch(
+            points=verified_points(result.points, sources, track, leads, people)
+        )
+        alias = result.spoken_title
+        if alias is not None and track.spoken_title is None:
+            title = chinese_title({"title_zh": alias.text})
+            quote, source = _squash(alias.quote), _squash(sources.get(alias.source, ""))
+            # The cited excerpt must bind both names to the already identified recording.
+            # Album-level pages mentioning another translated song do not qualify.
+            if (
+                title
+                and quote
+                and quote in source
+                and _squash(track.canonical_title) in quote
+                and _squash(title) in quote
+            ):
+                outcome.spoken_title = title
+                outcome.spoken_title_evidence_id = alias.source
+        return outcome
 
 
 class _Stories(BaseModel):
