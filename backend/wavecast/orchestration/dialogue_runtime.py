@@ -107,6 +107,7 @@ class DialogueRuntime:
         previous_context: str = "",
         editorial_goal: str = "",
         programme_brief: str = "",
+        purpose: DialoguePurpose = DialoguePurpose.STORY,
     ) -> DialogueOffer | None:
         """A validated, saved passage for this slot, or ``None`` (the Writer path then runs).
 
@@ -126,7 +127,7 @@ class DialogueRuntime:
         slot = DialogueSlot(
             slot_id=context.slot_id,
             block_id=block_id_for(context.slot_id),
-            purpose=DialoguePurpose.STORY,
+            purpose=purpose,
             station=station,
             just_played=(
                 context.just_played_track.canonical_title

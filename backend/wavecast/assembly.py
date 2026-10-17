@@ -34,7 +34,14 @@ from wavecast.coverage import (
     ensure_required_coverage,
     unfulfilled_artists,
 )
-from wavecast.hosting import discussion_counts, discussion_seconds, plan_discussions
+from wavecast.hosting import (
+    CLOSING_SECONDS,
+    OPENING_SECONDS,
+    discussion_counts,
+    discussion_seconds,
+    needs_programme_opening,
+    plan_discussions,
+)
 from wavecast.intelligence.background import BackgroundIntelligencePipeline
 from wavecast.intelligence.curation import CuratorContractError, CuratorService
 from wavecast.intelligence.dialogue_pipeline import create_dialogue_stack
@@ -77,10 +84,11 @@ from wavecast.intelligence.trace import GenerationTrace
 from wavecast.intelligence.track_research import TrackResearchService
 from wavecast.intelligence.writer import WriterService, fallback_closing
 from wavecast.materialization import NarrationMaterializer
-from wavecast.models.dialogue import DialogueNotSupportedError
+from wavecast.models.dialogue import DialogueNotSupportedError, DialoguePurpose
 from wavecast.models.episode import (
     LiveEpisode,
     MusicSegment,
+    NarrationRole,
     NarrationSegment,
     PlayableEpisode,
     SegmentKind,
@@ -2950,7 +2958,11 @@ def _build_progressive_session(
             narration_ratio,
             min(
                 0.3,
-                (counts[0] * discussion_seconds(request.station) + 50)
+                (
+                    counts[0] * discussion_seconds(request.station)
+                    + OPENING_SECONDS
+                    + CLOSING_SECONDS
+                )
                 / request.desired_duration_seconds,
             ),
         )
@@ -3080,9 +3092,9 @@ def _build_progressive_session(
             chapter.target_narration_seconds = (
                 discussion_seconds(request.station)
                 if chapter.chapter_id in discussion_plan.chapter_ids
-                else 30
-                if index == 0
-                else 20
+                else OPENING_SECONDS
+                if chapter.chapter_id in (discussion_plan.opening_chapter_ids or [])[:1]
+                else CLOSING_SECONDS
                 if index == len(session_chapters) - 1
                 else 0
             )
@@ -3093,7 +3105,9 @@ def _build_progressive_session(
             desired_total_seconds=request.desired_duration_seconds,
             target_narration_ratio=target_narration_ratio,
             resolved_music_seconds=music_seconds,
-            requested_narration_seconds=counts[0] * discussion_seconds(request.station) + 50,
+            requested_narration_seconds=counts[0] * discussion_seconds(request.station)
+            + OPENING_SECONDS
+            + CLOSING_SECONDS,
             available_narration_seconds=available,
             allocated_narration_seconds=allocated,
             duration_target_feasible=allocated <= available
@@ -3824,6 +3838,7 @@ class StagedProgressiveChapterGenerator:
                 in {
                     *self.session.discussion_plan.chapter_ids,
                     self.session.discussion_plan.backup_chapter_id,
+                    *(self.session.discussion_plan.opening_chapter_ids or []),
                     self.session.chapters[0].chapter_id,
                     self.session.chapters[-1].chapter_id,
                 }
@@ -3922,6 +3937,13 @@ class StagedProgressiveChapterGenerator:
                 reason_code="narration_trackless_music_mismatch",
             )
 
+        bookends = (
+            self.session.discussion_plan is not None
+            and self.session.discussion_plan.opening_chapter_ids is not None
+        )
+        is_final_chapter = (
+            bool(self.session.chapters) and chapter_id == self.session.chapters[-1].chapter_id
+        )
         # Everything already authored for this programme, not only what has been played:
         # narration is written ahead of playback, so "committed" would let facts repeat.
         previous_context = "\n".join(
@@ -3931,6 +3953,7 @@ class StagedProgressiveChapterGenerator:
                 isinstance(segment, NarrationSegment)
                 and segment.order < chapter_start_order
                 and segment.state is not SegmentState.SKIPPED
+                and (not (bookends and is_final_chapter) or segment.is_audio_ready)
                 and segment.narration_text
             )
         )
@@ -3961,7 +3984,11 @@ class StagedProgressiveChapterGenerator:
         track_evidence: list[Evidence] = []
         track_evidence_ids: list[str] = []
         research_track = _research_focus(chapter)
-        if self.track_research is not None and research_track is not None:
+        if (
+            self.track_research is not None
+            and research_track is not None
+            and not (bookends and is_final_chapter)
+        ):
             researched = await self.track_research.prepare(
                 episode_id=episode.id,
                 track=research_track,
@@ -4016,10 +4043,6 @@ class StagedProgressiveChapterGenerator:
                         }
                     )
 
-        is_final_chapter = bool(self.session.chapters) and (
-            chapter.chapter_id == self.session.chapters[-1].chapter_id
-        )
-
         def assemble(script: RadioScript | NarrationScript) -> PlayableEpisode:
             radio_script, _ = _assemble_writer_scripts(
                 [script],
@@ -4034,22 +4057,30 @@ class StagedProgressiveChapterGenerator:
             _assert_narration_blocks_materialized(radio_script, composed)
             return composed
 
-        needs_opening = bool(
-            self.session.discussion_plan is not None
-            and not is_final_chapter
-            and not any(
-                isinstance(segment, NarrationSegment)
-                and segment.chapter_id != "chapter-1"
-                and (segment.is_audio_ready or segment.state is SegmentState.SCRIPT_READY)
-                for segment in episode.timeline_segments
+        needs_opening = (
+            needs_programme_opening(episode, chapter_id)
+            if bookends
+            else bool(
+                self.session.discussion_plan is not None
+                and not is_final_chapter
+                and not any(
+                    isinstance(segment, NarrationSegment)
+                    and segment.chapter_id != "chapter-1"
+                    and (segment.is_audio_ready or segment.state is SegmentState.SCRIPT_READY)
+                    for segment in episode.timeline_segments
+                )
+                and "chapter-2" in self.session.narration_authored_chapter_ids
             )
-            and "chapter-2" in self.session.narration_authored_chapter_ids
         )
         editorial_goal = writer_chapter.narration_goal
         if needs_opening:
             editorial_goal = (
-                "The first opening could not air. Briefly establish the programme's specific "
-                "listening question and use this song/material to begin exploring it. "
+                (
+                    "Establish the programme's specific "
+                    if bookends
+                    else "The first opening could not air. Briefly establish the programme's specific "
+                )
+                + "listening question and use this song/material to begin exploring it. "
                 "Do not repeat the station welcome or promise unconfirmed tracks. " + editorial_goal
             )
             writer_chapter = writer_chapter.model_copy(update={"narration_goal": editorial_goal})
@@ -4071,6 +4102,7 @@ class StagedProgressiveChapterGenerator:
                         in {
                             *self.session.discussion_plan.chapter_ids,
                             self.session.discussion_plan.backup_chapter_id,
+                            *(self.session.discussion_plan.opening_chapter_ids or []),
                         }
                         for context in item.slot_contexts
                     }
@@ -4090,6 +4122,9 @@ class StagedProgressiveChapterGenerator:
                 editorial_goal=writer_chapter.narration_goal,
                 programme_brief=episode.editorial_brief or self.session.topic,
                 track_label=f"{research_track.canonical_artist} - {research_track.canonical_title}",
+                purpose=DialoguePurpose.OPENING
+                if bookends and needs_opening
+                else DialoguePurpose.STORY,
             )
 
         playable: PlayableEpisode | None = None
@@ -4140,7 +4175,9 @@ class StagedProgressiveChapterGenerator:
                     previous_committed_context=previous_context,
                     next_track_metadata=next_track_metadata,
                     host_mode=self.session.presentation_intent.host_mode,
-                    target_duration_seconds=chapter.target_narration_seconds,
+                    target_duration_seconds=OPENING_SECONDS
+                    if bookends and needs_opening
+                    else chapter.target_narration_seconds,
                     output_language=self.session.output_language,
                     station=self.session.station,
                     voice_seed=episode.seed_id,
@@ -4151,6 +4188,9 @@ class StagedProgressiveChapterGenerator:
                     topic=self.session.topic,
                     opening_brief=(episode.editorial_brief or self.session.topic)
                     if needs_opening
+                    else None,
+                    closing_brief=(episode.editorial_brief or self.session.topic)
+                    if bookends and is_final_chapter
                     else None,
                     slot_contexts=chapter.slot_contexts,
                     track_points=track_points,
@@ -4225,6 +4265,12 @@ class StagedProgressiveChapterGenerator:
         if playable is None or not playable.segments:
             # A trackless narrative beat can legitimately have nothing to say.
             return None
+        for segment in playable.segments:
+            if isinstance(segment, NarrationSegment):
+                if needs_opening:
+                    segment.hosting_role = "opening"
+                elif bookends and segment.narration_role is NarrationRole.OUTRO:
+                    segment.hosting_role = "closing"
         generated = _generated_runtime_chapter(
             chapter.chapter_id,
             list(playable.segments),

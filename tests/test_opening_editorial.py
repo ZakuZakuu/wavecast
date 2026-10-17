@@ -96,14 +96,14 @@ def test_topic_lead_survives_candidate_rotation_and_sharing_without_research(mon
 @pytest.mark.parametrize(
     ("station", "mode", "topic", "brief", "expected_window"),
     [
-        (StationId.PORTRAIT, HostMode.FULL, "方大同的爱情观", "听爱情里的靠近、迟疑和退让。", 30),
-        (StationId.PORTRAIT, HostMode.FULL, "椎名林檎", "从个人作品到乐队，尝试不同的听法。", 30),
+        (StationId.PORTRAIT, HostMode.FULL, "方大同的爱情观", "听爱情里的靠近、迟疑和退让。", 75),
+        (StationId.PORTRAIT, HostMode.FULL, "椎名林檎", "从个人作品到乐队，尝试不同的听法。", 75),
         (
             StationId.LINEAGE,
             HostMode.FULL,
             "灵魂乐的变化",
             "听不同年代如何处理相近的音乐想法。",
-            30,
+            75,
         ),
         (StationId.CRATE, HostMode.LIGHT, "想挖一些歌", "从喜欢的选择向外多听一点。", 12),
         (StationId.CASUAL, HostMode.LIGHT, "随便听一会儿", "几首适合连续听的选择。", 12),
@@ -334,3 +334,112 @@ def test_catalog_spoken_title_survives_saved_proposal_and_fast_opening():
     narration = next(s for s in generated.segments if isinstance(s, NarrationSegment))
     assert "丸之内虐待狂" in narration.tts_text
     assert music.model_dump() == prefix
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_fast_opening_prefers_real_dialogue_and_reuses_the_single_writer_fallback(
+    tmp_path, available
+):
+    from wavecast.models.dialogue import DialoguePurpose
+    from wavecast.models.episode import MusicSegment
+
+    from tests.test_dialogue_runtime import TRACK, Rig, evidence
+
+    rig = Rig(tmp_path)
+    bootstrap = _PlaceholderBootstrapRuntime()
+    bootstrap.fast_track = TRACK
+    repository = InMemoryEpisodeRepository()
+    orchestrator = EpisodeOrchestrator(repository, progressive_runtime=bootstrap)
+    episode = orchestrator.start(
+        _seed().model_copy(
+            update={
+                "station": StationId.PORTRAIT,
+                "output_language": OutputLanguage.ZH_CN,
+                "presentation_intent": PresentationIntent(host_mode=HostMode.FULL),
+            }
+        )
+    )
+    episode = asyncio.run(orchestrator.ensure_fast_start_async(episode.id))
+    episode.opening_evidence = evidence() if available else []
+    assembly = create_episode_assembly_service(ProviderSettings(mode="mock"))
+    assembly.dialogue_runtime = rig.runtime
+    assembly.background_pipeline.writer = rig.writer
+    adapter = StagedProgressiveRuntimeAdapter(assembly)
+    prefix = next(
+        s for s in episode.segments if isinstance(s, MusicSegment) and s.chapter_id == "chapter-1"
+    ).model_dump()
+    generated = asyncio.run(adapter.author_fast_successor_narration(episode))
+    assert generated is not None
+    speech = next(s for s in generated.segments if isinstance(s, NarrationSegment))
+    assert speech.hosting_role == "opening"
+    assert (
+        speech.narration_role is not NarrationRole.INTRO
+    )  # editorial role never changes placement
+    if available:
+        assert speech.dialogue.purpose is DialoguePurpose.OPENING
+        assert rig.writer.calls == 0
+        assert len(rig.writer_llm.calls) == 1
+    else:
+        assert speech.dialogue is None
+        assert rig.writer.calls == 1
+        assert not rig.writer_llm.calls
+    assert (
+        next(
+            s
+            for s in episode.segments
+            if isinstance(s, MusicSegment) and s.chapter_id == "chapter-1"
+        ).model_dump()
+        == prefix
+    )
+
+
+def test_closing_has_room_to_answer_the_opening_without_random_moves_or_new_research():
+    from wavecast.intelligence.models import ChapterPlan, NarrationSlotContext
+
+    text = (
+        "开头我们问这些歌怎样表达靠近。听到这里，热烈与克制并不总在两端，有时会在同一首歌里相遇。"
+    )
+    fixture = StructuredFixture(
+        RadioScript(
+            blocks=[
+                RadioScriptBlock(kind=RadioScriptBlockKind.OUTRO, text=text, duration_seconds=32)
+            ]
+        )
+    )
+    script = asyncio.run(
+        WriterService(fixture).write(
+            ChapterPlan(
+                index=5,
+                track=None,
+                narrative_role="resolution",
+                reason="Close",
+                narration_goal="Close",
+            ),
+            [],
+            station=StationId.PORTRAIT,
+            host_mode=HostMode.FULL,
+            output_language=OutputLanguage.ZH_CN,
+            target_duration_seconds=45,
+            closing_brief="靠近与退让",
+            previous_committed_context="开头的问题与已经播出的讨论。",
+            route_tracks=["方大同 - 爱爱爱", "方大同 - 特别的人"],
+            slot_contexts=[
+                NarrationSlotContext(
+                    slot_id="final",
+                    chapter_index=5,
+                    placement="after_final_track",
+                    allowed_block_kinds=[RadioScriptBlockKind.OUTRO],
+                    is_final=True,
+                )
+            ],
+        )
+    )
+    assert len(fixture.prompts) == 1
+    prompt = fixture.prompts[0]
+    assert "Target narration duration seconds: 45" in prompt
+    assert "Return to the opening's listening question" in prompt
+    assert "开头的问题与已经播出的讨论。" in prompt
+    assert "one or two plain sentences" not in prompt
+    assert "This block's move" not in prompt and "Register samples" not in prompt
+    assert script.blocks[-1].text.startswith(text)
+    assert len(script.blocks[-1].text) > len(text)  # existing sign-off is still appended

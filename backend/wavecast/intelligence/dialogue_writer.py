@@ -50,7 +50,7 @@ id）；这一轮没有用到任何事实就填空列表。不要补充素材之
 不要把理解说成艺人的本意、原话或已经证实的事实。\
 do_not_infer 里的内容不能说。backstage 里的内容绝对不要念出来。
 
-围绕 central_question 讲清一个有意思的点，素材是理解后的内容，不是逐条念的清单。\
+{telling_task}\
 不要反复说「有文章指出」「某报道说」，不要念来源发表日期；只有具体评论、引语或有争议的说法才交代必要归属。\
 一般用三到八轮把这个点聊完整，具体展开由你决定，不要用空话凑数。\
 
@@ -141,6 +141,13 @@ class DialogueWriter:
             ),
             today=programme_date(),
             programme_brief=slot.programme_brief or "围绕本期主题展开",
+            telling_task=(
+                "这是本期完整开篇：从刚听到的歌和已有素材切入，建立本期具体的收听方向，"
+                "说明接下来这首为什么值得放在这里。central_question 是素材切口，可服务于更大的节目方向。"
+                "不重复台呼，不列节目大纲，不预告未经确认的曲目，也不必按固定句式分段。"
+                if slot.purpose is DialoguePurpose.OPENING
+                else "围绕 central_question 讲清一个有意思的点，素材是理解后的内容，不是逐条念的清单。"
+            ),
             editorial_goal=slot.editorial_goal or "讲清一个值得听的点",
             previous=slot.previous_context or "（无：节目刚开始）",
             max_turn_chars=1500,

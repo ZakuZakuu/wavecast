@@ -1281,3 +1281,106 @@ def test_researched_title_is_used_now_and_saved_for_later_host_passages(tmp_path
     )
     assert music.spoken_title == named.spoken_title
     assert music.track_ref == TRACK.track_ref
+
+
+def test_second_gap_can_take_over_opening_without_waiting_for_middle_discussion(tmp_path):
+    from wavecast.hosting import DiscussionPlan, delivered_discussions
+
+    rig = Rig(tmp_path)
+    episode = rig.repository.get(EPISODE_ID)
+    # This fixture's available seam now follows the lost first gap; a short welcome is not enough.
+    rig.session.chapters[0].chapter_id = "chapter-3"
+    rig.session.chapters[1].chapter_id = "chapter-4"
+    for segment in episode.segments:
+        if segment.chapter_id == "chapter-2":
+            segment.chapter_id = "chapter-3"
+    rig.session.narration_authored_chapter_ids = ["chapter-2"]
+    rig.session.discussion_plan = DiscussionPlan(
+        target=3, minimum=2, chapter_ids=[], opening_chapter_ids=["chapter-2", "chapter-3"]
+    )
+    episode.segments.append(
+        NarrationSegment(
+            chapter_id="chapter-1",
+            order=0,
+            title="Welcome",
+            state=SegmentState.AUDIO_READY,
+            planned_duration_seconds=10,
+            narration_text="欢迎收听。",
+            audio_source_url="/welcome",
+        )
+    )
+    episode = rig.author()
+    narration = next(
+        s
+        for s in episode.segments
+        if isinstance(s, NarrationSegment) and s.chapter_id == "chapter-3"
+    )
+    assert narration.hosting_role == "opening"
+    assert narration.dialogue.purpose.value == "opening"
+    assert narration.state is SegmentState.SCRIPT_READY
+    episode = rig.voice()
+    assert episode.hosting_coverage.opening == "delivered"
+    assert delivered_discussions(episode) == 0
+
+
+def test_substantive_closing_uses_voiced_context_and_the_real_outro_slot(tmp_path):
+    from wavecast.hosting import DiscussionPlan
+    from wavecast.intelligence.writer import WriterService
+    from wavecast.models.episode import NarrationRole
+
+    from tests.test_intelligence_services import StructuredFixture
+
+    slot = _slot(
+        FIRST_SLOT,
+        1,
+        placement=NarrationSlotPlacement.AFTER_FINAL_TRACK,
+        allowed_block_kinds=[RadioScriptBlockKind.OUTRO],
+        is_final=True,
+        upcoming_track=None,
+    )
+    rig = Rig(tmp_path, first_slot=slot)
+    rig.session.chapters = rig.session.chapters[:1]
+    rig.session.chapters[0].target_narration_seconds = 45
+    rig.session.discussion_plan = DiscussionPlan(
+        target=3, minimum=2, chapter_ids=[], opening_chapter_ids=[]
+    )
+    episode = rig.repository.get(EPISODE_ID)
+    episode.editorial_brief = "把不同作品里爱的表达放在一起听。"
+    for state, text in (
+        (SegmentState.AUDIO_READY, "ACTUALLY_VOICED"),
+        (SegmentState.SCRIPT_READY, "UNVOICED_DRAFT"),
+        (SegmentState.SKIPPED, "SKIPPED_DRAFT"),
+    ):
+        episode.segments.append(
+            NarrationSegment(
+                chapter_id="chapter-1",
+                order=0,
+                state=state,
+                title=text,
+                narration_text=text,
+                planned_duration_seconds=10,
+                audio_source_url="/voice" if state is SegmentState.AUDIO_READY else None,
+            )
+        )
+    fixture = StructuredFixture(
+        RadioScript(
+            blocks=[
+                RadioScriptBlock(
+                    kind=RadioScriptBlockKind.OUTRO,
+                    text="听过这些歌，爱的表达也就有了不同的层次。",
+                    duration_seconds=30,
+                )
+            ]
+        )
+    )
+    rig.generator.writer = WriterService(fixture)
+    generated = asyncio.run(rig.generator.author_narration(episode, "chapter-2"))
+    assert generated is not None
+    assert len(fixture.prompts) == 1
+    prompt = fixture.prompts[0]
+    assert "ACTUALLY_VOICED" in prompt
+    assert "UNVOICED_DRAFT" not in prompt and "SKIPPED_DRAFT" not in prompt
+    assert "substantive closing" in prompt
+    narration = next(s for s in generated.segments if isinstance(s, NarrationSegment))
+    assert narration.hosting_role == "closing"
+    assert narration.narration_role is NarrationRole.OUTRO

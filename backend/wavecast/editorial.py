@@ -34,6 +34,21 @@ def editorial_station_guidance(station: StationId | None) -> str:
     )
 
 
+def closing_passage_guidance() -> str:
+    return (
+        "This is the programme's substantive closing, not a track introduction. "
+        "Return to the opening's listening question or direction, using only the actual route "
+        "and earlier host passages below. Explain what those examples add to our understanding; "
+        "leave room for a nuanced or open answer. Do not just list songs or repeat the opening. "
+        "Introduce no new biography, research or factual claim, and promise nothing to come. "
+        "The route and earlier script describe what aired; they are not independent factual evidence. "
+        "Give the final outro the main space, aiming at 30–45 seconds including the sign-off; "
+        "any before-track handoff in the same request is optional and brief. "
+        "Use your own natural structure, without a required sentence count or padding. "
+        "Do not add a farewell or station name: the application appends the sign-off.\n"
+    )
+
+
 def opening_passage_guidance(station: StationId | None, host_mode: HostMode) -> str:
     density = (
         "Develop a concrete direction the listener can follow through this programme, "
