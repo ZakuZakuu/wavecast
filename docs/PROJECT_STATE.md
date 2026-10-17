@@ -10,7 +10,7 @@ Updated: 2026-10-18（北京时间）。唯一当前状态入口。旧过程记�
 
 正式API部署`a96c34f9-82be-469d-93bf-c6ea2b37bffe` SUCCESS，源码固定为`485ea12`；启动日志无ERROR/Traceback。前端构建输入相对旧正式版没有变化，Vercel按ignore规则保留原READY构建`dpl_2fzNxTHMXzm4LMUWktEzjgtcimFd`（Web SHA `6be4919`），无需与API SHA强行相同。正式API和wavecast.space同源health/公开节目/未知404、节目页面OG标题及未知短链均通过。没有改模型、密钥、数据库或新增付费节目。
 
-[#318发布CI](https://github.com/ZakuZakuu/wavecast/actions/runs/39055489756)全绿：后端1741通过/3跳过、Web299通过、Ruff/Mypy/Docker冒烟通过；合并后的完整文件树与该PR head一致。main自动复跑见[39056788684](https://github.com/ZakuZakuu/wavecast/actions/runs/39056788684)，不把尚未观察到的结果写成通过。#316原完整CI同样通过，试听测试部署原为`e85241c`；integration快进后服务继续跟随同一已发布应用代码。
+[#318发布CI](https://github.com/ZakuZakuu/wavecast/actions/runs/39055489756)全绿：后端1741通过/3跳过、Web299通过、Ruff/Mypy/Docker冒烟通过；合并后的完整文件树与该PR head一致。main自动复跑[39056788684](https://github.com/ZakuZakuu/wavecast/actions/runs/39056788684)也已观测全绿（后端1741/3跳过、Web299、Docker通过）。#316原完整CI同样通过，试听测试部署原为`e85241c`；integration快进后服务继续跟随同一已发布应用代码。
 
 已知后续事项：和弦符号/乐理缩写的TTS读法（dim被拆成字母）记入[#317](https://github.com/ZakuZakuu/wavecast/issues/317)，优先由Writer口语化，准确保留音乐含义，不新增翻译/复审。此前Lite连续429由免费额度耗尽自动停用造成，用户已关闭；最新线上Lite成功，授权的临时key最小调用也200（212 token），未写仓库或更换部署密钥。渐进任务心跳失活取消后resume未观察到继续生成已记入[#319](https://github.com/ZakuZakuu/wavecast/issues/319)，根因待查；偶发编排/素材格式问题也留待后续。用户再次明确本轮只记issue并发布，不继续修复或重构租约。
 

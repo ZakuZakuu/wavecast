@@ -7,7 +7,7 @@
 - 正式发布 PR：[#318](https://github.com/ZakuZakuu/wavecast/pull/318)，main / integration 为 `485ea1252c070d090b57cf6bc3e1cc7814ca3d2f`。应用代码与已试听 `e85241c` 相同。
 - 正式 API：`a96c34f9-82be-469d-93bf-c6ea2b37bffe` SUCCESS。正式 Web 继续使用原 READY 构建；已确认 Web 构建输入无变化。
 - 复查 https://wavecast.space ：health、公开节目读取、未知节目/短码404、节目页面 OG 标题、未知短链均通过。部署后所查时间窗口没有 WARNING/ERROR/Traceback；这不是全量真机或新节目验收。
-- #318 发布 CI 全绿，后端1741通过/3跳过，Web299通过；main 自动复跑结果以 [39056788684](https://github.com/ZakuZakuu/wavecast/actions/runs/39056788684) 为准。
+- #318 发布 CI 全绿，后端1741通过/3跳过，Web299通过；main 自动复跑 [39056788684](https://github.com/ZakuZakuu/wavecast/actions/runs/39056788684) 也已观测全部成功（同为后端1741通过/3跳过，Web299通过，Docker通过）。
 - 保留后续问题：[#317](https://github.com/ZakuZakuu/wavecast/issues/317) 和弦/乐理符号口语化；[#319](https://github.com/ZakuZakuu/wavecast/issues/319) 心跳失活后生成恢复。用户明确本轮不修。
 
 ## 可行性概览
