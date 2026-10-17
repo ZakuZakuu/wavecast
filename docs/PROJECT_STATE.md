@@ -4,18 +4,15 @@ Updated: 2026-10-17（北京时间）。唯一当前状态入口。旧过程记�
 
 ## 当前任务
 
-#315中文口播名修复已合入integration `c3cb95a4964be02010f2e2d9b8f24f42b54141e8`；head `c3ce241` CI全绿。Railway测试部署`ea66ff73-a2e1-42fe-922d-8803ddda10ed` SUCCESS、Vercel `dpl_4frX6YPFaTbojRv599hysP92BpU5` READY，两端同SHA；API公开读/未知404、预览同源health通过。用户已明确授权本次合入测试；正式仍为`6be4919`。
+用户已完成#316版人物志试听，认可当前版本并明确授权发布正式环境，本轮不再追加代码修复。待发布代码为integration `e85241c8722224aac4657f5aed51209e582d3f59`（#312–#316）；本发布分支只更新状态文档，应用代码与已试听版本一致。正式当前仍为main `6be4919`，需完成发布PR全套CI、普通merge、正式API/Web部署终态和只读冒烟后记录新检查点。
 
-用户试听#314最新节目`db15f6cb-2e47-434c-b387-096ddd4f33b1`：31:37，三段双人共3:09，正文认可；开篇19.4秒单人、完整双人来得晚，结尾14.8秒。全部TTS估价¥0.565（完整用量回执，非实付），本轮不以demo成本限制口播。
+本轮交付：外文名称可说形式及可靠中文歌名；节目编辑方法与首曲主题约束；人物志/来龙去脉FULL主持的正文讨论交付；首两个音乐间隙独立60–90秒完整开篇，结尾30–45秒；节目方向/章节任务进入曲目要点、背景与双人素材选择，Curator优先主题贴合。没有新增模型复审或摘要流水线，旧节目不补稿。见[ADR 0032](adr/0032-editorial-opening.md)、[0033](adr/0033-hosted-programme-delivery.md)、[0034](adr/0034-grounded-spoken-song-titles.md)、[0035](adr/0035-substantive-opening-and-closing.md)。
 
-当前PR [#316](https://github.com/ZakuZakuu/wavecast/pull/316)（[ADR 0035](adr/0035-substantive-opening-and-closing.md)）包含已同意的完整开篇/收尾与素材角度补齐。原head `ba944fa` CI全绿，新增补丁待新head CI。前两首独立开篇60–90秒、结尾30–45秒；编辑方向/章节任务在曲目要点、背景和双人素材选择时就传入，不只在Writer出现。Curator主题贴合优先，防止用爵士措辞强接一般作品介绍；无新模型调用或复审。
+#316 head `5bb7c20`的[完整CI](https://github.com/ZakuZakuu/wavecast/actions/runs/39050660723)全绿：后端1741通过/3跳过、Web299通过、Ruff/Mypy/Docker冒烟通过；本地相关回归366通过。测试API部署`65311344-0c35-4ada-b39f-d0bc53f166e0` SUCCESS、Web `dpl_92tqQFq6J8zfpfH1iVyXTWaS958s` READY，两端均为`e85241c`，API及受保护网页同源公开读/健康检查通过。
 
-用户最新试听`b3acf873-35f5-4082-81ad-de34bb860ccd`为#315（28:02、两段双人），并未验收#316。现已明确授权将素材修补与#316一起部署测试，需等待最新head完整CI通过后一次合入integration，并观察部署终态/冒烟；正式与旧节目不改。
+已知后续事项：和弦符号/乐理缩写的TTS读法（dim被拆成字母）记入[#317](https://github.com/ZakuZakuu/wavecast/issues/317)，优先由Writer口语化，准确保留音乐含义，不新增翻译/复审。此前Lite连续429由免费额度耗尽自动停用造成，用户已关闭；最新线上Lite成功，授权的临时key最小调用也200（212 token），未写仓库或更换部署密钥。另有渐进任务心跳失活后取消、resume成功但未观察到重启，以及偶发编排/素材格式问题，继续按具体日志排查；用户明确本轮不再堆修复，不据此重构租约。
 
-
-**本轮实现**见[ADR 0033](adr/0033-hosted-programme-delivery.md)：FULL等待在途Writer/TTS及保存，快速开篇共用防重；人物志/来龙去脉FULL主持新节目按时长安排讨论，约30分钟计划3段/交付最低2段、60分钟5/4，按音乐时间分散，预留口播时间。只计实际配音进入时间线、双方参与且有事实支持的讨论；非讨论缝隙可纯音乐。主要段落结束后最多尝试一个未发布补位；不足时返回hosting_coverage短缺并正常保留可播音乐。轻文本台/旧session沿用原策略。开篇复用已有FastStart证据，失败由下一段接过导入任务；提案方向传给Curator，章节任务传给双人Writer。窄切口首曲按精确候选顺序找，不任取同艺人歌曲兜底。无新复审/翻译/摘要调用，不修改已发布前缀。
-
-开场方法论保存在[设计文档](design/programme-editorial-method-and-opening.md)，台标音乐仍留后续。新一轮需新建节目验收完整开篇、三段正文与实际收束；旧节目不补稿。
+认可的#314节目`db15f6cb-2e47-434c-b387-096ddd4f33b1`为31:37、三段双人，TTS估价¥0.565（非实付）；本轮不以demo成本限制口播。开场方法论见[设计文档](design/programme-editorial-method-and-opening.md)，台标音乐仍留后续。
 
 ## 已发布基线
 
