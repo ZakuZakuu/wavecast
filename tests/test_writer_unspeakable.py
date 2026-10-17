@@ -72,7 +72,7 @@ def test_a_closing_may_name_any_song_of_the_programme_even_with_a_japanese_title
     assert result.blocks[0].text.endswith(compose_signoff(StationId.PORTRAIT, "programme-1") or "")
 
 
-def test_the_writer_is_told_to_use_chinese_titles_or_say_what_a_foreign_title_means() -> None:
+def test_the_writer_uses_supported_names_or_natural_references_without_translation() -> None:
     llm = Sequenced(_script("Jody 是同一个人写的。"))
 
     _write(llm)
@@ -80,5 +80,6 @@ def test_the_writer_is_told_to_use_chinese_titles_or_say_what_a_foreign_title_me
     prompt = llm.prompts[0]
     assert "speaks only Chinese and English" in prompt
     assert "established Chinese title" in prompt
-    assert "这首歌的名字，中文意思是" in prompt
+    assert "tour and album names" in prompt
+    assert "translate from memory" in prompt
     assert "do not invent a Chinese title" in prompt

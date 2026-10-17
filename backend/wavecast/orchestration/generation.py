@@ -4,7 +4,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from wavecast.intelligence.models import Evidence
+from wavecast.intelligence.models import Evidence, ResolvedTrack
 from wavecast.models.episode import LiveEpisode, MusicSegment, NarrationSegment, SegmentState
 from wavecast.providers import AudioProvider, MockAudioProvider
 
@@ -18,6 +18,7 @@ class GeneratedChapter(BaseModel):
     # into the persisted session so the evidence behind what was said stays inspectable.
     research_evidence: list[Evidence] = Field(default_factory=list)
     research_evidence_ids: list[str] = Field(default_factory=list)
+    researched_track: ResolvedTrack | None = None
 
 
 class ProgressiveChapterGenerator(Protocol):

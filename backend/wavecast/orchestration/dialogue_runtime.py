@@ -27,6 +27,7 @@ from wavecast.intelligence.story_material import StoryMaterialService
 from wavecast.models.dialogue import DialogueAudioSnapshot, DialogueBlock, DialoguePurpose
 from wavecast.models.episode import MusicSegment, NarrationSegment
 from wavecast.orchestration.dialogue_timeline import DialogueSeamService
+from wavecast.spoken_form import KnownTrack
 from wavecast.stations import StationId
 from wavecast.storage.dialogue_artifacts import DialogueArtifactStore
 from wavecast.storage.story_usage import StoryUsageStore
@@ -104,6 +105,9 @@ class DialogueRuntime:
         track_ref: str | None,
         track_label: str,
         previous_context: str = "",
+        editorial_goal: str = "",
+        programme_brief: str = "",
+        purpose: DialoguePurpose = DialoguePurpose.STORY,
     ) -> DialogueOffer | None:
         """A validated, saved passage for this slot, or ``None`` (the Writer path then runs).
 
@@ -123,7 +127,7 @@ class DialogueRuntime:
         slot = DialogueSlot(
             slot_id=context.slot_id,
             block_id=block_id_for(context.slot_id),
-            purpose=DialoguePurpose.STORY,
+            purpose=purpose,
             station=station,
             just_played=(
                 context.just_played_track.canonical_title
@@ -136,6 +140,13 @@ class DialogueRuntime:
                 else None
             ),
             previous_context=previous_context,
+            editorial_goal=editorial_goal,
+            programme_brief=programme_brief,
+            tracks=tuple(
+                KnownTrack(track.canonical_artist, track.canonical_title, track.spoken_title)
+                for track in (context.just_played_track, context.upcoming_track)
+                if track is not None
+            ),
         )
         try:
             result = await self._seam.resume(
@@ -147,6 +158,8 @@ class DialogueRuntime:
                     story_id=story_id,
                     subject=track_label or subject,
                     recording_refs=[track_ref],
+                    programme_brief=programme_brief or subject,
+                    editorial_goal=editorial_goal,
                 )
                 if material is None:
                     logger.info("dialogue_skipped slot_id=%s reason=thin_material", context.slot_id)

@@ -15,16 +15,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
-from wavecast.models.dialogue import DialogueBlock, DialogueDraft, DialogueIssue
+from wavecast.models.dialogue import DialogueBlock, DialogueDraft, DialogueIssue, DialoguePurpose
 from wavecast.models.story_material import StoryMaterial
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.llm_factory import build_llm
 from wavecast.providers.usage import UsageLedger
+from wavecast.spoken_form import has_unspeakable_script, to_spoken_form
 from wavecast.stations import StationId
 from wavecast.storage.dialogue_artifacts import CheckedDialogueRecord
 
@@ -107,6 +108,11 @@ class DialoguePipeline:
             outcome.status = DialogueStatus.SKIPPED
             outcome.reason = "station_has_no_dialogue"
             return outcome
+        if slot.purpose is DialoguePurpose.OPENING and slot.station in {
+            StationId.PORTRAIT,
+            StationId.LINEAGE,
+        }:
+            budget = replace(budget, target_min_seconds=60, target_max_seconds=90)
         outcome.calls = 1
         try:
             draft = await self._writer.write(material, slot, budget)
@@ -124,6 +130,17 @@ class DialoguePipeline:
         block = self._to_block(draft, material, slot, outcome)
         if block is None:
             return outcome
+        # Only known names are converted; the authored lines and fact references stay intact.
+        # Refuse unresolved names here so the existing single-host fallback still has a turn.
+        for turn in block.turns:
+            if not has_unspeakable_script(turn.text):
+                continue
+            spoken = to_spoken_form(turn.text, slot.tracks)
+            if not spoken.ok:
+                outcome.reason = "unspeakable_script"
+                logger.info("dialogue_rejected slot_id=%s reason=unspeakable_script", slot.slot_id)
+                return outcome
+            turn.tts_text = spoken.tts_text
         if block.duration_seconds > budget.hard_max_seconds:
             outcome.reason = "too_long"
             return outcome

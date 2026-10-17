@@ -38,6 +38,7 @@ from wavecast.intelligence.models import (
 from wavecast.intelligence.story_material import StoryMaterialService, verify_material
 from wavecast.intelligence.track_research import TrackResearch
 from wavecast.materialization import NarrationMaterializer
+from wavecast.models.dialogue import DialogueDraft, DraftTurn
 from wavecast.models.episode import (
     EpisodeState,
     GenerationMode,
@@ -370,6 +371,42 @@ def test_voicing_keeps_the_hosts_voices_and_the_real_audio_length(tmp_path) -> N
     saved = rig.repository.get(EPISODE_ID)
     restored = [s for s in saved.ordered_segments if isinstance(s, NarrationSegment) and s.dialogue][0]
     assert restored.dialogue_audio == segment.dialogue_audio
+
+
+def test_a_foreign_track_title_survives_authoring_storage_and_voicing(tmp_path) -> None:
+    played = OPENING.model_copy(update={"canonical_title": "夢のあと", "spoken_title": "梦之后"})
+    rig = Rig(tmp_path, first_slot=_slot(FIRST_SLOT, 0, just_played_track=played))
+    text = "刚才的《夢のあと》留下了一个问题，我们沿着它继续听。"
+    draft = _retag(DialogueDraft(turns=[DraftTurn(speaker="A", text=text, fact_refs=["fdt-F1"])]))  # type: ignore[arg-type]
+    rig.writer_llm.queues[DialogueDraft] = [draft]
+
+    rig.author()
+    (authored,) = rig.narration()
+    assert authored.dialogue is not None
+    assert authored.dialogue.turns[0].tts_text == "刚才的梦之后留下了一个问题，我们沿着它继续听。"
+    saved = asyncio.run(rig.artifacts.load(EPISODE_ID, authored.dialogue.block_id))
+    assert saved is not None and saved.block == authored.dialogue
+
+    rig.voice()
+
+    (voiced,) = rig.narration()
+    assert voiced.state is SegmentState.AUDIO_READY and voiced.dialogue_audio is not None
+    assert voiced.narration_text == text
+    assert rig.writer.calls == 0 and rig.writer_llm.calls == [("DialogueDraft", "dialogue_writer")]
+
+
+def test_an_unreadable_tour_name_falls_back_before_audio_not_after_it(tmp_path) -> None:
+    rig = Rig(tmp_path)
+    draft = _retag(DialogueDraft(turns=[DraftTurn(speaker="A", text="她的“雙六エクスタシー”巡演聚集了这些乐手。", fact_refs=["fdt-F1"])]))  # type: ignore[arg-type]
+    rig.writer_llm.queues[DialogueDraft] = [draft]
+
+    rig.author()
+    rig.voice()
+
+    (segment,) = rig.narration()
+    assert segment.state is SegmentState.AUDIO_READY and segment.dialogue is None
+    assert rig.writer.calls == 1
+    assert not rig.ledger().entries
 
 
 def test_a_failing_dialogue_writer_leaves_the_chapter_to_the_writer_and_gives_the_story_back(tmp_path) -> None:
@@ -1116,3 +1153,260 @@ def test_the_api_materializer_records_into_the_runtime_ledger(tmp_path) -> None:
 
     assert materializer.dialogue_speech is not None and materializer.dialogue_speech._ledger is ledger  # type: ignore[attr-defined]
     assert api_module._build_narration_materializer(ProviderSettings(), MockTTSProvider(storage), storage, ledger).dialogue_speech is None
+
+
+def test_planned_discussion_gets_the_editorial_goal_and_original_earlier_context(
+    tmp_path, monkeypatch
+):
+    from wavecast.hosting import DiscussionPlan
+
+    rig = Rig(tmp_path, seed=_seed_choosing(SECOND_SLOT, FIRST_SLOT))
+    # The old hash would select the other slot. The durable heavy-station plan wins.
+    rig.session.discussion_plan = DiscussionPlan(target=3, minimum=2, chapter_ids=["chapter-2"])
+    rig.session.chapters[0].chapter.narration_goal = "用这首歌比较靠近与退让"
+    episode = rig.repository.get(EPISODE_ID)
+    episode.editorial_brief = "爱情表达里的不同选择"
+    episode.segments.append(
+        NarrationSegment(
+            id="later-host",
+            chapter_id="chapter-3",
+            order=100,
+            state=SegmentState.SCRIPT_READY,
+            title="Future",
+            planned_duration_seconds=10,
+            narration_text="DO_NOT_INCLUDE_LATER_HOST",
+        )
+    )
+    material_prompts = []
+    material_call = rig.material_llm.structured
+
+    async def capture_material(prompt, output_type, **kwargs):
+        material_prompts.append(prompt)
+        return await material_call(prompt, output_type, **kwargs)
+
+    monkeypatch.setattr(rig.material_llm, "structured", capture_material)
+    research_assignments = []
+    research_call = rig.generator.track_research.prepare
+
+    async def capture_research(**kwargs):
+        research_assignments.append(kwargs)
+        return await research_call(**kwargs)
+
+    monkeypatch.setattr(rig.generator.track_research, "prepare", capture_research)
+    prompts = []
+    original = rig.writer_llm.structured
+
+    async def capture(prompt, output_type, **kwargs):
+        prompts.append(prompt)
+        return await original(prompt, output_type, **kwargs)
+
+    monkeypatch.setattr(rig.writer_llm, "structured", capture)
+    rig.author()
+    assert rig.narration()[0].dialogue is not None
+    prompt = prompts[-1]
+    assert "用这首歌比较靠近与退让" in prompt
+    assert "爱情表达里的不同选择" in prompt
+    assert "DO_NOT_INCLUDE_LATER_HOST" not in prompt
+
+    assert len(material_prompts) == len(research_assignments) == 1
+    assert "用这首歌比较靠近与退让" in material_prompts[0]
+    assert "爱情表达里的不同选择" in material_prompts[0]
+    assert "not evidence" in material_prompts[0]
+    assert research_assignments[0]["programme_brief"] == episode.editorial_brief
+    assert (
+        research_assignments[0]["editorial_goal"] == rig.session.chapters[0].chapter.narration_goal
+    )
+    assert len(rig.material_llm.calls) == len(rig.writer_llm.calls) == 1
+
+
+def test_next_available_discussion_takes_up_a_failed_opening(tmp_path, monkeypatch):
+    from wavecast.hosting import DiscussionPlan
+
+    rig = Rig(tmp_path)
+    episode = rig.repository.get(EPISODE_ID)
+    # Move the fixture's available discussion after an earlier failed opening.
+    rig.session.chapters[1].chapter_id = "chapter-4"
+    rig.session.chapters[0].chapter_id = "chapter-3"
+    for segment in episode.segments:
+        if segment.chapter_id == "chapter-2":
+            segment.chapter_id = "chapter-3"
+            segment.order += 1
+    episode.segments.append(
+        NarrationSegment(
+            id="missed-opening",
+            chapter_id="chapter-2",
+            order=1,
+            state=SegmentState.SKIPPED,
+            title="Missed",
+            planned_duration_seconds=30,
+        )
+    )
+    rig.session.narration_authored_chapter_ids = ["chapter-2"]
+    rig.session.discussion_plan = DiscussionPlan(target=3, minimum=2, chapter_ids=["chapter-3"])
+    prompts = []
+    original = rig.writer_llm.structured
+
+    async def capture(prompt, output_type, **kwargs):
+        prompts.append(prompt)
+        return await original(prompt, output_type, **kwargs)
+
+    monkeypatch.setattr(rig.writer_llm, "structured", capture)
+    rig.author()
+    assert len(prompts) == 1
+    assert "The first opening could not air" in prompts[0]
+
+
+@pytest.mark.parametrize("station", [None, StationId.PORTRAIT])
+def test_researched_title_is_used_now_and_saved_for_later_host_passages(tmp_path, station):
+    rig = Rig(tmp_path, station=station)
+    named = TRACK.model_copy(
+        update={"spoken_title": "爱，爱，爱", "spoken_title_evidence_id": "E1"}
+    )
+
+    class NamedResearcher(_Researcher):
+        async def prepare(self, **kwargs):
+            result = await super().prepare(**kwargs)
+            result.spoken_title = named.spoken_title
+            result.spoken_title_evidence_id = named.spoken_title_evidence_id
+            return result
+
+    rig.generator.track_research = NamedResearcher()
+    prompts = []
+    if station is None:
+        original = rig.writer.write
+
+        async def capture(*args, **kwargs):
+            prompts.append(kwargs)
+            return await original(*args, **kwargs)
+
+        rig.writer.write = capture
+    else:
+        original = rig.writer_llm.structured
+
+        async def capture(prompt, *args, **kwargs):
+            prompts.append(prompt)
+            return await original(prompt, *args, **kwargs)
+
+        rig.writer_llm.structured = capture
+
+    episode = rig.author()
+    assert len(prompts) == 1
+    if station is None:
+        assert prompts[0]["slot_contexts"][0].chapter_track.spoken_title == named.spoken_title
+    else:
+        assert '"spoken_title": "爱，爱，爱"' in prompts[0]
+    # Reload persisted state: another seam can name the same recording without re-extracting it.
+    assert episode.progressive_session is not None
+    saved = ProgressiveAssemblySession.model_validate_json(episode.progressive_session.model_dump_json())
+    for chapter in saved.chapters:
+        assert chapter.resolved_track.spoken_title == named.spoken_title
+        assert chapter.resolved_track.spoken_title_evidence_id == "E1"
+        assert chapter.slot_contexts[0].upcoming_track.spoken_title == named.spoken_title
+    music = next(
+        s for s in episode.segments if isinstance(s, MusicSegment) and s.chapter_id == "chapter-2"
+    )
+    assert music.spoken_title == named.spoken_title
+    assert music.track_ref == TRACK.track_ref
+
+
+def test_second_gap_can_take_over_opening_without_waiting_for_middle_discussion(tmp_path):
+    from wavecast.hosting import DiscussionPlan, delivered_discussions
+
+    rig = Rig(tmp_path)
+    episode = rig.repository.get(EPISODE_ID)
+    # This fixture's available seam now follows the lost first gap; a short welcome is not enough.
+    rig.session.chapters[0].chapter_id = "chapter-3"
+    rig.session.chapters[1].chapter_id = "chapter-4"
+    for segment in episode.segments:
+        if segment.chapter_id == "chapter-2":
+            segment.chapter_id = "chapter-3"
+    rig.session.narration_authored_chapter_ids = ["chapter-2"]
+    rig.session.discussion_plan = DiscussionPlan(
+        target=3, minimum=2, chapter_ids=[], opening_chapter_ids=["chapter-2", "chapter-3"]
+    )
+    episode.segments.append(
+        NarrationSegment(
+            chapter_id="chapter-1",
+            order=0,
+            title="Welcome",
+            state=SegmentState.AUDIO_READY,
+            planned_duration_seconds=10,
+            narration_text="欢迎收听。",
+            audio_source_url="/welcome",
+        )
+    )
+    episode = rig.author()
+    narration = next(
+        s
+        for s in episode.segments
+        if isinstance(s, NarrationSegment) and s.chapter_id == "chapter-3"
+    )
+    assert narration.hosting_role == "opening"
+    assert narration.dialogue.purpose.value == "opening"
+    assert narration.state is SegmentState.SCRIPT_READY
+    episode = rig.voice()
+    assert episode.hosting_coverage.opening == "delivered"
+    assert delivered_discussions(episode) == 0
+
+
+def test_substantive_closing_uses_voiced_context_and_the_real_outro_slot(tmp_path):
+    from wavecast.hosting import DiscussionPlan
+    from wavecast.intelligence.writer import WriterService
+    from wavecast.models.episode import NarrationRole
+
+    from tests.test_intelligence_services import StructuredFixture
+
+    slot = _slot(
+        FIRST_SLOT,
+        1,
+        placement=NarrationSlotPlacement.AFTER_FINAL_TRACK,
+        allowed_block_kinds=[RadioScriptBlockKind.OUTRO],
+        is_final=True,
+        upcoming_track=None,
+    )
+    rig = Rig(tmp_path, first_slot=slot)
+    rig.session.chapters = rig.session.chapters[:1]
+    rig.session.chapters[0].target_narration_seconds = 45
+    rig.session.discussion_plan = DiscussionPlan(
+        target=3, minimum=2, chapter_ids=[], opening_chapter_ids=[]
+    )
+    episode = rig.repository.get(EPISODE_ID)
+    episode.editorial_brief = "把不同作品里爱的表达放在一起听。"
+    for state, text in (
+        (SegmentState.AUDIO_READY, "ACTUALLY_VOICED"),
+        (SegmentState.SCRIPT_READY, "UNVOICED_DRAFT"),
+        (SegmentState.SKIPPED, "SKIPPED_DRAFT"),
+    ):
+        episode.segments.append(
+            NarrationSegment(
+                chapter_id="chapter-1",
+                order=0,
+                state=state,
+                title=text,
+                narration_text=text,
+                planned_duration_seconds=10,
+                audio_source_url="/voice" if state is SegmentState.AUDIO_READY else None,
+            )
+        )
+    fixture = StructuredFixture(
+        RadioScript(
+            blocks=[
+                RadioScriptBlock(
+                    kind=RadioScriptBlockKind.OUTRO,
+                    text="听过这些歌，爱的表达也就有了不同的层次。",
+                    duration_seconds=30,
+                )
+            ]
+        )
+    )
+    rig.generator.writer = WriterService(fixture)
+    generated = asyncio.run(rig.generator.author_narration(episode, "chapter-2"))
+    assert generated is not None
+    assert len(fixture.prompts) == 1
+    prompt = fixture.prompts[0]
+    assert "ACTUALLY_VOICED" in prompt
+    assert "UNVOICED_DRAFT" not in prompt and "SKIPPED_DRAFT" not in prompt
+    assert "substantive closing" in prompt
+    narration = next(s for s in generated.segments if isinstance(s, NarrationSegment))
+    assert narration.hosting_role == "closing"
+    assert narration.narration_role is NarrationRole.OUTRO

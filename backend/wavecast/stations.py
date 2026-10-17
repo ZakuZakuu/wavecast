@@ -49,8 +49,8 @@ STATION_PROFILES: dict[StationId, StationProfile] = {
 }
 
 
-# How a programme opens, written by us rather than the Writer so it stays short, true and never
-# turns into a stock phrase the model repeats.  One flowing sentence or two: what we begin with
+# The station identity and fallback when the proposal has no usable episode-specific lead.
+# One flowing sentence or two: what we begin with
 # (and, only when the listener's request names the artist, that it is theirs), then the station
 # by name and frequency.  The frequency is read digit by digit, like a year, without the decimal
 # point ("FM九七四"), which is how radio announces it; digits themselves are avoided because the

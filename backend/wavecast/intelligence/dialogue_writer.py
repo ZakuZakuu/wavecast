@@ -16,6 +16,7 @@ from wavecast.models.story_material import StoryMaterial
 from wavecast.programme_date import programme_date
 from wavecast.providers.errors import ProviderInvalidResponseError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
+from wavecast.spoken_form import SPOKEN_NAME_GUIDANCE, KnownTrack, spoken_artist, spoken_title
 from wavecast.stations import StationId
 
 from .dialogue_budget import DialogueStationBudget
@@ -35,6 +36,9 @@ class DialogueSlot:
     # What the programme's hosts have already said, so a passage neither contradicts
     # nor repeats it; empty at the start of a programme.
     previous_context: str = ""
+    tracks: tuple[KnownTrack, ...] = ()
+    editorial_goal: str = ""
+    programme_brief: str = ""
 
 
 _WRITER_PROMPT = """你为一档真实的音乐电台写一段两位主持人的对话。主持人 A 先开口，B 接话；\
@@ -42,12 +46,15 @@ _WRITER_PROMPT = """你为一档真实的音乐电台写一段两位主持人的
 
 只能使用本段「素材」里列出的事实。每一轮的 fact_refs 填这一轮说到或默认成立的事实的 id（只能是素材里的 \
 id）；这一轮没有用到任何事实就填空列表。不要补充素材之外的经历、动机、引语、创作归属或因果。\
+节目主题不是每首歌的曲风、和声或乐器的事实证明；不要为扣题给歌曲强加未经素材支持的音乐特征。\
 可以基于素材展开听感和编辑理解，自然表达，不必套「可以这样听」等固定句式；\
 不要把理解说成艺人的本意、原话或已经证实的事实。\
 do_not_infer 里的内容不能说。backstage 里的内容绝对不要念出来。
 
-围绕 central_question 讲清一个有意思的点，素材是理解后的内容，不是逐条念的清单。\
+{telling_task}\
 不要反复说「有文章指出」「某报道说」，不要念来源发表日期；只有具体评论、引语或有争议的说法才交代必要归属。\
+一般用三到八轮把这个点聊完整，具体展开由你决定，不要用空话凑数。\
+
 A、B 要接住对方的话：追问、补一个具体细节、换个理解角度，别轮流播报材料，也别用空泛赞同凑轮次。\
 个人生活信息只有确实帮助理解音乐时才讲，讲清它为什么值得放在这里；与主题无关就舍弃。\
 怎么说由你定：可以用一个真实的问题带出下一句，但问题里的事实前提也要在 fact_refs 里列出。\
@@ -60,13 +67,21 @@ A、B 要接住对方的话：追问、补一个具体细节、换个理解角�
 素材确认人物已经离世时，不要描述成他现在仍在创作或开展活动；遗作发行也必须有素材支持。\
 前文只用于衔接，人物状态等事实仍以素材为准。主持人不要编造自己的经历或查资料的过程。
 
+口播名称规则：{speech_guidance}
+没有中文名称的巡演、专辑等，用上下文清楚的中文指代自然讲述，别照抄外文专名。
+
 本节目里主持人此前已经说过的话（原文，按先后顺序；只用来让这一段接得上、不重复、不与它矛盾；事实依据仍然只来自下面的素材）：
 {previous}
 
 下面是这一段的任务和素材。
+本期编辑意图（不是事实证据）：{programme_brief}
+本段要推进的内容：{editorial_goal}
+把本段接到全期脉络里，不要每段都重新开场，也不要预告未经确认的后续曲目。
 这是一段 {purpose} 用途的对话，位置：{placement}。
 篇幅目标约 {min_s}–{max_s} 秒（约 {min_chars}–{max_chars} 字）。这是目标，不是下限：素材不够就写短，\
 不要为了凑长度重复或加料。
+
+相邻歌曲的展示名与口播名（只用于称呼，不是事实证据）：{names}
 
 素材（JSON）：
 {material}"""
@@ -113,7 +128,28 @@ class DialogueWriter:
             if part
         ) or "两首歌之间"
         prompt = _WRITER_PROMPT.format(
+            speech_guidance=SPOKEN_NAME_GUIDANCE,
+            names=json.dumps(
+                [
+                    {
+                        "display": f"{track.artist} - {track.title}",
+                        "spoken_artist": spoken_artist(track.artist),
+                        "spoken_title": track.spoken_title or spoken_title(track.title),
+                    }
+                    for track in slot.tracks
+                ],
+                ensure_ascii=False,
+            ),
             today=programme_date(),
+            programme_brief=slot.programme_brief or "围绕本期主题展开",
+            telling_task=(
+                "这是本期完整开篇：从刚听到的歌和已有素材切入，建立本期具体的收听方向，"
+                "说明接下来这首为什么值得放在这里。central_question 是素材切口，可服务于更大的节目方向。"
+                "不重复台呼，不列节目大纲，不预告未经确认的曲目，也不必按固定句式分段。"
+                if slot.purpose is DialoguePurpose.OPENING
+                else "围绕 central_question 讲清一个有意思的点，素材是理解后的内容，不是逐条念的清单。"
+            ),
+            editorial_goal=slot.editorial_goal or "讲清一个值得听的点",
             previous=slot.previous_context or "（无：节目刚开始）",
             max_turn_chars=1500,
             purpose=slot.purpose.value,

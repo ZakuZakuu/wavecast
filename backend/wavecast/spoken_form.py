@@ -19,9 +19,12 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from wavecast.text_identity import to_simplified
+
+if TYPE_CHECKING:
+    from wavecast.intelligence.models import NarrationSlotContext, ResolvedTrack
 
 # Kana, Hangul, Cyrillic, Hebrew, Arabic, Devanagari and Thai: the voice reads these badly.
 UNSPEAKABLE_SCRIPTS = re.compile(
@@ -39,6 +42,19 @@ KNOWN_CHINESE_NAMES: dict[str, str] = {
 }
 
 GENERIC_SONG = "这首歌"
+SPOKEN_NAME_GUIDANCE = (
+    "The voice speaks only Chinese and English. Display text may keep original names, but "
+    "what is spoken must contain no Japanese kana, Korean or other unsupported scripts. "
+    "Use a catalog-provided spoken_title or an established Chinese title supported by the "
+    "evidence; do not invent a Chinese title, translate from memory, or use romaji. "
+    "Without a readable name, write a natural reference to the song, album, tour or person "
+    "instead, keeping the point and its context intact. This applies to every name in the "
+    "passage, including quoted tour and album names, not only the adjacent songs. "
+    "A missing spoken_title means the name is unavailable, not that its name is 这首歌. "
+    "Write the entire reference naturally; never put a generic reference in title brackets "
+    "or append it to another 这首/这支. "
+    "Do not simply remove foreign characters or insert the original name again in parentheses."
+)
 _TRAILING_GROUP = re.compile(r"\s*[\(\[（][^\)\]）]*[\)\]）]\s*$")
 _CATALOGUE_NUMBER = re.compile(r"\b(?:no|op|bwv|k|rv|hob|d|kv|woo)\.?\s*\d", re.IGNORECASE)
 _WRAPPERS = "《》「」『』“”\"'‘’"
@@ -107,15 +123,27 @@ def spoken_title(title: str) -> str | None:
 
 
 def chinese_title(metadata: Mapping[str, Any] | None) -> str | None:
-    """The Chinese title a catalog recorded for a song (``title_zh``), if it is readable."""
+    """A readable Chinese title from explicit catalog translation fields."""
 
-    value = (metadata or {}).get("title_zh")
-    if not isinstance(value, str):
-        return None
-    text = to_simplified(value.strip())
-    if not text or len(text) > 80 or has_unspeakable_script(text):
-        return None
-    return text
+    metadata = metadata or {}
+    # Translation fields have a clear catalog meaning. Unlabelled aliases can also be
+    # versions or promotional copy, so they are not automatically Chinese song titles.
+    for key in ("title_zh", "translated_title", "tns", "transNames"):
+        raw = metadata.get(key)
+        values = raw if isinstance(raw, list) else [raw]
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            text = to_simplified(value.strip())
+            if (
+                text
+                and len(text) <= 80
+                and re.search(r"[\u3400-\u9fff]", text)
+                and not has_unspeakable_script(text)
+                and text not in {GENERIC_SONG, "歌曲", "该曲"}
+            ):
+                return text
+    return None
 
 
 def catalog_album(metadata: Mapping[str, Any] | None) -> str | None:
@@ -203,10 +231,23 @@ def to_spoken_form(
 
     spoken = tts_text if tts_text else text
     # An explanatory original-name aside (“（原名：…）”) is display-only.
-    spoken = re.sub(r"[（(][^）)]*" + UNSPEAKABLE_SCRIPTS.pattern + r"[^）)]*[）)]", "", spoken)
+    spoken = re.sub(r"[（(]\s*原名\s*[:：][^）)]*" + UNSPEAKABLE_SCRIPTS.pattern + r"[^）)]*[）)]", "", spoken)
     for track in tracks:
         title_spoken = track.spoken_title or spoken_title(track.title)
-        spoken = _replace_entity(spoken, _variants(track.title), title_spoken or GENERIC_SONG)
+        if title_spoken:
+            spoken = _replace_entity(spoken, _variants(track.title), title_spoken)
+        else:
+            for name in _variants(track.title):
+                entity = f"[{re.escape(_WRAPPERS)}]?{re.escape(name)}[{re.escape(_WRAPPERS)}]?"
+                reference = r"((?:这|那|上一|下一)[首支])(?:歌|曲子)?"
+
+                def natural_reference(match: re.Match[str]) -> str:
+                    ref = match.group(1)
+                    return ref + ("歌" if ref.endswith("首") else "曲子")
+
+                spoken = re.sub(reference + r"\s*" + entity, natural_reference, spoken)
+                spoken = re.sub(entity + r"\s*" + reference, natural_reference, spoken)
+            spoken = _replace_entity(spoken, _variants(track.title), GENERIC_SONG)
         artist_spoken = spoken_artist(track.artist)
         credits = [track.artist, *(p for p in _ARTIST_SEPARATORS.split(track.artist) if p.strip())]
         if artist_spoken is not None:
@@ -221,3 +262,21 @@ def to_spoken_form(
     spoken = " ".join(spoken.split()) if "\n" in spoken else spoken
     leftovers = sorted(set(re.findall(rf"\S*{UNSPEAKABLE_SCRIPTS.pattern}\S*", spoken)))
     return SpokenForm(tts_text=spoken, unspeakable=leftovers)
+
+
+def with_spoken_track(context: NarrationSlotContext, named: ResolvedTrack) -> NarrationSlotContext:
+    """Carry a verified spoken name through every reference to the same catalog recording."""
+    return context.model_copy(
+        update={
+            field: track.model_copy(
+                update={
+                    "spoken_title": named.spoken_title,
+                    "spoken_title_evidence_id": named.spoken_title_evidence_id,
+                }
+            )
+            for field in ("chapter_track", "just_played_track", "upcoming_track")
+            if (track := getattr(context, field)) is not None
+            and track.track_ref == named.track_ref
+            and track.spoken_title is None
+        }
+    )

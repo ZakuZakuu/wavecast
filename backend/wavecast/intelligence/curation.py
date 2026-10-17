@@ -6,6 +6,7 @@ import json
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from wavecast.editorial import EDITORIAL_METHOD
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
 from wavecast.text_identity import canonical_name
 
@@ -56,6 +57,7 @@ class CuratorService:
         committed_chapters: list[ChapterPlan] | None = None,
         output_language: OutputLanguage = OutputLanguage.AUTO,
         topic: str = "",
+        editorial_brief: str | None = None,
         trace: GenerationTrace | None = None,
         catalog_pool: CatalogPool | None = None,
         required_artists: Sequence[str] = (),
@@ -108,8 +110,8 @@ class CuratorService:
             "novelty_distance may start at any supported "
             "distance; distances may be skipped, and repeated distances are allowed when "
             "intended. The sequence must never move backward: very_close <= close <= bridge "
-            "<= discovery <= surprise. For example, [\"close\", \"bridge\", \"discovery\"] "
-            "is valid, while [\"close\", \"surprise\", \"bridge\"] is invalid. Preserve "
+            '<= discovery <= surprise. For example, ["close", "bridge", "discovery"] '
+            'is valid, while ["close", "surprise", "bridge"] is invalid. Preserve '
             "committed chapters exactly and place speculative chapters after committed chapters. "
             "Define the distances semantically: very_close keeps the same core sonic identity; "
             "close introduces at least one new musical dimension; bridge connects anchor traits "
@@ -119,6 +121,11 @@ class CuratorService:
             "a single-artist deep dive, later bridge/discovery chapters should introduce new "
             "artists or scenes only when they answer the topic. Use each chapter reason as a concise "
             "topic-specific rationale.\n"
+            f"{EDITORIAL_METHOD}"
+            "Give narration_goal a distinct job in this route: develop the listening question "
+            "with an example, a contrast or a useful connection rather than repeating the theme "
+            "or announcing every song. Choose the progression freely; no fixed essay template. "
+            f"Programme intention (not factual evidence): {editorial_brief or topic}\n"
             f"Research context: {_compact_json(research_context)}\n"
             f"FastStart context: {_compact_json(fast_context)}\n"
             f"Committed: {_compact_json([item.model_dump(mode='json') for item in committed])}\n"
@@ -177,7 +184,11 @@ def _required_artists_context(required: Sequence[str]) -> str:
 _POOL_INSTRUCTIONS = (
     "Available catalog tracks were verified playable just now. Choose each TrackProposal "
     "from this list whenever it fits the topic, copying artist and title exactly as written; "
-    "propose a track outside the list only when the list cannot serve the topic. Prefer "
+    "propose a track outside the list only when the list cannot serve the topic. "
+    "Fit to the programme's specific angle takes priority over popularity or catalog source. "
+    "Use the existing reason and evidence_ids to explain each recording's role in that angle; "
+    "an artist's identity or a compilation credit is not evidence of a track's musical style. "
+    "Among equally suitable tracks, prefer "
     "source llm_candidate, then artist_search, then keyword_search; inside a source the order "
     "means nothing, so when several tracks fit equally well do not favour the first ones. "
     "Never propose a track named in Unavailable.\n"

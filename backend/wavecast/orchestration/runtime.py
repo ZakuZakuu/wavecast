@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
+from wavecast.hosting import OPENING_SECONDS, discussion_counts
 from wavecast.intelligence.models import ResolvedTrack
 from wavecast.models.episode import (
     GenerationMode,
@@ -84,6 +85,7 @@ class StagedProgressiveRuntimeAdapter:
             track_ref=opening_track_ref,
             canonical_artist=opening_artist,
             canonical_title=opening_title,
+            spoken_title=opening.spoken_title,
             duration_seconds=_known_seconds(opening),
         )
         from wavecast.assembly import LiveEpisodeAssemblyRequest, route_limits_for_duration
@@ -93,6 +95,7 @@ class StagedProgressiveRuntimeAdapter:
         )
         request = LiveEpisodeAssemblyRequest(
             topic=episode.topic,
+            editorial_brief=episode.editorial_brief,
             anchor_tracks=[opening.title],
             desired_duration_seconds=episode.program_estimated_duration_seconds,
             max_tracks=max_tracks,
@@ -111,7 +114,7 @@ class StagedProgressiveRuntimeAdapter:
     async def author_fast_successor_narration(
         self, episode: LiveEpisode
     ) -> GeneratedChapter | None:
-        """Write the first A -> B host bridge from durable playback identity only."""
+        """Establish the programme's direction using the durable opening and first pair."""
 
         from wavecast.assembly import (
             EpisodeAssemblyError,
@@ -123,12 +126,16 @@ class StagedProgressiveRuntimeAdapter:
         from wavecast.composer import PreparedMusicAsset
         from wavecast.intelligence.models import (
             ChapterPlan,
+            NarrationScript,
             NarrationSlotContext,
             NarrationSlotPlacement,
             NarrativeRole,
+            RadioScript,
+            RadioScriptBlock,
             RadioScriptBlockKind,
             TrackProposal,
         )
+        from wavecast.models.dialogue import DialoguePurpose
         from wavecast.presentation import HostMode
         from wavecast.providers.contracts import AudioAsset, AudioAssetType
         from wavecast.providers.errors import ProviderError
@@ -188,12 +195,14 @@ class StagedProgressiveRuntimeAdapter:
             track_ref=opening_track_ref,
             canonical_artist=opening_artist,
             canonical_title=opening_title,
+            spoken_title=opening.spoken_title,
             duration_seconds=_known_seconds(opening),
         )
         successor_track = ResolvedTrack(
             track_ref=successor_track_ref,
             canonical_artist=successor_artist,
             canonical_title=successor_title,
+            spoken_title=successor.spoken_title,
             duration_seconds=_known_seconds(successor),
         )
         chapter = ChapterPlan(
@@ -205,10 +214,11 @@ class StagedProgressiveRuntimeAdapter:
                 confidence=1.0,
             ),
             narrative_role=NarrativeRole.BRIDGE,
-            reason="Connect the opening to the already prepared successor.",
+            evidence_ids=[item.id for item in episode.opening_evidence],
+            reason="Establish the programme's listening direction after its first song.",
             narration_goal=(
-                "Give one concise spoken bridge from the track just heard to the "
-                "already prepared next track without unsupported factual claims."
+                "Develop the programme's opening: connect the confirmed first pair to a "
+                "specific listening direction, without treating editorial intention as fact."
             ),
         )
         slot = NarrationSlotContext(
@@ -220,28 +230,87 @@ class StagedProgressiveRuntimeAdapter:
             just_played_track=opening_track,
             upcoming_track=successor_track,
         )
+        complete_opening = (
+            discussion_counts(
+                episode.station,
+                episode.presentation_intent.host_mode,
+                episode.program_estimated_duration_seconds,
+            )
+            is not None
+        )
         target_seconds = (
-            24
+            OPENING_SECONDS
+            if complete_opening
+            else 30
             if episode.presentation_intent.host_mode is HostMode.FULL
             else 12
         )
-        try:
-            script = await self.assembly.background_pipeline.writer.write(
-                chapter,
-                [],
-                next_track_metadata=(
-                    f"{successor_track.canonical_artist} - "
-                    f"{successor_track.canonical_title}"
-                ),
-                host_mode=episode.presentation_intent.host_mode,
-                target_duration_seconds=target_seconds,
-                output_language=episode.output_language,
+        offer = None
+        dialogue = self.assembly.dialogue_runtime
+        if complete_opening and dialogue is not None:
+            offer = await dialogue.offer(
+                episode_id=episode.id,
                 station=episode.station,
-                voice_seed=episode.seed_id,
-                topic=episode.topic,
-                slot_contexts=[slot],
-                inference_profile=InferenceProfile.FAST,
+                context=slot,
+                chosen_slot_ids={slot.slot_id},
+                chapter_id="chapter-2",
+                order=pending.order,
+                evidence=episode.opening_evidence,
+                subject=episode.topic,
+                track_ref=successor_track.track_ref,
+                track_label=f"{successor_artist} - {successor_title}",
+                previous_context="\n".join(
+                    segment.narration_text
+                    for segment in episode.ordered_segments
+                    if isinstance(segment, NarrationSegment)
+                    and segment.order < pending.order
+                    and segment.is_audio_ready
+                    and segment.narration_text
+                ),
+                programme_brief=episode.editorial_brief or episode.topic,
+                editorial_goal=chapter.narration_goal,
+                purpose=DialoguePurpose.OPENING,
             )
+        script: RadioScript | NarrationScript
+        try:
+            if offer is not None:
+                script = RadioScript(
+                    blocks=[
+                        RadioScriptBlock(
+                            kind=RadioScriptBlockKind.TRACK_INTRO,
+                            text=offer.block.text,
+                            duration_seconds=offer.block.duration_seconds,
+                            dialogue=offer.block,
+                        )
+                    ],
+                    intended_duration_seconds=offer.block.duration_seconds,
+                )
+            else:
+                script = await self.assembly.background_pipeline.writer.write(
+                    chapter,
+                    episode.opening_evidence,
+                    next_track_metadata=(
+                        f"{successor_track.canonical_artist} - {successor_track.canonical_title}"
+                    ),
+                    host_mode=episode.presentation_intent.host_mode,
+                    target_duration_seconds=target_seconds,
+                    output_language=episode.output_language,
+                    station=episode.station,
+                    voice_seed=episode.seed_id,
+                    topic=episode.topic,
+                    opening_brief=episode.editorial_brief or episode.topic,
+                    previous_committed_context="\n".join(
+                        segment.narration_text
+                        for segment in episode.ordered_segments
+                        if isinstance(segment, NarrationSegment)
+                        and segment.order < pending.order
+                        and segment.is_audio_ready
+                        and segment.state is not SegmentState.SKIPPED
+                        and segment.narration_text
+                    ),
+                    slot_contexts=[slot],
+                    inference_profile=InferenceProfile.FAST,
+                )
             radio_script, _ = _assemble_writer_scripts(
                 [script],
                 1,
@@ -285,6 +354,12 @@ class StagedProgressiveRuntimeAdapter:
         ):
             return None
 
+        for segment in playable.segments:
+            if isinstance(segment, NarrationSegment):
+                if complete_opening:
+                    segment.hosting_role = "opening"
+                if offer is not None and offer.audio is not None:
+                    segment.dialogue_audio = offer.audio
         return _generated_runtime_chapter(
             "chapter-2",
             playable.segments,
@@ -304,6 +379,7 @@ class StagedProgressiveRuntimeAdapter:
                 segment
                 for segment in episode.ordered_segments
                 if segment.chapter_id == "chapter-1"
+                and isinstance(segment, MusicSegment)
                 and segment.track_ref is not None
                 and segment.artist
                 and segment.title
@@ -320,6 +396,7 @@ class StagedProgressiveRuntimeAdapter:
             track_ref=track_ref,
             canonical_artist=artist,
             canonical_title=title,
+            spoken_title=opening.spoken_title,
             duration_seconds=_known_seconds(opening),
         )
         from wavecast.assembly import LiveEpisodeAssemblyRequest, route_limits_for_duration
@@ -329,6 +406,7 @@ class StagedProgressiveRuntimeAdapter:
         )
         request = LiveEpisodeAssemblyRequest(
             topic=episode.topic,
+            editorial_brief=episode.editorial_brief,
             anchor_tracks=[opening.title],
             desired_duration_seconds=episode.program_estimated_duration_seconds,
             max_tracks=max_tracks,
@@ -362,6 +440,7 @@ class StagedProgressiveRuntimeAdapter:
                 track_ref=locked_track_ref,
                 canonical_artist=locked_artist,
                 canonical_title=locked_title,
+                spoken_title=locked_segment.spoken_title,
                 duration_seconds=_known_seconds(locked_segment),
             )
         # Local import avoids a module-load cycle while keeping the

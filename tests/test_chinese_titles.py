@@ -6,7 +6,7 @@ import httpx
 from wavecast.catalog_pool import CatalogPoolBuilder, PoolBuildConfig
 from wavecast.intelligence.models import OutputLanguage, ResolvedTrack
 from wavecast.intelligence.resolution import _resolved_track
-from wavecast.proposals import ProposalGenerationRequest, _opening_narration_text
+from wavecast.proposals import ProposalGenerationRequest, _opening_copy
 from wavecast.providers.config import ProviderSettings
 from wavecast.providers.contracts import TrackMetadata
 from wavecast.providers.netease import NeteaseMusicProvider
@@ -40,7 +40,7 @@ def test_the_sidecar_adapter_keeps_the_chinese_title() -> None:
                         "artist": "久石譲",
                         "title": "あの夏へ",
                         "duration_seconds": 190,
-                        "title_zh": "回到那个夏天",
+                        "tns": ["回到那个夏天"],
                     }
                 ]
             },
@@ -53,7 +53,7 @@ def test_the_sidecar_adapter_keeps_the_chinese_title() -> None:
 
     tracks = asyncio.run(provider.search("あの夏へ", limit=3))
 
-    assert tracks[0].metadata["title_zh"] == "回到那个夏天"
+    assert chinese_title(tracks[0].metadata) == "回到那个夏天"
 
 
 # --- it follows the song ---------------------------------------------------------------------
@@ -114,7 +114,7 @@ def _opening(track: ResolvedTrack, station: StationId = StationId.PORTRAIT) -> s
     request = ProposalGenerationRequest(
         prompt="久石让", output_language=OutputLanguage.ZH_CN, station=station
     )
-    return _opening_narration_text(request, draft, track)
+    return _opening_copy(request, draft, track)[0]
 
 
 def test_the_opening_says_the_chinese_title_when_the_catalog_has_one() -> None:

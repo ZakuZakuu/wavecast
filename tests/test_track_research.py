@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from wavecast.intelligence.models import (
     ChapterPlan,
     Evidence,
@@ -623,3 +624,114 @@ def test_a_portrait_tells_a_background_story_on_every_other_chapter_even_with_so
         scopes.append([point.scope for point in result.points])
 
     assert scopes[0] == ["track"] and scopes[1] == ["background"] and scopes[2] == ["track"]
+
+
+def test_briefing_extracts_a_source_bound_title_without_an_extra_call():
+    from wavecast.intelligence.track_research import _TitleAlias
+
+    track = ResolvedTrack(
+        track_ref="n:rin", canonical_artist="椎名林檎", canonical_title="丸ノ内サディスティック"
+    )
+    quote = "椎名林檎的《丸ノ内サディスティック》，中文通常译作《丸之内虐待狂》。"
+    source = _evidence("alias-source", quote)
+    briefer = Briefer(
+        _Briefing(spoken_title=_TitleAlias(text="丸之内虐待狂", source=source.id, quote=quote))
+    )
+    service = _service(Searcher(), briefer)
+    outcome = asyncio.run(service._brief(track, "椎名林檎", [source]))
+    assert outcome.spoken_title == "丸之内虐待狂"
+    assert outcome.spoken_title_evidence_id == source.id
+    assert len(briefer.prompts) == 1
+    assert outcome.points == []  # a title is not forced into a spoken fact
+
+
+@pytest.mark.parametrize(
+    "title,source_id,quote",
+    [
+        ("丸之内虐待狂", "missing-source", "《丸ノ内サディスティック》中文名为《丸之内虐待狂》。"),
+        (
+            "丸之内虐待狂",
+            "evidence-alias-source",
+            "这是一句没有出现在来源中的丸ノ内サディスティック丸之内虐待狂",
+        ),
+        (
+            "另一首歌",
+            "evidence-alias-source",
+            "《丸ノ内サディスティック》中文名为《丸之内虐待狂》。",
+        ),
+        ("丸之内虐待狂", "evidence-alias-source", "《丸之内虐待狂》是一首歌曲。"),
+    ],
+)
+def test_unbound_or_invented_spoken_title_is_not_accepted(title, source_id, quote):
+    from wavecast.intelligence.track_research import _TitleAlias
+
+    track = ResolvedTrack(
+        track_ref="n:rin", canonical_artist="椎名林檎", canonical_title="丸ノ内サディスティック"
+    )
+    source = _evidence(
+        "alias-source",
+        "《丸ノ内サディスティック》中文名为《丸之内虐待狂》。另有《丸之内虐待狂》是一首歌曲。",
+    )
+    briefer = Briefer(
+        _Briefing(spoken_title=_TitleAlias(text=title, source=source_id, quote=quote))
+    )
+    outcome = asyncio.run(_service(Searcher(), briefer)._brief(track, "椎名林檎", [source]))
+    assert outcome.spoken_title is None
+
+
+@pytest.mark.parametrize(
+    "angle,goal",
+    [
+        ("久石让作品里的钢琴表达", "用这首歌建立钢琴与人声关系的切口"),
+        ("久石让与动画叙事", "理解这首片尾曲在故事结束时的作用"),
+    ],
+)
+def test_programme_angle_reaches_existing_track_brief_without_more_calls(angle, goal):
+    source = _evidence("focus", KIMURA_PAGE)
+    briefer = Briefer(
+        _Briefing(
+            points=[
+                _RawPoint(
+                    text="它是《千与千寻》的片尾曲",
+                    source=source.id,
+                    quote="是动画电影《千与千寻》的片尾曲",
+                )
+            ]
+        )
+    )
+    searcher = Searcher()
+    result = asyncio.run(
+        _service(searcher, briefer).prepare(
+            episode_id="focus",
+            track=KIMURA,
+            evidence=[source],
+            station=StationId.PORTRAIT,
+            subject="久石让",
+            programme_brief=angle,
+            editorial_goal=goal,
+        )
+    )
+    assert len(briefer.prompts) == 1 and not searcher.queries
+    assert angle in briefer.prompts[0] and goal in briefer.prompts[0]
+    assert "not evidence" in briefer.prompts[0]
+    assert result.points
+
+
+def test_background_material_retains_programme_angle_and_existing_episode_cache():
+    briefer = Briefer(_Stories(stories=[]))
+    service = _service(Searcher(), briefer)
+
+    async def twice():
+        for _ in range(2):
+            await service.background_story(
+                episode_id="focus",
+                station=StationId.PORTRAIT,
+                subject="久石让",
+                subject_names=["久石让"],
+                evidence=[_evidence("bio", BIO)],
+                programme_brief="久石让与动画叙事",
+            )
+
+    asyncio.run(twice())
+    assert len(briefer.prompts) == 1
+    assert "久石让与动画叙事" in briefer.prompts[0] and "not evidence" in briefer.prompts[0]

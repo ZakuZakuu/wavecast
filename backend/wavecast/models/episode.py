@@ -8,6 +8,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from wavecast.audio_timing import TrackTimingProfile
+from wavecast.hosting import HostingCoverage, hosting_coverage
 from wavecast.language import OutputLanguage
 from wavecast.models.dialogue import DialogueAudioSnapshot, DialogueBlock, VoiceRoleSnapshot
 from wavecast.presentation import PresentationIntent
@@ -78,6 +79,7 @@ class EpisodeSeed(BaseModel):
     estimated_duration_seconds: int = Field(gt=0)
     opening_track_ref: str
     opening_track_title: str
+    opening_track_spoken_title: str | None = Field(default=None, max_length=160)
     opening_track_artist: str
     opening_track_duration_seconds: int | None = Field(default=None, gt=0)
     opening_track_timing_profile: TrackTimingProfile | None = None
@@ -142,6 +144,7 @@ class MusicSegment(Segment):
     track_ref: str
     audio_source_url: str | None = None
     timing_profile: TrackTimingProfile | None = None
+    spoken_title: str | None = Field(default=None, max_length=160)
 
 
 class NarrationSegment(Segment):
@@ -154,6 +157,8 @@ class NarrationSegment(Segment):
     tts_text: str | None = Field(default=None, min_length=1)
     tts_cues: list[str] = Field(default_factory=list)
     narration_role: NarrationRole = NarrationRole.GENERAL
+    # Editorial task, independent of physical placement / mix narration_role.
+    hosting_role: Literal["opening", "closing"] | None = None
     # A fact-checked two-host passage.  When present it is the source of ``narration_text`` (the
     # visible copy is derived from it and may not differ) and of what is voiced; ``tts_text`` and
     # cues belong to the one-voice path and are refused beside it.  ``dialogue_audio`` is the
@@ -214,6 +219,9 @@ class LiveEpisode(BaseModel):
     # Short cover label of the seed, so the player draws the same cover as the home page.
     cover_title: str | None = Field(default=None, max_length=40)
     topic: str | None = None
+    # The proposal's listening intention, not researched facts. Optional for older episodes.
+    editorial_brief: str | None = None
+    opening_evidence: list[Evidence] = Field(default_factory=list, exclude=True, repr=False)
     listener_id: str = "test-listener"
     # Account ownership is separate from immutable runtime listener identity.
     owner_user_id: str | None = Field(default=None, exclude=True)
@@ -252,6 +260,11 @@ class LiveEpisode(BaseModel):
     @property
     def timeline_segments(self) -> list[Segment]:
         return [segment for segment in self.ordered_segments if segment.is_timeline_active]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def hosting_coverage(self) -> HostingCoverage | None:
+        return hosting_coverage(self)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -384,6 +397,7 @@ class LiveEpisode(BaseModel):
 
 # Deferred to the end of this module so the low-level durable contract can import
 # intelligence models without observing a partially initialized Episode model.
+from wavecast.intelligence.models import Evidence  # noqa: E402
 from wavecast.models.progressive import ProgressiveAssemblySession  # noqa: E402
 
 LiveEpisode.model_rebuild()
