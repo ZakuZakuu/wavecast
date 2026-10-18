@@ -1,9 +1,10 @@
-import { rng, type CoverParams } from "../build-cover";
+import { bareCoverSvg, rng, type CoverParams } from "../build-cover";
 import { formatFreq, stationById } from "../../stations";
 import { hashString } from "./color";
 import { MOTIFS } from "./motifs";
 import { selectCover } from "./select";
 import { STYLE_FNS } from "./styles";
+import { coverViewToSvg } from "./svg";
 import type { CoverView, StyledCoverStyle } from "./types";
 
 export type ComposedCover = { kind: "legacy" } | { kind: "styled"; style: StyledCoverStyle; view: CoverView };
@@ -23,6 +24,12 @@ export function composeCover(params: CoverParams): ComposedCover {
     station: { hue: station.cover.hue, name: station.name, freq: formatFreq(station.freq) },
   });
   return { kind: "styled", style: choice.style, view };
+}
+
+/** The cover as a standalone SVG without text or grain, for share previews and lock-screen artwork. */
+export function coverSvg(params: CoverParams, size = 512): string {
+  const composed = composeCover({ ...params, bare: true });
+  return composed.kind === "styled" ? coverViewToSvg(composed.view, size) : bareCoverSvg(params, size);
 }
 
 export { COVER_MOTIFS, COVER_STYLES, type CoverMotif, type CoverPin, type CoverStyle } from "./types";
