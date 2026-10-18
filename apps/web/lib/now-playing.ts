@@ -140,26 +140,36 @@ export function routeChapters(
   plan: MixPlan | null,
   currentMusicId: string | null,
   frontier: number,
+  /** Playhead, to mark the host speech being heard; the song is marked by `currentMusicId`. */
+  position = -1,
 ): RouteChapter[] {
   // Speech is listed only where next/previous can land on it: published, playable, once per run.
-  const voiceStarts = new Map(
+  const voiceRuns = new Map(
     (plan ? programmeJumpPoints(plan, episode) : [])
       .filter((point) => point.lane === "VOICE" && point.startSeconds < frontier)
-      .map((point) => [point.segmentId, point.startSeconds]),
+      .map((point) => [point.segmentId, point]),
   );
+  // The current song stays "current" after it ends until the next one starts; with a playhead it is
+  // marked only while it is actually audible, so a host speaking in the gap is the one marked.
+  const songEnds = new Map(
+    (plan?.clips ?? [])
+      .filter((clip) => clip.lane === "MUSIC")
+      .map((clip) => [clip.segmentId, clip.timelineStartSeconds + clip.playableDurationSeconds]),
+  );
+  const audible = (segmentId: string) => position < 0 || position < (songEnds.get(segmentId) ?? Number.POSITIVE_INFINITY);
   return musicChaptersForEpisode(episode).map((chapter, index) => {
     const startOf = (segment: Segment) => plan?.segmentStarts[segment.id] ?? null;
     const starts = chapter.segments.map(startOf).filter((value): value is number => value !== null);
     const rows = chapter.segments.flatMap((segment): RouteTrack[] => {
       if (segment.kind === "NARRATION") {
-        const start = voiceStarts.get(segment.id);
-        return start === undefined ? [] : [{
+        const run = voiceRuns.get(segment.id);
+        return run === undefined ? [] : [{
           id: segment.id,
           kind: "VOICE",
           label: narrationLabel(segment, episode),
-          playing: false,
+          playing: position >= run.startSeconds && position < run.endSeconds,
           ready: true,
-          startSeconds: start,
+          startSeconds: run.startSeconds,
         }];
       }
       const start = startOf(segment);
@@ -171,13 +181,13 @@ export function routeChapters(
         id: segment.id,
         kind: "MUSIC",
         label: trackLabel(segment),
-        playing: segment.id === currentMusicId,
+        playing: segment.id === currentMusicId && audible(segment.id),
         ready,
         startSeconds: start,
       }];
     });
     const songs = rows.filter((row) => row.kind === "MUSIC");
-    const playing = songs.some((track) => track.playing);
+    const playing = rows.some((track) => track.playing);
     const ready = songs.length > 0 && songs.every((track) => track.ready);
     return {
       id: chapter.id,

@@ -79,6 +79,12 @@ describe("generated-frontier player behavior", () => {
       ]);
     });
 
+    it("gives each point its end, and a run of speech ends with its last clip", () => {
+      const plan = planOf(clip("one", "MUSIC", 0, 10), clip("a", "VOICE", 18, 10), clip("b", "VOICE", 28.5, 8), clip("two", "MUSIC", 50, 30));
+      const points = programmeJumpPoints(plan, episodeOf(narration("a"), narration("b")));
+      expect(points.map((point) => point.endSeconds)).toEqual([10, 36.5, 80]);
+    });
+
     it("lists one place when speech and a song start together", () => {
       const plan = planOf(clip("voice", "VOICE", 0, 20), clip("one", "MUSIC", 0));
       expect(programmeJumpPoints(plan, episodeOf(narration("voice")))).toHaveLength(1);

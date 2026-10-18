@@ -33,7 +33,8 @@ const VOICE_JOIN_SECONDS = 1.5;
 /** Starts closer than this are one place on the timeline. */
 const SAME_START_SECONDS = 0.05;
 
-export type JumpPoint = { segmentId: string; lane: "MUSIC" | "VOICE"; startSeconds: number };
+/** `endSeconds` is the end of the clip, or of the last clip of a run of consecutive host speech. */
+export type JumpPoint = { segmentId: string; lane: "MUSIC" | "VOICE"; startSeconds: number; endSeconds: number };
 
 /**
  * Every place next/previous/the route can land: the start of each song and the start of each
@@ -45,9 +46,14 @@ export function programmeJumpPoints(plan: MixPlan, episode?: Pick<LiveEpisode, "
   const segments = episode ? new Map(episode.segments.map((segment) => [segment.id, segment])) : null;
   const music: JumpPoint[] = plan.clips
     .filter((clip) => clip.lane === "MUSIC")
-    .map((clip) => ({ segmentId: clip.segmentId, lane: "MUSIC", startSeconds: clip.timelineStartSeconds }));
+    .map((clip) => ({
+      segmentId: clip.segmentId,
+      lane: "MUSIC",
+      startSeconds: clip.timelineStartSeconds,
+      endSeconds: clip.timelineStartSeconds + clip.playableDurationSeconds,
+    }));
   const voice: JumpPoint[] = [];
-  let speechEnd = Number.NEGATIVE_INFINITY;
+  let run: JumpPoint | null = null;
   const speech = plan.clips
     .filter((clip) => clip.lane === "VOICE")
     .filter((clip) => {
@@ -57,10 +63,13 @@ export function programmeJumpPoints(plan: MixPlan, episode?: Pick<LiveEpisode, "
     })
     .sort((left, right) => left.timelineStartSeconds - right.timelineStartSeconds);
   for (const clip of speech) {
-    if (clip.timelineStartSeconds > speechEnd + VOICE_JOIN_SECONDS) {
-      voice.push({ segmentId: clip.segmentId, lane: "VOICE", startSeconds: clip.timelineStartSeconds });
+    const end = clip.timelineStartSeconds + clip.playableDurationSeconds;
+    if (!run || clip.timelineStartSeconds > run.endSeconds + VOICE_JOIN_SECONDS) {
+      run = { segmentId: clip.segmentId, lane: "VOICE", startSeconds: clip.timelineStartSeconds, endSeconds: end };
+      voice.push(run);
+    } else {
+      run.endSeconds = Math.max(run.endSeconds, end);
     }
-    speechEnd = Math.max(speechEnd, clip.timelineStartSeconds + clip.playableDurationSeconds);
   }
   const points: JumpPoint[] = [];
   for (const point of [...music, ...voice].sort((left, right) => left.startSeconds - right.startSeconds)) {

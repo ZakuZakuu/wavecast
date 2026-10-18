@@ -116,6 +116,35 @@ describe("route", () => {
     expect(routeChapters(episode, plan, "m2", 200)[1].status).toBe("playing");
   });
 
+  it("marks the host speech being heard, and a song only while it is audible", () => {
+    const at = (position: number) => routeChapters(episode, plan, "m1", 200, position);
+    // 95–105 is the host speaking over the end of m1 (0–100): both are audible.
+    expect(at(97)[0].tracks.map((track) => track.playing)).toEqual([true]);
+    expect(at(97)[1].tracks.map((track) => track.playing)).toEqual([true, false]);
+    // 102: m1 has ended and m2 has begun; the host is still speaking, so the host and m2 are marked.
+    const listening = routeChapters(episode, plan, "m2", 200, 102);
+    expect(listening[1].tracks.map((track) => track.playing)).toEqual([true, true]);
+    // 150: only m2.
+    expect(routeChapters(episode, plan, "m2", 200, 150)[1].tracks.map((track) => track.playing)).toEqual([false, true]);
+  });
+
+  it("marks only the speech once the song before it has ended, and its chapter plays", () => {
+    const quiet: MixPlan = {
+      ...plan,
+      clips: [
+        { ...plan.clips[0], playableDurationSeconds: 90 },
+        { ...plan.clips[1], timelineStartSeconds: 92 },
+        { ...plan.clips[2], timelineStartSeconds: 102 },
+      ],
+      segmentStarts: { m1: 0, n1: 92, m2: 102, m3: 202 },
+    };
+    const chapters = routeChapters(episode, quiet, "m1", 300, 95);
+    expect(chapters[0].tracks[0].playing).toBe(false);
+    expect(chapters[0].status).toBe("ready");
+    expect(chapters[1].tracks[0].playing).toBe(true);
+    expect(chapters[1].status).toBe("playing");
+  });
+
   it("finds the music under narration", () => {
     expect(currentMusicSegment(episode, plan, 97)?.id).toBe("m1");
     expect(currentMusicSegment(episode, plan, 150)?.id).toBe("m2");
