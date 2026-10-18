@@ -9,6 +9,15 @@ export const LOGIN_NUDGE_SNOOZE_DAYS = 7;
 /** The card appears when this many distinct programmes have been finished. */
 export const LOGIN_NUDGE_AFTER_FINISHED = 2;
 export const PROGRAMME_FINISHED_EVENT = "wavecast-programme-finished";
+/** A hint the listener asked for by acting (换一批 as a guest): shown at once, not rate-limited. */
+export const LOGIN_HINT_EVENT = "wavecast-login-hint";
+
+export type LoginHintCopy = { title: string; note: string };
+export const LOGIN_NUDGE_COPY: LoginHintCopy = { title: "想让推荐更懂你？", note: "登录后会记住你的口味" };
+
+export function requestLoginHint(copy: LoginHintCopy): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(LOGIN_HINT_EVENT, { detail: copy }));
+}
 
 export type VisitPrompt = "install" | "login";
 

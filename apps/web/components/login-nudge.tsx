@@ -7,8 +7,11 @@ import { authClient } from "../lib/auth-client";
 import {
   claimVisitPrompt,
   finishedProgrammeCount,
+  LOGIN_HINT_EVENT,
+  LOGIN_NUDGE_COPY,
   loginNudgeSnoozedUntil,
   PROGRAMME_FINISHED_EVENT,
+  type LoginHintCopy,
   shouldShowLoginNudge,
   snoozeLoginNudge,
   visitPrompt,
@@ -27,6 +30,8 @@ export function LoginNudge({ hidden }: { hidden: boolean }) {
   const { data: session } = authClient.useSession();
   const signedIn = Boolean(session?.user);
   const [phase, setPhase] = useState<Phase>("none");
+  // A hint the listener asked for is shown as given and does not snooze the one-off card.
+  const [asked, setAsked] = useState<LoginHintCopy | null>(null);
 
   useEffect(() => {
     const onFinished = () => {
@@ -43,6 +48,16 @@ export function LoginNudge({ hidden }: { hidden: boolean }) {
     return () => window.removeEventListener(PROGRAMME_FINISHED_EVENT, onFinished);
   }, [signedIn]);
 
+  useEffect(() => {
+    const onHint = (event: Event) => {
+      if (signedIn) return;
+      setAsked((event as CustomEvent<LoginHintCopy>).detail);
+      setPhase("shown");
+    };
+    window.addEventListener(LOGIN_HINT_EVENT, onHint);
+    return () => window.removeEventListener(LOGIN_HINT_EVENT, onHint);
+  }, [signedIn]);
+
   // Shown once the page (not the player) is on screen, if the visit's slot is free.
   useEffect(() => {
     if (phase !== "pending" || hidden) return;
@@ -53,10 +68,15 @@ export function LoginNudge({ hidden }: { hidden: boolean }) {
     if (signedIn) setPhase("none");
   }, [signedIn]);
 
+  useEffect(() => {
+    if (phase === "none") setAsked(null);
+  }, [phase]);
+
   if (phase !== "shown" && phase !== "leaving") return null;
 
+  const copy = asked ?? LOGIN_NUDGE_COPY;
   const leave = () => {
-    snoozeLoginNudge();
+    if (!asked) snoozeLoginNudge();
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) setPhase("none");
     else setPhase("leaving");
   };
@@ -71,8 +91,8 @@ export function LoginNudge({ hidden }: { hidden: boolean }) {
       }}
     >
       <p className="login-nudge-copy">
-        <strong>想让推荐更懂你？</strong>
-        <span>登录后会记住你的口味</span>
+        <strong>{copy.title}</strong>
+        <span>{copy.note}</span>
       </p>
       <div className="login-nudge-actions">
         <button type="button" className="login-nudge-later" onClick={leave}>以后再说</button>

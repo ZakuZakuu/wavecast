@@ -159,7 +159,7 @@ h1, h2, h3, p { margin-top: 0; }
   }
   .page-enter { animation-name: fade-in; }
   /* No press scaling either; opacity/colour feedback only. */
-  button:active, .pressable:active, .station-card:active { transform: none !important; }
+  button:active, .pressable:active, .station-tile:active { transform: none !important; }
   @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 }
 

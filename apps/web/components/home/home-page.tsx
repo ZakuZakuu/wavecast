@@ -10,8 +10,8 @@ import { authClient } from "../../lib/auth-client";
 import { programmeCover, rememberCoverSource } from "../../lib/cover/programme-cover";
 import { dedupeByTitle, ideaStation, pickMeta, RECOMMENDATION_MINUTES } from "../../lib/home-picks";
 import { FEATURED_PROGRAMMES, featuredDurationIntent, type FeaturedProgramme } from "../../lib/featured";
+import { requestLoginHint } from "../../lib/login-nudge";
 import {
-  formatFreq,
   rememberProgrammeStation,
   stationById,
   stationForProgramme,
@@ -27,6 +27,8 @@ import { useNowPlaying } from "../player/playback-provider";
 import { TuningInScreen } from "../tune/tuning-in";
 import { useTuneStart } from "../tune/use-tune-start";
 import { ProgrammeSheet, type ProgrammePreview } from "./programme-sheet";
+import { PullToRefresh } from "./pull-to-refresh";
+import { StationTile } from "./station-tile";
 
 type Pick = {
   key: string;
@@ -81,6 +83,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
   const [rotating, setRotating] = useState(false);
   const [rotationNote, setRotationNote] = useState<string | null>(null);
   const tune = useTuneStart();
+  const askToSignIn = () => requestLoginHint({ title: "登录后才能换一批", note: "登录后可以获得完整推荐" });
 
   useEffect(() => {
     api.seeds()
@@ -224,62 +227,53 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
     <AppShell
       background={<span className="glow" aria-hidden="true" style={{ left: -100, top: -160, width: 420, height: 340, background: glow, opacity: 0.14 }} />}
     >
-      <div className="home">
-        <header className="home-head">
-          <h1 className="page-title">首页</h1>
-          <Link href="/account" className="avatar" aria-label="账户">
-            {initial ?? (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="9" r="3.6" /><path d="M5.5 19.5a6.5 6.5 0 0 1 13 0" /></svg>
-            )}
-          </Link>
-        </header>
+      <PullToRefresh canRefresh={Boolean(user)} onRefresh={rotateIdeas} onBlocked={askToSignIn}>
+        <div className="home">
+          <header className="home-head">
+            <h1 className="page-title">首页</h1>
+            <Link href="/account" className="avatar" aria-label="账户">
+              {initial ?? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="9" r="3.6" /><path d="M5.5 19.5a6.5 6.5 0 0 1 13 0" /></svg>
+              )}
+            </Link>
+          </header>
 
-        <section className="home-section" aria-labelledby="home-stations">
-          <h2 id="home-stations" className="section-title">电台</h2>
-          <div className="station-row">
-            {STATIONS.map((station) => (
-              <Link
-                key={station.id}
-                href={`/tune?station=${station.id}`}
-                className="station-card"
-                style={{ background: station.deep }}
-                aria-label={`FM ${formatFreq(station.freq)} ${station.name}，${station.line}`}
-              >
-                <span className="station-card-freq tabular">{formatFreq(station.freq)}</span>
-                <span className="station-card-copy">
-                  <span className="station-card-name">{station.name}</span>
-                  <span className="station-card-line">{station.line}</span>
-                </span>
-              </Link>
-            ))}
-          </div>
-        </section>
+          <section className="home-section" aria-labelledby="home-stations">
+            <h2 id="home-stations" className="section-title">电台</h2>
+            <div className="station-row">
+              {STATIONS.map((station) => <StationTile key={station.id} station={station} />)}
+            </div>
+          </section>
 
-        <section className="home-section" aria-labelledby="home-picks">
-          <div className="section-head">
-            <h2 id="home-picks" className="section-title">{guest ? "先听这几档" : "猜你想听"}</h2>
-            {guest ? (
-              <p className="section-hint">登录后，这里会换成按你口味准备的节目<Link href="/account">登录</Link></p>
+          <section className="home-section" aria-labelledby="home-picks">
+            <div className="section-head">
+              <div className="section-title-row">
+                <h2 id="home-picks" className="section-title">{guest ? "先听这几档" : "猜你想听"}</h2>
+                {guest || ideas?.length ? (
+                  <button type="button" className="pick-refresh" onClick={guest ? askToSignIn : () => void rotateIdeas()} disabled={rotating}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
+                    {rotating ? "正在换…" : "换一批"}
+                  </button>
+                ) : null}
+              </div>
+              {guest ? (
+                <p className="section-hint">登录后，这里会换成按你口味准备的节目<Link href="/account">登录</Link></p>
+              ) : null}
+            </div>
+            {error ? <p className="inline-note" role="alert">{error}</p> : null}
+            {rotationNote ? <p className="inline-note" role="status">{rotationNote}</p> : null}
+            <div className="pick-grid">
+              {picks.map((pick) => <PickCard key={pick.key} pick={pick} onSelect={selectPick} />)}
+              {loading && !picks.length
+                ? Array.from({ length: 6 }).map((_, index) => <span key={index} className="pick-skeleton" aria-hidden="true" />)
+                : null}
+            </div>
+            {!loading && !picks.length ? (
+              <p className="inline-note">还没有可以推荐的节目。<Link href="/tune">去调一档</Link></p>
             ) : null}
-          </div>
-          {error ? <p className="inline-note" role="alert">{error}</p> : null}
-          {rotationNote ? <p className="inline-note" role="status">{rotationNote}</p> : null}
-          <div className="pick-grid">
-            {picks.map((pick) => <PickCard key={pick.key} pick={pick} onSelect={selectPick} />)}
-            {loading && !picks.length
-              ? Array.from({ length: 6 }).map((_, index) => <span key={index} className="pick-skeleton" aria-hidden="true" />)
-              : null}
-          </div>
-          {!loading && !picks.length ? (
-            <p className="inline-note">还没有可以推荐的节目。<Link href="/tune">去调一档</Link></p>
-          ) : null}
-          {!guest && ideas?.length ? (
-            <button type="button" className="pick-refresh" onClick={() => void rotateIdeas()} disabled={rotating}>
-              {rotating ? "正在换…" : "换一批"}
-            </button>
-          ) : null}
-        </section>
-      </div>
+          </section>
+        </div>
+      </PullToRefresh>
       <ProgrammeSheet
         preview={preview}
         open={sheetOpen}
