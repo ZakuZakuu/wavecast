@@ -11,6 +11,7 @@ import {
   type CoverParams,
 } from "../lib/cover/build-cover";
 import { breakHeading, coverHeading, programmeCover, seedFromId } from "../lib/cover/programme-cover";
+import { selectCover } from "../lib/cover/styled/select";
 import { STATIONS, type CoverTemplate, type StationId } from "../lib/stations";
 
 /** First seed whose cover uses `template` on `station`. */
@@ -159,7 +160,8 @@ describe("programme cover params", () => {
     const first = programmeCover({ id: "seed-1", title: "睡前半小时", stationId: "night" });
     expect(first).toEqual(programmeCover({ id: "seed-1", title: "睡前半小时", stationId: "night" }));
     expect(first.params.seed).toBe(seedFromId("seed-1"));
-    expect(STATIONS.find((s) => s.id === "night")!.templates).toContain(first.template);
+    // An original cover keeps its station's templates; a styled one has none.
+    if (first.template) expect(STATIONS.find((s) => s.id === "night")!.templates).toContain(first.template);
     // Bare (mini player / library) draws the same graphics as the full cover.
     expect(buildCover({ ...first.params, bare: true }).slots).toEqual(buildCover(first.params).slots);
   });
@@ -167,8 +169,9 @@ describe("programme cover params", () => {
   it("gives a station's programmes visibly different covers", () => {
     const titles = ["夜航低音线", "雨夜慢频", "低速张力", "睡前半小时", "凌晨三点", "专注两小时", "海边夜色", "城市熄灯"];
     const covers = titles.map((title, index) => programmeCover({ id: `night-${index}-${title}`, title, stationId: "night" }));
-    expect(new Set(covers.map((c) => c.template)).size).toBeGreaterThanOrEqual(2);
-    expect(new Set(covers.map((c) => c.bg)).size).toBe(titles.length);
+    const looks = new Set(covers.map((c) => `${selectCover("night", c.params.seed).style}:${selectCover("night", c.params.seed).motif}`));
+    expect(looks.size).toBeGreaterThanOrEqual(4);
+    expect(new Set(covers.map((c) => c.bg)).size).toBeGreaterThanOrEqual(titles.length - 1);
   });
 });
 

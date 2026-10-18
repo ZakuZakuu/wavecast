@@ -3,6 +3,7 @@
 // procedural palette around the station hue (dark / light / vivid mode) and
 // the template's composition.
 import { stationById, type CoverTemplate, type StationId } from "../stations";
+import type { CoverPin } from "./styled/types";
 
 export type CoverParams = {
   stationId: StationId;
@@ -11,6 +12,8 @@ export type CoverParams = {
   heading: string;
   /** No text at all (small sizes): graphics only. */
   bare?: boolean;
+  /** A fixed style/picture/layout (featured cards); see `composeCover`. */
+  pin?: CoverPin;
 };
 
 export type CoverSlot = {
@@ -67,7 +70,7 @@ const LIGHT_TEXT = "#FAF8F4";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-function rng(seed: number) {
+export function rng(seed: number) {
   let a = seed >>> 0;
   return function next() {
     a = (a + 0x6D2B79F5) | 0;

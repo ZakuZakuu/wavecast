@@ -1,6 +1,8 @@
 import type { CSSProperties } from "react";
 
 import { buildCover, type CoverBox, type CoverParams } from "../../lib/cover/build-cover";
+import { composeCover } from "../../lib/cover/styled";
+import { StyledCover } from "./styled-cover";
 
 const SANS = "var(--font-ui)";
 const SERIF = "var(--font-serif)";
@@ -12,20 +14,24 @@ function place(box: CoverBox): CSSProperties {
 }
 
 /**
- * Renders the cover v2 (Cover2.dc.html). Callers pass `bare` for anything
- * under 64px (mini player, library rows, blurred player background).
+ * A programme's cover: one of the styled covers, or the original generator's (cover v2, Cover2.dc.html),
+ * as `composeCover` decides. Callers pass `bare` for anything under 64px (mini player, library rows,
+ * blurred player background).
  */
-export function TypeCover({
+export function TypeCover(props: CoverProps) {
+  const composed = composeCover(props.params);
+  if (composed.kind === "styled") return <StyledCover view={composed.view} bare={props.params.bare} radius={props.radius} className={props.className} style={props.style} />;
+  return <LegacyCover {...props} />;
+}
+
+type CoverProps = { params: CoverParams; radius?: number; className?: string; style?: CSSProperties };
+
+function LegacyCover({
   params,
   radius = 12,
   className,
   style,
-}: {
-  params: CoverParams;
-  radius?: number;
-  className?: string;
-  style?: CSSProperties;
-}) {
+}: CoverProps) {
   const cover = buildCover(params);
   const { title, stationLine, number } = cover;
 
