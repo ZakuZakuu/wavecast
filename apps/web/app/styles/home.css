@@ -90,7 +90,6 @@
 .ps-description { margin: 4px 0 0; font-size: 16px; line-height: 1.6; }
 .ps-reason { margin: 0; font-size: 14px; line-height: 1.6; color: var(--ink-2); }
 .ps-reason-label { display: block; font-size: 12px; font-weight: 600; letter-spacing: .04em; margin-bottom: 2px; }
-.ps-note { margin: 6px 0 0; font-size: 13px; color: var(--ink-2); }
 .ps-play { margin: 8px 24px calc(16px + env(safe-area-inset-bottom)); width: calc(100% - 48px); min-height: 54px; flex: 0 0 auto; }
 .pick-refresh {
   align-self: center; margin-top: 4px; padding: 10px 22px; border-radius: 999px;

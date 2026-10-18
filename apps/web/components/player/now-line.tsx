@@ -55,7 +55,7 @@ export function NowLine({
           ) : null}
         </span>
         <span className="nl-body">
-          <span className="nl-primary">正在准备接下来的内容，马上就好</span>
+          <span className="nl-primary">正在准备接下来的内容</span>
           <span className="nl-secondary tabular">已准备到 {formatClock(preparedSeconds)}</span>
         </span>
       </div>

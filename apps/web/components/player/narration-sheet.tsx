@@ -75,7 +75,6 @@ export function NarrationSheet({
           <p className="ns-empty">主持还没开口。开口之后，说过的话会留在这里。</p>
         )}
       </div>
-      <p className="ns-foot">正在说的那句会高亮，说过的话可以随时翻回来看。</p>
     </BottomSheet>
   );
 }

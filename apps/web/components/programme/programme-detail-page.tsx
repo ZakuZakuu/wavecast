@@ -177,7 +177,7 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
   const minutes = Math.max(1, Math.round(programme.estimated_duration_seconds / 60));
 
   let primary = "播放";
-  let note = "点播放之后，才会开始准备这档节目。";
+  let note = "";
   if (playingNow) {
     primary = "回到播放页";
     note = "这档节目正在播放。";
@@ -188,7 +188,7 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
     primary = "继续播放";
     note = `上次听到 ${formatClock(heard.progressSeconds)}，全长约 ${minutes} 分钟。`;
   }
-  if (phase === "preparing") note = "音乐几秒内就会响起来，后面的内容边播边准备。";
+  if (phase === "preparing") note = "正在开播…";
   if (phase === "error") note = message ?? "开播失败了，可以再试一次";
   if (phase === "quota") note = message ?? "今天的次数用完了。";
   const needLogin = phase === "quota" && !signedIn;

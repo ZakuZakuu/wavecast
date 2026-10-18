@@ -100,7 +100,7 @@ export function RouteSheet({
         }}
       />
 
-      <p className="route-foot">后面的章节会在你听的时候准备好，曲目可能会微调。</p>
+      {episode.state !== "MATERIALIZED" ? <p className="route-foot">后面的章节会在你听的时候准备好，曲目可能会微调。</p> : null}
     </BottomSheet>
   );
 }

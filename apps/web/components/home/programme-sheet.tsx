@@ -58,7 +58,6 @@ export function ProgrammeSheet({
             {preview.reason}
           </p>
         ) : null}
-        <p className="ps-note">点播放之后，才会开始准备这档节目。</p>
       </div>
       <button type="button" className="pill-button ps-play" onClick={onPlay} disabled={busy}>
         {busy ? "正在准备…" : "播放"}
