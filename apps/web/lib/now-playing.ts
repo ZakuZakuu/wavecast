@@ -1,7 +1,7 @@
 // Pure view-model helpers for the player, mini player and route sheet.
 import { activeMixClipsAt, type MixPlan } from "./mix-timeline";
-import { musicChaptersForEpisode } from "./playback";
-import type { LiveEpisode, MusicSegment, ProgramRenderManifest, Segment } from "./types";
+import { musicChaptersForEpisode, programmeJumpPoints } from "./playback";
+import type { LiveEpisode, MusicSegment, NarrationSegment, ProgramRenderManifest, Segment } from "./types";
 
 const READY_STATES = new Set(["AUDIO_READY", "COMMITTED", "PLAYED"]);
 
@@ -84,11 +84,42 @@ export function trackLabel(segment: Pick<MusicSegment, "title" | "artist">): str
 
 export type RouteTrack = {
   id: string;
+  /** A song, or a piece of host speech listed beside the songs. */
+  kind: "MUSIC" | "VOICE";
   label: string;
   playing: boolean;
   ready: boolean;
   startSeconds: number | null;
 };
+
+const NARRATION_ROLE_LABEL = {
+  INTRO: "开场",
+  TRACK_INTRO: "歌曲介绍",
+  TRANSITION: "串场",
+  OUTRO: "收尾",
+  GENERAL: "主持",
+} as const;
+
+/**
+ * Route label of a piece of host speech: the writer's heading when there is one, otherwise its
+ * role (and the song it leads into). The segment's own `title` is an internal placeholder and is
+ * never shown. Programmes without a stored role are told apart by where the speech sits.
+ */
+export function narrationLabel(segment: NarrationSegment, episode: Pick<LiveEpisode, "segments">): string {
+  const heading = segment.display_title?.trim();
+  if (heading) return heading;
+  const music = episode.segments
+    .filter((candidate): candidate is MusicSegment => candidate.kind === "MUSIC" && candidate.state !== "SKIPPED")
+    .sort((left, right) => left.order - right.order);
+  const next = music.find((candidate) => candidate.order > segment.order);
+  const role = segment.hosting_role === "opening" ? "开场"
+    : segment.hosting_role === "closing" ? "收尾"
+      : segment.narration_role && segment.narration_role !== "GENERAL" ? NARRATION_ROLE_LABEL[segment.narration_role]
+        : !music.some((candidate) => candidate.order < segment.order) ? "开场"
+          : !next ? "收尾"
+            : "串场";
+  return next && role !== "收尾" && next.title?.trim() ? `${role} · 引出${trackLabel(next)}` : role;
+}
 
 export type RouteChapter = {
   id: string;
@@ -110,34 +141,51 @@ export function routeChapters(
   currentMusicId: string | null,
   frontier: number,
 ): RouteChapter[] {
+  // Speech is listed only where next/previous can land on it: published, playable, once per run.
+  const voiceStarts = new Map(
+    (plan ? programmeJumpPoints(plan, episode) : [])
+      .filter((point) => point.lane === "VOICE" && point.startSeconds < frontier)
+      .map((point) => [point.segmentId, point.startSeconds]),
+  );
   return musicChaptersForEpisode(episode).map((chapter, index) => {
     const startOf = (segment: Segment) => plan?.segmentStarts[segment.id] ?? null;
     const starts = chapter.segments.map(startOf).filter((value): value is number => value !== null);
-    const tracks = chapter.segments
-      .filter((segment): segment is MusicSegment => segment.kind === "MUSIC")
-      .map((segment) => {
-        const start = startOf(segment);
-        const ready = READY_STATES.has(segment.state)
-          && Boolean(segment.audio_source_url)
-          && start !== null
-          && start < frontier;
-        return {
+    const rows = chapter.segments.flatMap((segment): RouteTrack[] => {
+      if (segment.kind === "NARRATION") {
+        const start = voiceStarts.get(segment.id);
+        return start === undefined ? [] : [{
           id: segment.id,
-          label: trackLabel(segment),
-          playing: segment.id === currentMusicId,
-          ready,
+          kind: "VOICE",
+          label: narrationLabel(segment, episode),
+          playing: false,
+          ready: true,
           startSeconds: start,
-        };
-      });
-    const playing = tracks.some((track) => track.playing);
-    const ready = tracks.length > 0 && tracks.every((track) => track.ready);
+        }];
+      }
+      const start = startOf(segment);
+      const ready = READY_STATES.has(segment.state)
+        && Boolean(segment.audio_source_url)
+        && start !== null
+        && start < frontier;
+      return [{
+        id: segment.id,
+        kind: "MUSIC",
+        label: trackLabel(segment),
+        playing: segment.id === currentMusicId,
+        ready,
+        startSeconds: start,
+      }];
+    });
+    const songs = rows.filter((row) => row.kind === "MUSIC");
+    const playing = songs.some((track) => track.playing);
+    const ready = songs.length > 0 && songs.every((track) => track.ready);
     return {
       id: chapter.id,
       index,
       title: `第 ${index + 1} 段`,
       startSeconds: starts.length ? Math.min(...starts) : null,
       status: playing ? "playing" : ready ? "ready" : "preparing",
-      tracks: tracks.length ? tracks : [{ id: chapter.id + ":tbd", label: "曲目待定", playing: false, ready: false, startSeconds: null }],
+      tracks: songs.length ? rows : [{ id: chapter.id + ":tbd", kind: "MUSIC", label: "曲目待定", playing: false, ready: false, startSeconds: null }],
     };
   });
 }

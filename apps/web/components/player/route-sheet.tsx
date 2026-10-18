@@ -52,7 +52,14 @@ export function RouteSheet({
               <span className="route-status">{STATUS_LABEL[chapter.status]}</span>
             </div>
             {chapter.tracks.map((track) => {
-              const content = (
+              const voice = track.kind === "VOICE";
+              const content = voice ? (
+                <>
+                  <span className="route-voice-dot" aria-hidden="true" />
+                  <span className="route-track-name">{track.label}</span>
+                  {track.startSeconds !== null ? <span className="route-time tabular">{formatClock(track.startSeconds)}</span> : null}
+                </>
+              ) : (
                 <>
                   <span className="route-eq" aria-hidden="true">
                     {track.playing ? <><i /><i /><i /></> : null}
@@ -64,7 +71,7 @@ export function RouteSheet({
                 <button
                   type="button"
                   key={track.id}
-                  className="route-track is-ready"
+                  className={voice ? "route-track is-voice is-ready" : "route-track is-ready"}
                   onClick={() => {
                     playback.commitSeek(track.startSeconds!);
                     if (!playback.browserPlaying) playback.resumePlayback();

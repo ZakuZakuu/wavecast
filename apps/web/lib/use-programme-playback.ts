@@ -11,7 +11,7 @@ import {
   triggerMixdownDownload,
   type MixdownArtifact,
 } from "./episode-export";
-import { nextProgramMusicStart, nextVisibleSegment } from "./playback";
+import { nextJumpStart, nextVisibleSegment } from "./playback";
 import {
   activeMixClipsAt,
   mixPlanSignature,
@@ -951,15 +951,19 @@ export function useProgrammePlayback({
     const target = localEpisodeRef.current;
     if (!target) return;
     if (!mixPlan) {
-      setError("下一章节还没有准备好");
+      setError("后面的内容还没有准备好");
       return;
     }
-    const nextStart = nextProgramMusicStart(mixPlan, browserPositionRef.current);
+    const position = browserPositionRef.current;
+    const nextStart = nextJumpStart(mixPlan, position, target);
     if (nextStart === undefined || nextStart >= maxSeekPosition) {
-      setError("下一章节还在准备中");
+      setError("后面的内容还在准备中");
       return;
     }
+    // Leaving host speech is not a verdict on a song: only skipping over playing music is a signal.
+    const musicPlaying = activeMixClipsAt(mixPlan, position).some((clip) => clip.lane === "MUSIC");
     commitSeek(nextStart);
+    if (!musicPlaying) return;
     void api.recordUserEvent({
       event_type: "SKIP",
       program_id: target.seed_id,

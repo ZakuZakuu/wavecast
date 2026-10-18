@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useLayoutEffect, useRef, useState } from "react";
 
 import { currentMusicSegment, estimatedTotalSeconds, formatClock } from "../lib/now-playing";
-import { nextProgramMusicStart } from "../lib/playback";
+import { nextJumpStart } from "../lib/playback";
 import { formatFreq } from "../lib/stations";
 import { TypeCover } from "./cover/type-cover";
 import { PauseIcon, PlayIcon, SkipIcon } from "./icons";
@@ -39,7 +39,7 @@ export function MiniPlayer({ hidden = false }: { hidden?: boolean }) {
   const music = currentMusicSegment(episode, np.mixPlan, np.browserPosition, np.current);
   const total = estimatedTotalSeconds(episode, np.programManifest);
   const played = Math.min(100, (np.browserPosition / Math.max(1, total)) * 100);
-  const nextStart = np.mixPlan ? nextProgramMusicStart(np.mixPlan, np.browserPosition) : undefined;
+  const nextStart = np.mixPlan ? nextJumpStart(np.mixPlan, np.browserPosition, episode) : undefined;
   const canSkip = nextStart !== undefined && nextStart < np.maxSeekPosition;
 
   return (
@@ -93,7 +93,7 @@ export function MiniPlayer({ hidden = false }: { hidden?: boolean }) {
           <PauseIcon size={24} className="morph-pause" />
         </span>
       </button>
-      <button type="button" className="mini-button" aria-label="跳过这首" onClick={np.nextPlayback} disabled={!canSkip}>
+      <button type="button" className="mini-button" aria-label="下一首" onClick={np.nextPlayback} disabled={!canSkip}>
         <SkipIcon size={24} />
       </button>
     </div>

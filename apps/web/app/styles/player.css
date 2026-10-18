@@ -426,6 +426,10 @@ button.route-track { min-height: 44px; margin: -6px 0; }
 .route-track.is-playing { color: #FFFFFF; }
 .route-track.is-pending { color: rgba(255, 255, 255, .5); }
 .route-track-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.route-track.is-voice { font-size: 14px; color: rgba(255, 255, 255, .62); }
+.route-voice-dot { width: 14px; flex: 0 0 auto; display: grid; place-items: center; }
+.route-voice-dot::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .7; }
+.route-track .route-time { margin-left: auto; flex: 0 0 auto; }
 .route-eq { width: 14px; height: 12px; display: flex; align-items: flex-end; gap: 1.5px; flex: 0 0 auto; }
 .route-eq i { width: 3px; border-radius: 1px; background: var(--live); animation: voice 800ms ease-in-out infinite alternate; transform-origin: bottom; }
 .route-eq i:nth-child(1) { height: 6px; }

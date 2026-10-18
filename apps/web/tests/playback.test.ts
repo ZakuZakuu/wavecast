@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, musicChaptersForEpisode, nextProgramMusicStart, nextVisibleSegment, previousProgramMusicStart, reconcileBrowserPosition, remainingSegmentSeconds, segmentAtPosition, segmentOffset, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
+import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, musicChaptersForEpisode, nextJumpStart, nextVisibleSegment, previousJumpStart, programmeJumpPoints, reconcileBrowserPosition, remainingSegmentSeconds, segmentAtPosition, segmentOffset, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
 import type { MixPlan } from "../lib/mix-timeline";
 import type { LiveEpisode } from "../lib/types";
 
@@ -38,19 +38,56 @@ describe("generated-frontier player behavior", () => {
     })[1].segments.map((segment) => segment.id)).toEqual(["bridge"]);
   });
 
-  it("next goes to the upcoming music clip, rather than its voice bridge", () => {
-    const plan: MixPlan = {
-      schemaVersion: 1, episodeId: episode.id, durationSeconds: 60,
-      segmentStarts: { opening: 0, narration: 18, bridge: 25 },
-      clips: [
-        { id: "opening", segmentId: "opening", lane: "MUSIC", timelineStartSeconds: 0, sourceUrl: "/a", sourceOffsetSeconds: 0, playableDurationSeconds: 22, gain: 1, fadeInSeconds: 0, fadeOutSeconds: 0, gainAutomation: [] },
-        { id: "voice", segmentId: "narration", lane: "VOICE", timelineStartSeconds: 18, sourceUrl: "/v", sourceOffsetSeconds: 0, playableDurationSeconds: 10, gain: 1, fadeInSeconds: 0, fadeOutSeconds: 0, gainAutomation: [] },
-        { id: "bridge", segmentId: "bridge", lane: "MUSIC", timelineStartSeconds: 25, sourceUrl: "/b", sourceOffsetSeconds: 0, playableDurationSeconds: 35, gain: 1, fadeInSeconds: 0, fadeOutSeconds: 0, gainAutomation: [] },
-      ],
-    };
-    expect(nextProgramMusicStart(plan, 17)).toBe(25);
-    expect(nextProgramMusicStart(plan, 20)).toBe(25);
-    expect(nextProgramMusicStart(plan, 26)).toBeUndefined();
+  describe("jump points", () => {
+    const clip = (id: string, lane: "MUSIC" | "VOICE", start: number, duration = 100) => ({
+      id, segmentId: id, lane, timelineStartSeconds: start, sourceUrl: "/x", sourceOffsetSeconds: 0,
+      playableDurationSeconds: duration, gain: 1, fadeInSeconds: 0, fadeOutSeconds: 0, gainAutomation: [],
+    });
+    const planOf = (...clips: ReturnType<typeof clip>[]) => ({ clips }) as unknown as MixPlan;
+    const narration = (id: string, state = "AUDIO_READY") => ({
+      id, chapter_id: "c", order: 1, kind: "NARRATION" as const, state: state as never, planned_duration_seconds: 10,
+      actual_duration_seconds: 10, audio_source_url: state === "AUDIO_READY" ? "/n/" + id : null, duration_seconds: 10,
+      track_ref: null, title: "Narration", artist: null, narration_text: "text", asset_ref: null,
+    });
+    const episodeOf = (...segments: ReturnType<typeof narration>[]) => ({ segments }) as unknown as LiveEpisode;
+
+    it("next walks songs and host speech alike, ending on the closing speech", () => {
+      const plan = planOf(clip("opening", "MUSIC", 0, 22), clip("narration", "VOICE", 18, 10), clip("bridge", "MUSIC", 25, 35), clip("outro", "VOICE", 60, 10));
+      const withSpeech = episodeOf(narration("narration"), narration("outro"));
+      expect(programmeJumpPoints(plan, withSpeech).map((point) => point.startSeconds)).toEqual([0, 18, 25, 60]);
+      expect(nextJumpStart(plan, 17, withSpeech)).toBe(18);
+      expect(nextJumpStart(plan, 18, withSpeech)).toBe(25);
+      expect(nextJumpStart(plan, 26, withSpeech)).toBe(60);
+      expect(nextJumpStart(plan, 61, withSpeech)).toBeUndefined();
+    });
+
+    it("leaves out speech that is skipped, a draft or has no audio", () => {
+      const plan = planOf(clip("opening", "MUSIC", 0, 22), clip("skipped", "VOICE", 10, 5), clip("draft", "VOICE", 30, 5), clip("gone", "VOICE", 50, 5), clip("two", "MUSIC", 60));
+      const published = episodeOf(narration("skipped", "SKIPPED"), narration("draft", "SCRIPT_READY"));
+      expect(programmeJumpPoints(plan, published).map((point) => point.startSeconds)).toEqual([0, 60]);
+    });
+
+    it("counts consecutive speech once, at the first clip", () => {
+      const plan = planOf(
+        clip("one", "MUSIC", 0, 10),
+        clip("a", "VOICE", 18, 10), clip("b", "VOICE", 28.5, 8), clip("c", "VOICE", 40, 5),
+        clip("two", "MUSIC", 50),
+      );
+      const speech = episodeOf(narration("a"), narration("b"), narration("c"));
+      expect(programmeJumpPoints(plan, speech).map((point) => [point.lane, point.startSeconds])).toEqual([
+        ["MUSIC", 0], ["VOICE", 18], ["VOICE", 40], ["MUSIC", 50],
+      ]);
+    });
+
+    it("lists one place when speech and a song start together", () => {
+      const plan = planOf(clip("voice", "VOICE", 0, 20), clip("one", "MUSIC", 0));
+      expect(programmeJumpPoints(plan, episodeOf(narration("voice")))).toHaveLength(1);
+    });
+
+    it("counts every voice clip when no episode is given", () => {
+      const plan = planOf(clip("one", "MUSIC", 0), clip("host", "VOICE", 90, 5));
+      expect(programmeJumpPoints(plan).map((point) => point.startSeconds)).toEqual([0, 90]);
+    });
   });
 
   it("does not allow a listener to seek into ungenerated future", () => {
@@ -295,29 +332,30 @@ describe("local seek target resolution", () => {
     expect(segmentAtPosition(skipped, 22)?.id).toBe("bridge");
   });
 
-  describe("previousProgramMusicStart", () => {
+  describe("previousJumpStart", () => {
     const clip = (id: string, lane: "MUSIC" | "VOICE", start: number) => ({
       id, segmentId: id, lane, timelineStartSeconds: start, sourceUrl: "/x", sourceOffsetSeconds: 0,
-      playableDurationSeconds: 100, gain: 1, fadeInSeconds: 0, fadeOutSeconds: 0, gainAutomation: [],
+      playableDurationSeconds: lane === "VOICE" ? 10 : 100, gain: 1, fadeInSeconds: 0, fadeOutSeconds: 0, gainAutomation: [],
     });
     const plan = {
       clips: [clip("one", "MUSIC", 0), clip("host", "VOICE", 90), clip("two", "MUSIC", 100), clip("three", "MUSIC", 300)],
     } as unknown as MixPlan;
 
-    it("restarts the track once it has played for a few seconds", () => {
-      expect(previousProgramMusicStart(plan, 150)).toBe(100);
-      expect(previousProgramMusicStart(plan, 104)).toBe(100);
+    it("restarts what is playing once it has played for a few seconds", () => {
+      expect(previousJumpStart(plan, 150)).toBe(100);
+      expect(previousJumpStart(plan, 104)).toBe(100);
+      expect(previousJumpStart(plan, 95)).toBe(90);
     });
 
-    it("goes to the track before when it has only just started", () => {
-      expect(previousProgramMusicStart(plan, 101)).toBe(0);
-      expect(previousProgramMusicStart(plan, 301)).toBe(100);
+    it("goes to the place before when it has only just started, speech included", () => {
+      expect(previousJumpStart(plan, 101)).toBe(90);
+      expect(previousJumpStart(plan, 92)).toBe(0);
+      expect(previousJumpStart(plan, 301)).toBe(100);
     });
 
-    it("restarts the first track, and ignores narration as a track", () => {
-      expect(previousProgramMusicStart(plan, 1)).toBe(0);
-      expect(previousProgramMusicStart(plan, 92)).toBe(0);
-      expect(previousProgramMusicStart(plan, 0)).toBe(0);
+    it("restarts the first place", () => {
+      expect(previousJumpStart(plan, 1)).toBe(0);
+      expect(previousJumpStart(plan, 0)).toBe(0);
     });
   });
 });

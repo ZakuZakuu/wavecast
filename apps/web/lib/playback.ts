@@ -28,29 +28,70 @@ export function musicChaptersForEpisode(episode: LiveEpisode): MusicChapter[] {
   return chapters;
 }
 
-export function nextProgramMusicStart(plan: MixPlan, positionSeconds: number): number | undefined {
-  return plan.clips
-    .filter((clip) => clip.lane === "MUSIC" && clip.timelineStartSeconds > positionSeconds + 0.05)
-    .map((clip) => clip.timelineStartSeconds)
-    .sort((left, right) => left - right)[0];
+/** Host speech that starts this soon after the previous clip ended is the same piece of speech. */
+const VOICE_JOIN_SECONDS = 1.5;
+/** Starts closer than this are one place on the timeline. */
+const SAME_START_SECONDS = 0.05;
+
+export type JumpPoint = { segmentId: string; lane: "MUSIC" | "VOICE"; startSeconds: number };
+
+/**
+ * Every place next/previous/the route can land: the start of each song and the start of each
+ * piece of host speech, side by side. Speech counts only when it is published and playable (not
+ * skipped, not a draft) and consecutive clips count once, at the first. Pass the episode to
+ * apply that filter; without it every voice clip in the plan counts.
+ */
+export function programmeJumpPoints(plan: MixPlan, episode?: Pick<LiveEpisode, "segments">): JumpPoint[] {
+  const segments = episode ? new Map(episode.segments.map((segment) => [segment.id, segment])) : null;
+  const music: JumpPoint[] = plan.clips
+    .filter((clip) => clip.lane === "MUSIC")
+    .map((clip) => ({ segmentId: clip.segmentId, lane: "MUSIC", startSeconds: clip.timelineStartSeconds }));
+  const voice: JumpPoint[] = [];
+  let speechEnd = Number.NEGATIVE_INFINITY;
+  const speech = plan.clips
+    .filter((clip) => clip.lane === "VOICE")
+    .filter((clip) => {
+      if (!segments) return true;
+      const segment = segments.get(clip.segmentId);
+      return segment?.kind === "NARRATION" && isPlaybackReadySegment(segment);
+    })
+    .sort((left, right) => left.timelineStartSeconds - right.timelineStartSeconds);
+  for (const clip of speech) {
+    if (clip.timelineStartSeconds > speechEnd + VOICE_JOIN_SECONDS) {
+      voice.push({ segmentId: clip.segmentId, lane: "VOICE", startSeconds: clip.timelineStartSeconds });
+    }
+    speechEnd = Math.max(speechEnd, clip.timelineStartSeconds + clip.playableDurationSeconds);
+  }
+  const points: JumpPoint[] = [];
+  for (const point of [...music, ...voice].sort((left, right) => left.startSeconds - right.startSeconds)) {
+    const last = points.at(-1);
+    if (!last || point.startSeconds - last.startSeconds >= SAME_START_SECONDS) points.push(point);
+  }
+  return points;
+}
+
+export function nextJumpStart(
+  plan: MixPlan,
+  positionSeconds: number,
+  episode?: Pick<LiveEpisode, "segments">,
+): number | undefined {
+  return programmeJumpPoints(plan, episode)
+    .find((point) => point.startSeconds > positionSeconds + SAME_START_SECONDS)?.startSeconds;
 }
 
 /**
- * Where "previous" goes, as in any music player: back to the start of the track
- * that is playing if it has played for a few seconds, otherwise to the start of
- * the track before it (the first track simply restarts). Narration never counts
- * as a track.
+ * Where "previous" goes, as in any music player: back to the start of what is playing if it has
+ * played for a few seconds, otherwise to the start of the one before it (the first simply
+ * restarts). Songs and host speech are the same kind of place here.
  */
-export function previousProgramMusicStart(
+export function previousJumpStart(
   plan: MixPlan,
   positionSeconds: number,
+  episode?: Pick<LiveEpisode, "segments">,
   restartAfterSeconds = 3,
 ): number {
-  const starts = plan.clips
-    .filter((clip) => clip.lane === "MUSIC")
-    .map((clip) => clip.timelineStartSeconds)
-    .sort((left, right) => left - right);
-  const playing = starts.filter((start) => start <= positionSeconds + 0.05);
+  const starts = programmeJumpPoints(plan, episode).map((point) => point.startSeconds);
+  const playing = starts.filter((start) => start <= positionSeconds + SAME_START_SECONDS);
   if (!playing.length) return 0;
   const current = playing[playing.length - 1];
   if (positionSeconds - current > restartAfterSeconds) return current;
