@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import { api } from "../../lib/api";
 import { openPlayer } from "../../lib/player-nav";
 import { authClient } from "../../lib/auth-client";
 import { programmeCover, rememberCoverSource } from "../../lib/cover/programme-cover";
-import { dedupeByTitle, ideaStation, pickMeta, RECOMMENDATION_MINUTES } from "../../lib/home-picks";
+import { dedupeByTitle, featureEyebrow, ideaStation, pickMeta, RECOMMENDATION_MINUTES } from "../../lib/home-picks";
 import { FEATURED_PROGRAMMES, featuredDurationIntent, type FeaturedProgramme } from "../../lib/featured";
 import { requestLoginHint } from "../../lib/login-nudge";
 import {
@@ -48,10 +48,15 @@ type Pick = {
   busy: boolean;
 };
 
-function PickCard({ pick, onSelect }: { pick: Pick; onSelect: (pick: Pick) => void }) {
+/** What a card shows: its station, its cover and the line under the title. */
+function usePickView(pick: Pick) {
   const station = pick.stationId ? stationById(pick.stationId) : stationForProgramme(pick.id, pick.title);
   const cover = programmeCover({ id: pick.id, title: pick.coverTitle ?? pick.title, stationId: station.id });
-  const meta = pickMeta(station.name, pick.minutes);
+  return { station, cover, meta: pickMeta(station.name, pick.minutes) };
+}
+
+function PickCard({ pick, onSelect }: { pick: Pick; onSelect: (pick: Pick) => void }) {
+  const { cover, meta } = usePickView(pick);
   return (
     <button
       type="button"
@@ -66,6 +71,30 @@ function PickCard({ pick, onSelect }: { pick: Pick; onSelect: (pick: Pick) => vo
       <span className="pick-text">
         <span className="pick-title">{pick.title}</span>
         <span className="pick-meta">{pick.busy ? "正在准备…" : meta}</span>
+      </span>
+    </button>
+  );
+}
+
+/** The first pick, larger: the station's own pale colour behind a bigger cover, and what it is about. */
+function FeatureCard({ pick, onSelect }: { pick: Pick; onSelect: (pick: Pick) => void }) {
+  const { station, cover, meta } = usePickView(pick);
+  return (
+    <button
+      type="button"
+      className="pick-feature"
+      style={{ "--tile-light": station.light, "--tile-deep": station.deep } as CSSProperties}
+      aria-label={`${pick.title}，${meta}`}
+      onClick={() => onSelect(pick)}
+      disabled={pick.busy}
+    >
+      <span className="pick-feature-cover">
+        <TypeCover params={cover.params} radius={0} />
+      </span>
+      <span className="pick-feature-text">
+        <span className="pick-feature-eyebrow">{pick.busy ? "正在准备…" : featureEyebrow(station.name, pick.minutes)}</span>
+        <span className="pick-feature-title">{pick.title}</span>
+        {pick.description ? <span className="pick-feature-blurb">{pick.description}</span> : null}
       </span>
     </button>
   );
@@ -219,6 +248,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
     }
     : null;
 
+  const [feature, ...rail] = picks;
   const loading = sessionPending || (!guest && (seeds === null || ideas === null));
   const glow = np?.station?.light ?? "#5C7CE0";
   const initial = user?.name?.trim().slice(0, 1) || user?.email?.slice(0, 1)?.toUpperCase() || null;
@@ -238,13 +268,6 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
             </Link>
           </header>
 
-          <section className="home-section" aria-labelledby="home-stations">
-            <h2 id="home-stations" className="section-title">电台</h2>
-            <div className="station-row">
-              {STATIONS.map((station) => <StationTile key={station.id} station={station} />)}
-            </div>
-          </section>
-
           <section className="home-section" aria-labelledby="home-picks">
             <div className="section-head">
               <div className="section-title-row">
@@ -262,16 +285,27 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
             </div>
             {error ? <p className="inline-note" role="alert">{error}</p> : null}
             {rotationNote ? <p className="inline-note" role="status">{rotationNote}</p> : null}
-            <div className="pick-grid">
-              {picks.map((pick) => <PickCard key={pick.key} pick={pick} onSelect={selectPick} />)}
-              {loading && !picks.length
-                ? Array.from({ length: 6 }).map((_, index) => <span key={index} className="pick-skeleton" aria-hidden="true" />)
-                : null}
-            </div>
+            {feature ? <FeatureCard pick={feature} onSelect={selectPick} /> : null}
+            {loading && !picks.length ? <span className="pick-feature-skeleton" aria-hidden="true" /> : null}
+            {rail.length || (loading && !picks.length) ? (
+              <div className="pick-rail">
+                {rail.map((pick) => <PickCard key={pick.key} pick={pick} onSelect={selectPick} />)}
+                {loading && !picks.length
+                  ? Array.from({ length: 3 }).map((_, index) => <span key={index} className="pick-skeleton" aria-hidden="true" />)
+                  : null}
+              </div>
+            ) : null}
             {!loading && !picks.length ? (
               <p className="inline-note">还没有可以推荐的节目。<Link href="/tune">去调一档</Link></p>
             ) : null}
           </section>
+          <section className="home-section home-stations" aria-labelledby="home-stations">
+            <h2 id="home-stations" className="section-title">电台</h2>
+            <div className="station-row">
+              {STATIONS.map((station) => <StationTile key={station.id} station={station} />)}
+            </div>
+          </section>
+
         </div>
       </PullToRefresh>
       <ProgrammeSheet
