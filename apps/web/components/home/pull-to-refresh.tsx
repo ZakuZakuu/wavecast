@@ -120,7 +120,8 @@ export function PullToRefresh({
   const ready = offset >= PULL_THRESHOLD;
   return (
     <div ref={host}>
-      <div className="pull-logo" aria-hidden="true" style={{ opacity: offset > 0 ? 1 : 0 }}>
+      {/* The logo rides down with the content and rests in the uncovered gap once the pull is ready. */}
+      <div className="pull-logo" aria-hidden="true" style={{ opacity: offset > 0 ? 1 : 0, transform: `translateY(${offset - PULL_THRESHOLD}px)` }}>
         <LogoLine progress={refreshing ? 1 : pullProgress(offset)} swing={refreshing} bump={ready && !refreshing} />
       </div>
       <div className="pull-content" style={offset ? { transform: `translateY(${offset}px)` } : undefined}>
