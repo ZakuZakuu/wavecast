@@ -24,6 +24,7 @@ import {
 } from "../../lib/tuner";
 import type { DurationIntent } from "../../lib/types";
 import { AppShell } from "../app-shell";
+import { Guide } from "../guide/guide";
 import { Segmented } from "../segmented";
 import { easeStandard, prefersReducedMotion, tween } from "../../lib/motion/easing";
 import { VelocityTracker } from "../../lib/motion/gesture";
@@ -280,45 +281,47 @@ export function TunePage() {
             <p>{between ? "松手会自动对准最近的台" : station.description}</p>
           </div>
 
-          <div
-            ref={windowRef}
-            className={dragging ? "tuning-window is-dragging" : "tuning-window"}
-            role="slider"
-            tabIndex={0}
-            aria-label="调频"
-            aria-valuemin={87.5}
-            aria-valuemax={108}
-            aria-valuenow={Number(formatFreq(freq))}
-            aria-valuetext={between ? `FM ${formatFreq(freq)}，没有电台` : `FM ${formatFreq(freq)} ${station.name}`}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
-            onKeyDown={onKeyDown}
-          >
-            <TuningWindow
-              freq={freq}
-              width={width}
-              activeStation={reading.locked ? station : null}
-              noise={reading.noise}
-            />
-          </div>
+          <div className="tune-dial" data-guide="tune-dial">
+            <div
+              ref={windowRef}
+              className={dragging ? "tuning-window is-dragging" : "tuning-window"}
+              role="slider"
+              tabIndex={0}
+              aria-label="调频"
+              aria-valuemin={87.5}
+              aria-valuemax={108}
+              aria-valuenow={Number(formatFreq(freq))}
+              aria-valuetext={between ? `FM ${formatFreq(freq)}，没有电台` : `FM ${formatFreq(freq)} ${station.name}`}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+              onKeyDown={onKeyDown}
+            >
+              <TuningWindow
+                freq={freq}
+                width={width}
+                activeStation={reading.locked ? station : null}
+                noise={reading.noise}
+              />
+            </div>
 
-          <div
-            className="knurl"
-            aria-hidden="true"
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
-          >
-            <svg width={width} height={26} viewBox={`0 0 ${width} 26`}>
-              <path d={knurlPath(width, knurlPhaseForFreq(freq, width))} />
-            </svg>
+            <div
+              className="knurl"
+              aria-hidden="true"
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+            >
+              <svg width={width} height={26} viewBox={`0 0 ${width} 26`}>
+                <path d={knurlPath(width, knurlPhaseForFreq(freq, width))} />
+              </svg>
+            </div>
           </div>
         </section>
 
-        <label className="tune-input">
+        <label className="tune-input" data-guide="tune-input">
           <span className="visually-hidden">想听什么</span>
           <input
             type="text"
@@ -335,17 +338,19 @@ export function TunePage() {
 
         <Segmented
           label="时长"
+          guide="tune-duration"
           options={DURATIONS}
           value={duration}
           onChange={setDuration}
         />
 
-        <button type="button" className="on-air" disabled={between} onClick={() => startFrom(station)}>
+        <button type="button" className="on-air" data-guide="tune-onair" disabled={between} onClick={() => startFrom(station)}>
           <span className="on-air-light" aria-hidden="true" />
           {cta}
         </button>
       </div>
 
+      <Guide trigger="tune" />
       {tune.tuning ? (
         <TuningInScreen
           station={tune.tuning}

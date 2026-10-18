@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import { api } from "../../lib/api";
 import { openPlayer } from "../../lib/player-nav";
@@ -20,6 +20,7 @@ import {
 } from "../../lib/stations";
 import type { ProgramIdea, Seed } from "../../lib/types";
 import { AppShell } from "../app-shell";
+import { Guide } from "../guide/guide";
 import { TypeCover } from "../cover/type-cover";
 import { InstallPrompt } from "../install/install-prompt";
 import { OnboardingSheet } from "../onboarding/onboarding-sheet";
@@ -83,6 +84,7 @@ function FeatureCard({ pick, onSelect }: { pick: Pick; onSelect: (pick: Pick) =>
     <button
       type="button"
       className="pick-feature"
+      data-guide="home-feature"
       style={{ "--tile-light": station.light, "--tile-deep": station.deep } as CSSProperties}
       aria-label={`${pick.title}，${meta}`}
       onClick={() => onSelect(pick)}
@@ -249,6 +251,13 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
     : null;
 
   const [feature, ...rail] = picks;
+  // The taste sheet (signed-in people, once) comes before the guide; guests have none.
+  const [tasteSettled, setTasteSettled] = useState(false);
+  const tasteDone = useCallback(() => {
+    setTasteSettled(true);
+    onOnboardingFinished?.();
+  }, [onOnboardingFinished]);
+
   const loading = sessionPending || (!guest && (seeds === null || ideas === null));
   const glow = np?.station?.light ?? "#5C7CE0";
   const initial = user?.name?.trim().slice(0, 1) || user?.email?.slice(0, 1)?.toUpperCase() || null;
@@ -269,7 +278,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
           </header>
 
           <section className="home-section" aria-labelledby="home-picks">
-            <div className="section-head">
+            <div className="section-head" data-guide="home-picks-head">
               <div className="section-title-row">
                 <h2 id="home-picks" className="section-title">{guest ? "先听这几档" : "猜你想听"}</h2>
                 {guest || ideas?.length ? (
@@ -301,7 +310,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
           </section>
           <section className="home-section home-stations" aria-labelledby="home-stations">
             <h2 id="home-stations" className="section-title">电台</h2>
-            <div className="station-row">
+            <div className="station-row" data-guide="home-stations">
               {STATIONS.map((station) => <StationTile key={station.id} station={station} />)}
             </div>
           </section>
@@ -315,7 +324,8 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
         onClose={() => setSheetOpen(false)}
         onPlay={playSelected}
       />
-      <OnboardingSheet onFinished={onOnboardingFinished} />
+      <OnboardingSheet onFinished={tasteDone} />
+      <Guide trigger="home" ready={guest || tasteSettled} />
       <InstallPrompt />
       {tune.tuning ? (
         <TuningInScreen

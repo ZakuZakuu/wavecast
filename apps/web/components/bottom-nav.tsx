@@ -8,9 +8,9 @@ import { rememberTabPath } from "../lib/nav-memory";
 
 import { HomeIcon, LibraryIcon, TuneIcon } from "./icons";
 
-const ITEMS: Array<{ href: string; label: string; Icon: ComponentType<{ size?: number }> }> = [
+const ITEMS: Array<{ href: string; label: string; Icon: ComponentType<{ size?: number }>; guide?: string }> = [
   { href: "/", label: "首页", Icon: HomeIcon },
-  { href: "/tune", label: "调频", Icon: TuneIcon },
+  { href: "/tune", label: "调频", Icon: TuneIcon, guide: "nav-tune" },
   { href: "/library", label: "节目库", Icon: LibraryIcon },
 ];
 
@@ -20,13 +20,14 @@ export function BottomNav() {
 
   return (
     <nav className="bottom-nav" aria-label="主导航">
-      {ITEMS.map(({ href, label, Icon }) => {
+      {ITEMS.map(({ href, label, Icon, guide }) => {
         const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
         return (
           <Link
             href={href}
             className={active ? "bottom-nav-item active" : "bottom-nav-item"}
             aria-current={active ? "page" : undefined}
+            data-guide={guide}
             key={href}
           >
             <Icon size={26} />

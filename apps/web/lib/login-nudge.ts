@@ -2,7 +2,7 @@
 // finishes their second programme, kept apart from the install guide.
 const FINISHED_IDS_KEY = "wavecast-finished-programmes-v1";
 const SNOOZE_KEY = "wavecast-login-nudge-snooze-until-v1";
-/** sessionStorage: which one-off prompt this visit has used ("install" | "login"). */
+/** sessionStorage: which one-off prompt this visit has used ("install" | "login" | "guide"). */
 const VISIT_PROMPT_KEY = "wavecast-visit-prompt-v1";
 
 export const LOGIN_NUDGE_SNOOZE_DAYS = 7;
@@ -19,7 +19,7 @@ export function requestLoginHint(copy: LoginHintCopy): void {
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(LOGIN_HINT_EVENT, { detail: copy }));
 }
 
-export type VisitPrompt = "install" | "login";
+export type VisitPrompt = "install" | "login" | "guide";
 
 function readIds(): string[] {
   try {
@@ -55,7 +55,7 @@ export function recordFinishedProgramme(programmeId: string): number {
 export function visitPrompt(): VisitPrompt | null {
   try {
     const value = window.sessionStorage.getItem(VISIT_PROMPT_KEY);
-    return value === "install" || value === "login" ? value : null;
+    return value === "install" || value === "login" || value === "guide" ? value : null;
   } catch {
     return null;
   }
@@ -103,5 +103,5 @@ export function shouldShowLoginNudge(context: LoginNudgeContext): boolean {
   if (context.signedIn) return false;
   if (context.finishedCount < LOGIN_NUDGE_AFTER_FINISHED) return false;
   if (context.now < context.snoozedUntil) return false;
-  return context.visitPrompt !== "install";
+  return context.visitPrompt === null || context.visitPrompt === "login";
 }

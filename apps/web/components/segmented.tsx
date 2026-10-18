@@ -10,12 +10,15 @@ export function Segmented<T extends string>({
   onChange,
   kind = "radio",
   label,
+  guide,
 }: {
   options: ReadonlyArray<{ value: T; label: string }>;
   value: T;
   onChange: (value: T) => void;
   kind?: "radio" | "tab";
   label: string;
+  /** `data-guide` marker, so a first-use guide can light the control up. */
+  guide?: string;
 }) {
   const index = Math.max(0, options.findIndex((option) => option.value === value));
   return (
@@ -23,6 +26,7 @@ export function Segmented<T extends string>({
       className="segmented"
       role={kind === "radio" ? "radiogroup" : "tablist"}
       aria-label={label}
+      data-guide={guide}
       style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
     >
       <span
