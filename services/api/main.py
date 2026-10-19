@@ -5,7 +5,7 @@ import logging
 import os
 import re
 import shutil
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
@@ -140,6 +140,7 @@ from wavecast.rendering import (
     resolve_mix_sources,
 )
 from wavecast.rendering.fingerprint import mix_plan_fingerprint
+from wavecast.rendering.programme import DEFAULT_RENDER_HOLDBACK_SECONDS
 from wavecast.spoken_form import KnownTrack, to_spoken_form
 from wavecast.stations import StationId
 from wavecast.storage import (
@@ -600,10 +601,16 @@ orchestrator = EpisodeOrchestrator(
     progressive_runtime=progressive_runtime,
 )
 scheduler = InlineGenerationScheduler(orchestrator)
+async def _prepare_first_listen(episode_id: str) -> None:
+    """The start of a finished programme is mixed before it is called ready, so its first play is quick."""
+    await _render_programme(episode_id)
+
+
 generation_worker = GenerationWorker(
     generation_job_repository,
     orchestrator,
     worker_id=f"api-{uuid4().hex[:12]}",
+    after_full_generation=_prepare_first_listen,
 )
 BACKGROUND_GENERATION_ENABLED = os.getenv(
     "WAVECAST_BACKGROUND_GENERATION_ENABLED",
@@ -658,6 +665,7 @@ def configure_runtime(
         generation_job_repository,
         orchestrator,
         worker_id=f"api-{uuid4().hex[:12]}",
+        after_full_generation=_prepare_first_listen,
     )
 
 
@@ -695,6 +703,7 @@ def configure_narration_materializer(materializer: NarrationMaterializer) -> Non
         generation_job_repository,
         orchestrator,
         worker_id=f"api-{uuid4().hex[:12]}",
+        after_full_generation=_prepare_first_listen,
     )
 
 app = FastAPI(title="Wavecast API", version="0.2.0")
@@ -2148,8 +2157,21 @@ def canonical_mix_plan_for_episode(episode_id: str, actor: AuthPrincipal) -> Mix
     return plan_episode_mix(PlayableEpisode(id=current.id, segments=ready_segments))
 
 
-def _canonical_render_plan(current: LiveEpisode) -> MixPlan:
-    """Build the renderable prefix from one immutable Episode snapshot."""
+# A finished programme is rendered a few minutes at a time, from the start, instead of all at once: its
+# first listen then starts in seconds, and the rest is added as the listener gets near the end of what
+# is rendered (the same way a programme still being made grows). Whole segments only, as the renderer
+# expects, and enough of them that what may be published (the plan less its held-back tail) reaches the
+# wanted point.
+PROGRAMME_RENDER_AHEAD_SECONDS = 300.0
+_PROGRAMME_RENDER_MARGIN_SECONDS = 10.0
+#: The songs of a little more than is rendered are fetched too, as their real lengths are only known then.
+_PROGRAMME_FETCH_EXTRA_SECONDS = 120.0
+
+
+def _ready_prefix(
+    current: LiveEpisode, ahead_seconds: float | None = None,
+) -> tuple[list[MusicSegment | NarrationSegment], bool]:
+    """The ready, whole-segment prefix to render, and whether more ready segments were left out."""
 
     ready_segments: list[MusicSegment | NarrationSegment] = []
     for segment in current.timeline_segments:
@@ -2164,6 +2186,20 @@ def _canonical_render_plan(current: LiveEpisode) -> MixPlan:
             # freeze past. A merely pending narration is not.
             continue
         break
+    if ahead_seconds is None:
+        return ready_segments, False
+    needed = ahead_seconds + DEFAULT_RENDER_HOLDBACK_SECONDS + _PROGRAMME_RENDER_MARGIN_SECONDS
+    for count in range(1, len(ready_segments) + 1):
+        plan = plan_episode_mix(PlayableEpisode(id=current.id, segments=ready_segments[:count]))
+        if plan.duration_seconds >= needed:
+            return ready_segments[:count], count < len(ready_segments)
+    return ready_segments, False
+
+
+def _canonical_render_plan(current: LiveEpisode, ahead_seconds: float | None = None) -> MixPlan:
+    """Build the renderable prefix from one immutable Episode snapshot."""
+
+    ready_segments, _ = _ready_prefix(current, ahead_seconds)
     if not ready_segments:
         raise ValueError("program render plan is not ready")
     return plan_episode_mix(PlayableEpisode(id=current.id, segments=ready_segments))
@@ -2373,6 +2409,7 @@ async def _prepare_owned_music_assets(
     episode_id: str,
     *,
     ready_only: bool = False,
+    only_segment_ids: Collection[str] | None = None,
 ) -> MixdownPreparationResult:
     """Snapshot provider-backed music before any deterministic server render.
 
@@ -2399,6 +2436,8 @@ async def _prepare_owned_music_assets(
             if not isinstance(segment, MusicSegment):
                 continue
             if ready_only and not segment.is_audio_ready:
+                continue
+            if only_segment_ids is not None and segment.id not in only_segment_ids:
                 continue
             classification = classify_music_source(segment.audio_source_url or "")
             if classification.kind is MusicSourceKind.OWNED_ASSET:
@@ -2509,19 +2548,48 @@ async def render_program_stream(
 
     actor = principal(request)
     await to_thread.run_sync(owned, episode_id, actor)
+    return await _render_programme(episode_id)
+
+
+_render_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _render_programme(episode_id: str) -> ProgramRenderManifest:
+    """One render at a time per programme: they extend one append-only feed."""
+
+    lock = _render_locks.setdefault(episode_id, asyncio.Lock())
+    async with lock:
+        return await _render_programme_locked(episode_id)
+
+
+def _render_ahead_seconds(current: LiveEpisode, manifest: ProgramRenderManifest | None) -> float | None:
+    """How far a finished programme is rendered up to now (None: render everything that is ready)."""
+
+    if current.state not in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+        return None
+    reached = manifest.rendered_frontier_seconds if manifest is not None else 0.0
+    return max(reached, current.program_playback_position_seconds) + PROGRAMME_RENDER_AHEAD_SECONDS
+
+
+async def _render_programme_locked(episode_id: str) -> ProgramRenderManifest:
     started_at = monotonic()
     await to_thread.run_sync(_gc_program_render_cache, episode_id)
     try:
+        manifest = await load_program_manifest(audio_storage, episode_id)
+        before = await to_thread.run_sync(orchestrator.get, episode_id)
+        ahead = _render_ahead_seconds(before, manifest)
+        # Only the songs of the part about to be rendered are fetched, not the whole programme's.
+        wanted, _ = _ready_prefix(before, None if ahead is None else ahead + _PROGRAMME_FETCH_EXTRA_SECONDS)
         preparation = await _prepare_owned_music_assets(
             episode_id,
             ready_only=True,
+            only_segment_ids={segment.id for segment in wanted},
         )
         if not preparation.ready:
             raise HTTPException(
                 status_code=409,
                 detail="Program render music source is unavailable",
             )
-        manifest = await load_program_manifest(audio_storage, episode_id)
         if manifest is not None:
             skipped_pending = await to_thread.run_sync(
                 _skip_blocking_optional_narration_for_continuity,
@@ -2537,11 +2605,12 @@ async def render_program_stream(
                 )
 
         current = await to_thread.run_sync(orchestrator.get, episode_id)
-        plan = await to_thread.run_sync(canonical_render_plan_for_episode, episode_id)
+        plan = _canonical_render_plan(current, ahead)
+        _, more_to_come = _ready_prefix(current, ahead)
         complete = (
             current.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
             or _progressive_programme_ready_to_close(current)
-        )
+        ) and not more_to_come
         try:
             rendered = await render_program_prefix(
                 plan,

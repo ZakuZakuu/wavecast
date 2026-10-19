@@ -328,6 +328,32 @@ def test_a_full_request_made_while_a_progressive_run_is_in_flight_survives_the_l
     assert final is not None and final.status is GenerationJobStatus.COMPLETED
 
 
+def test_the_after_full_step_runs_inside_the_job_and_cannot_fail_it() -> None:
+    steps: list[str] = []
+
+    async def after(episode_id: str) -> None:
+        # Still running: the job is only over once this has finished.
+        steps.append(episode_id)
+        assert jobs.get_for_episode(episode_id).status is GenerationJobStatus.RUNNING  # type: ignore[union-attr]
+        raise RuntimeError("the mix failed")
+
+    runtime = EpisodeOrchestrator(
+        InMemoryEpisodeRepository(),
+        progressive_generator=DeterministicMockProgressiveGenerator(),
+    )
+    episode = runtime.start(_seed())
+    runtime.request_full_generation(episode.id)
+    jobs = InMemoryGenerationJobRepository()
+    jobs.request(episode.id, GenerationJobMode.FULL)
+    worker = GenerationWorker(jobs, runtime, worker_id="worker-after", after_full_generation=after)
+
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
+    assert steps == [episode.id]
+    job = jobs.get_for_episode(episode.id)
+    assert job is not None and job.status is GenerationJobStatus.COMPLETED
+    assert runtime.get(episode.id).state.value == "MATERIALIZED"
+
+
 def test_full_generation_continues_after_listener_leaves() -> None:
     runtime = EpisodeOrchestrator(
         InMemoryEpisodeRepository(),

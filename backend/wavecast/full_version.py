@@ -49,6 +49,10 @@ def full_version_status(
     episode: LiveEpisode, job: GenerationJob | None, now: datetime
 ) -> FullVersionStatus:
     if episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+        # The content is done, but the job is not over until the start of it is mixed, so that
+        # "ready" means it plays at once.
+        if is_active(job) and job is not None and not is_stale(job, now):
+            return FullVersionStatus.PREPARING
         return FullVersionStatus.READY
     if job is None or job.mode is not GenerationJobMode.FULL:
         return FullVersionStatus.NONE
@@ -65,6 +69,8 @@ def full_version_progress(episode: LiveEpisode, status: FullVersionStatus) -> in
         return 100
     if status is not FullVersionStatus.PREPARING:
         return 0
+    if episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+        return _PROGRESS_CEILING
     ready = sum(
         segment.duration_seconds
         for segment in episode.timeline_segments

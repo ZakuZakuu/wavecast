@@ -12,6 +12,7 @@ from wavecast.full_version import (
     FullVersionStatus,
     full_version_status,
 )
+from wavecast.models import EpisodeState
 from wavecast.orchestration.worker import GenerationWorker
 from wavecast.proposals import InMemoryProgramProposalRepository
 from wavecast.storage.generation_jobs import (
@@ -89,6 +90,13 @@ def test_status_follows_the_job_and_gives_up_on_a_stalled_one() -> None:
     assert full_version_status(episode, failed, now) is FullVersionStatus.FAILED
     cancelled = job.model_copy(update={"status": GenerationJobStatus.CANCELLED})
     assert full_version_status(episode, cancelled, now) is FullVersionStatus.NONE
+
+    # The content is whole, but ready means it plays at once: not while the job is still mixing the start.
+    whole = episode.model_copy(update={"state": EpisodeState.MATERIALIZED})
+    assert full_version_status(whole, job, now) is FullVersionStatus.PREPARING
+    done = job.model_copy(update={"status": GenerationJobStatus.COMPLETED})
+    assert full_version_status(whole, done, now) is FullVersionStatus.READY
+    assert full_version_status(whole, None, now) is FullVersionStatus.READY
 
 
 def test_prepare_only_makes_the_episode_and_reports_it_preparing_then_ready(

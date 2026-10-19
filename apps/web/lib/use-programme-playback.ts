@@ -11,7 +11,7 @@ import {
   triggerMixdownDownload,
   type MixdownArtifact,
 } from "./episode-export";
-import { nextJumpStart, nextVisibleSegment } from "./playback";
+import { nextJumpStart, nextVisibleSegment, shouldExtendRender } from "./playback";
 import {
   activeMixClipsAt,
   mixPlanSignature,
@@ -948,6 +948,16 @@ export function useProgrammePlayback({
     // the frozen prefix byte-for-byte and can append newly available HLS chunks.
     requestProgramRender();
   }, [requestProgramRender]);
+
+  // A finished programme is rendered a few minutes at a time: keep asking for more ahead of the listener.
+  const extendTick = Math.floor(browserPosition / 10);
+  useEffect(() => {
+    if (shouldExtendRender({
+      episodeState: localEpisode?.state ?? null,
+      manifest: programManifest,
+      positionSeconds: browserPositionRef.current,
+    })) requestProgramRender();
+  }, [extendTick, localEpisode?.state, programManifest, requestProgramRender]);
 
   const maxSeekPosition = programManifest?.renderedFrontierSeconds ?? 0;
   const displayedPosition = Math.min(
