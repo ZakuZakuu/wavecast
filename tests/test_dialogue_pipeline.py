@@ -25,7 +25,9 @@ from wavecast.intelligence.story_material import StoryMaterialService
 from wavecast.models.dialogue import DialogueDraft, DialoguePurpose, DraftTurn
 from wavecast.models.story_material import StoryMaterial
 from wavecast.providers.config import ProviderSettings
+from wavecast.providers.doubao_voices import VOICE_COMBINATION_B
 from wavecast.providers.errors import ProviderTimeoutError
+from wavecast.providers.speech import SpeechRequest
 from wavecast.providers.usage import UsageLedger
 from wavecast.spoken_form import KnownTrack, has_unspeakable_script
 from wavecast.stations import StationId
@@ -86,11 +88,46 @@ def test_a_valid_draft_goes_straight_to_ready_with_one_model_call_and_no_check()
 
     assert outcome.status is DialogueStatus.READY and outcome.speakable
     assert outcome.calls == 1 and not outcome.model_checked  # honest: nothing judged it
-    assert [(t.speaker, t.text, t.fact_refs, t.tts_text) for t in outcome.block.turns] == [  # type: ignore[union-attr]
-        (t.speaker, t.text, t.fact_refs, None) for t in draft.turns
+    assert [(t.speaker, t.text, t.fact_refs) for t in outcome.block.turns] == [  # type: ignore[union-attr]
+        (t.speaker, t.text, t.fact_refs) for t in draft.turns
     ]
     assert writer.calls == [("DialogueDraft", "dialogue_writer")]  # no check, repair or re-check
     assert outcome.first_check_issues == [] and outcome.repaired_turns == []
+
+
+def test_english_only_dialogue_keeps_display_and_sends_word_pronunciation_to_speech(tmp_path: Path) -> None:
+    text = "那句话是 NO MUSIC, NO LIFE?，他把它反过来写成 NO LIFE NO MUSIC。"
+    draft = DialogueDraft(turns=[DraftTurn(speaker="A", text=text, fact_refs=[f(4)])])
+    pipeline, writer = build(draft)
+    outcome = run(pipeline)
+    block = outcome.block
+
+    assert block is not None and outcome.status is DialogueStatus.READY
+    assert block.turns[0].text == text and block.turns[0].fact_refs == [f(4)]
+    assert draft.turns[0].text == text
+    assert len(writer.calls) == 1
+    request = SpeechRequest.dialogue(block, list(VOICE_COMBINATION_B))
+    assert request.turns[0].text == (
+        "那句话是 No music, no life?，他把它反过来写成 No life no music。"
+    )
+
+    store = DialogueArtifactStore(LocalObjectStorageProvider(tmp_path / "store"))
+    asyncio.run(store.save("english-episode", outcome.to_record()))
+    restored = asyncio.run(store.load("english-episode", block.block_id))
+    assert restored is not None
+    assert restored.block.text == text
+    assert SpeechRequest.dialogue(restored.block, list(VOICE_COMBINATION_B)) == request
+
+
+def test_readable_dialogue_years_use_the_existing_spoken_form_without_changing_facts() -> None:
+    text = "这张专辑发行于2006年，是一张 R&B 专辑。"
+    draft = DialogueDraft(turns=[DraftTurn(speaker="A", text=text, fact_refs=[f(4)])])
+    pipeline, _ = build(draft)
+    block = run(pipeline).block
+
+    assert block is not None
+    assert block.text == text
+    assert block.turns[0].tts_text == "这张专辑发行于二零零六年，是一张 R&B 专辑。"
 
 
 def test_what_the_old_check_would_have_flagged_is_no_longer_judged() -> None:
@@ -423,7 +460,10 @@ def test_the_writer_cannot_supply_what_is_spoken() -> None:
 
     outcome = run(pipeline)
 
-    assert outcome.block is not None and all(t.tts_text is None for t in outcome.block.turns)
+    assert outcome.block is not None
+    # Only the application supplies pronunciation text; the model cannot supply a second script.
+    assert "二零零六年" in (outcome.block.turns[4].tts_text or "")
+    assert outcome.block.turns[4].text.startswith("2006年")
 
 
 @pytest.mark.parametrize("spoken_title", [None, "同一夜晚"])
