@@ -2822,10 +2822,10 @@ async def program_stream_playlist(episode_id: str) -> Response:
 async def episode_mixdown(episode_id: str, request: Request) -> MixdownArtifact:
     """Render the current canonical plan from already-owned local audio assets."""
     actor = principal(request)
-    await to_thread.run_sync(_reject_published_copy, episode_id)
     # The repository facade is synchronous (asyncio.run() under Postgres), so it must not run
-    # on the request loop.
+    # on the request loop. Ownership first: an unknown or foreign id is a 404, never a 409 or a crash.
     await to_thread.run_sync(owned, episode_id, actor)
+    await to_thread.run_sync(_reject_published_copy, episode_id)
     try:
         plan = await to_thread.run_sync(canonical_mix_plan_for_episode, episode_id, actor)
         with TemporaryDirectory(prefix="wavecast-mixdown-") as temporary:
