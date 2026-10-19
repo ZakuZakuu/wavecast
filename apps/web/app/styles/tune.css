@@ -1,58 +1,129 @@
-/* Tuner (Frost-Tune) and tuning-in (Frost-Tuning). */
+/* Tuner (调频改版) and tuning-in (Frost-Tuning). */
 .tune {
+  position: relative;
   height: 100%;
   padding: var(--page-top-gap) var(--gutter) calc(var(--nav-height) + 12px);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.tuner-card {
-  border-radius: var(--radius-tuner-card);
-  background: var(--mat-card);
-  backdrop-filter: var(--blur-card);
-  -webkit-backdrop-filter: var(--blur-card);
-  border: .5px solid var(--mat-card-border);
-  box-shadow: 0 10px 30px rgba(29, 29, 31, .06);
-  padding: 20px 20px 18px;
-  display: flex;
-  flex-direction: column;
   gap: 14px;
+  /* The station under the dial, for everything on the page that wears its colour. */
+  --deep: #8F6B25;
+  --deep-text: #4A3510;
+  --box-line: rgba(201, 160, 74, .7);
+  --box-ring: rgba(201, 160, 74, .16);
+  --box-shadow: rgba(201, 160, 74, .16);
+  --chip-bg: rgba(201, 160, 74, .16);
+  --chip-on: rgba(201, 160, 74, .32);
 }
+.tune .page-title { height: 40px; font-size: 34px; line-height: 40px; transition: opacity 240ms var(--ease-standard); }
+/* The 电台指南 grows over the title's line: the title steps aside. */
+.tune.is-guiding .page-title { opacity: 0; }
 
-.tuner-readout { display: flex; align-items: flex-end; justify-content: space-between; }
+/* ---------- The card: tint, words, pictures, dial ---------- */
+.tuner-card {
+  --card-h: 250px;
+  --poster: 188px;
+  position: relative;
+  flex: 0 0 auto;
+  height: var(--card-h);
+  margin-top: 22px;
+  border-radius: 28px;
+  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .7), 0 14px 34px var(--card-shadow, rgba(110, 110, 120, .22));
+  transition: box-shadow 400ms var(--ease-standard);
+  /* The pictures leave the card to the right and up. */
+  overflow: visible;
+}
+.face-tint { position: absolute; inset: 0; border-radius: inherit; }
+.face-gloss { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; }
+.face-gloss::before { content: ""; position: absolute; right: -40px; top: -50px; width: 240px; height: 240px; border-radius: 50%; background: rgba(255, 255, 255, .5); filter: blur(22px); }
+.face-dust { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; mix-blend-mode: multiply; pointer-events: none; }
+.face-dust path { fill: rgba(29, 29, 31, .4); }
+
+.face-words { position: absolute; inset: 0; pointer-events: none; }
+.face-pill, .face-name, .face-tagline {
+  position: absolute;
+  transition: left 440ms var(--ease-standard), top 440ms var(--ease-standard), opacity 240ms var(--ease-standard);
+}
+.face-pill {
+  left: 18px;
+  top: 18px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .62);
+  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .9);
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--deep);
+}
+.face-name {
+  left: 18px;
+  top: 50px;
+  font-size: clamp(27px, 8.2vw, 32px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -.02em;
+  white-space: nowrap;
+  color: var(--deep-text);
+}
+.face-tagline { left: 18px; top: 93px; width: 134px; margin: 0; font-size: 14px; line-height: 20px; text-wrap: balance; color: var(--deep); }
+.face-poster {
+  position: absolute;
+  right: 4px;
+  top: -36px;
+  z-index: 3;
+  width: var(--poster);
+  height: var(--poster);
+  border-radius: 24px;
+  overflow: hidden;
+  pointer-events: none;
+  will-change: transform;
+  transition: top 440ms var(--ease-standard);
+}
+.tuner-guide-link {
+  position: absolute;
+  left: 18px;
+  top: 140px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--deep);
+  transition: opacity 200ms var(--ease-standard);
+}
+.tuner-guide-link::before { content: ""; position: absolute; inset: -8px -10px; }
+
+.tuner-card.is-expanded .face-pill { left: 22px; top: 52px; }
+.tuner-card.is-expanded .face-name { left: 22px; top: 84px; }
+.tuner-card.is-expanded .face-tagline { left: 22px; top: 126px; opacity: 0; }
+.tuner-card.is-expanded .face-poster { top: -26px; }
+.tuner-card.is-expanded .tuner-guide-link { opacity: 0; pointer-events: none; }
+
+/* The readout of the 开播中 card. */
 .tuner-freq { display: flex; align-items: baseline; gap: 6px; }
 .tuner-fm { font-size: 15px; font-weight: 500; color: var(--ink-2); }
 .tuner-number { font-family: var(--font-numeric); font-size: 56px; font-weight: 200; line-height: 1; letter-spacing: -0.03em; }
 
-.signal { display: flex; align-items: flex-end; gap: 3px; height: 18px; padding-bottom: 8px; box-sizing: content-box; }
-.signal span {
-  width: 4px;
-  border-radius: 1.5px;
-  background: rgba(29, 29, 31, .15);
-  transition: background-color 50ms linear;
-}
-.signal span.is-lit { background: var(--ink); }
-
-.tuner-station { display: flex; flex-direction: column; gap: 4px; min-height: 52px; }
-.tuner-station p { margin: 0; font-size: 15px; color: var(--ink-2); }
-.tuner-name-row { display: flex; align-items: center; gap: 8px; }
-.tuner-name {
-  font-size: 20px;
-  font-weight: 600;
-  animation: fade-in-plain var(--dur-fast) var(--ease-standard) both;
-}
-.tuner-name.is-between { color: var(--ink-3); }
+/* ---------- The dial ---------- */
+.tune-dial { position: absolute; left: 14px; right: 14px; bottom: 14px; height: 64px; }
 .tuning-window {
   position: relative;
-  height: 96px;
-  border-radius: var(--radius-window);
-  background: rgba(226, 226, 232, .78);
-  border: .5px solid rgba(29, 29, 31, .08);
-  box-shadow:
-    inset 0 2px 6px rgba(29, 29, 31, .16),
-    inset 0 1px 1px rgba(29, 29, 31, .08),
-    0 1px 0 rgba(255, 255, 255, .95);
+  height: 64px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, .58);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .95), 0 4px 12px rgba(29, 29, 31, .04);
   overflow: hidden;
   cursor: grab;
   touch-action: none;
@@ -62,123 +133,172 @@
 .tuning-window.is-dragging { cursor: grabbing; }
 .tuning-window.is-static { cursor: default; width: 100%; }
 .tuning-window:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
-.tw-layer { position: absolute; left: 0; top: 0; height: 96px; width: 0; will-change: transform; }
+.tw-layer { position: absolute; left: 0; top: 0; height: 64px; width: 0; will-change: transform; }
 .tw-scale { position: absolute; left: 0; top: 0; }
 .tw-noise-layer { position: absolute; left: 0; top: 0; pointer-events: none; }
-.tw-minor { fill: none; stroke: rgba(29, 29, 31, .2); stroke-width: 1; stroke-linecap: round; }
-.tw-major { fill: none; stroke: rgba(29, 29, 31, .48); stroke-width: 1.2; stroke-linecap: round; }
+.tw-minor { fill: none; stroke: rgba(29, 29, 31, .22); stroke-width: 1; stroke-linecap: round; }
+.tw-major { fill: none; stroke: rgba(29, 29, 31, .46); stroke-width: 1.2; stroke-linecap: round; }
 .tw-noise { fill: rgba(29, 29, 31, .16); }
 .tw-label {
   position: absolute;
-  top: 0;
+  top: 8px;
   width: 80px;
-  height: 36px;
-  padding-top: 2px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  font-size: 13px;
+  gap: 5px;
+  font-size: 12px;
   white-space: nowrap;
-  color: var(--ink-3);
+  color: var(--ink-2);
   font-weight: 400;
   transition: color var(--dur-fast) var(--ease-standard);
 }
 .tw-label.is-active { color: var(--ink); font-weight: 600; }
-.tw-dot { width: 5px; height: 5px; border-radius: 50%; }
-.tw-number {
-  position: absolute;
-  top: 60px;
-  width: 32px;
-  text-align: center;
-  font-family: var(--font-numeric);
-  font-size: 13px;
-  font-weight: 300;
-  color: var(--ink-3);
-}
-.tw-fade { position: absolute; top: 0; bottom: 0; width: 48px; pointer-events: none; }
-.tw-fade-left { left: 0; background: linear-gradient(90deg, rgba(228, 228, 234, .96), rgba(228, 228, 234, 0)); }
-.tw-fade-right { right: 0; background: linear-gradient(270deg, rgba(228, 228, 234, .96), rgba(228, 228, 234, 0)); }
+.tw-dot { width: 6px; height: 6px; border-radius: 50%; }
+.tw-fade { position: absolute; top: 0; bottom: 0; width: 32px; pointer-events: none; }
+.tw-fade-left { left: 0; background: linear-gradient(90deg, rgba(255, 255, 255, .8), rgba(255, 255, 255, 0)); }
+.tw-fade-right { right: 0; background: linear-gradient(270deg, rgba(255, 255, 255, .8), rgba(255, 255, 255, 0)); }
+.tw-arrow { position: absolute; top: 22px; color: rgba(29, 29, 31, .3); pointer-events: none; display: grid; }
+.tw-arrow-left { left: 7px; }
+.tw-arrow-right { right: 7px; }
+/* The needle starts below the names, so that it does not cross the one it points at. */
 .tw-pointer {
   position: absolute;
-  top: 8px;
-  bottom: 8px;
+  top: 28px;
+  bottom: 6px;
   width: 2px;
   border-radius: 1px;
   background: var(--live);
   box-shadow: 0 0 8px var(--live-glow);
   pointer-events: none;
 }
-.tw-ghost { position: absolute; top: 8px; bottom: 8px; width: 2px; border-radius: 1px; background: rgba(255, 107, 44, .18); }
+.tw-pointer-glow { position: absolute; top: 32px; bottom: 6px; width: 6px; border-radius: 3px; background: rgba(255, 107, 44, .2); filter: blur(3px); pointer-events: none; }
+.tw-ghost { position: absolute; top: 28px; bottom: 6px; width: 2px; border-radius: 1px; background: rgba(255, 107, 44, .18); }
 
-.knurl {
+/* ---------- What to listen to: the box, the two choices, the buttons ---------- */
+.tune-compose { display: flex; flex-direction: column; gap: 10px; }
+.tune-ask { padding-left: 4px; font-size: 19px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+.tune-box {
   position: relative;
-  height: 26px;
-  border-radius: 13px;
-  background: linear-gradient(180deg, rgba(29, 29, 31, .07), rgba(255, 255, 255, .75) 50%, rgba(29, 29, 31, .09));
-  box-shadow: inset 0 0 0 .5px rgba(29, 29, 31, .08);
-  overflow: hidden;
-  cursor: grab;
-  touch-action: none;
-}
-.knurl svg { position: absolute; left: 0; top: 0; }
-.knurl path { fill: none; stroke: rgba(29, 29, 31, .16); stroke-width: 1; }
-
-.tune-input { display: flex; }
-.tune-input input {
-  width: 100%;
-  height: 56px;
-  border: .5px solid rgba(255, 255, 255, .8);
-  border-radius: var(--radius-input);
-  background: rgba(255, 255, 255, .72);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  padding: 0 18px;
-  font-size: 17px;
-  color: var(--ink);
-  outline: none;
-}
-.tune-input input::placeholder { color: var(--ink-3); }
-.tune-input input:focus-visible { box-shadow: 0 0 0 2px rgba(29, 29, 31, .25); }
-
-.segmented {
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding: 3px;
-  border-radius: var(--radius-cover);
-  background: var(--fill);
-}
-.segmented button {
-  min-height: 36px;
-  border: 0;
-  border-radius: var(--radius-segment);
-  background: transparent;
-  font-size: 15px;
-  color: var(--ink);
-  white-space: nowrap;
-  transition: transform var(--dur-fast) var(--ease-standard);
-  position: relative;
-  z-index: 1;
-}
-.segmented button::after { content: ""; position: absolute; inset: -4px 0; }
-.segmented button.is-selected { font-weight: 600; }
-.seg-thumb {
-  position: absolute;
-  left: 3px;
-  top: 3px;
-  bottom: 3px;
-  border-radius: var(--radius-segment);
+  height: 92px;
+  box-sizing: border-box;
+  border-radius: 22px;
   background: #FFFFFF;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, .1);
-  transition: transform var(--dur-base) var(--ease-standard);
+  border: 1.5px solid var(--box-line);
+  box-shadow: 0 0 0 5px var(--box-ring), 0 14px 30px var(--box-shadow);
+  transition: border-color 400ms var(--ease-standard), box-shadow 400ms var(--ease-standard);
 }
-@media (prefers-reduced-motion: reduce) {
-  .seg-thumb { transition: none; }
+.tune-box textarea {
+  display: block;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  resize: none;
+  outline: none;
+  padding: 14px 54px 12px 18px;
+  font: inherit;
+  font-size: 17px;
+  line-height: 28px;
+  color: var(--ink);
+  text-wrap: pretty;
 }
+.tune-box textarea::placeholder { color: #9A9AA0; opacity: 1; }
+.tune-box:focus-within { box-shadow: 0 0 0 5px var(--chip-on), 0 14px 30px var(--box-shadow); }
+.tune-shuffle {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--chip-bg);
+  color: var(--deep);
+  display: grid;
+  place-items: center;
+  transition: background-color 400ms var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
+}
+.tune-shuffle:active { transform: scale(.92); }
+.tune-shuffle::before { content: ""; position: absolute; inset: -6px; }
 
+.tune-chips { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.tune-chip {
+  height: 40px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--chip-bg);
+  color: var(--deep-text);
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px 0 10px;
+  transition: background-color 250ms var(--ease-standard);
+}
+.tune-chip[aria-expanded="true"] { background: var(--chip-on); }
+.tune-chip .chip-caret { opacity: .6; }
+
+.chip-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 20;
+  box-sizing: border-box;
+  padding: 6px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, .96);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  box-shadow: 0 18px 44px rgba(29, 29, 31, .18), 0 0 0 .5px rgba(60, 60, 67, .12);
+  animation: chip-menu-in 180ms var(--ease-enter) both;
+}
+.chip-menu::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  width: 14px;
+  height: 14px;
+  transform: rotate(45deg);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, .96);
+}
+.chip-menu-duration { left: 0; width: 200px; }
+.chip-menu-duration::before { left: 46px; }
+.chip-menu-host { right: 0; width: min(292px, 100%); }
+.chip-menu-host::before { right: 70px; }
+@keyframes chip-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+.chip-item {
+  position: relative;
+  width: 100%;
+  min-height: 46px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  text-align: left;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.chip-item[aria-checked="true"] { background: rgba(118, 118, 128, .1); }
+.chip-item-text { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; }
+.chip-item-label { font-size: 16px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+.chip-item-hint { font-size: 12px; line-height: 1.35; color: var(--ink-2); }
+.chip-item-tag { height: 18px; padding: 0 7px; border-radius: 9px; background: rgba(118, 118, 128, .14); color: var(--ink-2); font-size: 11px; font-weight: 500; display: inline-flex; align-items: center; }
+.chip-item-check { flex: 0 0 auto; opacity: 0; }
+.chip-item[aria-checked="true"] .chip-item-check { opacity: 1; }
+.chip-scrim { position: fixed; inset: 0; z-index: 19; background: transparent; }
+
+.tune-actions { display: flex; gap: 10px; }
 .on-air {
-  min-height: 54px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 56px;
   border: 0;
   border-radius: 999px;
   background: var(--ink);
@@ -189,47 +309,66 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
+  white-space: nowrap;
+  box-shadow: 0 10px 24px rgba(29, 29, 31, .18);
   transition: opacity var(--dur-base) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
 }
 .on-air:active:not(:disabled) { transform: scale(.96); transition-duration: var(--dur-base), var(--dur-instant); }
 .on-air:disabled { opacity: .3; }
 .on-air-light { width: 8px; height: 8px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 4px rgba(255, 107, 44, .25); }
 
+/* 准备完整版: a round button beside 开播, the same height, lighter. */
+.prepare-round {
+  position: relative;
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: .5px solid rgba(29, 29, 31, .16);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .72);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  transition: transform var(--dur-fast) var(--ease-standard), background-color 250ms var(--ease-standard), color 250ms var(--ease-standard);
+}
+.prepare-round:active:not(:disabled) { transform: scale(.94); }
+.prepare-round:disabled { color: var(--ink-2); background: rgba(118, 118, 128, .12); border-color: rgba(29, 29, 31, .1); }
+.prepare-round.is-done { color: #1E9E52; background: rgba(30, 158, 82, .14); border-color: rgba(30, 158, 82, .3); }
+.prepare-round.is-limited { opacity: .55; }
+.prepare-round .on-air-spinner { width: 20px; height: 20px; border-width: 2.5px; }
+.tune-note { margin: -6px 0 0; font-size: 13px; line-height: 1.4; color: var(--danger); text-align: center; }
+
+/* The fraction of the page under the buttons wears the station's colour too (so the black one is not alone on grey). */
+.tune-bottom-glow { filter: blur(70px); }
+
 /* Global mini player visible: reserve its height too. */
 .app-root:has(> .mini-player:not([hidden])) .tune {
   padding-bottom: calc(var(--nav-height) + var(--mini-height) + 8px + 12px);
 }
 
-/* Short screens (375×667) must fit without scrolling. */
-@media (max-height: 760px) {
+/* Shorter screens: the card keeps its size (its words, link and dial need it); the page's spacing and the box give. */
+@media (max-height: 780px) {
   .tune { padding-top: 24px; gap: 12px; }
-  .tuner-card { padding: 16px 18px 14px; gap: 10px; }
-  .tuner-number { font-size: 48px; }
-  .tuner-station { min-height: 46px; }
-  .tune-input input { height: 50px; }
-  .on-air { min-height: 50px; }
+  .tuner-card { margin-top: 14px; }
+  .tune-box { height: 80px; }
+  .tune-box textarea { padding-top: 10px; }
 }
-/* Short screens with the mini player: tighten so the CTA stays clear of it. */
+@media (max-height: 700px) {
+  .tune { padding-top: 16px; gap: 10px; overflow-y: auto; overscroll-behavior: contain; }
+  .tuner-card { margin-top: 10px; }
+  .tune .page-title { font-size: 28px; height: 34px; line-height: 34px; }
+  .tune-box { height: 72px; }
+  .tune-box textarea { font-size: 16px; line-height: 24px; }
+  .tune-chip { height: 38px; }
+  .on-air, .prepare-round { min-height: 48px; }
+  .prepare-round { width: 48px; height: 48px; }
+}
 @media (max-height: 760px) {
   .app-root:has(> .mini-player:not([hidden])) .tune { padding-top: 12px; gap: 10px; }
   .app-root:has(> .mini-player:not([hidden])) .tune .page-title { font-size: 28px; }
-  .app-root:has(> .mini-player:not([hidden])) .tuner-card { padding-top: 14px; padding-bottom: 12px; gap: 8px; }
-  .app-root:has(> .mini-player:not([hidden])) .tuner-number { font-size: 44px; }
-  .app-root:has(> .mini-player:not([hidden])) .tune-input input { height: 46px; }
-  .app-root:has(> .mini-player:not([hidden])) .on-air { min-height: 48px; }
-}
-/* Two buttons now: on the shortest screens tighten once more, and let the page scroll if it still does not fit. */
-@media (max-height: 700px) {
-  .tune { padding-top: 16px; gap: 10px; overflow-y: auto; overscroll-behavior: contain; }
-  .tuner-card { padding: 14px 18px 12px; }
-  .tuner-station { min-height: 40px; }
-  .tune-input input { height: 46px; }
-  .on-air { min-height: 46px; }
-}
-@media (max-height: 680px) {
-  .tune .page-title { font-size: 28px; }
-  .tuner-station p { font-size: 14px; }
-  .tuning-window { height: 88px; }
 }
 
 /* ---------- Tuning-in ---------- */
@@ -321,11 +460,12 @@
 .tune-glow { transition: background-color 600ms var(--ease-standard), opacity 600ms var(--ease-standard); }
 
 @media (prefers-reduced-motion: reduce) {
-  .signal span { transition-delay: 0ms !important; }
+  .chip-menu { animation: none; }
+  .face-pill, .face-name, .face-tagline, .face-poster { transition: none; }
 }
 
 /* Soft keyboard open (lib/soft-keyboard.ts): the app is pinned to the visible
-   area; the field and the CTA stay above the keyboard, the dial gives way. */
+   area; the box, the choices and the buttons stay above the keyboard, the card gives way. */
 html.kb-open,
 html.kb-open body,
 html.kb-open .app-root { height: var(--kb-height); }
@@ -338,43 +478,8 @@ html.kb-open .tune {
   justify-content: flex-end;
 }
 html.kb-open .tune .page-title,
-html.kb-open .tune .tuner-station p,
-html.kb-open .tune .knurl { display: none; }
-html.kb-open .tune .tuner-card {
-  flex: 0 1 auto;
-  min-height: 0;
-  overflow: hidden;
-  padding-top: 14px;
-  padding-bottom: 14px;
-  gap: 10px;
-}
-html.kb-open .tune .tuner-station { min-height: 0; }
-html.kb-open .tune .tuner-number { font-size: 44px; }
+html.kb-open .tune .tuner-card { display: none; }
 
-/* Dial window and knurl as one box, so the first-use guide can light them up together. */
-.tune-dial { display: flex; flex-direction: column; gap: 14px; }
-
-/* 准备完整版: as big as 开播, lighter, so the two read as equals with 开播 the stronger. */
-.on-air.is-secondary {
-  border: .5px solid rgba(29, 29, 31, .16);
-  background: rgba(255, 255, 255, .72);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  color: var(--ink);
-}
-.on-air.is-secondary { position: relative; overflow: hidden; }
-.on-air.is-secondary > * { position: relative; }
-.on-air.is-secondary:disabled { opacity: 1; }
-.on-air.is-secondary.is-done { color: #1E9E52; }
-.on-air-sweep {
-  position: absolute !important;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(255, 107, 44, .2), transparent);
-  animation: full-sweep 1.4s linear infinite;
-}
-@keyframes full-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
-.tune-note { margin: -6px 0 0; font-size: 13px; line-height: 1.4; color: var(--danger); text-align: center; }
-@media (prefers-reduced-motion: reduce) { .on-air-sweep { animation: none; } }
 .on-air-spinner {
   width: 18px;
   height: 18px;
@@ -385,3 +490,128 @@ html.kb-open .tune .tuner-number { font-size: 44px; }
   animation: full-spin 1s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) { .on-air-spinner { animation: none; } }
+
+/* ---------- The 电台指南: the tuner card, grown ---------- */
+.sg { position: absolute; inset: 0; z-index: 10; pointer-events: none; }
+.sg:not([aria-hidden="true"]) { pointer-events: auto; }
+/* Where the card ends up; measured, so that the card can move to it from the tuner card by left/top/width/height. */
+.sg-slot {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: calc(var(--safe-top) + clamp(34px, 7.6vh, 64px));
+  bottom: calc(var(--nav-height) + 12px);
+  pointer-events: none;
+}
+.app-root:has(> .mini-player:not([hidden])) .sg-slot { bottom: calc(var(--nav-height) + var(--mini-height) + 20px); }
+.sg-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(242, 242, 244, .88);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  opacity: 0;
+  transition: opacity 300ms var(--ease-standard);
+}
+.sg-scrim.is-on { opacity: 1; }
+.tuner-card.sg-card {
+  position: absolute;
+  margin: 0;
+  outline: none;
+  transition: left 460ms var(--ease-standard), top 460ms var(--ease-standard), width 460ms var(--ease-standard), height 460ms var(--ease-standard), border-radius 460ms var(--ease-standard), box-shadow 400ms var(--ease-standard);
+}
+.tuner-card.sg-card.is-expanded { border-radius: 32px; }
+
+.sg-fade { position: absolute; inset: 0; opacity: 0; transition: opacity 180ms var(--ease-standard); pointer-events: none; }
+.sg-fade.is-on { opacity: 1; transition: opacity 280ms var(--ease-standard) 180ms; pointer-events: auto; }
+.sg-body { position: absolute; left: 22px; right: 22px; top: 130px; bottom: 192px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.sg-body::-webkit-scrollbar { display: none; }
+.sg-stack { display: grid; }
+.sg-page { grid-area: 1 / 1; min-width: 0; display: flex; flex-direction: column; }
+.sg-give { min-height: 74px; width: 128px; display: flex; flex-direction: column; gap: 2px; padding-top: 2px; }
+.sg-give-label { font-size: 12px; line-height: 16px; color: var(--ink-2); }
+.sg-give-text { font-size: 15px; line-height: 20px; font-weight: 600; color: var(--deep-text); }
+.sg-pos { margin: 0; font-size: 16px; line-height: 24px; color: var(--deep-text); }
+.sg-host-row { margin-top: 10px; height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 0 0 auto; }
+.sg-host {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .58);
+  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .9);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.sg-host b { font-size: 14px; font-weight: 600; color: var(--deep-text); }
+.sg-bars { display: flex; align-items: flex-end; gap: 3px; height: 16px; }
+.sg-bars span { width: 5px; border-radius: 2.5px; }
+.sg-fill-note { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.sg-scenes { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; padding-bottom: 2px; }
+.sg-scene {
+  width: 100%;
+  min-height: 56px;
+  box-sizing: border-box;
+  padding: 0 14px 0 12px;
+  border: 0;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .8);
+  box-shadow: 0 1px 0 rgba(29, 29, 31, .03);
+  text-align: left;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+.sg-scene:active { transform: scale(.985); }
+.sg-tag { flex: 0 0 auto; width: 64px; height: 24px; border-radius: 12px; background: var(--chip-bg); color: var(--deep-text); font-size: 12px; font-weight: 600; display: grid; place-items: center; }
+.sg-text { min-width: 0; flex: 1 1 auto; font-size: 15px; line-height: 20px; }
+.sg-scene > svg { flex: 0 0 auto; color: var(--deep); }
+.sg-choose {
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  bottom: 130px;
+  height: 48px;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .8);
+  font-size: 16px;
+  font-weight: 600;
+  transition: background-color 300ms var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
+}
+.sg-choose:active { transform: scale(.97); }
+.sg-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 84px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+  pointer-events: none;
+}
+.sg-hint span { display: grid; }
+.sg-hint.is-first { width: fit-content; margin: 0 auto; padding: 0 14px; border-radius: 15px; background: var(--ink); color: #FFFFFF; font-weight: 500; box-shadow: 0 6px 16px rgba(29, 29, 31, .22); }
+.sg-hint.is-first span:first-child { animation: sg-nudge-left 1.6s ease-in-out infinite; }
+.sg-hint.is-first span:last-child { animation: sg-nudge-right 1.6s ease-in-out infinite; }
+@keyframes sg-nudge-left { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-4px); } }
+@keyframes sg-nudge-right { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(4px); } }
+@media (prefers-reduced-motion: reduce) {
+  .tuner-card.sg-card, .sg-scrim, .sg-fade, .sg-fade.is-on { transition: none; }
+  .sg-hint.is-first span { animation: none !important; }
+}
+/* Short screens: the page scrolls inside the card, and the buttons and the dial stay put. */
+@media (max-height: 700px) {
+  .sg-body { top: 124px; bottom: 164px; }
+  .sg-choose { bottom: 116px; height: 44px; }
+  .sg-hint { bottom: 82px; height: 26px; }
+}

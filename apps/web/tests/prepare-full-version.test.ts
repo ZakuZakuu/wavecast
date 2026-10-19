@@ -76,6 +76,17 @@ describe("准备完整版 from the tuner", () => {
     expect(text("creating")).toBe("爵士");
   });
 
+  it("sends the host the listener chose, and nothing when they did not", async () => {
+    const store = await fresh();
+    vi.mocked(api.prepareFullVersion).mockResolvedValue({ request_id: "r1" });
+    await act(async () => { await store.prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
+    expect(vi.mocked(api.prepareFullVersion).mock.calls.at(-1)?.[0]).not.toHaveProperty("host_mode");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+
+    await act(async () => { await store.prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT", "NONE"); });
+    expect(vi.mocked(api.prepareFullVersion).mock.calls.at(-1)?.[0]).toMatchObject({ host_mode: "NONE" });
+  });
+
   it("files the programme when the server has made it, and keeps waiting while it has not", async () => {
     const store = await fresh();
     vi.mocked(api.prepareFullVersion).mockResolvedValue({ request_id: "r1" });

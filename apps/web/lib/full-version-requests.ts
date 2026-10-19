@@ -5,7 +5,7 @@ import { friendlyError } from "./friendly-error";
 import { watchFullVersion } from "./full-versions";
 import { proposalRequest } from "./proposal-request";
 import { rememberProgrammeStation, type Station, type StationId } from "./stations";
-import type { DurationIntent } from "./types";
+import type { DurationIntent, HostMode } from "./types";
 import { recordCreatedProgram, recordRecentEpisode } from "./user-library";
 
 // 准备完整版 from the tuner: the server answers at once and makes the programme in the background, so
@@ -107,6 +107,7 @@ export async function prepareFullVersionFromTuner(
   target: Station,
   prompt: string,
   duration: DurationIntent,
+  hostMode?: HostMode | null,
 ): Promise<void> {
   if (starting) return;
   load();
@@ -115,7 +116,7 @@ export async function prepareFullVersionFromTuner(
   started = false;
   emit();
   try {
-    const { request_id: id } = await api.prepareFullVersion(proposalRequest(target, prompt, duration));
+    const { request_id: id } = await api.prepareFullVersion(proposalRequest(target, prompt, duration, hostMode));
     pending = [...pending, { id, title: prompt.trim() || target.name, stationId: target.id, since: Date.now() }];
     save();
     startedTimer = briefly(() => { started = true; }, () => { started = false; }, STARTED_MS, startedTimer);

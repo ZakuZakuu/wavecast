@@ -137,3 +137,29 @@ export const StopIcon = (p: IconProps) => (
 export const InfoIcon = (p: IconProps) => (
   <svg {...stroke(p)}><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5M12 8h.01" strokeWidth={2.4} /></svg>
 );
+
+export const ChevronRightIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><path d="m9.5 5.5 6.5 6.5-6.5 6.5" /></svg>
+);
+
+export const ClockIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
+);
+
+export const MicIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" /></svg>
+);
+
+/** A list with a plus: add to the queue (准备完整版 puts the programme in 节目库 for later). */
+export const QueuePlusIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><path d="M4 7h11M4 12h7M4 17h7M17.5 13.5v7M14 17h7" /></svg>
+);
+
+export const ShuffleIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>
+);
+
+/** An arrow up and to the left: this goes into the box above. */
+export const FillIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><path d="M17 17 7 7M7 17V7h10" /></svg>
+);

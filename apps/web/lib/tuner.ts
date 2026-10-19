@@ -1,10 +1,16 @@
 // Pure tuning-window maths (HANDOFF §6.1, Frost-Tune.dc.html).
 import { FREQ_MAX, FREQ_MIN, STATIONS, type Station } from "./stations";
 
-export const PX_PER_MHZ = 38.75;
+/**
+ * Pixels of dial travel per MHz. Stations sit about 4.3 MHz apart, so about 100px of drag moves from one to the next,
+ * and the dial window (about 320px wide) shows a station and a neighbour on each side.
+ */
+export const PX_PER_MHZ = 23;
 export const LOCK_RANGE = 0.15;
 export const BETWEEN_THRESHOLD = 0.3;
-export const TICK_BASELINE = 52;
+export const TICK_BASELINE = 56;
+/** Height of the dial window, and of its scale layer. */
+export const DIAL_HEIGHT = 64;
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -40,8 +46,6 @@ export type TunerReading = {
   distance: number;
   locked: boolean;
   between: boolean;
-  /** Lit signal bars, 1..5. */
-  bars: number;
   /** Static noise opacity, 0..1, rising continuously with distance from a station. */
   noise: number;
 };
@@ -56,9 +60,8 @@ export function readTuner(freq: number): TunerReading {
   const { station, distance } = nearestStation(freq);
   const locked = distance <= LOCK_RANGE + 1e-9;
   const between = distance > BETWEEN_THRESHOLD + 1e-9;
-  const bars = locked ? 5 : between ? 1 : 3;
   const noise = noiseForDistance(distance);
-  return { station, distance, locked, between, bars, noise };
+  return { station, distance, locked, between, noise };
 }
 
 /**
@@ -94,7 +97,7 @@ export function scaleTranslate(freq: number, windowWidth: number): number {
   return windowWidth / 2 - scaleX(freq);
 }
 
-/** The whole band drawn once (ticks + numbers), for a translateX-only layer. */
+/** The whole band drawn once (ticks only), for a translateX-only layer. */
 export function fullScaleGeometry(): TickGeometry {
   return tickGeometry((FREQ_MIN + FREQ_MAX) / 2, FULL_SCALE_WIDTH);
 }
@@ -102,64 +105,26 @@ export function fullScaleGeometry(): TickGeometry {
 export type TickGeometry = {
   minor: string;
   major: string;
-  numbers: Array<{ x: number; label: string }>;
 };
 
-/** Ticks every 0.2 MHz bottom-aligned at y=52: integer 18, half 12, other 7. */
+/** Ticks every 0.2 MHz bottom-aligned at TICK_BASELINE: integer 16, half 10, other 6. */
 export function tickGeometry(center: number, width: number): TickGeometry {
   const lo = center - width / 2 / PX_PER_MHZ;
   const hi = center + width / 2 / PX_PER_MHZ;
   let minor = "";
   let major = "";
-  const numbers: TickGeometry["numbers"] = [];
   for (let i = Math.ceil(lo * 5); i <= Math.floor(hi * 5); i += 1) {
     const f = i / 5;
     if (f < FREQ_MIN - 1e-9 || f > FREQ_MAX + 1e-9) continue;
     const x = r2((f - lo) * PX_PER_MHZ);
     const isInt = i % 5 === 0;
     const isHalf = !isInt && Math.abs(f * 2 - Math.round(f * 2)) < 0.001;
-    const h = isInt ? 18 : isHalf ? 12 : 7;
+    const h = isInt ? 16 : isHalf ? 10 : 6;
     const seg = "M" + x + " " + (TICK_BASELINE - h) + "V" + TICK_BASELINE;
-    if (isInt) {
-      major += seg;
-      if (i % 10 === 0) numbers.push({ x, label: String(Math.round(f)) });
-    } else {
-      minor += seg;
-    }
+    if (isInt) major += seg;
+    else minor += seg;
   }
-  return { minor, major, numbers };
-}
-
-export const KNURL_MAX_ANGLE = (70 * Math.PI) / 180;
-export const KNURL_LINES = 31;
-
-/**
- * Knurled dial: lines evenly spaced in angle within ±70°, projected onto the
- * cylinder (x = centre + R·sin a / sin 70°). `phase` (radians) rotates the
- * cylinder so the grooves travel while dragging.
- */
-export function knurlXs(width: number, phase = 0): number[] {
-  const step = (2 * KNURL_MAX_ANGLE) / (KNURL_LINES - 1);
-  const radius = width / 2 - 7;
-  const offset = ((phase % step) + step) % step;
-  const xs: number[] = [];
-  for (let k = -1; k <= KNURL_LINES; k += 1) {
-    const a = -KNURL_MAX_ANGLE + step * k + offset;
-    if (a < -KNURL_MAX_ANGLE - 1e-9 || a > KNURL_MAX_ANGLE + 1e-9) continue;
-    xs.push(r2(width / 2 + (radius * Math.sin(a)) / Math.sin(KNURL_MAX_ANGLE)));
-  }
-  return xs;
-}
-
-export function knurlPath(width: number, phase = 0): string {
-  return knurlXs(width, phase).map((x) => "M" + x + " 7V19").join("");
-}
-
-/** Radians of dial rotation per MHz tuned, so the grooves follow the drag. */
-export function knurlPhaseForFreq(freq: number, width: number): number {
-  const radius = width / 2 - 7;
-  // Arc length equals pointer travel at the centre of the cylinder.
-  return ((freq - FREQ_MIN) * PX_PER_MHZ * Math.sin(KNURL_MAX_ANGLE)) / Math.max(1, radius);
+  return { minor, major };
 }
 
 function rng(seed: number) {
@@ -173,7 +138,7 @@ function rng(seed: number) {
 }
 
 /** Static between-stations noise dots (deterministic). */
-export function noisePath(width: number, height = 96, count = 260, seed = 7): string {
+export function noisePath(width: number, height = DIAL_HEIGHT, count = 200, seed = 7): string {
   const R = rng(seed);
   let d = "";
   for (let k = 0; k < count; k += 1) {
@@ -201,4 +166,56 @@ export function wheelDeltaPx(
   if (event.deltaMode === 1) return delta * 16;
   if (event.deltaMode === 2) return delta * pageWidth;
   return delta;
+}
+
+/**
+ * How far (MHz) the tuner is from a station before its picture has left and its words have faded: half the usual
+ * spacing, so that at the half-way point between two stations neither is showing (and the card carries static).
+ */
+export const STATION_FADE_MHZ = 2.15;
+
+export type StationBlend = {
+  station: Station;
+  /** MHz from the dial's frequency, whichever side it is on. */
+  distance: number;
+  /** 1 on the station, 0 once `STATION_FADE_MHZ` away: opacity of its words. */
+  weight: number;
+  /** 0 on the station, 1 once `STATION_FADE_MHZ` away: how far its picture has flown off. */
+  away: number;
+};
+
+/** Every station's share of the card at this frequency; depends on the distance only, so dragging back replays it. */
+export function stationBlends(freq: number): StationBlend[] {
+  return STATIONS.map((station) => {
+    const distance = Math.abs(station.freq - freq);
+    const away = Math.min(1, distance / STATION_FADE_MHZ);
+    return { station, distance, weight: 1 - away, away };
+  });
+}
+
+/**
+ * The card's tint is the nearest station's, with the second nearest laid over it at `amount` (0 on a station,
+ * 0.5 half-way): the same colour from either side of the half-way point.
+ */
+export function tintBlend(freq: number): { base: Station; over: Station; amount: number } {
+  const ranked = [...STATIONS].sort((a, b) => Math.abs(a.freq - freq) - Math.abs(b.freq - freq));
+  const [base, over] = ranked;
+  const near = Math.abs(base.freq - freq);
+  const far = Math.abs(over.freq - freq);
+  return { base, over, amount: near + far === 0 ? 0 : near / (near + far) };
+}
+
+/** Where the poster is as it flies off (away 1) and back (away 0): right and a little up, turning and growing. */
+export function posterPose(away: number): { x: number; y: number; rotate: number; scale: number } {
+  const eased = Math.pow(Math.min(1, Math.max(0, away)), 2.2);
+  return { x: eased * 300, y: -eased * 70, rotate: 6 + eased * 10, scale: 1 + eased * 0.1 };
+}
+
+/**
+ * Static over the card's picture: none on a station, strongest half-way between two (as the picture has gone and
+ * the next has not arrived), so that tuning past a station reads as passing through the band.
+ */
+export function cardNoise(distance: number): number {
+  const t = Math.min(1, Math.max(0, (distance - 0.9) / (STATION_FADE_MHZ - 0.9)));
+  return 0.7 * t * t * (3 - 2 * t);
 }

@@ -101,6 +101,8 @@ export type ProposalGenerationRequest = {
   output_language?: "zh-CN" | "en-US" | "ja-JP";
   /** The station the listener tuned: sets the default hosting (夜里 means no host). */
   station?: "casual" | "crate" | "portrait" | "lineage" | "night";
+  /** Only when the listener touched the host control; it then outranks the station's default and the wording. */
+  host_mode?: HostMode;
 };
 
 type SegmentBase = {
