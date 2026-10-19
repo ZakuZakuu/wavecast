@@ -11,6 +11,7 @@ import { friendlyError } from "../../lib/friendly-error";
 import { chapterNumberOf, currentMusicSegment, estimatedTotalSeconds, nextMusicSegment, publishedNarration, trackLabel, voiceClipTiming } from "../../lib/now-playing";
 import { currentSentenceIndex, nowLineMode, splitSentences, type NowLineMode } from "../../lib/now-line";
 import { nextJumpStart, previousJumpStart } from "../../lib/playback";
+import { coverInFront, rememberCoverChoice, rememberedCoverChoice, songCoverSrc, type CoverFront } from "../../lib/song-cover";
 import { formatFreq, stationForProgramme } from "../../lib/stations";
 import { TypeCover } from "../cover/type-cover";
 import { Back15Icon, ChevronDownIcon, DownloadIcon, Forward15Icon, HeartIcon, MoreIcon, PauseIcon, PlayIcon, PrevIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
@@ -18,6 +19,7 @@ import { ShareSheet } from "../programme/share-sheet";
 import { MoreSheet } from "./more-sheet";
 import { NarrationSheet, type NarrationPassage } from "./narration-sheet";
 import { NowLine } from "./now-line";
+import { PlayerCover, useLoadedCover } from "./player-cover";
 import { authClient } from "../../lib/auth-client";
 import { useNowPlaying, usePlaybackControl, usePlaybackTarget } from "./playback-provider";
 import { useFavourite } from "../../lib/use-favourite";
@@ -128,6 +130,9 @@ export function PlayerScreen({
     [episode, np],
   );
   const { ref: coverAreaRef, size: coverSize } = useCoverSize(np?.cover?.titleBelow ? 26 : 0);
+  // The cover of the song under the playhead (during the host's words, the song just before).
+  const songCover = useLoadedCover(songCoverSrc(music?.cover_url));
+  const [coverChoice, setCoverChoice] = useState<CoverFront | null>(rememberedCoverChoice);
 
   if (!np || !episode) {
     // A start that failed before any episode existed still reports here.
@@ -165,6 +170,16 @@ export function PlayerScreen({
   const frontier = np.maxSeekPosition;
   const total = estimatedTotalSeconds(episode, manifest);
   const darkCover = cover ? isDarkColour(cover.bg) : true;
+  const coverFront = coverInFront({
+    choice: coverChoice,
+    songReady: songCover.current !== null,
+    started: np.browserPlaying || np.browserPosition > 0.5,
+  });
+  const toggleCover = () => {
+    const chosen: CoverFront = coverFront === "song" ? "show" : "song";
+    rememberCoverChoice(chosen);
+    setCoverChoice(chosen);
+  };
   const preparingHint = np.programBuffering || np.preparingAhead || !audioReady;
 
   const skip = () => {
@@ -231,11 +246,14 @@ export function PlayerScreen({
     : { primary: `继续收听：${episode.title ?? "WaveCast"}`, secondary: "" };
 
   return (
-    <main className="player" data-cover-tone={darkCover ? "dark" : "light"}>
+    <main className="player" data-cover-tone={darkCover ? "dark" : "light"} data-front={songCover.current ? coverFront : undefined}>
       {cover ? (
         <div className="player-backdrop" aria-hidden="true">
           <div className="player-backdrop-art">
             <TypeCover params={{ ...cover.params, bare: true }} radius={0} />
+            {songCover.current ? (
+              <img className="player-backdrop-song" src={songCover.current} alt="" referrerPolicy="no-referrer" />
+            ) : null}
           </div>
           <span className="player-backdrop-shade" />
         </div>
@@ -264,9 +282,7 @@ export function PlayerScreen({
 
         <div ref={coverAreaRef} className="player-cover-area">
           {cover ? (
-            <div className="player-cover" data-drag-handle style={{ width: coverSize, height: coverSize }}>
-              <TypeCover params={cover.params} radius={12} />
-            </div>
+            <PlayerCover params={cover.params} size={coverSize} song={songCover} front={coverFront} onToggle={toggleCover} />
           ) : null}
           {cover?.titleBelow ? <p className="player-programme-title" style={{ maxWidth: coverSize }}>{episode.title}</p> : null}
         </div>

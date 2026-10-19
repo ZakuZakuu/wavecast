@@ -264,6 +264,8 @@ class ResolvedTrack(BaseModel):
     # A readable Chinese title from the catalog or an explicitly cited research source.
     # The voice uses it for the original title; it is not part of the track's identity.
     spoken_title: str | None = Field(default=None, max_length=160)
+    # The album artwork the catalog lists for this recording; display only, never identity.
+    cover_url: str | None = Field(default=None, max_length=500)
     spoken_title_evidence_id: str | None = Field(default=None, max_length=160)
     # The album the catalog lists this recording on; research uses it to find (and share) what is
     # known about the work, never as part of the track's identity.

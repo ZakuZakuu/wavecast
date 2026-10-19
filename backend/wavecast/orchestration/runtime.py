@@ -86,6 +86,7 @@ class StagedProgressiveRuntimeAdapter:
             canonical_artist=opening_artist,
             canonical_title=opening_title,
             spoken_title=opening.spoken_title,
+            cover_url=opening.cover_url,
             duration_seconds=_known_seconds(opening),
         )
         from wavecast.assembly import LiveEpisodeAssemblyRequest, route_limits_for_duration
@@ -196,6 +197,7 @@ class StagedProgressiveRuntimeAdapter:
             canonical_artist=opening_artist,
             canonical_title=opening_title,
             spoken_title=opening.spoken_title,
+            cover_url=opening.cover_url,
             duration_seconds=_known_seconds(opening),
         )
         successor_track = ResolvedTrack(
@@ -203,6 +205,7 @@ class StagedProgressiveRuntimeAdapter:
             canonical_artist=successor_artist,
             canonical_title=successor_title,
             spoken_title=successor.spoken_title,
+            cover_url=successor.cover_url,
             duration_seconds=_known_seconds(successor),
         )
         chapter = ChapterPlan(
@@ -397,6 +400,7 @@ class StagedProgressiveRuntimeAdapter:
             canonical_artist=artist,
             canonical_title=title,
             spoken_title=opening.spoken_title,
+            cover_url=opening.cover_url,
             duration_seconds=_known_seconds(opening),
         )
         from wavecast.assembly import LiveEpisodeAssemblyRequest, route_limits_for_duration
@@ -441,6 +445,7 @@ class StagedProgressiveRuntimeAdapter:
                 canonical_artist=locked_artist,
                 canonical_title=locked_title,
                 spoken_title=locked_segment.spoken_title,
+                cover_url=locked_segment.cover_url,
                 duration_seconds=_known_seconds(locked_segment),
             )
         # Local import avoids a module-load cycle while keeping the

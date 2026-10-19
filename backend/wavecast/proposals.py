@@ -36,6 +36,7 @@ from wavecast.spoken_form import (
     SPOKEN_NAME_GUIDANCE,
     KnownTrack,
     catalog_album,
+    catalog_cover,
     chinese_title,
     spoken_artist,
     spoken_title,
@@ -91,6 +92,7 @@ class ProgramProposal(BaseModel):
     opening_track_ref: str = Field(min_length=1, max_length=500)
     opening_track_title: str = Field(min_length=1, max_length=300)
     opening_track_spoken_title: str | None = Field(default=None, max_length=160)
+    opening_track_cover_url: str | None = Field(default=None, max_length=500)
     opening_track_artist: str = Field(min_length=1, max_length=300)
     opening_track_duration_seconds: int | None = Field(default=None, gt=0)
     opening_track_timing_profile: TrackTimingProfile | None = None
@@ -120,6 +122,7 @@ class ProgramProposal(BaseModel):
             opening_track_ref=self.opening_track_ref,
             opening_track_title=self.opening_track_title,
             opening_track_spoken_title=self.opening_track_spoken_title,
+            opening_track_cover_url=self.opening_track_cover_url,
             opening_track_artist=self.opening_track_artist,
             opening_track_duration_seconds=self.opening_track_duration_seconds,
             opening_track_timing_profile=self.opening_track_timing_profile,
@@ -145,6 +148,7 @@ class ProgramProposal(BaseModel):
             opening_track_ref=seed.opening_track_ref,
             opening_track_title=seed.opening_track_title,
             opening_track_spoken_title=seed.opening_track_spoken_title,
+            opening_track_cover_url=seed.opening_track_cover_url,
             opening_track_artist=seed.opening_track_artist,
             opening_track_duration_seconds=seed.opening_track_duration_seconds,
             opening_track_timing_profile=seed.opening_track_timing_profile,
@@ -542,6 +546,7 @@ def shared_copy(original: ProgramProposal, *, new_id: str) -> ProgramProposal:
         opening_track_ref=original.opening_track_ref,
         opening_track_title=original.opening_track_title,
         opening_track_spoken_title=original.opening_track_spoken_title,
+        opening_track_cover_url=original.opening_track_cover_url,
         opening_track_artist=original.opening_track_artist,
         opening_track_duration_seconds=original.opening_track_duration_seconds,
         opening_track_timing_profile=original.opening_track_timing_profile,
@@ -729,6 +734,7 @@ class LLMProgramProposalGenerator:
                     opening_track_ref=resolved.track_ref,
                     opening_track_title=resolved.canonical_title,
                     opening_track_spoken_title=resolved.spoken_title,
+                    opening_track_cover_url=resolved.cover_url,
                     opening_track_artist=resolved.canonical_artist,
                     opening_track_duration_seconds=opening_duration_seconds,
                     opening_track_timing_profile=opening_timing_profile,
@@ -925,6 +931,7 @@ class LLMProgramProposalGenerator:
             canonical_artist=metadata.artist,
             canonical_title=metadata.title,
             spoken_title=chinese_title(metadata.metadata),
+            cover_url=catalog_cover(metadata.metadata),
             album=catalog_album(metadata.metadata),
         )
         timing_profile = await self.retrieval.registry.get_timing_profile(canonical)

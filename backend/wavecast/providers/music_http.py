@@ -180,6 +180,7 @@ class SidecarMusicProvider(MusicProvider):
         metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
         for key in (
             "album",
+            "cover_url",
             "title_zh",
             "translated_title",
             "tns",

@@ -164,7 +164,7 @@ from wavecast.route_work import (
     requested_work,
     scope_works,
 )
-from wavecast.spoken_form import catalog_album, chinese_title, with_spoken_track
+from wavecast.spoken_form import catalog_album, catalog_cover, chinese_title, with_spoken_track
 from wavecast.stations import StationId
 from wavecast.storage.assets import LocalObjectStorageProvider
 from wavecast.storage.dialogue_artifacts import DialogueArtifactStore
@@ -893,6 +893,7 @@ class LiveEpisodeAssemblyService:
                     canonical_title=alternative.title,
                     duration_seconds=alternative.duration_seconds or None,
                     spoken_title=chinese_title(alternative.metadata),
+                    cover_url=catalog_cover(alternative.metadata),
                     album=catalog_album(alternative.metadata),
                 )
                 if any(_same_song_identity(candidate, used) for used in used_tracks):
@@ -1305,6 +1306,7 @@ class LiveEpisodeAssemblyService:
                         canonical_title=alternative.title,
                         duration_seconds=alternative.duration_seconds or None,
                         spoken_title=chinese_title(alternative.metadata),
+                        cover_url=catalog_cover(alternative.metadata),
                     album=catalog_album(alternative.metadata),
                     )
                 else:

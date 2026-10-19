@@ -165,6 +165,16 @@ def catalog_album(metadata: Mapping[str, Any] | None) -> str | None:
     return text[:160] if text else None
 
 
+def catalog_cover(metadata: Mapping[str, Any] | None) -> str | None:
+    """The album artwork address the catalog supplies for a recording; https only."""
+
+    value = (metadata or {}).get("cover_url")
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text if text.startswith("https://") and len(text) <= 500 else None
+
+
 def spoken_artist(artist: str) -> str | None:
     """How to say an artist credit; unspeakable credits are dropped (at most two are named)."""
 

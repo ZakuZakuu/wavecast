@@ -164,6 +164,7 @@ class EpisodeComposer:
                     audio_source_url=asset.playback_url,
                     title=track.canonical_title,
                     spoken_title=track.spoken_title,
+                    cover_url=track.cover_url,
                     artist=track.canonical_artist,
                     asset_ref=asset.asset_id,
                     timing_profile=_asset_timing_profile(asset),

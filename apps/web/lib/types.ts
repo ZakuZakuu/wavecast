@@ -123,6 +123,8 @@ export type MusicSegment = SegmentBase & {
   kind: "MUSIC";
   track_ref: string;
   artist: string | null;
+  /** The album artwork the catalog lists for the recording (https); absent for older programmes. */
+  cover_url?: string | null;
 };
 
 export type NarrationSegment = SegmentBase & {

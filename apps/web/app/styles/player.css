@@ -50,7 +50,19 @@
   opacity: .9;
 }
 .player-backdrop-shade { position: absolute; inset: 0; background: rgba(28, 22, 14, .35); }
-.player[data-cover-tone="light"] .player-backdrop-shade { background: rgba(28, 22, 14, .55); }
+.player[data-cover-tone="light"] .player-backdrop-shade,
+.player[data-front="song"] .player-backdrop-shade { background: rgba(28, 22, 14, .55); }
+/* The song's cover colours the background while it is in front; the programme's stays underneath. */
+.player-backdrop-song {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 400ms var(--ease);
+}
+.player[data-front="song"] .player-backdrop-song { opacity: 1; }
 
 .player-body {
   position: relative;
@@ -140,6 +152,55 @@
   overflow: hidden;
   box-shadow: 0 22px 50px rgba(0, 0, 0, .35);
   view-transition-name: programme-cover;
+}
+/* Two covers of one size, the second a little up and to the right behind the first; tapping brings
+   the other forward. */
+.player-cover-stack { position: relative; flex: 0 0 auto; touch-action: none; }
+.player-cover-card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--card);
+  height: var(--card);
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, .08);
+  box-shadow: 0 22px 50px rgba(0, 0, 0, .35);
+  transition: transform 250ms var(--ease), z-index 0s 125ms;
+}
+.player-cover-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 14, 8, .34);
+  opacity: 0;
+  transition: opacity 250ms var(--ease);
+  pointer-events: none;
+}
+.player-cover-card.is-show { view-transition-name: programme-cover; }
+.player-cover-stack[data-front="song"] .is-song,
+.player-cover-stack[data-front="show"] .is-show { transform: translate(0, var(--off)); z-index: 2; }
+.player-cover-stack[data-front="song"] .is-show,
+.player-cover-stack[data-front="show"] .is-song { transform: translate(var(--off), 0); z-index: 1; }
+.player-cover-stack[data-front="song"] .is-show::after,
+.player-cover-stack[data-front="show"] .is-song::after { opacity: 1; }
+.player-song-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.player-song-image.is-entering { animation: player-song-in 400ms var(--ease) both; }
+@keyframes player-song-in { from { opacity: 0; } to { opacity: 1; } }
+.player-cover-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.player-cover-hit:focus-visible { outline: 2px solid rgba(255, 255, 255, .85); outline-offset: 3px; border-radius: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .player-cover-card, .player-cover-card::after, .player-backdrop-song { transition: none; }
+  .player-song-image.is-entering { animation: none; }
 }
 .player-cover-placeholder {
   width: min(296px, 100%);
