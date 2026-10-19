@@ -7,6 +7,7 @@ vi.mock("next/link", () => ({ default: (props: Record<string, unknown>) => creat
 vi.mock("../lib/api", () => ({
   api: {
     program: vi.fn(() => Promise.resolve(null)),
+    prepareFullVersion: vi.fn(),
     fullVersionStatuses: vi.fn(() => Promise.resolve([])),
     materialize: vi.fn(() => Promise.resolve({})),
   },
@@ -17,7 +18,10 @@ vi.mock("../components/cover/programme-cover-view", () => ({ ProgrammeCoverView:
 
 import { api } from "../lib/api";
 import { LibraryPage, UNDO_MS } from "../components/library/library-page";
+import { prepareFullVersionFromTuner } from "../lib/full-version-requests";
 import { readUnseenFullVersions, watchFullVersion } from "../lib/full-versions";
+import { STATIONS } from "../lib/stations";
+import type { LiveEpisode } from "../lib/types";
 import { isFavoriteSeed, readUserLibrary } from "../lib/user-library";
 
 let root: Root;
@@ -216,6 +220,21 @@ describe("LibraryPage", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(8100); });
       await click(".lib-retry");
       expect(host.querySelector(".undo-toast")?.textContent).toBe("最多同时准备 2 档");
+    });
+
+    it("holds a place at the top for a programme still being made, until the server has made it", async () => {
+      seed([]);
+      let finish: (value: LiveEpisode) => void = () => undefined;
+      vi.mocked(api.prepareFullVersion).mockReturnValue(new Promise((done) => { finish = done; }));
+      await mountAndSettle();
+      let started: Promise<void> = Promise.resolve();
+      await act(async () => { started = prepareFullVersionFromTuner(STATIONS[1], "夜里听爵士", "SHORT"); });
+      const making = host.querySelector(".lib-making");
+      expect(making?.textContent).toContain("夜里听爵士");
+      expect(making?.textContent).toContain("正在编排 · 可以离开");
+      expect(host.querySelector(".lib-list")?.firstElementChild).toBe(making);
+      await act(async () => { finish({ id: "e", seed_id: "s", title: "夜里听爵士", state: "MATERIALIZING", playback_position_seconds: 0, timeline_duration_seconds: 60, program_estimated_duration_seconds: 2100 } as LiveEpisode); await started; });
+      expect(host.querySelector(".lib-making")).toBeNull();
     });
 
     it("counts as seen once the library is opened", async () => {

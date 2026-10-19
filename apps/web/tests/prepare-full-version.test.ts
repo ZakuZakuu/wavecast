@@ -10,8 +10,8 @@ vi.mock("../lib/api", () => ({
 }));
 
 import { MoreSheet } from "../components/player/more-sheet";
-import { usePrepareFullVersion } from "../components/tune/use-prepare-full-version";
 import { api, ApiRequestError } from "../lib/api";
+import { prepareFullVersionFromTuner, useCreatingFullVersions, useFullVersionNotice } from "../lib/full-version-requests";
 import { readWatchedFullVersions } from "../lib/full-versions";
 import { STATIONS } from "../lib/stations";
 import type { LiveEpisode } from "../lib/types";
@@ -37,35 +37,66 @@ const episode = { id: "ep-1", seed_id: "proposal-1", title: "夜里的爵士", t
 
 describe("准备完整版 from the tuner", () => {
   function Probe() {
-    const { busy, notice, prepare } = usePrepareFullVersion();
+    const creating = useCreatingFullVersions();
+    const notice = useFullVersionNotice();
     return createElement("div", null,
-      createElement("button", { onClick: () => void prepare(STATIONS[0], "爵士", "SHORT") }, busy ? "busy" : "go"),
+      createElement("p", { id: "creating" }, creating.map((item) => item.title).join("|")),
       createElement("p", { id: "notice" }, notice ?? ""),
     );
   }
-  const press = () => act(async () => host.querySelector("button")!.click());
+  const text = (id: string) => host.querySelector(`#${id}`)?.textContent;
 
-  it("tunes without playing, files the programme in the library, waits for it, and says it started", async () => {
-    vi.mocked(api.prepareFullVersion).mockResolvedValue(episode);
+  it("shows at once that it is under way, files the programme when it is made, and waits for it", async () => {
+    let finish: (value: LiveEpisode) => void = () => undefined;
+    vi.mocked(api.prepareFullVersion).mockReturnValue(new Promise((done) => { finish = done; }));
     await render(createElement(Probe));
-    await press();
+
+    let started: Promise<void> = Promise.resolve();
+    await act(async () => { started = prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
+    expect(text("creating")).toBe("爵士");
+    expect(text("notice")).toBe("正在创建节目，可以离开");
     expect(api.prepareFullVersion).toHaveBeenCalledWith(expect.objectContaining({ prompt: "爵士", duration_intent: "SHORT", station: STATIONS[0].id }));
-    expect(host.querySelector("#notice")?.textContent).toBe("开始准备完整版");
+
+    // A second one is not started while the first is being made.
+    await act(async () => { await prepareFullVersionFromTuner(STATIONS[1], "别的", "SHORT"); });
+    expect(api.prepareFullVersion).toHaveBeenCalledTimes(1);
+
+    await act(async () => { finish(episode); await started; });
+    expect(text("creating")).toBe("");
+    expect(text("notice")).toBe("开始准备完整版");
     expect(readUserLibrary().createdProgramIds).toContain("proposal-1");
     expect(readUserLibrary().recentPrograms.map((item) => item.episodeId)).toEqual(["ep-1"]);
     expect(readWatchedFullVersions().map((item) => item.episodeId)).toEqual(["ep-1"]);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(3300); });
+    expect(text("notice")).toBe("");
+  });
+
+  it("is not tied to the page: it carries on and still says how it ended after the page is gone", async () => {
+    let finish: (value: LiveEpisode) => void = () => undefined;
+    vi.mocked(api.prepareFullVersion).mockReturnValue(new Promise((done) => { finish = done; }));
+    await render(createElement(Probe));
+    let started: Promise<void> = Promise.resolve();
+    await act(async () => { started = prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await render(createElement(Probe));
+    expect(text("creating")).toBe("爵士");
+    await act(async () => { finish(episode); await started; });
+    expect(text("notice")).toBe("开始准备完整版");
   });
 
   it("passes on the server's reason when it is Chinese (too many at once), and a plain one otherwise", async () => {
-    vi.mocked(api.prepareFullVersion).mockRejectedValueOnce(new ApiRequestError("最多同时准备 2 档", 429));
     await render(createElement(Probe));
-    await press();
-    expect(host.querySelector("#notice")?.textContent).toBe("最多同时准备 2 档");
+    vi.mocked(api.prepareFullVersion).mockRejectedValueOnce(new ApiRequestError("最多同时准备 2 档", 429));
+    await act(async () => { await prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
+    expect(text("notice")).toBe("最多同时准备 2 档");
+    expect(text("creating")).toBe("");
     expect(readWatchedFullVersions()).toEqual([]);
 
     vi.mocked(api.prepareFullVersion).mockRejectedValueOnce(new Error("Bad gateway"));
-    await press();
-    expect(host.querySelector("#notice")?.textContent).toBe("没有准备成功，可以再试一次");
+    await act(async () => { await prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
+    expect(text("notice")).toBe("没有准备成功，可以再试一次");
   });
 });
 

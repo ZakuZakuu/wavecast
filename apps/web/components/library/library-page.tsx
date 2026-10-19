@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { api, ApiRequestError } from "../../lib/api";
+import { useCreatingFullVersions } from "../../lib/full-version-requests";
 import { clearUnseenFullVersions, FULL_VERSION_POLL_MS, watchFullVersion } from "../../lib/full-versions";
 import { openPlayer } from "../../lib/player-nav";
 import { listeningStatus, progressRatio, recentEntries } from "../../lib/library-view";
@@ -337,6 +338,8 @@ export function LibraryPage() {
   const loadingMine = tab === "mine" && unfetched.length > 0;
 
   const visible = filter === "all" ? rows : rows.filter((row) => row.stationId === filter);
+  // Programmes being made for a 完整版 are not in the library yet; they hold a place at the top meanwhile.
+  const makingNow = useCreatingFullVersions().filter((item) => tab === "recent" && (filter === "all" || item.stationId === filter));
 
   return (
     <AppShell>
@@ -368,8 +371,25 @@ export function LibraryPage() {
           ))}
         </div>
 
-        {visible.length ? (
+        {visible.length || makingNow.length ? (
           <ul className="lib-list">
+            {makingNow.map((item) => (
+              <li key={item.id} className="lib-row lib-making" aria-label={`${item.title}，正在编排`}>
+                <div className="lib-link">
+                  <span className="lib-cover">
+                    <ProgrammeCoverView id={item.id} title={item.title} stationId={item.stationId} bare radius={0} />
+                  </span>
+                  <span className="lib-copy">
+                    <span className="lib-title-line"><span className="lib-title">{item.title}</span></span>
+                    <span className="lib-status">
+                      <span className="filter-dot" style={{ background: STATIONS.find((s) => s.id === item.stationId)?.light }} />
+                      正在编排 · 可以离开
+                    </span>
+                  </span>
+                  <span className="lib-making-ring" aria-hidden="true" />
+                </div>
+              </li>
+            ))}
             {visible.map((row) => (
               <SwipeRow
                 key={row.key}

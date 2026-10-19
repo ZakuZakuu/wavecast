@@ -10,6 +10,7 @@ import {
   subscribeFullVersions,
   type WatchedFullVersion,
 } from "../lib/full-versions";
+import { useFullVersionNotice } from "../lib/full-version-requests";
 import { openPlayer } from "../lib/player-nav";
 import { stationForProgramme } from "../lib/stations";
 import { ProgrammeCoverView } from "./cover/programme-cover-view";
@@ -64,7 +65,17 @@ export function FullVersionWatcher({ hidden }: { hidden: boolean }) {
     return () => window.clearTimeout(timer);
   }, [banner]);
 
-  if (!banner || hidden) return null;
+  const notice = useFullVersionNotice();
+  if (hidden) return null;
+  return (
+    <>
+      {notice ? <div className="undo-toast" role="status"><span>{notice}</span></div> : null}
+      {banner ? <FinishedBanner banner={banner} onDone={() => setBanner(null)} /> : null}
+    </>
+  );
+}
+
+function FinishedBanner({ banner, onDone }: { banner: WatchedFullVersion; onDone: () => void }) {
   return (
     <div className="full-banner" role="status">
       <span className="full-banner-cover">
@@ -83,7 +94,7 @@ export function FullVersionWatcher({ hidden }: { hidden: boolean }) {
       <button
         type="button"
         onClick={() => {
-          setBanner(null);
+          onDone();
           openPlayer(`/episode/materialized/${encodeURIComponent(banner.episodeId)}`);
         }}
       >

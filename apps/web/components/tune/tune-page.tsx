@@ -25,6 +25,7 @@ import {
 import type { DurationIntent } from "../../lib/types";
 import { AppShell } from "../app-shell";
 import { DownloadIcon } from "../icons";
+import { prepareFullVersionFromTuner, useCreatingFullVersions } from "../../lib/full-version-requests";
 import { Guide } from "../guide/guide";
 import { Segmented } from "../segmented";
 import { easeStandard, prefersReducedMotion, tween } from "../../lib/motion/easing";
@@ -32,7 +33,6 @@ import { VelocityTracker } from "../../lib/motion/gesture";
 import { animateSpring, type Cancel } from "../../lib/motion/spring";
 import { useSoftKeyboard } from "../../lib/soft-keyboard";
 import { TuningInScreen } from "./tuning-in";
-import { usePrepareFullVersion } from "./use-prepare-full-version";
 import { LAST_STATION_KEY, useTuneStart } from "./use-tune-start";
 import { TuningWindow, useElementWidth } from "./tuning-window";
 
@@ -45,7 +45,7 @@ const GLIDE_STOP_SPEED = 0.05;
 
 export function TunePage() {
   const tune = useTuneStart();
-  const full = usePrepareFullVersion();
+  const creating = useCreatingFullVersions().length > 0;
   useSoftKeyboard();
 
   const [freq, setFreqState] = useState(STATIONS[0].freq);
@@ -351,12 +351,11 @@ export function TunePage() {
           <span className="on-air-light" aria-hidden="true" />
           {cta}
         </button>
-        <button type="button" className="on-air is-secondary" data-guide="tune-prepare" disabled={between || full.busy} onClick={() => void full.prepare(station, text, duration)}>
-          {full.busy ? <span className="on-air-spinner" aria-hidden="true" /> : <DownloadIcon size={20} strokeWidth={2} />}
-          {full.busy ? "准备中" : "准备完整版"}
+        <button type="button" className="on-air is-secondary" data-guide="tune-prepare" disabled={between || creating} onClick={() => void prepareFullVersionFromTuner(station, text, duration)}>
+          {creating ? <span className="on-air-spinner" aria-hidden="true" /> : <DownloadIcon size={20} strokeWidth={2} />}
+          {creating ? "准备中" : "准备完整版"}
         </button>
       </div>
-      {full.notice ? <div className="undo-toast" role="status"><span>{full.notice}</span></div> : null}
 
       <Guide trigger="tune" />
       {tune.tuning ? (
