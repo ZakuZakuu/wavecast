@@ -3,11 +3,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { TypeCover } from "../components/cover/type-cover";
+import { rng } from "../lib/cover/build-cover";
 import { cssToStyle } from "../lib/cover/styled/css";
 import { composeCover } from "../lib/cover/styled";
 import { MOTIFS } from "../lib/cover/styled/motifs";
 import { COVER_MOTIFS, COVER_STYLES, type StyledCoverStyle } from "../lib/cover/styled/types";
 import { MOTIF_POOLS, selectCover, STYLE_FAVOURITES } from "../lib/cover/styled/select";
+import { nestedBlobRadii } from "../lib/cover/styled/shapes";
 import { LAYOUT_COUNTS } from "../lib/cover/styled/styles";
 import { emWidth, fitSize, splitTitle, titleBox } from "../lib/cover/styled/text";
 import { STATIONS, type StationId } from "../lib/stations";
@@ -156,5 +158,26 @@ describe("rendering", () => {
     const legacy = renderToStaticMarkup(createElement(TypeCover, { params: { stationId: "casual", seed: 3, heading: "夜里", pin: { style: "legacy" } } }));
     expect(legacy).toContain("夜里");
     expect(legacy).not.toContain("wc-cover-grain");
+  });
+});
+
+describe("contour lines", () => {
+  it("never touch: every ring keeps a gap to the one inside it, for any seed", () => {
+    const radii = [7, 12, 20, 28, 36, 44];
+    for (let seed = 1; seed <= 300; seed += 1) {
+      const rings = nestedBlobRadii(radii, rng(seed * 7919));
+      expect(rings).toHaveLength(radii.length);
+      for (let ring = 1; ring < rings.length; ring += 1) {
+        rings[ring].forEach((value, step) => {
+          expect(value - rings[ring - 1][step]).toBeGreaterThanOrEqual(3);
+        });
+      }
+    }
+  });
+
+  it("are still wobbly rather than circles", () => {
+    const rings = nestedBlobRadii([12, 20, 28], rng(5));
+    const spread = Math.max(...rings[2]) - Math.min(...rings[2]);
+    expect(spread).toBeGreaterThan(4);
   });
 });
