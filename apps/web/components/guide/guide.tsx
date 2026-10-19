@@ -14,7 +14,7 @@ import { Portal } from "../portal";
 const RETRY_MS = 400;
 /** How long a page waits for its guide to be able to start (a covering sheet, a card still loading). */
 const RETRY_LIMIT = 75;
-const SETTLE_MS: Record<GuideTrigger, number> = { home: 600, tune: 600, player: 2000 };
+const SETTLE_MS = 600;
 
 const find = (target: string) => document.querySelector<HTMLElement>(`[data-guide="${target}"]`);
 const present = (step: GuideStep) => !step.target || Boolean(find(step.target));
@@ -29,10 +29,9 @@ type Run = { def: GuideDef; steps: GuideStep[]; index: number };
 
 /**
  * First-use guide for one page (lib/guide). Waits until nothing else is open and the page has what it lights up,
- * then shows the page's unseen guide a step at a time. `ready`: the page has settled (taste sheet done, audio playing).
- * `maxOverlays`: overlays that may already be open (the player itself is one).
+ * then shows the page's unseen guide a step at a time. `ready`: the page has settled (taste sheet done).
  */
-export function Guide({ trigger, ready = true, maxOverlays = 0 }: { trigger: GuideTrigger; ready?: boolean; maxOverlays?: number }) {
+export function Guide({ trigger, ready = true }: { trigger: GuideTrigger; ready?: boolean }) {
   const router = useRouter();
   const { data, isPending } = authClient.useSession();
   return (
@@ -40,7 +39,6 @@ export function Guide({ trigger, ready = true, maxOverlays = 0 }: { trigger: Gui
       trigger={trigger}
       signedIn={isPending ? null : Boolean(data?.user)}
       ready={ready}
-      maxOverlays={maxOverlays}
       onNavigate={(href) => router.push(href)}
     />
   );
@@ -50,14 +48,12 @@ export function GuideRunner({
   trigger,
   signedIn,
   ready,
-  maxOverlays,
   onNavigate,
 }: {
   trigger: GuideTrigger;
   /** null while the session is still loading. */
   signedIn: boolean | null;
   ready: boolean;
-  maxOverlays: number;
   onNavigate: (href: string) => void;
 }) {
   const [run, setRun] = useState<Run | null>(null);
@@ -79,13 +75,13 @@ export function GuideRunner({
     let timer: number;
     const attempt = () => {
       attempts += 1;
-      const first = openOverlayCount() > maxOverlays ? -1 : nextShown(steps, 0);
+      const first = openOverlayCount() > 0 ? -1 : nextShown(steps, 0);
       if (first >= 0) setRun({ def, steps, index: first });
       else if (attempts < RETRY_LIMIT) timer = window.setTimeout(attempt, RETRY_MS);
     };
-    timer = window.setTimeout(attempt, SETTLE_MS[trigger]);
+    timer = window.setTimeout(attempt, SETTLE_MS);
     return () => window.clearTimeout(timer);
-  }, [run, ready, signedIn, trigger, maxOverlays]);
+  }, [run, ready, signedIn, trigger]);
 
   const end = useCallback((href?: string) => {
     setRun((current) => {

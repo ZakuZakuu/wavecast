@@ -15,7 +15,6 @@ import { formatFreq, stationForProgramme } from "../../lib/stations";
 import { TypeCover } from "../cover/type-cover";
 import { Back15Icon, ChevronDownIcon, Forward15Icon, MoreIcon, PauseIcon, PlayIcon, PrevIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
 import { ShareSheet } from "../programme/share-sheet";
-import { Guide } from "../guide/guide";
 import { MoreSheet } from "./more-sheet";
 import { NarrationSheet, type NarrationPassage } from "./narration-sheet";
 import { NowLine } from "./now-line";
@@ -245,7 +244,7 @@ export function PlayerScreen({
                 <span>{station.name}</span>
               </span>
             ) : <span />}
-            <button type="button" className="glass-icon" aria-label="更多操作" data-guide="player-more" onClick={() => setMoreOpen(true)}>
+            <button type="button" className="glass-icon" aria-label="更多操作" onClick={() => setMoreOpen(true)}>
               <MoreIcon size={20} />
             </button>
           </div>
@@ -317,10 +316,10 @@ export function PlayerScreen({
           </div>
 
           <div className="player-bottom">
-            <button type="button" className="bottom-tool" aria-label="主持词" data-guide="player-script" onClick={() => setNarrationOpen(true)}>
+            <button type="button" className="bottom-tool" aria-label="主持词" onClick={() => setNarrationOpen(true)}>
               <ScriptIcon size={22} strokeWidth={1.8} />
             </button>
-            <button type="button" className="bottom-tool" aria-label="节目路线" data-guide="player-route" onClick={() => setRouteOpen(true)}>
+            <button type="button" className="bottom-tool" aria-label="节目路线" onClick={() => setRouteOpen(true)}>
               <RouteIcon size={22} strokeWidth={1.8} />
             </button>
           </div>
@@ -330,9 +329,6 @@ export function PlayerScreen({
       {np.error ? <p className="player-error" role="alert">{friendlyError(np.error, "播放遇到了问题，可以稍后重试")}</p> : null}
 
       {toast.message ? <div className="toast" role="status">{toast.message}</div> : null}
-
-      {/* The programme is on air: the player itself is the one open overlay. */}
-      <Guide trigger="player" ready={audioReady && np.browserPlaying} maxOverlays={1} />
 
       <RouteSheet
         open={routeOpen}

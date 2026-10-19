@@ -38,9 +38,9 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-async function mount(props: { trigger?: GuideTrigger; signedIn?: boolean | null; ready?: boolean; maxOverlays?: number } = {}) {
+async function mount(props: { trigger?: GuideTrigger; signedIn?: boolean | null; ready?: boolean } = {}) {
   await act(async () => {
-    root.render(createElement(GuideRunner, { trigger: "home", signedIn: false, ready: true, maxOverlays: 0, onNavigate, ...props }));
+    root.render(createElement(GuideRunner, { trigger: "home", signedIn: false, ready: true, onNavigate, ...props }));
   });
   await act(async () => { await vi.advanceTimersByTimeAsync(700); });
 }
@@ -130,7 +130,7 @@ describe("GuideRunner", () => {
   it("does not start before the page is ready or the session is known", async () => {
     await mount({ ready: false });
     expect(card()).toBeNull();
-    await act(async () => root.render(createElement(GuideRunner, { trigger: "home", signedIn: null, ready: true, maxOverlays: 0, onNavigate })));
+    await act(async () => root.render(createElement(GuideRunner, { trigger: "home", signedIn: null, ready: true, onNavigate })));
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
     expect(card()).toBeNull();
   });

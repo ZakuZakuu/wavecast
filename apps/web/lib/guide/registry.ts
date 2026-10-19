@@ -1,7 +1,7 @@
 // First-use guides: a list of guides, each a few steps that light up a real element (`data-guide="…"`).
 // To guide a new feature, add a guide here (and mark its element); people who have seen the others
 // are shown only the new one. Rewording a guide that people should see again: raise its `version`.
-export type GuideTrigger = "home" | "tune" | "player";
+export type GuideTrigger = "home" | "tune";
 
 export type GuideStep = {
   /** `data-guide` value of the element to light up; none = a plain card over the dimmed screen. */
@@ -76,16 +76,6 @@ export const GUIDES: readonly GuideDef[] = [
       { target: "tune-input", text: "想听什么，在这里说：一个歌手、一首歌，或者你在做什么。" },
       { target: "tune-duration", text: "选一档的长度：短节目 30–40 分钟，长节目约 1 小时。" },
       { target: "tune-onair", side: "above", text: "对准了就点开播。音乐几秒内响起，后面的内容边听边准备。" },
-    ],
-  },
-  {
-    id: "player-intro",
-    version: 1,
-    trigger: "player",
-    steps: [
-      { target: "player-script", side: "above", text: "主持在说什么，点这里看全文。" },
-      { target: "player-route", side: "above", text: "看整档节目的路线，点一首可以直接跳过去。" },
-      { target: "player-more", text: "分享、保存整期节目，都在这里。" },
     ],
   },
 ];

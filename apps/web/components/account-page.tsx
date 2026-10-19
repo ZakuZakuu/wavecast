@@ -260,7 +260,7 @@ function AccountView({ name, email }: { name: string; email: string | null | und
             <button type="button" className="acct-row is-tall" onClick={replayGuides}>
               <span className="acct-row-copy">
                 <span className="acct-row-title">重看新手引导</span>
-                <span className="acct-row-sub">再看一遍首页、调频和播放页的提示</span>
+                <span className="acct-row-sub">再看一遍首页和调频页的提示</span>
               </span>
               <Chevron />
             </button>
