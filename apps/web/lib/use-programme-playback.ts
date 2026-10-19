@@ -17,6 +17,7 @@ import {
   mixPlanSignature,
   type MixPlan,
 } from "./mix-timeline";
+import { FULL_VERSION_POLL_MS, playerFullVersion, unwatchFullVersion, watchFullVersion } from "./full-versions";
 import { usePlayerStore } from "./player-store";
 import type {
   LiveEpisode,
@@ -548,6 +549,16 @@ export function useProgrammePlayback({
     return subscribeToEpisodeEvents(localEpisode.id, setEpisode);
   }, [localEpisode?.id, setEpisode]);
 
+  // The event stream can be cut by a proxy; while a 完整版 is being asked for, look at the episode too.
+  useEffect(() => {
+    if (saveState !== "preparing" || !localEpisode?.id) return;
+    const id = localEpisode.id;
+    const timer = window.setInterval(() => {
+      void api.get(id).then(setEpisode).catch(() => undefined);
+    }, FULL_VERSION_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [localEpisode?.id, saveState, setEpisode]);
+
   useEffect(() => {
     setExportState("idle");
     setExportArtifact(null);
@@ -725,9 +736,10 @@ export function useProgrammePlayback({
       current?.title ?? null,
       listenerPosition,
     )) {
-      throw new Error("完整节目还没有准备好");
+      throw new Error("完整版还没有准备好");
     }
     setSaved(true);
+    unwatchFullVersion(ready.id);
     setError(null);
     void api.recordUserEvent({
       event_type: "SAVE",
@@ -736,19 +748,21 @@ export function useProgrammePlayback({
     }).catch(() => undefined);
   }, [current?.title]);
 
-  const prepareAndSaveEpisode = useCallback(async () => {
-    if (!localEpisode || saveState !== "idle" || saved) return;
+  /** Asks for the 完整版 (the whole episode, prepared in the background); "limit" = too many at once. */
+  const prepareFullVersion = useCallback(async (): Promise<"started" | "ready" | "limit" | "failed"> => {
+    if (!localEpisode || saveState !== "idle" || saved) return "failed";
     if (localEpisode.state === "MATERIALIZED") {
       try {
         persistMaterializedEpisode(localEpisode);
+        return "ready";
       } catch (reason: unknown) {
         setError(
           reason instanceof Error
             ? reason.message
-            : "保存节目失败，请稍后重试",
+            : "完整版没有准备成功，请稍后重试",
         );
+        return "failed";
       }
-      return;
     }
 
     setSaveState("requesting");
@@ -759,17 +773,25 @@ export function useProgrammePlayback({
       if (requested.state === "MATERIALIZED") {
         persistMaterializedEpisode(requested);
         setSaveState("idle");
-        return;
+        return "ready";
       }
+      watchFullVersion({
+        episodeId: requested.id,
+        programmeId: requested.seed_id,
+        title: requested.title ?? "WaveCast 节目",
+      });
       setSaveState("preparing");
+      return "started";
     } catch (reason: unknown) {
       materializationRequestVersionRef.current = null;
       setSaveState("idle");
+      if (reason instanceof ApiRequestError && reason.status === 429) return "limit";
       setError(
         reason instanceof Error
           ? reason.message
-          : "完整节目生成请求失败，请稍后重试",
+          : "完整版没有准备成功，请稍后重试",
       );
+      return "failed";
     }
   }, [
     localEpisode,
@@ -787,7 +809,7 @@ export function useProgrammePlayback({
         requestProgramRender();
       } catch (reason: unknown) {
         setError(
-          reason instanceof Error ? reason.message : "保存节目失败，请稍后重试",
+          reason instanceof Error ? reason.message : "完整版没有准备成功，请稍后重试",
         );
       } finally {
         materializationRequestVersionRef.current = null;
@@ -804,7 +826,7 @@ export function useProgrammePlayback({
     ) {
       materializationRequestVersionRef.current = null;
       setSaveState("idle");
-      setError("完整节目生成失败，可以稍后重试");
+      setError("完整版没有准备成功，可以稍后重试");
     }
   }, [
     localEpisode,
@@ -986,6 +1008,8 @@ export function useProgrammePlayback({
     }
   }, []);
 
+  const fullVersion = playerFullVersion(localEpisode, saved, saveState !== "idle");
+
   return {
     localEpisode,
     error,
@@ -1014,7 +1038,8 @@ export function useProgrammePlayback({
     requestProgramRender,
     leaveEpisode,
     exportEpisode,
-    prepareAndSaveEpisode,
+    prepareFullVersion,
+    fullVersion,
     handleProgramPosition,
     handlePlayingChange,
     commitSeek,

@@ -38,6 +38,18 @@ type Phase =
     retryable?: boolean;
   };
 
+/** What the tuner asks the server for: the station's default topic when nothing was typed. */
+export function proposalRequest(target: Station, prompt: string, duration: DurationIntent) {
+  return {
+    prompt: prompt.trim().length >= 2 ? prompt.trim() : target.defaultTopic,
+    duration_intent: duration,
+    taste_context: tasteContext(readLocalTaste(), lessLikeThisArtists()),
+    // The interface is Chinese: the programme follows it, not the language of the keyword.
+    output_language: PROGRAMME_LANGUAGE,
+    station: target.id,
+  };
+}
+
 export type TuneStart = ReturnType<typeof useTuneStart>;
 
 /**
@@ -69,15 +81,7 @@ export function useTuneStart() {
       // Ignore.
     }
     try {
-      const batch = await api.createProgramProposals({
-        prompt: prompt.trim().length >= 2 ? prompt.trim() : target.defaultTopic,
-        duration_intent: duration,
-        count: 1,
-        taste_context: tasteContext(readLocalTaste(), lessLikeThisArtists()),
-        // The interface is Chinese: the programme follows it, not the language of the keyword.
-        output_language: PROGRAMME_LANGUAGE,
-        station: target.id,
-      });
+      const batch = await api.createProgramProposals({ ...proposalRequest(target, prompt, duration), count: 1 });
       if (requestRef.current !== requestId) return;
       const proposal = batch.proposals[0];
       if (!proposal) throw new Error("没有拿到节目方案");

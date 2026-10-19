@@ -218,6 +218,14 @@
   .app-root:has(> .mini-player:not([hidden])) .tune-input input { height: 46px; }
   .app-root:has(> .mini-player:not([hidden])) .on-air { min-height: 48px; }
 }
+/* Two buttons now: on the shortest screens tighten once more, and let the page scroll if it still does not fit. */
+@media (max-height: 700px) {
+  .tune { padding-top: 16px; gap: 10px; overflow-y: auto; overscroll-behavior: contain; }
+  .tuner-card { padding: 14px 18px 12px; }
+  .tuner-station { min-height: 40px; }
+  .tune-input input { height: 46px; }
+  .on-air { min-height: 46px; }
+}
 @media (max-height: 680px) {
   .tune .page-title { font-size: 28px; }
   .tuner-station p { font-size: 14px; }
@@ -345,3 +353,22 @@ html.kb-open .tune .tuner-number { font-size: 44px; }
 
 /* Dial window and knurl as one box, so the first-use guide can light them up together. */
 .tune-dial { display: flex; flex-direction: column; gap: 14px; }
+
+/* 准备完整版: as big as 开播, lighter, so the two read as equals with 开播 the stronger. */
+.on-air.is-secondary {
+  border: .5px solid rgba(29, 29, 31, .16);
+  background: rgba(255, 255, 255, .72);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  color: var(--ink);
+}
+.on-air-spinner {
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid rgba(29, 29, 31, .18);
+  border-top-color: var(--live);
+  animation: full-spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .on-air-spinner { animation: none; } }

@@ -4,12 +4,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock("next/link", () => ({ default: (props: Record<string, unknown>) => createElement("a", { ...props, href: String(props.href) }) }));
-vi.mock("../lib/api", () => ({ api: { program: vi.fn(() => Promise.resolve(null)) } }));
+vi.mock("../lib/api", () => ({
+  api: {
+    program: vi.fn(() => Promise.resolve(null)),
+    fullVersionStatuses: vi.fn(() => Promise.resolve([])),
+    materialize: vi.fn(() => Promise.resolve({})),
+  },
+  ApiRequestError: class extends Error { constructor(message: string, readonly status: number) { super(message); } },
+}));
 vi.mock("../lib/player-nav", () => ({ openPlayer: vi.fn() }));
 vi.mock("../components/cover/programme-cover-view", () => ({ ProgrammeCoverView: () => null }));
 
 import { api } from "../lib/api";
 import { LibraryPage, UNDO_MS } from "../components/library/library-page";
+import { readUnseenFullVersions, watchFullVersion } from "../lib/full-versions";
 import { isFavoriteSeed, readUserLibrary } from "../lib/user-library";
 
 let root: Root;
@@ -58,7 +66,7 @@ const collapsed = (rowSelector: string) => act(async () => {
 });
 
 describe("LibraryPage", () => {
-  it("lists recent and saved programmes with a heart on favourites and 整期 on whole episodes", async () => {
+  it("lists recent and saved programmes with a heart on favourites and 完整版 on whole episodes", async () => {
     seed(["a"]);
     await mount();
     expect(titles()).toEqual(["雨天开车", "睡前半小时"]);
@@ -66,7 +74,7 @@ describe("LibraryPage", () => {
     expect(rows[0].querySelector(".lib-heart")).not.toBeNull();
     expect(rows[0].querySelector(".lib-full")).toBeNull();
     expect(rows[1].querySelector(".lib-heart")).toBeNull();
-    expect(rows[1].querySelector(".lib-full")?.textContent).toBe("整期");
+    expect(rows[1].querySelector(".lib-full")?.textContent).toBe("完整版");
   });
 
   it("favourites and un-favourites from the swipe actions", async () => {
@@ -165,6 +173,58 @@ describe("LibraryPage", () => {
       await openMine();
       expect(titles()).toEqual([]);
       expect(host.querySelector(".lib-empty")?.textContent).toContain("在调频页开播的节目会留在这里");
+    });
+  });
+
+  describe("完整版", () => {
+    const fresh = (seedId: string, title: string) => ({ ...record(seedId, title, Date.now() - 1000), progressSeconds: 0 });
+    const status = (episodeId: string, state: "preparing" | "ready" | "failed", progress = 0) =>
+      ({ episode_id: episodeId, programme_id: episodeId.replace("-ep", ""), status: state, progress });
+    const seedRecents = (...records: ReturnType<typeof fresh>[]) => window.localStorage.setItem("wavecast-user-library-v1", JSON.stringify({
+      version: 1, favoriteSeedIds: [], recentPrograms: records, savedEpisodes: [], createdProgramIds: [],
+    }));
+    const mountAndSettle = async () => {
+      await mount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    };
+    const statusLines = () => [...host.querySelectorAll(".lib-status")].map((node) => node.textContent);
+
+    it("says how far a preparing one is, that a ready one is waiting, and that a failed one failed", async () => {
+      seedRecents(fresh("p", "在准备"), fresh("r", "备好了"), fresh("f", "没成功"));
+      vi.mocked(api.fullVersionStatuses).mockResolvedValue([status("p-ep", "preparing", 40), status("r-ep", "ready", 100), status("f-ep", "failed")]);
+      await mountAndSettle();
+      expect(statusLines()).toEqual(expect.arrayContaining(["准备中 · 40%", "已准备好 · 约 30 分钟完整版", "准备失败"]));
+      expect(host.querySelector('[aria-label="准备中 40%"]')).not.toBeNull();
+      expect(host.querySelector(".lib-prep-line")).not.toBeNull();
+      expect(host.querySelector(".lib-status.is-ready.is-new")).not.toBeNull();
+    });
+
+    it("lets a failed one be tried again, and says so when too many are being prepared", async () => {
+      seedRecents(fresh("f", "没成功"));
+      vi.mocked(api.fullVersionStatuses).mockResolvedValue([status("f-ep", "failed")]);
+      vi.mocked(api.materialize).mockClear();
+      await mountAndSettle();
+      vi.mocked(api.fullVersionStatuses).mockResolvedValue([status("f-ep", "preparing")]);
+      await click(".lib-retry");
+      expect(api.materialize).toHaveBeenCalledWith("f-ep");
+      expect(host.querySelector(".undo-toast")?.textContent).toBe("重新准备");
+      expect(statusLines()[0]).toBe("准备中 · 0%");
+
+      const { ApiRequestError } = await import("../lib/api");
+      vi.mocked(api.fullVersionStatuses).mockResolvedValue([status("f-ep", "failed")]);
+      vi.mocked(api.materialize).mockRejectedValueOnce(new ApiRequestError("最多同时准备 2 档", 429));
+      await act(async () => { await vi.advanceTimersByTimeAsync(8100); });
+      await click(".lib-retry");
+      expect(host.querySelector(".undo-toast")?.textContent).toBe("最多同时准备 2 档");
+    });
+
+    it("counts as seen once the library is opened", async () => {
+      watchFullVersion({ episodeId: "x-ep", programmeId: "x", title: "x" });
+      window.localStorage.setItem("wavecast-full-unseen-v1", JSON.stringify([{ episodeId: "x-ep", programmeId: "x", title: "x", since: Date.now() }]));
+      expect(readUnseenFullVersions()).toHaveLength(1);
+      seed([]);
+      await mountAndSettle();
+      expect(readUnseenFullVersions()).toHaveLength(0);
     });
   });
 });

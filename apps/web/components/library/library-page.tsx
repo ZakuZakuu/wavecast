@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { api } from "../../lib/api";
+import { api, ApiRequestError } from "../../lib/api";
+import { clearUnseenFullVersions, FULL_VERSION_POLL_MS, watchFullVersion } from "../../lib/full-versions";
 import { openPlayer } from "../../lib/player-nav";
 import { listeningStatus, progressRatio, recentEntries } from "../../lib/library-view";
 import { stationForProgramme, STATIONS, type StationId } from "../../lib/stations";
-import type { ProgramProposal } from "../../lib/types";
+import type { FullVersionItem, ProgramProposal } from "../../lib/types";
 import {
   emptyUserLibrary,
   isFavoriteSeed,
@@ -61,10 +62,14 @@ type Row = {
   status: string;
   ratio: number;
   href: string;
-  /** A heart on the row, and the 整期 mark (the whole episode is generated and saved). */
+  /** A heart on the row, and the 完整版 mark (the whole episode is generated). */
   favourite: boolean;
   full: boolean;
   actions: SwipeAction[];
+  /** The 完整版 of the row's episode: being prepared (with how far), failed (with a way to retry), or not asked for. */
+  fullState: FullVersionItem["status"];
+  prep: number;
+  retry?: () => void;
 };
 
 type Undo = { message: string; restore: () => void };
@@ -79,6 +84,17 @@ function ProgressRing({ ratio }: { ratio: number }) {
   );
 }
 
+/** 完整版 being prepared: an orange ring filling up, with the arrow of the download in it. */
+function PrepRing({ percent }: { percent: number }) {
+  return (
+    <span className="ring" style={{ background: `conic-gradient(var(--live) ${percent}%, rgba(29,29,31,.1) 0)` }} role="img" aria-label={`准备中 ${percent}%`}>
+      <span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14" /></svg>
+      </span>
+    </span>
+  );
+}
+
 export function LibraryPage() {
   const [tab, setTab] = useState<TabId>("recent");
   const [filter, setFilter] = useState<StationId | "all">("all");
@@ -88,6 +104,8 @@ export function LibraryPage() {
   // Favourites with no recent or saved record (hearted from a detail page): their programme, once fetched.
   const [favProgrammes, setFavProgrammes] = useState<Record<string, ProgramProposal>>({});
   const [undo, setUndo] = useState<Undo | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [fullStates, setFullStates] = useState<Record<string, FullVersionItem>>({});
   const [now, setNow] = useState(() => Date.now());
   // Only one row may show its delete button; any tap outside it closes it.
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -115,6 +133,49 @@ export function LibraryPage() {
     [library.recentPrograms, library.savedEpisodes],
   );
   const recentBySeed = useMemo(() => new Map(entries.map((entry) => [entry.record.seedId, entry])), [entries]);
+  // Opening 节目库 is how the listener "sees" what finished in the background.
+  useEffect(() => clearUnseenFullVersions(), []);
+
+  // Where each listed episode's 完整版 stands, asked again every few seconds while one is being prepared.
+  const episodeKey = entries.slice(0, 30).map(({ record }) => record.episodeId).join(",");
+  const anyPreparing = Object.values(fullStates).some((item) => item.status === "preparing");
+  useEffect(() => {
+    if (!episodeKey) return;
+    let active = true;
+    const load = () => {
+      void api.fullVersionStatuses(episodeKey.split(","))
+        .then((items) => {
+          if (active) setFullStates(Object.fromEntries(items.map((item) => [item.episode_id, item])));
+        })
+        .catch(() => undefined);
+    };
+    load();
+    if (!anyPreparing) return () => { active = false; };
+    const timer = window.setInterval(load, FULL_VERSION_POLL_MS);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [anyPreparing, episodeKey]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 3200);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  const retryFull = (episodeId: string, programmeId: string, title: string) => {
+    api.materialize(episodeId)
+      .then(() => {
+        watchFullVersion({ episodeId, programmeId, title });
+        setFullStates((current) => ({ ...current, [episodeId]: { episode_id: episodeId, programme_id: programmeId, status: "preparing", progress: 0 } }));
+        setNotice("重新准备");
+      })
+      .catch((reason: unknown) => {
+        setNotice(reason instanceof ApiRequestError && reason.status === 429 ? "最多同时准备 2 档" : "没有准备成功，可以再试一次");
+      });
+  };
+
   // A programme the listener has a record of needs no request; only the rest are asked for.
   const mineIds = useMemo(() => library.createdProgramIds.slice(0, 30), [library.createdProgramIds]);
   const unfetched = mineIds.filter((id) => !recentBySeed.has(id) && !(id in created));
@@ -199,17 +260,30 @@ export function LibraryPage() {
     const position = storedPosition(record.episodeId);
     const progress = position !== null ? Math.max(position, 0) : record.progressSeconds;
     const merged = { ...record, progressSeconds: progress };
+    const state = fullStates[record.episodeId];
+    const fullState = state?.status ?? "none";
+    // Preparing and failed say so instead of the listening status; a finished one that was never played says it is ready.
+    const status = fullState === "preparing"
+      ? `准备中 · ${state?.progress ?? 0}%`
+      : fullState === "failed"
+        ? "准备失败"
+        : fullState === "ready" && progress < 1
+          ? `已准备好 · 约 ${Math.max(1, Math.round(record.durationSeconds / 60))} 分钟`
+          : listeningStatus(merged, now);
     return {
       key: record.episodeId,
       programmeId: record.seedId,
       title: record.title,
       stationId: stationForProgramme(record.seedId, record.title).id,
-      status: listeningStatus(merged, now),
+      status,
       ratio: progressRatio(progress, record.durationSeconds),
       href: `/episode/materialized/${record.episodeId}`,
       favourite: favouriteSet.has(record.seedId),
-      full,
-      actions,
+      full: full || fullState === "ready",
+      actions: fullState === "failed" ? actions.filter((action) => action.tone === "danger") : actions,
+      fullState,
+      prep: state?.progress ?? 0,
+      retry: fullState === "failed" ? () => retryFull(record.episodeId, record.seedId, record.title) : undefined,
     };
   };
   const proposalRow = (programme: ProgramProposal, status: string, actions: SwipeAction[]): Row => ({
@@ -223,6 +297,8 @@ export function LibraryPage() {
     favourite: favouriteSet.has(programme.id),
     full: false,
     actions,
+    fullState: "none",
+    prep: 0,
   });
   const notStarted = (programme: ProgramProposal) =>
     `约 ${Math.max(1, Math.round(programme.estimated_duration_seconds / 60))} 分钟，还没听`;
@@ -257,7 +333,7 @@ export function LibraryPage() {
       const programme = created[id];
       return programme ? [proposalRow(programme, notStarted(programme), [])] : [];
     });
-  }, [created, entries, favProgrammes, favouriteSet, library.favoriteSeedIds, mineIds, now, recentBySeed, tab]);
+  }, [created, entries, favProgrammes, favouriteSet, fullStates, library.favoriteSeedIds, mineIds, now, recentBySeed, tab]);
   const loadingMine = tab === "mine" && unfetched.length > 0;
 
   const visible = filter === "all" ? rows : rows.filter((row) => row.stationId === filter);
@@ -317,21 +393,26 @@ export function LibraryPage() {
                         <span className="lib-title">{row.title}</span>
                         {row.favourite ? <HeartIcon className="lib-heart" size={14} strokeWidth={2} filled aria-label="已收藏" aria-hidden={false} role="img" /> : null}
                       </span>
-                      <span className="lib-status">
+                      <span className={`lib-status is-${row.fullState}${row.fullState === "ready" && row.status.startsWith("已准备好") ? " is-new" : ""}`}>
                         <span className="filter-dot" style={{ background: STATIONS.find((s) => s.id === row.stationId)?.light }} />
                         {row.status}
-                        {row.full ? <span className="lib-full">整期</span> : null}
+                        {row.full ? <span className="lib-full">完整版</span> : null}
                       </span>
                     </span>
                   </Link>
-                  <button
-                    type="button"
-                    className="ring-button"
-                    aria-label={`播放 ${row.title}`}
-                    onClick={() => openPlayer(row.href)}
-                  >
-                    <ProgressRing ratio={row.ratio} />
-                  </button>
+                  {row.retry ? (
+                    <button type="button" className="lib-retry" aria-label={`重试 ${row.title}`} onClick={row.retry}>重试</button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="ring-button"
+                      aria-label={`播放 ${row.title}`}
+                      onClick={() => openPlayer(row.href)}
+                    >
+                      {row.fullState === "preparing" ? <PrepRing percent={row.prep} /> : <ProgressRing ratio={row.ratio} />}
+                    </button>
+                  )}
+                  {row.fullState === "preparing" ? <span className="lib-prep-line" style={{ width: `${row.prep}%` }} aria-hidden="true" /> : null}
                 </div>
               </SwipeRow>
             ))}
@@ -351,6 +432,7 @@ export function LibraryPage() {
           </div>
         )}
       </div>
+      {notice && !undo ? <div className="undo-toast" role="status"><span>{notice}</span></div> : null}
       {undo ? (
         <div className="undo-toast" role="status">
           <span>{undo.message}</span>

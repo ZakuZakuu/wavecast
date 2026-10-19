@@ -228,7 +228,7 @@
   touch-action: pan-y;
   z-index: 1;
 }
-.lib-link { -webkit-user-drag: none; user-select: none; -webkit-user-select: none; height: 100%; padding: 0 14px; display: flex; align-items: center; gap: 12px; }
+.lib-link { position: relative; -webkit-user-drag: none; user-select: none; -webkit-user-select: none; height: 100%; padding: 0 14px; display: flex; align-items: center; gap: 12px; }
 .lib-main { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; gap: 12px; }
 .ring-button { flex: 0 0 auto; width: 44px; height: 44px; margin-right: -8px; padding: 0; border: 0; background: transparent; display: grid; place-items: center; }
 .lib-cover { width: 52px; height: 52px; flex: 0 0 auto; border-radius: 8px; overflow: hidden; }
@@ -238,6 +238,11 @@
 .lib-heart { flex: 0 0 auto; }
 .lib-full { flex: 0 0 auto; height: 18px; padding: 0 6px; border-radius: 9px; background: rgba(118, 118, 128, .14); color: var(--ink-2); display: grid; place-items: center; font-size: 11px; font-weight: 500; }
 .lib-status { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); white-space: nowrap; overflow: hidden; }
+/* 完整版 states of a row: being prepared (a thin line along the foot), ready and not heard yet, failed. */
+.lib-prep-line { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--live); }
+.lib-status.is-ready.is-new { color: #1E9E52; }
+.lib-status.is-failed { color: var(--danger); }
+.lib-retry { flex: 0 0 auto; height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--ink); color: #FFFFFF; font-size: 14px; font-weight: 600; }
 .ring { width: 30px; height: 30px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center; }
 .ring > span { width: 24px; height: 24px; border-radius: 50%; background: var(--surface); display: grid; place-items: center; color: var(--ink); }
 /* 撤销: a dark pill above the mini player after a delete or an un-favourite. */

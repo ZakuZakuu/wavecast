@@ -78,4 +78,13 @@ export const GUIDES: readonly GuideDef[] = [
       { target: "tune-onair", side: "above", text: "对准了就点开播。音乐几秒内响起，后面的内容边听边准备。" },
     ],
   },
+  {
+    id: "tune-full",
+    version: 1,
+    trigger: "tune",
+    requires: "tune-intro",
+    steps: [
+      { target: "tune-prepare", side: "above", text: "想先备好、晚点再听？点这里准备完整版，做好后会留在节目库。", primary: "知道了", skip: false },
+    ],
+  },
 ];

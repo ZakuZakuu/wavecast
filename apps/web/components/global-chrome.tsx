@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 
 import { isChromelessRoute, useImmersiveActive } from "../lib/chrome-visibility";
 import { BottomNav } from "./bottom-nav";
+import { FullVersionWatcher } from "./full-version-watcher";
 import { LoginNudge } from "./login-nudge";
 import { MiniPlayer } from "./mini-player";
 
@@ -20,6 +21,7 @@ export function GlobalChrome() {
     <>
       <MiniPlayer hidden={hidden} />
       <LoginNudge hidden={hidden} />
+      <FullVersionWatcher hidden={hidden} />
       {hidden ? null : <BottomNav />}
     </>
   );

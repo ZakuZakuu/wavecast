@@ -122,10 +122,6 @@ export const PlusSquareIcon = (p: IconProps) => (
   <svg {...stroke(p)}><rect x="4" y="4" width="16" height="16" rx="4" /><path d="M12 8.5v7M8.5 12h7" /></svg>
 );
 
-export const SaveIcon = (p: IconProps) => (
-  <svg {...stroke(p)}><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1z" /></svg>
-);
-
 export const DownloadIcon = (p: IconProps) => (
   <svg {...stroke(p)}><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14" /></svg>
 );

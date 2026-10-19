@@ -126,6 +126,16 @@ export type ProgramRenderManifest = {
 
 export type SourceNotice = { kind: "UNPLAYABLE_ARTISTS"; artists: string[] };
 
+/** Where the 完整版 (the whole episode, prepared in the background) of an episode stands. */
+export type FullVersionState = "none" | "preparing" | "ready" | "failed";
+export type FullVersionItem = {
+  episode_id: string;
+  programme_id: string;
+  status: FullVersionState;
+  /** 0–100, estimated from the audio finished so far. */
+  progress: number;
+};
+
 export type LiveEpisode = {
   id: string;
   seed_id: string;

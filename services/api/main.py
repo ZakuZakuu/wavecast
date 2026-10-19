@@ -28,6 +28,14 @@ from wavecast.assembly import create_episode_assembly_service
 from wavecast.auth import AuthPrincipal, AuthTokenError, JwksJWTVerifier
 from wavecast.catalog_pool import CatalogPoolBuilder, PoolBuildConfig
 from wavecast.deployment import audio_root_from_env, normalize_database_url
+from wavecast.full_version import (
+    MAX_CONCURRENT_FULL_VERSIONS,
+    FullVersionStatus,
+    full_version_progress,
+    full_version_status,
+    is_active,
+    is_stale,
+)
 from wavecast.materialization import (
     MusicSnapshotError,
     MusicSnapshotStore,
@@ -2924,6 +2932,50 @@ async def materialize_narration(
         raise HTTPException(status_code=502, detail=str(error)) from error
 
 
+def _owns_episode(episode: LiveEpisode, actor: AuthPrincipal) -> bool:
+    return episode.listener_id == actor.listener_id or (
+        actor.user_id is not None and episode.owner_user_id == actor.user_id
+    )
+
+
+def _full_versions_in_progress(actor: AuthPrincipal, *, excluding: str | None = None) -> int:
+    """How many 完整版 of this listener are being prepared right now (a stalled one is not)."""
+    now = datetime.now(UTC)
+    count = 0
+    for job in generation_job_repository.list_active(GenerationJobMode.FULL):
+        if job.episode_id == excluding or is_stale(job, now):
+            continue
+        try:
+            episode = orchestrator.get(job.episode_id)
+        except EpisodeRuntimeError:
+            continue
+        if _owns_episode(episode, actor):
+            count += 1
+    return count
+
+
+def _require_full_version_slot(actor: AuthPrincipal, *, excluding: str | None = None) -> None:
+    if _full_versions_in_progress(actor, excluding=excluding) >= MAX_CONCURRENT_FULL_VERSIONS:
+        raise HTTPException(
+            status_code=429,
+            detail=f"最多同时准备 {MAX_CONCURRENT_FULL_VERSIONS} 档",
+        )
+
+
+def _admit_full_version(episode_id: str, actor: AuthPrincipal) -> None:
+    """Allow a 完整版 request: one already being prepared is left alone, a stalled one starts over."""
+    episode = orchestrator.get(episode_id)
+    if episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+        return
+    job = generation_job_repository.get_for_episode(episode_id)
+    if is_active(job):
+        assert job is not None
+        if not is_stale(job, datetime.now(UTC)):
+            return
+        generation_job_repository.cancel_for_episode(episode_id)
+    _require_full_version_slot(actor, excluding=episode_id)
+
+
 @app.post(
     "/api/episodes/{episode_id}/materialize",
     response_model=LiveEpisode,
@@ -2932,6 +2984,7 @@ async def materialize_narration(
 async def materialize(episode_id: str, request: Request) -> LiveEpisode:
     actor = principal(request)
     await to_thread.run_sync(owned, episode_id, actor)
+    await to_thread.run_sync(_admit_full_version, episode_id, actor)
     episode = await to_thread.run_sync(orchestrator.request_full_generation, episode_id)
     if episode.state is EpisodeState.MATERIALIZED:
         return episode
@@ -2949,6 +3002,58 @@ async def materialize(episode_id: str, request: Request) -> LiveEpisode:
             detail="Full episode generation queue is unavailable",
         ) from error
     return episode
+
+
+@app.post("/api/full-versions", response_model=LiveEpisode, status_code=202)
+async def prepare_full_version(
+    body: ProposalGenerationRequest, request: Request,
+) -> LiveEpisode:
+    """Tune a programme and prepare its 完整版 without playing it (the listener is not there)."""
+    actor = principal(request)
+    # Before a proposal is made, so a refusal costs the listener none of their allowance.
+    await to_thread.run_sync(_require_full_version_slot, actor)
+    batch = await create_program_proposals(body.model_copy(update={"count": 1}), request)
+    started = await create_episode(batch.proposals[0].id, request)
+    await materialize(started.id, request)
+    await to_thread.run_sync(orchestrator.leave, started.id)
+    return await to_thread.run_sync(orchestrator.get, started.id)
+
+
+class FullVersionItem(BaseModel):
+    episode_id: str
+    programme_id: str
+    status: FullVersionStatus
+    progress: int
+
+
+@app.get("/api/full-versions", response_model=list[FullVersionItem])
+async def full_version_statuses(episode_ids: str, request: Request) -> list[FullVersionItem]:
+    """Where the 完整版 of each listed episode stands (episodes that are not the caller's are left out)."""
+    actor = principal(request)
+    wanted = [item for item in dict.fromkeys(episode_ids.split(",")) if item][:30]
+
+    def collect() -> list[FullVersionItem]:
+        now = datetime.now(UTC)
+        items: list[FullVersionItem] = []
+        for episode_id in wanted:
+            try:
+                episode = orchestrator.get(episode_id)
+            except EpisodeRuntimeError:
+                continue
+            if not _owns_episode(episode, actor):
+                continue
+            status = full_version_status(
+                episode, generation_job_repository.get_for_episode(episode_id), now,
+            )
+            items.append(FullVersionItem(
+                episode_id=episode_id,
+                programme_id=episode.seed_id,
+                status=status,
+                progress=full_version_progress(episode, status),
+            ))
+        return items
+
+    return await to_thread.run_sync(collect)
 
 
 @app.post("/api/episodes/{episode_id}/replan", response_model=LiveEpisode)

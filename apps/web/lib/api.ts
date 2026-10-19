@@ -1,5 +1,6 @@
 import { parseMixPlan, type MixPlan } from "./mix-timeline";
 import type {
+  FullVersionItem,
   UserEventInput,
   UserEventType,
   UserPreferences,
@@ -163,6 +164,14 @@ export const api = {
   pause: (id: string) => request<LiveEpisode>(`/episodes/${id}/pause`, { method: "POST" }),
   resume: (id: string) => request<LiveEpisode>(`/episodes/${id}/resume`, { method: "POST" }),
   materialize: (id: string) => request<LiveEpisode>(`/episodes/${id}/materialize`, { method: "POST" }),
+  /** Tune a programme and prepare its 完整版 without playing it. */
+  prepareFullVersion: (input: ProposalGenerationRequest) =>
+    request<LiveEpisode>("/full-versions", {
+      method: "POST",
+      body: JSON.stringify({ ...input, count: 1 }),
+    }),
+  fullVersionStatuses: (episodeIds: string[]) =>
+    request<FullVersionItem[]>(`/full-versions?episode_ids=${encodeURIComponent(episodeIds.join(","))}`),
   prepareMixdown: (id: string) => request<MixdownPreparationResult>(`/episodes/${id}/prepare-mixdown`, { method: "POST" }),
   mixdown: (id: string) => request<MixdownArtifact>(`/episodes/${id}/mixdown`, { method: "POST" }),
   myLibrary: (expectedUserId: string) => request<unknown>("/me/library", undefined, expectedUserId),

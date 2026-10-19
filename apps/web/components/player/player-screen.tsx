@@ -13,7 +13,7 @@ import { currentSentenceIndex, nowLineMode, splitSentences, type NowLineMode } f
 import { nextJumpStart, previousJumpStart } from "../../lib/playback";
 import { formatFreq, stationForProgramme } from "../../lib/stations";
 import { TypeCover } from "../cover/type-cover";
-import { Back15Icon, ChevronDownIcon, Forward15Icon, HeartIcon, MoreIcon, PauseIcon, PlayIcon, PrevIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
+import { Back15Icon, ChevronDownIcon, DownloadIcon, Forward15Icon, HeartIcon, MoreIcon, PauseIcon, PlayIcon, PrevIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
 import { ShareSheet } from "../programme/share-sheet";
 import { MoreSheet } from "./more-sheet";
 import { NarrationSheet, type NarrationPassage } from "./narration-sheet";
@@ -205,6 +205,13 @@ export function PlayerScreen({
     toast.show(artist ? `已记下，之后的推荐会少放 ${artist}` : "已记下", 3200);
   };
 
+  const prepareFull = () => {
+    void np.prepareFullVersion().then((result) => {
+      if (result === "started") toast.show("开始准备完整版", 2200, "top");
+      else if (result === "limit") toast.show("最多同时准备 2 档", 2200, "top");
+    });
+  };
+
   // Sentence timing follows the audio position, so seeks re-derive it.
   const sentenceIndexFor = (segmentId: string | null, list: string[]) => {
     if (!list.length) return -1;
@@ -270,9 +277,26 @@ export function PlayerScreen({
               <h1>{music?.title || episode.title || "WaveCast"}</h1>
               <p>{music?.artist ?? station?.name ?? ""}</p>
             </div>
-            <button type="button" className="glass-icon" aria-label="少放这类" onClick={lessLikeThis}>
-              <ThumbDownIcon size={20} strokeWidth={1.8} />
-            </button>
+            <div className="player-meta-actions">
+              <button
+                type="button"
+                className={`full-pill is-${np.fullVersion}`}
+                aria-label={np.fullVersion === "ready" ? "完整版已准备好" : np.fullVersion === "preparing" ? "完整版准备中" : "准备完整版"}
+                disabled={np.fullVersion !== "none"}
+               
+                onClick={prepareFull}
+              >
+                {np.fullVersion === "none" ? <DownloadIcon size={18} strokeWidth={2} /> : null}
+                {np.fullVersion === "preparing" ? <span className="full-pill-ring" aria-hidden="true" /> : null}
+                {np.fullVersion === "ready" ? (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+                ) : null}
+                {np.fullVersion === "preparing" ? "准备中" : "完整版"}
+              </button>
+              <button type="button" className="glass-icon" aria-label="少放这类" onClick={lessLikeThis}>
+                <ThumbDownIcon size={20} strokeWidth={1.8} />
+              </button>
+            </div>
           </div>
 
           <NowLine
@@ -357,6 +381,7 @@ export function PlayerScreen({
         playback={np}
         onDetail={() => router.push(`/program/${encodeURIComponent(episode.seed_id)}`)}
         onShare={() => setShareOpen(true)}
+        onPrepareFull={prepareFull}
       />
       <ShareSheet
         open={shareOpen}

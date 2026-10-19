@@ -658,3 +658,37 @@ button.route-track { min-height: 44px; margin: -6px 0; }
   .nl-caption-list { transition: none; }
   .nl-spinner { animation-duration: 2.4s; }
 }
+
+/* 完整版 button beside 少放这类: not asked for, being prepared (progress ring), done (solid). */
+.player-meta-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+.full-pill {
+  position: relative;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 0 14px 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--mat-on-art);
+  backdrop-filter: var(--blur-nav);
+  -webkit-backdrop-filter: var(--blur-nav);
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.full-pill:disabled { opacity: 1; }
+.full-pill.is-ready { background: #FFFFFF; color: var(--ink); }
+.full-pill-ring {
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .28);
+  border-top-color: #FFFFFF;
+  animation: full-spin 1s linear infinite;
+}
+@keyframes full-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .full-pill-ring { animation: none; } }

@@ -103,6 +103,10 @@ class GenerationJobRepository(Protocol):
 
     def get_for_episode(self, episode_id: str) -> GenerationJob | None: ...
 
+    def list_active(self, mode: GenerationJobMode) -> list[GenerationJob]:
+        """Jobs of one mode that are queued or running (the small set the queue is working on)."""
+        ...
+
 
 generation_jobs_table = Table(
     "episode_generation_jobs",
@@ -391,6 +395,15 @@ class InMemoryGenerationJobRepository:
             current = self._jobs_by_episode.get(episode_id)
             return current.model_copy(deep=True) if current is not None else None
 
+    def list_active(self, mode: GenerationJobMode) -> list[GenerationJob]:
+        with self._lock:
+            return [
+                job.model_copy(deep=True)
+                for job in self._jobs_by_episode.values()
+                if job.mode is mode
+                and job.status in {GenerationJobStatus.PENDING, GenerationJobStatus.RUNNING}
+            ]
+
     def _requeue_expired(self, now: datetime) -> None:
         for current in list(self._jobs_by_episode.values()):
             if (
@@ -533,6 +546,9 @@ class PostgresGenerationJobRepository:
             GenerationJob | None,
             self._run(self._get_for_episode(episode_id)),
         )
+
+    def list_active(self, mode: GenerationJobMode) -> list[GenerationJob]:
+        return cast(list[GenerationJob], self._run(self._list_active(mode)))
 
     def close(self) -> None:
         self._run(self.engine.dispose())
@@ -832,6 +848,20 @@ class PostgresGenerationJobRepository:
                 )
             ).mappings().first()
         return _job_from_mapping(row) if row is not None else None
+
+    async def _list_active(self, mode: GenerationJobMode) -> list[GenerationJob]:
+        async with self.engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    select(generation_jobs_table).where(
+                        generation_jobs_table.c.mode == mode.value,
+                        generation_jobs_table.c.status.in_(
+                            [GenerationJobStatus.PENDING.value, GenerationJobStatus.RUNNING.value]
+                        ),
+                    )
+                )
+            ).mappings().all()
+        return [_job_from_mapping(row) for row in rows]
 
     async def _locked_owned(
         self, connection: Any, job_id: str, worker_id: str

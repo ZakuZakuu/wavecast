@@ -2,7 +2,7 @@
 
 import { downloadFilename } from "../../lib/episode-export";
 import { BottomSheet } from "../bottom-sheet";
-import { DownloadIcon, InfoIcon, PlayIcon, SaveIcon, ShareIcon, StopIcon } from "../icons";
+import { DownloadIcon, InfoIcon, PlayIcon, ShareIcon, StopIcon } from "../icons";
 import type { NowPlaying } from "./playback-provider";
 
 /**
@@ -19,6 +19,7 @@ export function MoreSheet({
   playback,
   onDetail,
   onShare,
+  onPrepareFull,
 }: {
   open: boolean;
   onClose: () => void;
@@ -27,17 +28,17 @@ export function MoreSheet({
   onDetail: () => void;
   /** Open the share sheet for this programme. */
   onShare: () => void;
+  /** Ask for the 完整版 of this programme (the player says how it went). */
+  onPrepareFull: () => void;
 }) {
   const episode = playback.localEpisode;
   if (!episode) return null;
   const materialized = episode.state === "MATERIALIZED";
-  const saveLabel = playback.saveState !== "idle"
-    ? "正在准备完整节目…"
-    : playback.saved
-      ? "已保存到节目库"
-      : materialized
-        ? "保存到节目库"
-        : "准备完整节目并保存";
+  const fullLabel = playback.fullVersion === "ready"
+    ? "完整版已准备好"
+    : playback.fullVersion === "preparing"
+      ? "准备中…"
+      : "准备完整版";
 
   return (
     <BottomSheet open={open} onClose={onClose} label="更多操作" tone="light">
@@ -54,11 +55,11 @@ export function MoreSheet({
         <button
           type="button"
           className="action-row"
-          onClick={() => void playback.prepareAndSaveEpisode()}
-          disabled={playback.saveState !== "idle" || playback.saved}
+          onClick={() => { onClose(); onPrepareFull(); }}
+          disabled={playback.fullVersion !== "none"}
         >
-          <SaveIcon size={22} />
-          <span>{saveLabel}</span>
+          <DownloadIcon size={22} />
+          <span>{fullLabel}</span>
         </button>
         <button
           type="button"
@@ -67,18 +68,12 @@ export function MoreSheet({
           disabled={!materialized || playback.exportState === "preparing"}
         >
           <DownloadIcon size={22} />
-          <span>
-            {playback.exportState === "preparing" ? "正在准备导出…" : "导出 MP3"}
-            {!materialized ? <small>完整节目准备好后可以导出</small> : null}
-          </span>
+          <span>{playback.exportState === "preparing" ? "正在准备导出…" : "导出 MP3"}</span>
         </button>
         {episode.is_listener_active ? (
           <button type="button" className="action-row" onClick={() => { playback.leaveEpisode(); onClose(); }}>
             <StopIcon size={22} />
-            <span>
-              {episode.state === "MATERIALIZING" ? "停止播放（完整节目继续准备）" : "停止后台准备"}
-              <small>已经准备好的部分会保留</small>
-            </span>
+            <span>{playback.fullVersion === "preparing" ? "停止播放（完整版继续准备）" : "停止后台准备"}</span>
           </button>
         ) : (
           <button type="button" className="action-row" onClick={() => { playback.resumePlayback(); onClose(); }}>
