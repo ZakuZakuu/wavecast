@@ -25,7 +25,7 @@ from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.llm_factory import build_llm
 from wavecast.providers.usage import UsageLedger
-from wavecast.spoken_form import has_unspeakable_script, to_spoken_form
+from wavecast.spoken_form import to_spoken_form
 from wavecast.stations import StationId
 from wavecast.storage.dialogue_artifacts import CheckedDialogueRecord
 
@@ -130,17 +130,15 @@ class DialoguePipeline:
         block = self._to_block(draft, material, slot, outcome)
         if block is None:
             return outcome
-        # Only known names are converted; the authored lines and fact references stay intact.
-        # Refuse unresolved names here so the existing single-host fallback still has a turn.
+        # Apply the same deterministic spoken forms as the single-host path, including
+        # readable English and years. Display lines and fact references stay intact.
         for turn in block.turns:
-            if not has_unspeakable_script(turn.text):
-                continue
             spoken = to_spoken_form(turn.text, slot.tracks)
             if not spoken.ok:
                 outcome.reason = "unspeakable_script"
                 logger.info("dialogue_rejected slot_id=%s reason=unspeakable_script", slot.slot_id)
                 return outcome
-            turn.tts_text = spoken.tts_text
+            turn.tts_text = spoken.tts_text if spoken.tts_text != turn.text else None
         if block.duration_seconds > budget.hard_max_seconds:
             outcome.reason = "too_long"
             return outcome
