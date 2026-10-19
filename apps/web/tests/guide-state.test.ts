@@ -98,7 +98,10 @@ describe("guide registry", () => {
     };
     walk(join(__dirname, "..", "components"));
     const text = sources.join("\n");
-    const marked = (target: string) => text.includes(`data-guide="${target}"`) || text.includes(`guide="${target}"`) || text.includes(`guide: "${target}"`);
+    // A marker may be conditional, as in data-guide={first ? "target" : undefined}.
+    const marked = (target: string) =>
+      text.includes(`data-guide="${target}"`) || text.includes(`guide="${target}"`) || text.includes(`guide: "${target}"`)
+      || new RegExp(`data-guide=\\{[^}]*"${target}"`).test(text);
     for (const guide of GUIDES) {
       for (const step of guide.steps) if (step.target) expect(marked(step.target), `${guide.id}: ${step.target}`).toBe(true);
     }

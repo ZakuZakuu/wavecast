@@ -277,8 +277,11 @@ class PublicationService:
     # -- the mix -------------------------------------------------------------------------------
 
     async def _mix(self, publication_id: str) -> None:
+        # The repositories are synchronous (a Postgres one runs its own event loop), so every call
+        # leaves this loop for a worker thread.
+        repository = self.repository
         try:
-            current = self.repository.get(publication_id)
+            current = await asyncio.to_thread(repository.get, publication_id)
             if current is None or current.status is not PublicationStatus.MIXING:
                 return
             episode_id = current.source_episode_id
@@ -289,45 +292,49 @@ class PublicationService:
                 if free is not None and free < GENERATION_RESERVE_BYTES:
                     raise MixFailure("space")
                 manifest = await self._render(episode_id, self._step_seconds)
-                if self.repository.get(publication_id) is None:
-                    return
-                self.repository.update(
-                    publication_id, only_from={PublicationStatus.MIXING},
+                moved = await asyncio.to_thread(
+                    repository.update, publication_id,
+                    only_from={PublicationStatus.MIXING},
                     audio_seconds=manifest.rendered_frontier_seconds,
                 )
+                if moved is None:
+                    return  # stopped meanwhile (revoked, taken down, timed out)
                 if manifest.complete:
                     break
                 if manifest.rendered_frontier_seconds <= reached:
                     raise MixFailure("no_progress")
                 reached = manifest.rendered_frontier_seconds
             keys, total = await self._verify(episode_id, manifest)
-            _seconds, fingerprint = self._plan_info(episode_id)
-            published = self.repository.update(
-                publication_id, only_from={PublicationStatus.MIXING},
-                status=PublicationStatus.PUBLISHED, asset_keys=keys, bytes_total=total,
-                audio_seconds=manifest.rendered_frontier_seconds, plan_fingerprint=fingerprint,
-                error_code=None, published_at=self._now(), revoked_at=None,
+            _seconds, fingerprint = await asyncio.to_thread(self._plan_info, episode_id)
+            frontier = manifest.rendered_frontier_seconds
+            published = await asyncio.to_thread(
+                lambda: repository.update(
+                    publication_id, only_from={PublicationStatus.MIXING},
+                    status=PublicationStatus.PUBLISHED, asset_keys=keys, bytes_total=total,
+                    audio_seconds=frontier, plan_fingerprint=fingerprint,
+                    error_code=None, published_at=self._now(), revoked_at=None,
+                )
             )
             if published is not None:
-                self._mark_published(episode_id)
+                await asyncio.to_thread(self._mark_published, episode_id)
                 logger.info(
                     "publication_published publication_id=%s episode_id=%s bytes=%s seconds=%.1f",
-                    publication_id, episode_id, total, manifest.rendered_frontier_seconds,
+                    publication_id, episode_id, total, frontier,
                 )
         except MixFailure as failure:
             logger.warning("publication_mix_failed publication_id=%s code=%s", publication_id, failure.code)
-            self.repository.update(
-                publication_id, only_from={PublicationStatus.MIXING},
-                status=PublicationStatus.FAILED, error_code=failure.code,
-            )
+            await asyncio.to_thread(self._fail_mix, publication_id, failure.code)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - the owner is told it did not work; the log has the rest
             logger.exception("publication_mix_failed publication_id=%s", publication_id)
-            self.repository.update(
-                publication_id, only_from={PublicationStatus.MIXING},
-                status=PublicationStatus.FAILED, error_code=_error_code(error),
-            )
+            await asyncio.to_thread(self._fail_mix, publication_id, _error_code(error))
+
+    def _fail_mix(self, publication_id: str, code: str) -> None:
+        self.repository.update(
+            publication_id, only_from={PublicationStatus.MIXING},
+            status=PublicationStatus.FAILED, error_code=code,
+        )
 
     async def _verify(self, episode_id: str, manifest: ProgramRenderManifest) -> tuple[list[str], int]:
         """The audio is whole and unchanged: every chunk is stored and matches the hash it was
@@ -335,7 +342,7 @@ class PublicationService:
 
         if not manifest.complete or not manifest.chunks:
             raise MixFailure("incomplete")
-        plan_seconds, _fingerprint = self._plan_info(episode_id)
+        plan_seconds, _fingerprint = await asyncio.to_thread(self._plan_info, episode_id)
         if manifest.rendered_frontier_seconds + 0.5 < plan_seconds:
             raise MixFailure("short_audio")
         keys = [manifest_key(episode_id)]

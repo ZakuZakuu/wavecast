@@ -50,6 +50,26 @@ export type PublicProgramme = {
   opening_track_title: string;
   opening_track_artist: string;
   is_owner: boolean;
+  /** A published programme: listeners play the programme itself, nothing is made for them. */
+  published?: boolean;
+  /** The author has stopped sharing it; only people who already hold a copy can still open it. */
+  revoked?: boolean;
+};
+
+/** Where the publication of one of the listener's own programmes stands. */
+export type PublicationStatus = "preparing" | "mixing" | "published" | "revoked" | "failed";
+export type Visibility = "link" | "public";
+export type PublicationItem = {
+  id: string;
+  /** The ten digits of the short link (/p/<code>). */
+  code: string;
+  episode_id: string;
+  status: PublicationStatus;
+  visibility: Visibility;
+  /** The step being worked on: making the 完整版, mixing it, or nothing more to do. */
+  step: "full" | "mix" | "done";
+  progress: number;
+  error_code?: string | null;
 };
 
 export type ProgramProposalBatch = {

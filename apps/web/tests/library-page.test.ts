@@ -10,12 +10,18 @@ vi.mock("../lib/api", () => ({
     prepareFullVersion: vi.fn(),
     fullVersionRequests: vi.fn(() => Promise.resolve([])),
     fullVersionStatuses: vi.fn(() => Promise.resolve([])),
+    publicationStatuses: vi.fn(() => Promise.resolve([])),
+    revokePublication: vi.fn(),
+    restorePublication: vi.fn(),
+    publicProgramme: vi.fn(() => Promise.reject(new Error("404"))),
+    copyPublished: vi.fn(),
     materialize: vi.fn(() => Promise.resolve({})),
   },
   ApiRequestError: class extends Error { constructor(message: string, readonly status: number) { super(message); } },
 }));
 vi.mock("../lib/player-nav", () => ({ openPlayer: vi.fn() }));
 vi.mock("../components/cover/programme-cover-view", () => ({ ProgrammeCoverView: () => null }));
+vi.mock("../components/guide/guide", () => ({ Guide: () => null }));
 
 import { api } from "../lib/api";
 import { LibraryPage, UNDO_MS } from "../components/library/library-page";
@@ -70,15 +76,15 @@ const collapsed = (rowSelector: string) => act(async () => {
 });
 
 describe("LibraryPage", () => {
-  it("lists recent and saved programmes with a heart on favourites and 完整版 on whole episodes", async () => {
+  it("lists recent and saved programmes with a heart on favourites and a 完整版 mark on whole episodes", async () => {
     seed(["a"]);
     await mount();
     expect(titles()).toEqual(["雨天开车", "睡前半小时"]);
     const rows = [...host.querySelectorAll(".lib-row")];
     expect(rows[0].querySelector(".lib-heart")).not.toBeNull();
-    expect(rows[0].querySelector(".lib-full")).toBeNull();
+    expect(rows[0].querySelector(".lib-marker")).toBeNull();
     expect(rows[1].querySelector(".lib-heart")).toBeNull();
-    expect(rows[1].querySelector(".lib-full")?.textContent).toBe("完整版");
+    expect(rows[1].querySelector(".lib-marker")?.getAttribute("aria-label")).toBe("完整版");
   });
 
   it("favourites and un-favourites from the swipe actions", async () => {
@@ -197,7 +203,9 @@ describe("LibraryPage", () => {
       seedRecents(fresh("p", "在准备"), fresh("r", "备好了"), fresh("f", "没成功"));
       vi.mocked(api.fullVersionStatuses).mockResolvedValue([status("p-ep", "preparing", 40), status("r-ep", "ready", 100), status("f-ep", "failed")]);
       await mountAndSettle();
-      expect(statusLines()).toEqual(expect.arrayContaining(["准备中 · 40%", "已准备好 · 约 30 分钟完整版", "准备失败"]));
+      expect(statusLines()).toEqual(expect.arrayContaining(["准备中 · 40%", "已准备好 · 约 30 分钟", "准备失败"]));
+      // A new one says it is ready in words; it needs no mark.
+      expect(host.querySelector(".lib-status.is-ready.is-new .lib-marker")).toBeNull();
       expect(host.querySelector('[aria-label="准备中 40%"]')).not.toBeNull();
       expect(host.querySelector(".lib-prep-line")).not.toBeNull();
       expect(host.querySelector(".lib-status.is-ready.is-new")).not.toBeNull();
@@ -244,6 +252,52 @@ describe("LibraryPage", () => {
       seed([]);
       await mountAndSettle();
       expect(readUnseenFullVersions()).toHaveLength(0);
+    });
+  });
+
+  describe("shared programmes", () => {
+    const publication = (episodeId: string, status: "published" | "mixing" = "published") => ({
+      id: `pub-${"a".repeat(32)}`, code: "a".repeat(10), episode_id: episodeId, status, visibility: "link" as const,
+      step: status === "published" ? "done" as const : "mix" as const, progress: status === "published" ? 100 : 40,
+    });
+
+    it("marks a shared programme with one mark, which stands for 完整版 too", async () => {
+      seed([]);
+      vi.mocked(api.publicationStatuses).mockResolvedValue([publication("b-ep")]);
+      vi.mocked(api.fullVersionStatuses).mockResolvedValue([
+        { episode_id: "b-ep", programme_id: "b", status: "ready", progress: 100 },
+      ]);
+      await mount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      const row = host.querySelector('[data-row-key="b-ep"]')!;
+      expect([...row.querySelectorAll(".lib-marker")].map((node) => node.getAttribute("aria-label"))).toEqual(["已分享"]);
+      expect(host.querySelector('[data-row-key="a-ep"] .lib-marker')).toBeNull();
+    });
+
+    it("deleting a shared programme stops sharing it, and 撤销 brings the sharing back", async () => {
+      seed([]);
+      vi.mocked(api.publicationStatuses).mockResolvedValue([publication("b-ep")]);
+      vi.mocked(api.revokePublication).mockResolvedValue({ ...publication("b-ep"), status: "revoked" } as never);
+      vi.mocked(api.restorePublication).mockResolvedValue(publication("b-ep"));
+      await mount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+      await press("删除 睡前半小时");
+      await collapsed('[data-row-key="b-ep"]');
+      expect(api.revokePublication).toHaveBeenCalledWith(`pub-${"a".repeat(32)}`);
+      expect(host.querySelector(".undo-toast")?.textContent).toContain("已删除「睡前半小时」，分享也撤回了");
+
+      await click(".undo-toast button");
+      expect(api.restorePublication).toHaveBeenCalledWith(`pub-${"a".repeat(32)}`);
+      expect(titles()).toEqual(["雨天开车", "睡前半小时"]);
+    });
+
+    it("deleting a programme that is not shared does not touch any sharing", async () => {
+      seed([]);
+      vi.mocked(api.revokePublication).mockClear();
+      await mount();
+      await press("删除 雨天开车");
+      expect(api.revokePublication).not.toHaveBeenCalled();
     });
   });
 });

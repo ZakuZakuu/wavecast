@@ -391,6 +391,7 @@ export function PlayerScreen({
           title: episode.title ?? "WaveCast",
           coverTitle: episode.cover_title,
           stationId: np.station?.id ?? stationForProgramme(episode.seed_id, episode.title).id,
+          episodeId: episode.id,
         }}
       />
       <NarrationSheet

@@ -180,8 +180,8 @@ def test_a_listeners_copy_plays_the_fixed_feed_with_its_own_progress(client, rig
     assert client.get(f"/api/episodes/{made['episode_id']}", headers=owner).json()["program_playback_position_seconds"] == 0
     # Nobody else can read or drive it, and it cannot be re-mixed or exported.
     assert client.get(f"/api/episodes/{body['id']}", headers=other).status_code == 404
-    assert client.get(f"/api/episodes/{body['id']}/mix-plan", headers=visitor).status_code == 409
     assert client.post(f"/api/episodes/{body['id']}/mixdown", headers=visitor).status_code == 409
+    assert client.post(f"/api/episodes/{body['id']}/prepare-mixdown", headers=visitor).status_code == 409
     # Nothing was spent: no allowance, no generation job.
     assert api_module.generation_job_repository.get_for_episode(body["id"]) is None
 

@@ -1,7 +1,7 @@
 // First-use guides: a list of guides, each a few steps that light up a real element (`data-guide="…"`).
 // To guide a new feature, add a guide here (and mark its element); people who have seen the others
 // are shown only the new one. Rewording a guide that people should see again: raise its `version`.
-export type GuideTrigger = "home" | "tune";
+export type GuideTrigger = "home" | "tune" | "library";
 
 export type GuideStep = {
   /** `data-guide` value of the element to light up; none = a plain card over the dimmed screen. */
@@ -85,6 +85,19 @@ export const GUIDES: readonly GuideDef[] = [
     requires: "tune-intro",
     steps: [
       { target: "tune-prepare", side: "above", text: "想先备好、晚点再听？点这里准备完整版，做好后会留在节目库。", primary: "知道了", skip: false },
+    ],
+  },
+  {
+    id: "library-marks",
+    version: 1,
+    trigger: "library",
+    steps: [
+      {
+        target: "lib-marker",
+        text: "灰色打钩的圆圈表示完整版，分享图标表示正在分享，分享的节目一定是完整版。",
+        primary: "知道了",
+        skip: false,
+      },
     ],
   },
 ];

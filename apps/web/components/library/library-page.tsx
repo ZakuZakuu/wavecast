@@ -6,10 +6,11 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiRequestError } from "../../lib/api";
 import { useCreatingFullVersions } from "../../lib/full-version-requests";
 import { clearUnseenFullVersions, FULL_VERSION_POLL_MS, watchFullVersion } from "../../lib/full-versions";
+import { isBeingMade } from "../../lib/publications";
 import { openPlayer } from "../../lib/player-nav";
 import { listeningStatus, progressRatio, recentEntries } from "../../lib/library-view";
 import { stationForProgramme, STATIONS, type StationId } from "../../lib/stations";
-import type { FullVersionItem, ProgramProposal } from "../../lib/types";
+import type { FullVersionItem, ProgramProposal, PublicationItem } from "../../lib/types";
 import {
   emptyUserLibrary,
   isFavoriteSeed,
@@ -25,6 +26,7 @@ import {
   type UserLibraryState,
 } from "../../lib/user-library";
 import { AppShell } from "../app-shell";
+import { Guide } from "../guide/guide";
 import { HeartIcon } from "../icons";
 import { Segmented } from "../segmented";
 import { ProgrammeCoverView } from "../cover/programme-cover-view";
@@ -63,9 +65,15 @@ type Row = {
   status: string;
   ratio: number;
   href: string;
-  /** A heart on the row, and the 完整版 mark (the whole episode is generated). */
+  /** A heart on the row. */
   favourite: boolean;
-  full: boolean;
+  /**
+   * The one mark after the status: shared (a published programme is a 完整版 by definition), else
+   * 完整版 for one that has been listened to; a new one says "已准备好" and needs none.
+   */
+  marker: "shared" | "full" | null;
+  /** Plays the row when it has no episode to open (a favourited published programme not yet played). */
+  play?: () => void;
   actions: SwipeAction[];
   /** The 完整版 of the row's episode: being prepared (with how far), failed (with a way to retry), or not asked for. */
   fullState: FullVersionItem["status"];
@@ -75,6 +83,19 @@ type Row = {
 
 type Undo = { message: string; restore: () => void };
 
+/** What a row needs of a programme that has no listening record. */
+type ProgrammeSummary = Pick<ProgramProposal, "id" | "title" | "estimated_duration_seconds">;
+
+/** A programme the listener has not played: a proposal of their own, or a published one. */
+function programmeSummary(id: string): Promise<ProgrammeSummary | null> {
+  if (id.startsWith("pub-")) {
+    return api.publicProgramme(id)
+      .then((programme) => ({ id: programme.id, title: programme.title, estimated_duration_seconds: programme.estimated_duration_seconds }))
+      .catch(() => null);
+  }
+  return api.program(id).catch(() => null);
+}
+
 function ProgressRing({ ratio }: { ratio: number }) {
   return (
     <span className="ring" style={{ background: `conic-gradient(var(--ink) ${ratio * 100}%, rgba(29,29,31,.1) 0)` }} aria-hidden="true">
@@ -82,6 +103,21 @@ function ProgressRing({ ratio }: { ratio: number }) {
         <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z" /></svg>
       </span>
     </span>
+  );
+}
+
+/** What a row is besides its status: shared with others, or a 完整版. Never both: shared says it all. */
+function RowMarker({ kind, guide }: { kind: "shared" | "full"; guide: boolean }) {
+  return kind === "shared" ? (
+    <svg className="lib-marker" data-guide={guide ? "lib-marker" : undefined} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="已分享">
+      <path d="M12 15.5V4m0 0L8 8m4-4 4 4" />
+      <path d="M6 11.5H5.5a1.5 1.5 0 0 0-1.5 1.5v5.5a1.5 1.5 0 0 0 1.5 1.5h13a1.5 1.5 0 0 0 1.5-1.5V13a1.5 1.5 0 0 0-1.5-1.5H18" />
+    </svg>
+  ) : (
+    <svg className="lib-marker" data-guide={guide ? "lib-marker" : undefined} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="完整版">
+      <circle cx="12" cy="12" r="9" />
+      <path d="m8 12.3 2.8 2.8L16.2 9.4" />
+    </svg>
   );
 }
 
@@ -103,10 +139,12 @@ export function LibraryPage() {
   // Programmes of 我调的 with no listening record, as the server describes them (null: it would not).
   const [created, setCreated] = useState<Record<string, ProgramProposal | null>>({});
   // Favourites with no recent or saved record (hearted from a detail page): their programme, once fetched.
-  const [favProgrammes, setFavProgrammes] = useState<Record<string, ProgramProposal>>({});
+  const [favProgrammes, setFavProgrammes] = useState<Record<string, ProgrammeSummary>>({});
   const [undo, setUndo] = useState<Undo | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [fullStates, setFullStates] = useState<Record<string, FullVersionItem>>({});
+  // The publication of each listed episode that is the listener's own and has one.
+  const [publications, setPublications] = useState<Record<string, PublicationItem>>({});
   const [now, setNow] = useState(() => Date.now());
   // Only one row may show its delete button; any tap outside it closes it.
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -139,14 +177,21 @@ export function LibraryPage() {
 
   // Where each listed episode's 完整版 stands, asked again every few seconds while one is being prepared.
   const episodeKey = entries.slice(0, 30).map(({ record }) => record.episodeId).join(",");
-  const anyPreparing = Object.values(fullStates).some((item) => item.status === "preparing");
+  const anyPreparing = Object.values(fullStates).some((item) => item.status === "preparing")
+    || Object.values(publications).some((item) => isBeingMade(item));
   useEffect(() => {
     if (!episodeKey) return;
     let active = true;
     const load = () => {
-      void api.fullVersionStatuses(episodeKey.split(","))
+      const ids = episodeKey.split(",");
+      void api.fullVersionStatuses(ids)
         .then((items) => {
           if (active) setFullStates(Object.fromEntries(items.map((item) => [item.episode_id, item])));
+        })
+        .catch(() => undefined);
+      void api.publicationStatuses(ids)
+        .then((items) => {
+          if (active) setPublications(Object.fromEntries(items.map((item) => [item.episode_id, item])));
         })
         .catch(() => undefined);
     };
@@ -209,9 +254,9 @@ export function LibraryPage() {
     const wanted = missingFavourites.filter((id) => !favProgrammes[id]).slice(0, 30);
     if (!wanted.length) return;
     let active = true;
-    void Promise.all(wanted.map((id) => api.program(id).catch(() => null))).then((items) => {
+    void Promise.all(wanted.map((id) => programmeSummary(id))).then((items) => {
       if (!active) return;
-      setFavProgrammes((current) => ({ ...current, ...Object.fromEntries(items.filter((item): item is ProgramProposal => Boolean(item)).map((item) => [item.id, item])) }));
+      setFavProgrammes((current) => ({ ...current, ...Object.fromEntries(items.filter((item): item is ProgrammeSummary => Boolean(item)).map((item) => [item.id, item])) }));
     });
     return () => {
       active = false;
@@ -223,13 +268,27 @@ export function LibraryPage() {
     const current = readUserLibrary();
     const recent = current.recentPrograms.filter((item) => item.seedId === seedId);
     const saved = current.savedEpisodes.filter((item) => item.seedId === seedId);
+    // Deleting a programme that is shared stops sharing it; copies people already hold keep playing.
+    const shared = [...recent, ...saved]
+      .map((item) => publications[item.episodeId])
+      .find((item): item is PublicationItem => Boolean(item) && item.status === "published");
     removeRecentProgramme(seedId);
     saved.forEach((item) => removeSavedEpisode(item.episodeId));
+    if (shared) {
+      void api.revokePublication(shared.id)
+        .then((item) => setPublications((all) => ({ ...all, [item.episode_id]: item })))
+        .catch(() => undefined);
+    }
     setUndo({
-      message: `已删除「${title}」`,
+      message: shared ? `已删除「${title}」，分享也撤回了` : `已删除「${title}」`,
       restore: () => {
         restoreRecentPrograms(recent);
         saved.forEach(restoreSavedEpisode);
+        if (shared) {
+          void api.restorePublication(shared.id)
+            .then((item) => setPublications((all) => ({ ...all, [item.episode_id]: item })))
+            .catch(() => undefined);
+        }
       },
     });
   };
@@ -271,6 +330,8 @@ export function LibraryPage() {
         : fullState === "ready" && progress < 1
           ? `已准备好 · 约 ${Math.max(1, Math.round(record.durationSeconds / 60))} 分钟`
           : listeningStatus(merged, now);
+    const shared = publications[record.episodeId]?.status === "published";
+    const newlyReady = fullState === "ready" && progress < 1;
     return {
       key: record.episodeId,
       programmeId: record.seedId,
@@ -280,14 +341,14 @@ export function LibraryPage() {
       ratio: progressRatio(progress, record.durationSeconds),
       href: `/episode/materialized/${record.episodeId}`,
       favourite: favouriteSet.has(record.seedId),
-      full: full || fullState === "ready",
+      marker: shared ? "shared" : (full || fullState === "ready") && !newlyReady ? "full" : null,
       actions: fullState === "failed" ? actions.filter((action) => action.tone === "danger") : actions,
       fullState,
       prep: state?.progress ?? 0,
       retry: fullState === "failed" ? () => retryFull(record.episodeId, record.seedId, record.title) : undefined,
     };
   };
-  const proposalRow = (programme: ProgramProposal, status: string, actions: SwipeAction[]): Row => ({
+  const proposalRow = (programme: ProgrammeSummary, status: string, actions: SwipeAction[]): Row => ({
     key: programme.id,
     programmeId: programme.id,
     title: programme.title,
@@ -295,13 +356,19 @@ export function LibraryPage() {
     status,
     ratio: 0,
     href: `/episode/${programme.id}`,
+    // A published programme is played as the listener's own copy of it, not started from a seed.
+    play: programme.id.startsWith("pub-")
+      ? () => void api.copyPublished(programme.id)
+        .then((copy) => openPlayer(`/episode/materialized/${encodeURIComponent(copy.id)}`))
+        .catch(() => setNotice("现在打不开这档节目"))
+      : undefined,
     favourite: favouriteSet.has(programme.id),
-    full: false,
+    marker: null,
     actions,
     fullState: "none",
     prep: 0,
   });
-  const notStarted = (programme: ProgramProposal) =>
+  const notStarted = (programme: ProgrammeSummary) =>
     `约 ${Math.max(1, Math.round(programme.estimated_duration_seconds / 60))} 分钟，还没听`;
 
   const rows: Row[] = useMemo(() => {
@@ -334,10 +401,12 @@ export function LibraryPage() {
       const programme = created[id];
       return programme ? [proposalRow(programme, notStarted(programme), [])] : [];
     });
-  }, [created, entries, favProgrammes, favouriteSet, fullStates, library.favoriteSeedIds, mineIds, now, recentBySeed, tab]);
+  }, [created, entries, favProgrammes, favouriteSet, fullStates, library.favoriteSeedIds, mineIds, now, publications, recentBySeed, tab]);
   const loadingMine = tab === "mine" && unfetched.length > 0;
 
   const visible = filter === "all" ? rows : rows.filter((row) => row.stationId === filter);
+  // The first row with a mark carries the guide's anchor; the guide only runs once there is one to point at.
+  const firstMarked = visible.find((row) => row.marker)?.key ?? null;
   // Programmes being made for a 完整版 are not in the library yet; they hold a place at the top meanwhile.
   const makingNow = useCreatingFullVersions().filter((item) => tab === "recent" && (filter === "all" || item.stationId === filter));
 
@@ -416,7 +485,7 @@ export function LibraryPage() {
                       <span className={`lib-status is-${row.fullState}${row.fullState === "ready" && row.status.startsWith("已准备好") ? " is-new" : ""}`}>
                         <span className="filter-dot" style={{ background: STATIONS.find((s) => s.id === row.stationId)?.light }} />
                         {row.status}
-                        {row.full ? <span className="lib-full">完整版</span> : null}
+                        {row.marker ? <RowMarker kind={row.marker} guide={row.key === firstMarked} /> : null}
                       </span>
                     </span>
                   </Link>
@@ -427,7 +496,7 @@ export function LibraryPage() {
                       type="button"
                       className="ring-button"
                       aria-label={`播放 ${row.title}`}
-                      onClick={() => openPlayer(row.href)}
+                      onClick={() => (row.play ? row.play() : openPlayer(row.href))}
                     >
                       {row.fullState === "preparing" ? <PrepRing percent={row.prep} /> : <ProgressRing ratio={row.ratio} />}
                     </button>
@@ -467,6 +536,7 @@ export function LibraryPage() {
           </button>
         </div>
       ) : null}
+      <Guide trigger="library" ready={firstMarked !== null} />
     </AppShell>
   );
 }

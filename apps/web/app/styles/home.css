@@ -236,7 +236,7 @@
 .lib-title-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .lib-title { font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lib-heart { flex: 0 0 auto; }
-.lib-full { flex: 0 0 auto; height: 18px; padding: 0 6px; border-radius: 9px; background: rgba(118, 118, 128, .14); color: var(--ink-2); display: grid; place-items: center; font-size: 11px; font-weight: 500; }
+.lib-marker { flex: 0 0 auto; color: var(--ink-3); }
 .lib-status { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); white-space: nowrap; overflow: hidden; }
 /* 完整版 states of a row: being prepared (a thin line along the foot), ready and not heard yet, failed. */
 .lib-prep-line { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--live); }

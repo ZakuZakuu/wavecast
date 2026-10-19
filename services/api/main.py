@@ -2553,7 +2553,6 @@ def episode_mix_plan(episode_id: str, request: Request) -> MixPlan:
     """Return the deterministic server-owned arrangement for the ready prefix."""
     actor = principal(request)
     owned(episode_id, actor)
-    _reject_published_copy(episode_id)
     try:
         return canonical_mix_plan_for_episode(episode_id, actor)
     except ValueError as error:
@@ -3512,8 +3511,7 @@ async def _publish(episode_id: str, body: PublishRequest, actor: AuthPrincipal) 
         )
     except PublishRefusal as error:
         raise _refusal(error) from error
-    current = await to_thread.run_sync(orchestrator.get, episode_id)
-    return _publication_item(publication, current)
+    return await to_thread.run_sync(lambda: _publication_item(publication, orchestrator.get(episode_id)))
 
 
 @app.get("/api/publications", response_model=list[PublicationItem])
