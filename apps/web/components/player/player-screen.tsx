@@ -13,13 +13,14 @@ import { currentSentenceIndex, nowLineMode, splitSentences, type NowLineMode } f
 import { nextJumpStart, previousJumpStart } from "../../lib/playback";
 import { formatFreq, stationForProgramme } from "../../lib/stations";
 import { TypeCover } from "../cover/type-cover";
-import { Back15Icon, ChevronDownIcon, Forward15Icon, MoreIcon, PauseIcon, PlayIcon, PrevIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
+import { Back15Icon, ChevronDownIcon, Forward15Icon, HeartIcon, MoreIcon, PauseIcon, PlayIcon, PrevIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
 import { ShareSheet } from "../programme/share-sheet";
 import { MoreSheet } from "./more-sheet";
 import { NarrationSheet, type NarrationPassage } from "./narration-sheet";
 import { NowLine } from "./now-line";
 import { authClient } from "../../lib/auth-client";
 import { useNowPlaying, usePlaybackControl, usePlaybackTarget } from "./playback-provider";
+import { useFavourite } from "../../lib/use-favourite";
 import { ProgressBar } from "./progress-bar";
 import { RouteSheet } from "./route-sheet";
 
@@ -52,8 +53,11 @@ function useCoverSize(extraBelow: number) {
 
 function useToast() {
   const [message, setMessage] = useState<string | null>(null);
+  // Most messages sit low, above the controls; confirmations of a tap on the controls sit at the top.
+  const [position, setPosition] = useState<"bottom" | "top">("bottom");
   const timer = useRef<number | null>(null);
-  const show = useCallback((text: string, durationMs = 2200) => {
+  const show = useCallback((text: string, durationMs = 2200, where: "bottom" | "top" = "bottom") => {
+    setPosition(where);
     setMessage(text);
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setMessage(null), durationMs);
@@ -61,7 +65,7 @@ function useToast() {
   useEffect(() => () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
   }, []);
-  return { message, show };
+  return { message, position, show };
 }
 
 export function PlayerScreen({
@@ -80,6 +84,7 @@ export function PlayerScreen({
   const toast = useToast();
   const userId = authClient.useSession().data?.user?.id ?? null;
   const signedIn = userId !== null;
+  const { favourite, toggle: toggleFavourite } = useFavourite(playback?.localEpisode?.seed_id ?? seedId ?? null);
   const [routeOpen, setRouteOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -319,6 +324,15 @@ export function PlayerScreen({
             <button type="button" className="bottom-tool" aria-label="主持词" onClick={() => setNarrationOpen(true)}>
               <ScriptIcon size={22} strokeWidth={1.8} />
             </button>
+            <button
+              type="button"
+              className="bottom-tool"
+              aria-label={favourite ? "取消收藏" : "收藏"}
+              aria-pressed={favourite}
+              onClick={() => toast.show(toggleFavourite() ? "已收藏" : "已取消收藏", 1800, "top")}
+            >
+              <HeartIcon size={22} strokeWidth={1.8} filled={favourite} />
+            </button>
             <button type="button" className="bottom-tool" aria-label="节目路线" onClick={() => setRouteOpen(true)}>
               <RouteIcon size={22} strokeWidth={1.8} />
             </button>
@@ -328,7 +342,7 @@ export function PlayerScreen({
 
       {np.error ? <p className="player-error" role="alert">{friendlyError(np.error, "播放遇到了问题，可以稍后重试")}</p> : null}
 
-      {toast.message ? <div className="toast" role="status">{toast.message}</div> : null}
+      {toast.message ? <div className={toast.position === "top" ? "toast is-top" : "toast"} role="status">{toast.message}</div> : null}
 
       <RouteSheet
         open={routeOpen}

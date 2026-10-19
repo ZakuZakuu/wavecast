@@ -25,6 +25,20 @@ function recent(overrides: Partial<RecentProgramRecord> = {}): RecentProgramReco
   };
 }
 
+describe("taking back a delete", () => {
+  it("puts removed recent and saved records back where the list sorts them", () => {
+    const first = recent({ episodeId: "e1", updatedAt: 30 });
+    const second = recent({ episodeId: "e2", seedId: "seed-2", updatedAt: 20 });
+    const saved: SavedEpisodeRecord = { ...first, savedAt: 40 };
+    let state = upsertSavedInState(upsertRecentInState(upsertRecentInState(emptyUserLibrary(), second), first), saved);
+    state = { ...state, recentPrograms: state.recentPrograms.filter((item) => item.seedId !== "seed-1"), savedEpisodes: [] };
+    expect(state.recentPrograms.map((item) => item.episodeId)).toEqual(["e2"]);
+    const restored = upsertSavedInState([first].reduce(upsertRecentInState, state), saved);
+    expect(restored.recentPrograms.map((item) => item.episodeId).sort()).toEqual(["e1", "e2"]);
+    expect(restored.savedEpisodes.map((item) => item.episodeId)).toEqual(["e1"]);
+  });
+});
+
 describe("user library state", () => {
   it("toggles proposal favorites without duplicates", () => {
     const first = toggleFavoriteInState(emptyUserLibrary(), "seed-1");

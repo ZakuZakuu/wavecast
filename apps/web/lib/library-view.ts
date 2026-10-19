@@ -57,4 +57,17 @@ export function listeningStatus(
   return `听到 ${formatClock(record.progressSeconds)}，${when}`;
 }
 
+/**
+ * What 最近 lists: the recent programmes and the saved full episodes together, one row per programme
+ * (newest first). `full` marks a programme whose whole episode has been generated and saved.
+ */
+export function recentEntries(
+  recent: RecentProgramRecord[],
+  saved: SavedEpisodeRecord[],
+): Array<{ record: RecentProgramRecord | SavedEpisodeRecord; full: boolean }> {
+  const savedSeeds = new Set(saved.map((record) => record.seedId));
+  return dedupeByProgramme<RecentProgramRecord | SavedEpisodeRecord>([...recent, ...saved])
+    .map((record) => ({ record, full: savedSeeds.has(record.seedId) }));
+}
+
 export type LibraryRow = (RecentProgramRecord | SavedEpisodeRecord) & { kind: "episode" };

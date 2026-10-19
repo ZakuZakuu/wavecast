@@ -15,9 +15,10 @@ import { formatFreq, rememberProgrammeStation, stationById, stationForProgramme 
 import type { PublicProgramme } from "../../lib/types";
 import { emptyUserLibrary, readUserLibrary, subscribeUserLibrary, type RecentProgramRecord } from "../../lib/user-library";
 import { formatClock } from "../../lib/now-playing";
-import { ChevronLeftIcon, ShareIcon } from "../icons";
+import { ChevronLeftIcon, HeartIcon, ShareIcon } from "../icons";
 import { TypeCover } from "../cover/type-cover";
 import { useNowPlaying } from "../player/playback-provider";
+import { useFavourite } from "../../lib/use-favourite";
 import { ShareSheet } from "./share-sheet";
 
 const PROGRESS_PREFIX = "wavecast-program-progress:";
@@ -104,6 +105,7 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
   const [library, setLibrary] = useState(emptyUserLibrary);
   const [now, setNow] = useState(() => Date.now());
   const [shareOpen, setShareOpen] = useState(false);
+  const { favourite, toggle: toggleFavourite } = useFavourite(programmeId);
   const [phase, setPhase] = useState<"idle" | "preparing" | "error" | "quota">("idle");
   const [message, setMessage] = useState<string | null>(null);
 
@@ -261,6 +263,9 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
           <button type="button" className="pd-icon" aria-label="返回" onClick={back}><ChevronLeftIcon size={24} strokeWidth={1.8} /></button>
         )}
         <div className="pd-head-actions">
+          <button type="button" className="pd-icon" aria-label={favourite ? "取消收藏" : "收藏"} aria-pressed={favourite} onClick={toggleFavourite}>
+            <HeartIcon size={22} strokeWidth={1.8} filled={favourite} />
+          </button>
           <button type="button" className="pd-icon" aria-label="分享这档节目" onClick={() => setShareOpen(true)}>
             <ShareIcon size={22} strokeWidth={1.8} />
           </button>

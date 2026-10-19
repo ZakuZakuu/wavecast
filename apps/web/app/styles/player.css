@@ -340,6 +340,7 @@
   white-space: nowrap;
   animation: fade-up var(--t-state) var(--ease) both;
 }
+.toast.is-top { bottom: auto; top: calc(var(--safe-top) + 112px); }
 @keyframes fade-up { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
 /* ---------- Sheets ---------- */

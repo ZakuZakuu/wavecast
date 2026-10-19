@@ -5,31 +5,39 @@ import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../../lib/api";
 import { openPlayer } from "../../lib/player-nav";
-import { dedupeByProgramme, listeningStatus, progressRatio } from "../../lib/library-view";
+import { listeningStatus, progressRatio, recentEntries } from "../../lib/library-view";
 import { stationForProgramme, STATIONS, type StationId } from "../../lib/stations";
 import type { ProgramProposal } from "../../lib/types";
 import {
   emptyUserLibrary,
+  isFavoriteSeed,
   readUserLibrary,
   removeRecentProgramme,
   removeSavedEpisode,
+  restoreRecentPrograms,
+  restoreSavedEpisode,
   subscribeUserLibrary,
+  toggleFavoriteSeed,
   type RecentProgramRecord,
+  type SavedEpisodeRecord,
   type UserLibraryState,
 } from "../../lib/user-library";
 import { AppShell } from "../app-shell";
+import { HeartIcon } from "../icons";
 import { Segmented } from "../segmented";
 import { ProgrammeCoverView } from "../cover/programme-cover-view";
-import { SwipeRow } from "./swipe-row";
+import { SwipeRow, type SwipeAction } from "./swipe-row";
 
 const TABS = [
   { id: "recent", label: "最近" },
-  { id: "saved", label: "收藏" },
+  { id: "fav", label: "收藏" },
   { id: "mine", label: "我调的" },
 ] as const;
 type TabId = typeof TABS[number]["id"];
 
 const PROGRESS_PREFIX = "wavecast-program-progress:";
+/** How long 撤销 stays on screen after a delete or an un-favourite. */
+export const UNDO_MS = 5000;
 
 /** The player's own listener checkpoint is fresher than the library record. */
 function storedPosition(episodeId: string): number | null {
@@ -53,9 +61,13 @@ type Row = {
   status: string;
   ratio: number;
   href: string;
-  onDelete?: () => void;
-  deleteLabel: string;
+  /** A heart on the row, and the 整期 mark (the whole episode is generated and saved). */
+  favourite: boolean;
+  full: boolean;
+  actions: SwipeAction[];
 };
+
+type Undo = { message: string; restore: () => void };
 
 function ProgressRing({ ratio }: { ratio: number }) {
   return (
@@ -72,6 +84,9 @@ export function LibraryPage() {
   const [filter, setFilter] = useState<StationId | "all">("all");
   const [library, setLibrary] = useState<UserLibraryState>(emptyUserLibrary);
   const [created, setCreated] = useState<ProgramProposal[]>([]);
+  // Favourites with no recent or saved record (hearted from a detail page): their programme, once fetched.
+  const [favProgrammes, setFavProgrammes] = useState<Record<string, ProgramProposal>>({});
+  const [undo, setUndo] = useState<Undo | null>(null);
   const [now, setNow] = useState(() => Date.now());
   // Only one row may show its delete button; any tap outside it closes it.
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -106,7 +121,76 @@ export function LibraryPage() {
     };
   }, [library.createdProgramIds, tab]);
 
-  const recordRow = (record: RecentProgramRecord, onDelete: () => void): Row => {
+  useEffect(() => {
+    if (!undo) return;
+    const timer = window.setTimeout(() => setUndo(null), UNDO_MS);
+    return () => window.clearTimeout(timer);
+  }, [undo]);
+
+  const favouriteSet = useMemo(() => new Set(library.favoriteSeedIds), [library.favoriteSeedIds]);
+  const entries = useMemo(
+    () => recentEntries(library.recentPrograms, library.savedEpisodes),
+    [library.recentPrograms, library.savedEpisodes],
+  );
+
+  const missingFavourites = useMemo(() => {
+    const known = new Set(entries.map(({ record }) => record.seedId));
+    return library.favoriteSeedIds.filter((id) => !known.has(id));
+  }, [entries, library.favoriteSeedIds]);
+  useEffect(() => {
+    if (tab !== "fav") return;
+    const wanted = missingFavourites.filter((id) => !favProgrammes[id]).slice(0, 30);
+    if (!wanted.length) return;
+    let active = true;
+    void Promise.all(wanted.map((id) => api.program(id).catch(() => null))).then((items) => {
+      if (!active) return;
+      setFavProgrammes((current) => ({ ...current, ...Object.fromEntries(items.filter((item): item is ProgramProposal => Boolean(item)).map((item) => [item.id, item])) }));
+    });
+    return () => {
+      active = false;
+    };
+  }, [favProgrammes, missingFavourites, tab]);
+
+  /** Takes a programme out of the list; 撤销 puts back what was taken (recent and saved records). */
+  const deleteProgramme = (seedId: string, title: string) => {
+    const current = readUserLibrary();
+    const recent = current.recentPrograms.filter((item) => item.seedId === seedId);
+    const saved = current.savedEpisodes.filter((item) => item.seedId === seedId);
+    removeRecentProgramme(seedId);
+    saved.forEach((item) => removeSavedEpisode(item.episodeId));
+    setUndo({
+      message: `已删除「${title}」`,
+      restore: () => {
+        restoreRecentPrograms(recent);
+        saved.forEach(restoreSavedEpisode);
+      },
+    });
+  };
+  const removeFavourite = (seedId: string, title: string) => {
+    toggleFavoriteSeed(seedId);
+    setUndo({
+      message: `已取消收藏「${title}」`,
+      restore: () => {
+        if (!isFavoriteSeed(seedId)) toggleFavoriteSeed(seedId);
+      },
+    });
+  };
+
+  const favouriteAction = (seedId: string, title: string, favourite: boolean): SwipeAction => ({
+    label: favourite ? "取消收藏" : "收藏",
+    ariaLabel: `${favourite ? "取消收藏" : "收藏"} ${title}`,
+    tone: "favourite",
+    onPress: () => toggleFavoriteSeed(seedId),
+  });
+  const deleteAction = (seedId: string, title: string): SwipeAction => ({
+    label: "删除",
+    ariaLabel: `删除 ${title}`,
+    tone: "danger",
+    removes: true,
+    onPress: () => deleteProgramme(seedId, title),
+  });
+
+  const recordRow = (record: RecentProgramRecord | SavedEpisodeRecord, full: boolean, actions: SwipeAction[]): Row => {
     const position = storedPosition(record.episodeId);
     const progress = position !== null ? Math.max(position, 0) : record.progressSeconds;
     const merged = { ...record, progressSeconds: progress };
@@ -118,36 +202,58 @@ export function LibraryPage() {
       status: listeningStatus(merged, now),
       ratio: progressRatio(progress, record.durationSeconds),
       href: `/episode/materialized/${record.episodeId}`,
-      onDelete,
-      deleteLabel: `删除 ${record.title}`,
+      favourite: favouriteSet.has(record.seedId),
+      full,
+      actions,
     };
   };
+  const proposalRow = (programme: ProgramProposal, status: string, actions: SwipeAction[]): Row => ({
+    key: programme.id,
+    programmeId: programme.id,
+    title: programme.title,
+    stationId: stationForProgramme(programme.id, programme.title).id,
+    status,
+    ratio: 0,
+    href: `/episode/${programme.id}`,
+    favourite: favouriteSet.has(programme.id),
+    full: false,
+    actions,
+  });
+  const notStarted = (programme: ProgramProposal) =>
+    `约 ${Math.max(1, Math.round(programme.estimated_duration_seconds / 60))} 分钟，还没听`;
 
   const rows: Row[] = useMemo(() => {
     if (tab === "recent") {
-      return dedupeByProgramme(library.recentPrograms)
-        .map((record) => recordRow(record, () => removeRecentProgramme(record.seedId)));
+      return entries.map(({ record, full }) =>
+        recordRow(record, full, [
+          favouriteAction(record.seedId, record.title, favouriteSet.has(record.seedId)),
+          deleteAction(record.seedId, record.title),
+        ]));
     }
-    if (tab === "saved") {
-      return dedupeByProgramme(library.savedEpisodes)
-        .map((record) => recordRow(record, () => removeSavedEpisode(record.episodeId)));
+    if (tab === "fav") {
+      const bySeed = new Map(entries.map((entry) => [entry.record.seedId, entry]));
+      return library.favoriteSeedIds.flatMap((seedId) => {
+        const unfavourite: SwipeAction = {
+          label: "取消收藏",
+          ariaLabel: `取消收藏 ${bySeed.get(seedId)?.record.title ?? favProgrammes[seedId]?.title ?? ""}`,
+          tone: "favourite",
+          removes: true,
+          onPress: () => removeFavourite(seedId, bySeed.get(seedId)?.record.title ?? favProgrammes[seedId]?.title ?? ""),
+        };
+        const entry = bySeed.get(seedId);
+        if (entry) return [recordRow(entry.record, entry.full, [unfavourite])];
+        const programme = favProgrammes[seedId];
+        return programme ? [proposalRow(programme, notStarted(programme), [unfavourite])] : [];
+      });
     }
-    const recentBySeed = new Map(dedupeByProgramme(library.recentPrograms).map((record) => [record.seedId, record]));
+    const recentBySeed = new Map(entries.map((entry) => [entry.record.seedId, entry]));
     return created.map((programme) => {
       const recent = recentBySeed.get(programme.id);
-      if (recent) return { ...recordRow(recent, () => removeRecentProgramme(recent.seedId)), onDelete: undefined };
-      return {
-        key: programme.id,
-        programmeId: programme.id,
-        title: programme.title,
-        stationId: stationForProgramme(programme.id, programme.title).id,
-        status: `约 ${Math.max(1, Math.round(programme.estimated_duration_seconds / 60))} 分钟，还没听`,
-        ratio: 0,
-        href: `/episode/${programme.id}`,
-        deleteLabel: "",
-      };
+      return recent
+        ? recordRow(recent.record, recent.full, [])
+        : proposalRow(programme, notStarted(programme), []);
     });
-  }, [created, library, now, tab]);
+  }, [created, entries, favProgrammes, favouriteSet, library.favoriteSeedIds, now, tab]);
 
   const visible = filter === "all" ? rows : rows.filter((row) => row.stationId === filter);
 
@@ -187,8 +293,7 @@ export function LibraryPage() {
               <SwipeRow
                 key={row.key}
                 rowKey={row.key}
-                onDelete={row.onDelete}
-                deleteLabel={row.deleteLabel}
+                actions={row.actions}
                 open={openKey === row.key}
                 onOpenChange={(next) => setOpenKey(next ? row.key : null)}
               >
@@ -203,10 +308,14 @@ export function LibraryPage() {
                       <ProgrammeCoverView id={row.programmeId} title={row.title} stationId={row.stationId} bare radius={0} />
                     </span>
                     <span className="lib-copy">
-                      <span className="lib-title">{row.title}</span>
+                      <span className="lib-title-line">
+                        <span className="lib-title">{row.title}</span>
+                        {row.favourite ? <HeartIcon className="lib-heart" size={14} strokeWidth={2} filled aria-label="已收藏" aria-hidden={false} role="img" /> : null}
+                      </span>
                       <span className="lib-status">
                         <span className="filter-dot" style={{ background: STATIONS.find((s) => s.id === row.stationId)?.light }} />
                         {row.status}
+                        {row.full ? <span className="lib-full">整期</span> : null}
                       </span>
                     </span>
                   </Link>
@@ -227,14 +336,28 @@ export function LibraryPage() {
             <p>
               {tab === "recent"
                 ? "听过的节目会留在这里，下次从上次的位置接着听。"
-                : tab === "saved"
-                  ? "在播放页的“更多”里保存完整节目，它会留在这里。"
+                : tab === "fav"
+                  ? <>还没有收藏。在播放页或节目详情里点 ♡，<br />节目就会留在这里。</>
                   : "在调频页开播的节目会留在这里。"}
             </p>
             <Link href="/tune" className="pill-button">去调频</Link>
           </div>
         )}
       </div>
+      {undo ? (
+        <div className="undo-toast" role="status">
+          <span>{undo.message}</span>
+          <button
+            type="button"
+            onClick={() => {
+              undo.restore();
+              setUndo(null);
+            }}
+          >
+            撤销
+          </button>
+        </div>
+      ) : null}
     </AppShell>
   );
 }

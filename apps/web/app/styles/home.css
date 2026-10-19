@@ -201,15 +201,16 @@
 }
 .lib-row { transition: height var(--dur-base) var(--ease-standard), opacity var(--dur-base) var(--ease-standard); }
 .lib-row.is-removing { height: 0; opacity: 0; }
-/* Red layer behind the whole row, so a long swipe keeps showing red. */
-.lib-delete-layer {
+/* Coloured layer behind the whole row (the last action's colour), so a long swipe keeps showing it. */
+.lib-actions-layer {
   position: absolute;
   inset: 0;
   background: var(--danger);
   display: flex;
   justify-content: flex-end;
 }
-.lib-delete {
+.lib-actions-layer.is-favourite { background: #FF9500; }
+.lib-action {
   width: 84px;
   height: 100%;
   border: 0;
@@ -218,6 +219,8 @@
   font-size: 15px;
   font-weight: 600;
 }
+.lib-action.is-favourite { background: #FF9500; }
+.lib-action.is-danger { background: var(--danger); }
 .lib-row-body {
   position: absolute;
   inset: 0;
@@ -230,10 +233,39 @@
 .ring-button { flex: 0 0 auto; width: 44px; height: 44px; margin-right: -8px; padding: 0; border: 0; background: transparent; display: grid; place-items: center; }
 .lib-cover { width: 52px; height: 52px; flex: 0 0 auto; border-radius: 8px; overflow: hidden; }
 .lib-copy { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.lib-title-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .lib-title { font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-heart { flex: 0 0 auto; }
+.lib-full { flex: 0 0 auto; height: 18px; padding: 0 6px; border-radius: 9px; background: rgba(118, 118, 128, .14); color: var(--ink-2); display: grid; place-items: center; font-size: 11px; font-weight: 500; }
 .lib-status { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); white-space: nowrap; overflow: hidden; }
 .ring { width: 30px; height: 30px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center; }
 .ring > span { width: 24px; height: 24px; border-radius: 50%; background: var(--surface); display: grid; place-items: center; color: var(--ink); }
+/* 撤销: a dark pill above the mini player after a delete or an un-favourite. */
+.undo-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--nav-height) + 12px);
+  z-index: 30;
+  transform: translateX(-50%);
+  width: min(calc(100% - 32px), calc(var(--frame-max) - 32px));
+  box-sizing: border-box;
+  height: 48px;
+  padding: 0 6px 0 16px;
+  border-radius: 16px;
+  background: rgba(29, 29, 31, .94);
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  box-shadow: 0 10px 30px rgba(29, 29, 31, .25);
+  animation: undo-in var(--dur-base) var(--ease-enter) both;
+}
+.app-root:has(> .mini-player:not([hidden])) .undo-toast { bottom: calc(var(--nav-height) + var(--mini-height) + 16px); }
+.undo-toast span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.undo-toast button { flex: 0 0 auto; height: 44px; padding: 0 14px; border: 0; background: transparent; color: #FF8A4C; font-size: 15px; font-weight: 600; }
+@keyframes undo-in { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@media (prefers-reduced-motion: reduce) { .undo-toast { animation: none; } }
 .lib-empty { padding: 32px 8px; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }
 .lib-empty p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--ink-2); }
 

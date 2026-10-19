@@ -426,6 +426,24 @@ export function recordCreatedProgram(programId: string): UserLibraryState {
   });
 }
 
+/** Puts recent records back after 撤销 (the inverse of removeRecentProgramme). */
+export function restoreRecentPrograms(records: RecentProgramRecord[]): void {
+  if (!records.length) return;
+  persistUserLibrary(records.reduce(upsertRecentInState, readUserLibrary()));
+}
+
+/** Puts a saved episode back after 撤销 (the inverse of removeSavedEpisode), in the cloud Library too. */
+export function restoreSavedEpisode(record: SavedEpisodeRecord): void {
+  persistUserLibrary(upsertSavedInState(readUserLibrary(), record));
+  if (activeAccountId) {
+    const accountId = activeAccountId;
+    const generation = identityGeneration;
+    void api.saveLibraryEpisode(record, accountId)
+      .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
+      .catch(() => undefined);
+  }
+}
+
 /** Removes every recent record of a programme (local; cloud recents may re-merge). */
 export function removeRecentProgramme(seedId: string): void {
   const current = readUserLibrary();

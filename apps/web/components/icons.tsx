@@ -107,6 +107,13 @@ export const RouteIcon = (p: IconProps) => (
   <svg {...stroke(p)}><path d="M8 6h12M8 12h12M8 18h12" /><path d="M4 6h.01M4 12h.01M4 18h.01" strokeWidth={2.4} /></svg>
 );
 
+/** A heart: outline, or filled in the favourite colour when `filled`. */
+export const HeartIcon = ({ filled = false, ...p }: IconProps & { filled?: boolean }) => (
+  <svg {...stroke(p)} fill={filled ? "#FF4D6A" : "none"} stroke={filled ? "#FF4D6A" : "currentColor"}>
+    <path d="M12 20.2s-7.5-4.5-7.5-10.1A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.5c0 5.6-7.5 10.1-7.5 10.1z" />
+  </svg>
+);
+
 export const ShareIcon = (p: IconProps) => (
   <svg {...stroke(p)}><path d="M12 3.5v11M8 7.5l4-4 4 4" /><path d="M6.5 11H6a1.5 1.5 0 0 0-1.5 1.5v6A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5v-6A1.5 1.5 0 0 0 18 11h-.5" /></svg>
 );
