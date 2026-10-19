@@ -66,7 +66,7 @@ def test_a_new_programme_nobody_heard_yet_can_still_be_found_but_a_heard_one_ran
 
 
 def test_one_author_does_not_fill_the_shelf() -> None:
-    mine = [publication("same-author", age_days=index) for index in range(5)]
+    mine = [publication("same-author", age_days=index) for index in range(MAX_PER_AUTHOR + 3)]
     other = publication("someone-else", age_days=9)
     ranked = rank([*mine, other], {}, NOW)
     assert sum(1 for item in ranked if item.owner_listener_id == "same-author") == MAX_PER_AUTHOR
@@ -76,7 +76,11 @@ def test_one_author_does_not_fill_the_shelf() -> None:
     b = a.model_copy(update={"id": "pub-" + "b" * 32, "source_episode_id": "e2", "owner_user_id": "user-1"})
     c = a.model_copy(update={"id": "pub-" + "c" * 32, "source_episode_id": "e3", "owner_user_id": "user-1"})
     d = a.model_copy(update={"id": "pub-" + "d" * 32, "source_episode_id": "e4", "owner_user_id": "user-1"})
-    assert len(rank([b, c, d], {}, NOW)) == MAX_PER_AUTHOR
+    many = [
+        a.model_copy(update={"id": f"pub-{index:032d}", "source_episode_id": f"e{index}", "owner_user_id": "user-1"})
+        for index in range(MAX_PER_AUTHOR + 2)
+    ]
+    assert len(rank([*many, b, c, d], {}, NOW)) == MAX_PER_AUTHOR
 
 
 class Rig:

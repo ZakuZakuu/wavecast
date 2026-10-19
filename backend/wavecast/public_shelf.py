@@ -25,7 +25,7 @@ WINDOW_DAYS = 7
 #: How much being new is worth, against one listen right now.
 FRESHNESS_WEIGHT = 0.5
 #: One author may have this many programmes on the shelf.
-MAX_PER_AUTHOR = 2
+MAX_PER_AUTHOR = 10
 #: Below this many programmes to show, the whole section is left out.
 MIN_ON_SHELF = 3
 #: Programmes shown at a time.
