@@ -37,6 +37,26 @@ def test_explicit_wording_beats_the_station_default() -> None:
     assert resolve_presentation_intent("只听歌", StationId.LINEAGE).host_mode is HostMode.NONE
 
 
+def test_the_host_control_beats_both_wording_and_the_station_default() -> None:
+    assert resolve_presentation_intent("随便放点", StationId.NIGHT, HostMode.FULL).host_mode is HostMode.FULL
+    assert resolve_presentation_intent("多讲一点", StationId.CASUAL, HostMode.NONE).host_mode is HostMode.NONE
+    # Wording that only describes the music ("纯音乐") does not override a deliberate choice.
+    assert resolve_presentation_intent("纯音乐钢琴曲", StationId.PORTRAIT, HostMode.LIGHT).host_mode is HostMode.LIGHT
+    # Untouched control: nothing changes.
+    assert resolve_presentation_intent("随便放点", StationId.NIGHT, None).host_mode is HostMode.NONE
+
+
+def test_the_host_control_travels_from_request_to_proposal_to_seed() -> None:
+    request = ProposalGenerationRequest(
+        prompt="方大同这些年的作品", station=StationId.PORTRAIT, host_mode=HostMode.NONE
+    )
+
+    proposal = asyncio.run(DeterministicMockProgramProposalGenerator().generate(request))[0]
+
+    assert proposal.presentation_intent.host_mode is HostMode.NONE
+    assert proposal.to_episode_seed().presentation_intent.host_mode is HostMode.NONE
+
+
 def test_the_station_travels_from_request_to_proposal_to_seed() -> None:
     request = ProposalGenerationRequest(prompt="睡前听的安静音乐", station=StationId.NIGHT)
 

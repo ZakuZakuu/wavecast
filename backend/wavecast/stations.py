@@ -134,13 +134,18 @@ def compose_opening(
     return form.format(artist=artist, title=title, tag=tag or "")
 
 
-def resolve_presentation_intent(prompt: str, station: StationId | None) -> PresentationIntent:
-    """Presentation policy for a request: the station's default, unless the listener asked.
+def resolve_presentation_intent(
+    prompt: str, station: StationId | None, host_mode: HostMode | None = None
+) -> PresentationIntent:
+    """Presentation policy for a request.
 
-    Explicit wording in the request ("只听歌", "多讲一点") always wins over the station.
+    Order of precedence: the host control, when the listener touched it; explicit wording in the
+    request ("只听歌", "多讲一点"); the station's default.
     """
 
     inferred = infer_presentation_intent(prompt)
+    if host_mode is not None:
+        return inferred.model_copy(update={"host_mode": host_mode})
     if station is None:
         return inferred
     profile = STATION_PROFILES[station]

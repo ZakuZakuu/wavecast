@@ -26,7 +26,7 @@ from wavecast.intelligence.time_guard import has_relative_time, invents_experien
 from wavecast.language import OutputLanguage
 from wavecast.models.episode import CoverParams, EpisodeSeed, utc_now
 from wavecast.narration_quality import estimate_seconds
-from wavecast.presentation import PresentationIntent
+from wavecast.presentation import HostMode, PresentationIntent
 from wavecast.providers.contracts import ProgressiveLLMProvider
 from wavecast.providers.errors import ProviderError, ProviderSchemaValidationError
 from wavecast.providers.profiles import InferenceProfile, StructuredTransport
@@ -68,6 +68,9 @@ class ProposalGenerationRequest(BaseModel):
     output_language: OutputLanguage = OutputLanguage.AUTO
     # The station the listener tuned; sets the default hosting and (later) the host's voice.
     station: StationId | None = None
+    # Set only when the listener touched the host control (只听歌 / 偶尔说 / 多讲解); it then
+    # outranks both the station's default and any wording in the request.
+    host_mode: HostMode | None = None
 
     @field_validator("prompt")
     @classmethod
@@ -746,7 +749,7 @@ class LLMProgramProposalGenerator:
                     mood_tags=list(draft.mood_tags),
                     anchor_artists=[resolved.canonical_artist],
                     presentation_intent=resolve_presentation_intent(
-                        request.prompt, request.station
+                        request.prompt, request.station, request.host_mode
                     ),
                     output_language=request.output_language,
                     station=request.station,
@@ -1028,7 +1031,9 @@ class DeterministicMockProgramProposalGenerator:
                     genre_tags=list(genres),
                     mood_tags=list(moods),
                     anchor_artists=["Mira Fields"],
-                    presentation_intent=resolve_presentation_intent(request.prompt, request.station),
+                    presentation_intent=resolve_presentation_intent(
+                        request.prompt, request.station, request.host_mode
+                    ),
                     output_language=request.output_language,
                     station=request.station,
                 )
