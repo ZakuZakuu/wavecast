@@ -10,7 +10,7 @@ import { recordLessLikeThis } from "../../lib/listener-feedback";
 import { friendlyError } from "../../lib/friendly-error";
 import { chapterNumberOf, currentMusicSegment, estimatedTotalSeconds, nextMusicSegment, publishedNarration, trackLabel, voiceClipTiming } from "../../lib/now-playing";
 import { currentSentenceIndex, nowLineMode, splitSentences, type NowLineMode } from "../../lib/now-line";
-import { nextProgramMusicStart, previousProgramMusicStart } from "../../lib/playback";
+import { nextJumpStart, previousJumpStart } from "../../lib/playback";
 import { formatFreq, stationForProgramme } from "../../lib/stations";
 import { TypeCover } from "../cover/type-cover";
 import { Back15Icon, ChevronDownIcon, Forward15Icon, MoreIcon, PauseIcon, PlayIcon, PrevIcon, RouteIcon, ScriptIcon, SkipIcon, ThumbDownIcon } from "../icons";
@@ -163,9 +163,9 @@ export function PlayerScreen({
   const preparingHint = np.programBuffering || np.preparingAhead || !audioReady;
 
   const skip = () => {
-    const target = np.mixPlan ? nextProgramMusicStart(np.mixPlan, np.browserPosition) : undefined;
+    const target = np.mixPlan ? nextJumpStart(np.mixPlan, np.browserPosition, episode) : undefined;
     if (target === undefined || target >= frontier) {
-      toast.show("下一首还在准备");
+      toast.show("后面的内容还在准备");
       return;
     }
     np.nextPlayback();
@@ -173,7 +173,7 @@ export function PlayerScreen({
 
   const previous = () => {
     if (!np.mixPlan) return;
-    np.commitSeek(previousProgramMusicStart(np.mixPlan, np.browserPosition));
+    np.commitSeek(previousJumpStart(np.mixPlan, np.browserPosition, episode));
   };
 
   const forward = () => {

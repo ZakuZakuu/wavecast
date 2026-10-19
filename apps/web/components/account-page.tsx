@@ -23,6 +23,7 @@ import { IosInstallGuide } from "./install/install-prompt";
 import { LogoMark } from "./logo-mark";
 import { api } from "../lib/api";
 import { AvoidArtistsSheet } from "./account/avoid-artists-sheet";
+import { resetGuides } from "../lib/guide/state";
 import { OnboardingSheet } from "./onboarding/onboarding-sheet";
 
 function BackButton() {
@@ -183,6 +184,13 @@ function AccountView({ name, email }: { name: string; email: string | null | und
     setInstallRow(platform === "ios-safari" ? "ios" : platform === "installable" ? "prompt" : null);
   }, []);
 
+  const router = useRouter();
+  // Every guide shows again, starting with the one on the home page.
+  const replayGuides = () => {
+    resetGuides();
+    router.push("/");
+  };
+
   const install = async () => {
     if (installRow === "ios") {
       setGuide("open");
@@ -248,6 +256,15 @@ function AccountView({ name, email }: { name: string; email: string | null | und
 
         <h2 className="acct-group-title">其他</h2>
         <ul className="acct-group">
+          <li>
+            <button type="button" className="acct-row is-tall" onClick={replayGuides}>
+              <span className="acct-row-copy">
+                <span className="acct-row-title">重看新手引导</span>
+                <span className="acct-row-sub">再看一遍首页和调频页的提示</span>
+              </span>
+              <Chevron />
+            </button>
+          </li>
           {installRow ? (
             <li>
               <button type="button" className="acct-row" onClick={() => void install()}>

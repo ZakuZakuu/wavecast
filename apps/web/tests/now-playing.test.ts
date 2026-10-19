@@ -71,6 +71,80 @@ describe("route", () => {
     expect(JSON.stringify(chapters)).not.toContain("Track Intro");
   });
 
+  it("lists published host speech beside the songs, with a role label and its time", () => {
+    const chapter = routeChapters(episode, plan, "m2", 200)[1];
+    expect(chapter.tracks.map((track) => [track.kind, track.startSeconds])).toEqual([["VOICE", 95], ["MUSIC", 100]]);
+    expect(chapter.tracks[0].label).toBe("串场 · 引出Artist《Song m2》");
+    expect(chapter.tracks[0].ready).toBe(true);
+  });
+
+  it("labels speech by its stored role, and prefers the writer's heading", () => {
+    const withNarration = (extra: object): LiveEpisode => ({
+      ...episode,
+      segments: episode.segments.map((segment) => (segment.id === "n1" ? { ...segment, ...extra } as never : segment)),
+    });
+    const label = (extra: object) => routeChapters(withNarration(extra), plan, "m2", 200)[1].tracks[0].label;
+    expect(label({ hosting_role: "opening" })).toBe("开场 · 引出Artist《Song m2》");
+    expect(label({ narration_role: "OUTRO" })).toBe("收尾");
+    expect(label({ narration_role: "TRACK_INTRO" })).toBe("歌曲介绍 · 引出Artist《Song m2》");
+    expect(label({ narration_role: "OUTRO", display_title: " 一场重逢 " })).toBe("一场重逢");
+  });
+
+  it("names speech before the first song the opening and speech after the last one the closing", () => {
+    const narration = (id: string, order: number) => ({ ...episode.segments[1], id, order, chapter_id: "c1" }) as never;
+    const bookended: LiveEpisode = { ...episode, segments: [narration("intro", -1), episode.segments[0], narration("last", 5)] };
+    const bookendPlan: MixPlan = {
+      ...plan,
+      clips: [
+        { ...plan.clips[1], id: "kv1", segmentId: "intro", timelineStartSeconds: 0 },
+        { ...plan.clips[0], timelineStartSeconds: 12 },
+        { ...plan.clips[1], id: "kv2", segmentId: "last", timelineStartSeconds: 120 },
+      ],
+      segmentStarts: { intro: 0, m1: 12, last: 120 },
+    };
+    const tracks = routeChapters(bookended, bookendPlan, "m1", 300)[0].tracks;
+    expect(tracks.map((track) => track.label)).toEqual(["开场 · 引出Artist《Song m1》", "Artist《Song m1》", "收尾"]);
+  });
+
+  it("does not list speech past the prepared frontier, skipped speech, or let it change the chapter status", () => {
+    expect(routeChapters(episode, plan, "m2", 90)[1].tracks.map((track) => track.kind)).toEqual(["MUSIC"]);
+    const skipped: LiveEpisode = {
+      ...episode,
+      segments: episode.segments.map((segment) => (segment.id === "n1" ? { ...segment, state: "SKIPPED" as const } : segment)),
+    };
+    expect(routeChapters(skipped, plan, "m2", 200)[1].tracks.map((track) => track.kind)).toEqual(["MUSIC"]);
+    expect(routeChapters(episode, plan, "m2", 200)[1].status).toBe("playing");
+  });
+
+  it("marks the host speech being heard, and a song only while it is audible", () => {
+    const at = (position: number) => routeChapters(episode, plan, "m1", 200, position);
+    // 95–105 is the host speaking over the end of m1 (0–100): both are audible.
+    expect(at(97)[0].tracks.map((track) => track.playing)).toEqual([true]);
+    expect(at(97)[1].tracks.map((track) => track.playing)).toEqual([true, false]);
+    // 102: m1 has ended and m2 has begun; the host is still speaking, so the host and m2 are marked.
+    const listening = routeChapters(episode, plan, "m2", 200, 102);
+    expect(listening[1].tracks.map((track) => track.playing)).toEqual([true, true]);
+    // 150: only m2.
+    expect(routeChapters(episode, plan, "m2", 200, 150)[1].tracks.map((track) => track.playing)).toEqual([false, true]);
+  });
+
+  it("marks only the speech once the song before it has ended, and its chapter plays", () => {
+    const quiet: MixPlan = {
+      ...plan,
+      clips: [
+        { ...plan.clips[0], playableDurationSeconds: 90 },
+        { ...plan.clips[1], timelineStartSeconds: 92 },
+        { ...plan.clips[2], timelineStartSeconds: 102 },
+      ],
+      segmentStarts: { m1: 0, n1: 92, m2: 102, m3: 202 },
+    };
+    const chapters = routeChapters(episode, quiet, "m1", 300, 95);
+    expect(chapters[0].tracks[0].playing).toBe(false);
+    expect(chapters[0].status).toBe("ready");
+    expect(chapters[1].tracks[0].playing).toBe(true);
+    expect(chapters[1].status).toBe("playing");
+  });
+
   it("finds the music under narration", () => {
     expect(currentMusicSegment(episode, plan, 97)?.id).toBe("m1");
     expect(currentMusicSegment(episode, plan, 150)?.id).toBe("m2");

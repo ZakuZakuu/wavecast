@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dedupeByTitle, ideaStation, pickMeta, RECOMMENDATION_MINUTES } from "../lib/home-picks";
+import { dedupeByTitle, featureEyebrow, ideaStation, pickMeta, RECOMMENDATION_MINUTES } from "../lib/home-picks";
 
 describe("home picks", () => {
   it("keeps only the first programme of each title", () => {
@@ -18,6 +18,11 @@ describe("home picks", () => {
     expect(pickMeta("夜里", 30)).toBe("夜里，约 30 分钟");
     expect(pickMeta("唱片行", null)).toBe("唱片行");
     expect(RECOMMENDATION_MINUTES).toBe(35);
+  });
+
+  it("names the feature card's station and length above its title", () => {
+    expect(featureEyebrow("夜里", 35)).toBe("今日推荐 · 夜里 · 约 35 分钟");
+    expect(featureEyebrow("夜里", null)).toBe("今日推荐 · 夜里");
   });
 });
 

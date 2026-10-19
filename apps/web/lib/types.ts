@@ -94,6 +94,10 @@ export type NarrationSegment = SegmentBase & {
   kind: "NARRATION";
   track_ref: null;
   artist: null;
+  narration_role?: "INTRO" | "TRACK_INTRO" | "TRANSITION" | "OUTRO" | "GENERAL";
+  hosting_role?: "opening" | "closing" | null;
+  /** Short heading of the passage for the route, when the writer supplied one. */
+  display_title?: string | null;
 };
 
 export type Segment = MusicSegment | NarrationSegment;

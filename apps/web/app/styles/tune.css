@@ -342,3 +342,6 @@ html.kb-open .tune .tuner-card {
 }
 html.kb-open .tune .tuner-station { min-height: 0; }
 html.kb-open .tune .tuner-number { font-size: 44px; }
+
+/* Dial window and knurl as one box, so the first-use guide can light them up together. */
+.tune-dial { display: flex; flex-direction: column; gap: 14px; }

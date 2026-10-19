@@ -1,9 +1,10 @@
 // Rasterises a bare cover to a 512px PNG object URL for MediaSession artwork.
-import { bareCoverSvg, type CoverParams } from "./build-cover";
+import type { CoverParams } from "./build-cover";
+import { coverSvg } from "./styled";
 
 export async function coverArtworkUrl(params: CoverParams, size = 512): Promise<string | null> {
   if (typeof document === "undefined") return null;
-  const svg = bareCoverSvg(params, size);
+  const svg = coverSvg(params, size);
   const source = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
   const image = new Image(size, size);
   image.decoding = "async";

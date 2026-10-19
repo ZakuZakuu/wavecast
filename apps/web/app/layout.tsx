@@ -15,6 +15,7 @@ import "./styles/tune.css";
 import "./styles/home.css";
 import "./styles/programme.css";
 import "./styles/overlays.css";
+import "./styles/guide.css";
 import "./styles/account.css";
 import "./styles/desktop.css";
 

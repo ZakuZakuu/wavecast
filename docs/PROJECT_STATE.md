@@ -14,6 +14,10 @@ Updated: 2026-10-17（北京时间）。唯一当前状态入口。旧过程记�
 
 认可的#314节目`db15f6cb-2e47-434c-b387-096ddd4f33b1`为31:37、三段双人，TTS估价¥0.565（非实付）；本轮不以demo成本限制口播。开场方法论见[设计文档](design/programme-editorial-method-and-opening.md)，台标音乐仍留后续。
 
+## 界面优化第二轮（仅前端，在integration测试环境）
+
+首页推荐在前（特色卡+横滑），电台瓦片在后，下拉刷新（#324/#326）；封面库9风格×20图案×5构图（`apps/web/lib/cover/styled`，#323），分享预览图与锁屏封面同步（#328）；上下首含口播（#321）；新手引导（#325，`lib/guide`）：清单驱动，新功能只需在`registry.ts`加一条并给元素加`data-guide`，账户页可重看。#322文案盘点暂不处理。待定：#327、#320、#204、深色模式。
+
 ## 已发布基线
 
 - 正式站：**https://wavecast.space**。#299–#310 经 [#311](https://github.com/ZakuZakuu/wavecast/pull/311) 发布；main 发布提交 `6be49197cce31a5a87afe7f5c1cd4d184babc083`；integration已在此基础上合入#312至#315。

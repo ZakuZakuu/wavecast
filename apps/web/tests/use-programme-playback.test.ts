@@ -91,6 +91,57 @@ describe("useProgrammePlayback", () => {
     expect(latest!.browserPosition).toBe(0);
   });
 
+  describe("next", () => {
+    const clip = (id: string, lane: "MUSIC" | "VOICE", start: number, duration: number) => ({
+      id, segmentId: id, sourceUrl: "/x", lane, timelineStartSeconds: start, sourceOffsetSeconds: 0,
+      playableDurationSeconds: duration, gain: 1, fadeInSeconds: 0, fadeOutSeconds: 0, gainAutomation: [],
+    });
+    const withHost: LiveEpisode = {
+      ...episode,
+      segments: [
+        { ...episode.segments[0], planned_duration_seconds: 60, duration_seconds: 60 },
+        { id: "host", chapter_id: "two", order: 1, kind: "NARRATION", state: "AUDIO_READY", planned_duration_seconds: 10, actual_duration_seconds: 10, audio_source_url: "/h", duration_seconds: 10, track_ref: null, title: "Host", artist: null, narration_text: "hello", asset_ref: null },
+        { ...episode.segments[0], id: "second", chapter_id: "two", order: 2, title: "Second", planned_duration_seconds: 20, duration_seconds: 20 },
+      ],
+    };
+    const plan = {
+      schemaVersion: 1, episodeId: "episode-1", durationSeconds: 90,
+      segmentStarts: { opening: 0, host: 60, second: 70 },
+      clips: [clip("opening", "MUSIC", 0, 60), clip("host", "VOICE", 60, 10), clip("second", "MUSIC", 70, 20)],
+    };
+
+    async function mount() {
+      api.get.mockResolvedValue(withHost);
+      api.mixPlan.mockResolvedValue(plan);
+      await act(async () => { root.render(createElement(Probe, { episodeId: "episode-1" })); });
+      await flush();
+    }
+
+    it("goes from a song to the host speech after it, and records the skip", async () => {
+      await mount();
+      act(() => latest!.commitSeek(10));
+      act(() => latest!.nextPlayback());
+      expect(latest!.browserPosition).toBe(60);
+      expect(api.recordUserEvent).toHaveBeenCalledWith(expect.objectContaining({ event_type: "SKIP", episode_id: "episode-1" }));
+    });
+
+    it("goes from host speech to the next song without recording a skip", async () => {
+      await mount();
+      act(() => latest!.commitSeek(62));
+      act(() => latest!.nextPlayback());
+      expect(latest!.browserPosition).toBe(70);
+      expect(api.recordUserEvent).not.toHaveBeenCalledWith(expect.objectContaining({ event_type: "SKIP" }));
+    });
+
+    it("says the rest is still being prepared when nothing follows inside the prepared audio", async () => {
+      await mount();
+      act(() => latest!.commitSeek(80));
+      act(() => latest!.nextPlayback());
+      expect(latest!.browserPosition).toBe(80);
+      expect(latest!.error).toBe("后面的内容还在准备中");
+    });
+  });
+
   it("persists the listener position on pause", async () => {
     await act(async () => { root.render(createElement(Probe, { episodeId: "episode-1" })); });
     await flush();

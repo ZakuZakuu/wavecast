@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { coverHeading, programmeCover } from "../lib/cover/programme-cover";
+import { selectCover } from "../lib/cover/styled/select";
 import {
   FEATURED_PORTRAIT_ARTIST,
   FEATURED_PROGRAMMES,
@@ -51,13 +52,13 @@ describe("guest featured programmes", () => {
     }
   });
 
-  it("draws the same cover every time, with the station's template", () => {
+  it("draws the same, hand-picked cover every time", () => {
     for (const item of FEATURED_PROGRAMMES) {
       const first = programmeCover({ id: item.id, title: item.title, stationId: item.stationId });
-      const again = programmeCover({ id: item.id, title: item.title, stationId: item.stationId });
-      expect(again).toEqual(first);
-      const station = STATIONS.find((candidate) => candidate.id === item.stationId)!;
-      expect(station.templates).toContain(first.template);
+      expect(programmeCover({ id: item.id, title: item.title, stationId: item.stationId })).toEqual(first);
+      expect(first.params.pin).toEqual(item.cover);
+      expect(selectCover(item.stationId, first.params.seed, first.params.pin)).toMatchObject(item.cover);
+      expect(first.template).toBeNull();
     }
   });
 });

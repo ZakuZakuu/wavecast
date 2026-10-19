@@ -26,6 +26,11 @@ export function pickMeta(stationName: string, minutes: number | null): string {
   return minutes ? `${stationName}，约 ${minutes} 分钟` : stationName;
 }
 
+/** Small line above the feature card's title: "今日推荐 · 夜里 · 约 35 分钟". */
+export function featureEyebrow(stationName: string, minutes: number | null): string {
+  return ["今日推荐", stationName, minutes ? `约 ${minutes} 分钟` : null].filter(Boolean).join(" · ");
+}
+
 /**
  * The station the backend chose for a recommended idea, when it is one we know; otherwise undefined
  * so the caller falls back to guessing from the copy (ideas made before stations were chosen).

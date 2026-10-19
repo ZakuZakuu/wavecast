@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
-import { buildCover } from "../../../lib/cover/build-cover";
-import { coverHeading, seedFromId } from "../../../lib/cover/programme-cover";
+import { programmeCover } from "../../../lib/cover/programme-cover";
+import { coverSvg } from "../../../lib/cover/styled";
 import { fetchPublicProgramme } from "../../../lib/public-programme";
 import { formatFreq, stationById, stationForProgramme } from "../../../lib/stations";
 
@@ -45,12 +45,8 @@ export default async function Image({ params }: { params: Promise<{ seedId: stri
   const description = programme ? clamp(programme.description, 56) : "";
   const minutes = programme ? Math.max(1, Math.round(programme.estimated_duration_seconds / 60)) : 0;
   const meta = programme ? `FM ${formatFreq(station.freq)} ${station.name} · 约 ${minutes} 分钟` : "";
-  const cover = buildCover({
-    stationId: station.id,
-    seed: seedFromId(programme?.id ?? "wavecast"),
-    heading: coverHeading(programme?.title ?? "") ?? "",
-    bare: true,
-  });
+  const cover = programmeCover({ id: programme?.id ?? "wavecast", title: programme?.title ?? "", stationId: station.id });
+  const coverImage = `data:image/svg+xml;base64,${Buffer.from(coverSvg(cover.params, 630)).toString("base64")}`;
 
   const text = `${title}${description}${meta}WaveCast wavecast.space`;
   const [regular, bold] = await Promise.all([loadFont(text, 400), loadFont(text, 700)]);
@@ -66,23 +62,7 @@ export default async function Image({ params }: { params: Promise<{ seedId: stri
   return new ImageResponse(
     (
       <div style={{ width: "100%", height: "100%", display: "flex", background: "#F2F2F4", color: INK, fontFamily: "Noto Sans SC", position: "relative" }}>
-        <div style={{ width: 630, height: 630, display: "flex", background: cover.bg }}>
-          <svg width="630" height="630" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice">
-            {cover.slots.map((slot, index) => (
-              <path
-                key={index}
-                d={slot.d}
-                fill={slot.fill}
-                fillOpacity={slot.o}
-                stroke={slot.stroke}
-                strokeWidth={slot.sw}
-                strokeOpacity={slot.so}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            ))}
-          </svg>
-        </div>
+        <img src={coverImage} width={630} height={630} alt="" />
         <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "72px 64px 56px 64px" }}>
           {withText && programme ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>

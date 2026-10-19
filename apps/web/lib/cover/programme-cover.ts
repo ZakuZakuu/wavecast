@@ -1,6 +1,8 @@
 // Derives the one set of cover params used everywhere for a programme.
+import { FEATURED_PROGRAMMES } from "../featured";
 import { stationById, type CoverTemplate, type StationId } from "../stations";
 import { buildCover, visualLength, type CoverParams } from "./build-cover";
+import { composeCover } from "./styled";
 
 export const MAX_HEADING_WIDTH = 10;
 
@@ -57,8 +59,9 @@ export function breakHeading(text: string): string {
 
 export type ProgrammeCover = {
   params: CoverParams;
-  /** Template and background the seed resolved to (for theming around the cover). */
-  template: CoverTemplate;
+  /** The original generator's template, when the cover is one of those (null for the styled covers). */
+  template: CoverTemplate | null;
+  /** A solid colour that stands for the cover (for theming around it). */
   bg: string;
   /** True when the title did not fit the cover; render it beneath the cover. */
   titleBelow: boolean;
@@ -106,12 +109,15 @@ export function programmeCover(input: {
 }): ProgrammeCover {
   const label = input.coverTitle?.trim();
   const heading = (label && visualLength(label) <= MAX_HEADING_WIDTH ? breakHeading(label) : null) ?? coverHeading(input.title);
+  const coverId = coverIdFor(input.id);
   const params: CoverParams = {
     stationId: stationById(input.stationId).id,
-    seed: seedFromId(coverIdFor(input.id)),
+    seed: seedFromId(coverId),
     heading: heading ?? "",
     bare: heading === null,
+    pin: FEATURED_PROGRAMMES.find((item) => item.id === coverId)?.cover,
   };
-  const built = buildCover(params);
-  return { params, template: built.template, bg: built.bg, titleBelow: heading === null };
+  const composed = composeCover(params);
+  const legacy = composed.kind === "legacy" ? buildCover(params) : null;
+  return { params, template: legacy?.template ?? null, bg: legacy?.bg ?? (composed.kind === "styled" ? composed.view.bg : ""), titleBelow: heading === null };
 }
