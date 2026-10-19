@@ -166,7 +166,7 @@ def test_the_request_keeps_turn_order_and_the_chosen_b_voices(storage: LocalObje
 
     (request,) = speech.requests
     assert [t.speaker for t in request.turns] == [t.speaker for t in segment.dialogue.turns]  # type: ignore[union-attr]
-    assert [t.text for t in request.turns] == [t.text for t in segment.dialogue.turns]  # type: ignore[union-attr]
+    assert [t.text for t in request.turns] == [t.tts_text or t.text for t in segment.dialogue.turns]  # type: ignore[union-attr]
     assert {r.speaker: r.voice_id for r in request.roles} == {
         DialogueSpeaker.A: "zh_male_liufei_v2_saturn_bigtts",
         DialogueSpeaker.B: "zh_male_xiaolei_v2_saturn_bigtts",

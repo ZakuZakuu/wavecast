@@ -169,6 +169,22 @@ def test_the_cache_key_follows_everything_that_changes_what_is_heard(tmp_path) -
     assert provider.cache_key(swapped) != base
 
 
+def test_spoken_case_uses_a_new_audio_key_without_changing_the_display_or_old_request(tmp_path) -> None:
+    provider, *_ = _provider(tmp_path)
+    block = _block("NO MUSIC, NO LIFE?")
+    original = _request(block)
+    original_key = provider.cache_key(original)
+
+    block.turns[1].tts_text = "No music, no life?"
+    corrected = _request(block)
+
+    assert block.turns[1].text == "NO MUSIC, NO LIFE?"
+    assert original.turns[1].text == "NO MUSIC, NO LIFE?"
+    assert corrected.turns[1].text == "No music, no life?"
+    assert provider.cache_key(corrected) != original_key
+    assert provider.cache_key(original) == original_key
+
+
 def test_a_success_leaves_exactly_one_final_event_with_the_known_counts(tmp_path) -> None:
     provider, _, _, ledger = _provider(tmp_path)
     asyncio.run(provider.synthesize_dialogue(_request()))
