@@ -132,14 +132,33 @@ class GenerationWorker:
                     job.mode is GenerationJobMode.PROGRESSIVE
                     and "inactive" in str(error).casefold()
                 ):
-                    await asyncio.to_thread(
-                        self.jobs.cancel_for_episode,
-                        job.episode_id,
+                    # The listener left. But a 完整版 may have been asked for while this run was
+                    # in flight (it upgrades the very same job): that request is not theirs to
+                    # cancel, so hand the job back to be run again as the full one.
+                    current = await asyncio.to_thread(
+                        self.jobs.get_for_episode, job.episode_id
                     )
-                    logger.info(
-                        "generation_job_cancelled episode_id=%s reason=inactive_listener",
-                        job.episode_id,
-                    )
+                    if current is not None and current.request_version != job.request_version:
+                        await asyncio.to_thread(
+                            self.jobs.complete,
+                            job.id,
+                            self.worker_id,
+                            job.request_version,
+                        )
+                        logger.info(
+                            "generation_job_superseded episode_id=%s mode=%s",
+                            job.episode_id,
+                            current.mode.value,
+                        )
+                    else:
+                        await asyncio.to_thread(
+                            self.jobs.cancel_for_episode,
+                            job.episode_id,
+                        )
+                        logger.info(
+                            "generation_job_cancelled episode_id=%s reason=inactive_listener",
+                            job.episode_id,
+                        )
                 else:
                     logger.warning(
                         "generation_job_execution_failed episode_id=%s "

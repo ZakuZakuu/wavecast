@@ -10,7 +10,11 @@ from wavecast.models.episode import (
     MusicSegment,
     SegmentState,
 )
-from wavecast.orchestration.episode import EpisodeOrchestrator, InMemoryEpisodeRepository
+from wavecast.orchestration.episode import (
+    EpisodeOrchestrator,
+    EpisodeRuntimeError,
+    InMemoryEpisodeRepository,
+)
 from wavecast.orchestration.generation import (
     DeterministicMockProgressiveGenerator,
     GeneratedChapter,
@@ -291,6 +295,37 @@ def test_worker_cancels_generation_for_inactive_listener() -> None:
     job = jobs.get_for_episode(episode.id)
     assert job is not None
     assert job.status is GenerationJobStatus.CANCELLED
+
+
+def test_a_full_request_made_while_a_progressive_run_is_in_flight_survives_the_listener_leaving() -> None:
+    """Preparing a 完整版 without playing: the first run is claimed as progressive, then upgraded and the listener leaves."""
+    runtime = EpisodeOrchestrator(
+        InMemoryEpisodeRepository(),
+        progressive_generator=DeterministicMockProgressiveGenerator(),
+    )
+    episode = runtime.start(_seed())
+    jobs = InMemoryGenerationJobRepository()
+    jobs.request(episode.id)
+    worker = GenerationWorker(jobs, runtime, worker_id="worker-upgrade")
+
+    async def upgraded_then_left(episode_id: str, **_: object):
+        runtime.request_full_generation(episode_id)
+        jobs.request(episode_id, GenerationJobMode.FULL)
+        runtime.leave(episode_id)
+        raise EpisodeRuntimeError("listener session is inactive; generation is progressive")
+
+    runtime.ensure_buffer_async = upgraded_then_left  # type: ignore[method-assign]
+
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
+    job = jobs.get_for_episode(episode.id)
+    assert job is not None
+    assert (job.mode, job.status) == (GenerationJobMode.FULL, GenerationJobStatus.PENDING)
+
+    del runtime.ensure_buffer_async
+    assert asyncio.run(_run_once_and_stop_enrichment(worker)) is True
+    assert runtime.get(episode.id).state.value == "MATERIALIZED"
+    final = jobs.get_for_episode(episode.id)
+    assert final is not None and final.status is GenerationJobStatus.COMPLETED
 
 
 def test_full_generation_continues_after_listener_leaves() -> None:
