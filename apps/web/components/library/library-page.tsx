@@ -83,6 +83,21 @@ type Row = {
 
 type Undo = { message: string; restore: () => void };
 
+// What the server last said about the listed episodes. Kept for the life of the page, so coming back to
+// 节目库 draws the marks at once instead of drawing a wrong one first and correcting it a moment later.
+const lastKnown: {
+  full: Record<string, FullVersionItem>;
+  publications: Record<string, PublicationItem>;
+  publicationsAsked: boolean;
+} = { full: {}, publications: {}, publicationsAsked: false };
+
+/** For tests: forget what the server last said. */
+export function resetLibraryKnowledge(): void {
+  lastKnown.full = {};
+  lastKnown.publications = {};
+  lastKnown.publicationsAsked = false;
+}
+
 /** What a row needs of a programme that has no listening record. */
 type ProgrammeSummary = Pick<ProgramProposal, "id" | "title" | "estimated_duration_seconds">;
 
@@ -142,9 +157,11 @@ export function LibraryPage() {
   const [favProgrammes, setFavProgrammes] = useState<Record<string, ProgrammeSummary>>({});
   const [undo, setUndo] = useState<Undo | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [fullStates, setFullStates] = useState<Record<string, FullVersionItem>>({});
+  const [fullStates, setFullStates] = useState<Record<string, FullVersionItem>>(lastKnown.full);
   // The publication of each listed episode that is the listener's own and has one.
-  const [publications, setPublications] = useState<Record<string, PublicationItem>>({});
+  const [publications, setPublications] = useState<Record<string, PublicationItem>>(lastKnown.publications);
+  // Until it is known which are shared, a 完整版 mark could be wrong (a shared one shows the share mark).
+  const [publicationsKnown, setPublicationsKnown] = useState(lastKnown.publicationsAsked);
   const [now, setNow] = useState(() => Date.now());
   // Only one row may show its delete button; any tap outside it closes it.
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -186,12 +203,18 @@ export function LibraryPage() {
       const ids = episodeKey.split(",");
       void api.fullVersionStatuses(ids)
         .then((items) => {
-          if (active) setFullStates(Object.fromEntries(items.map((item) => [item.episode_id, item])));
+          lastKnown.full = Object.fromEntries(items.map((item) => [item.episode_id, item]));
+          if (active) setFullStates(lastKnown.full);
         })
         .catch(() => undefined);
       void api.publicationStatuses(ids)
         .then((items) => {
-          if (active) setPublications(Object.fromEntries(items.map((item) => [item.episode_id, item])));
+          lastKnown.publications = Object.fromEntries(items.map((item) => [item.episode_id, item]));
+          lastKnown.publicationsAsked = true;
+          if (active) {
+            setPublications(lastKnown.publications);
+            setPublicationsKnown(true);
+          }
         })
         .catch(() => undefined);
     };
@@ -341,7 +364,7 @@ export function LibraryPage() {
       ratio: progressRatio(progress, record.durationSeconds),
       href: `/episode/materialized/${record.episodeId}`,
       favourite: favouriteSet.has(record.seedId),
-      marker: shared ? "shared" : (full || fullState === "ready") && !newlyReady ? "full" : null,
+      marker: shared ? "shared" : publicationsKnown && (full || fullState === "ready") && !newlyReady ? "full" : null,
       actions: fullState === "failed" ? actions.filter((action) => action.tone === "danger") : actions,
       fullState,
       prep: state?.progress ?? 0,
@@ -401,7 +424,7 @@ export function LibraryPage() {
       const programme = created[id];
       return programme ? [proposalRow(programme, notStarted(programme), [])] : [];
     });
-  }, [created, entries, favProgrammes, favouriteSet, fullStates, library.favoriteSeedIds, mineIds, now, publications, recentBySeed, tab]);
+  }, [created, entries, favProgrammes, favouriteSet, fullStates, library.favoriteSeedIds, mineIds, now, publications, publicationsKnown, recentBySeed, tab]);
   const loadingMine = tab === "mine" && unfetched.length > 0;
 
   const visible = filter === "all" ? rows : rows.filter((row) => row.stationId === filter);

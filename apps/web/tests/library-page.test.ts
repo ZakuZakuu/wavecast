@@ -24,7 +24,7 @@ vi.mock("../components/cover/programme-cover-view", () => ({ ProgrammeCoverView:
 vi.mock("../components/guide/guide", () => ({ Guide: () => null }));
 
 import { api } from "../lib/api";
-import { LibraryPage, UNDO_MS } from "../components/library/library-page";
+import { LibraryPage, resetLibraryKnowledge, UNDO_MS } from "../components/library/library-page";
 import { prepareFullVersionFromTuner, settlePendingFullVersions } from "../lib/full-version-requests";
 import { readUnseenFullVersions, watchFullVersion } from "../lib/full-versions";
 import { STATIONS } from "../lib/stations";
@@ -49,6 +49,7 @@ function seed(favorites: string[]) {
 }
 
 beforeEach(() => {
+  resetLibraryKnowledge();
   vi.useFakeTimers();
   vi.stubGlobal("matchMedia", () => ({ matches: true }));
   window.localStorage.clear();
@@ -272,6 +273,29 @@ describe("LibraryPage", () => {
       const row = host.querySelector('[data-row-key="b-ep"]')!;
       expect([...row.querySelectorAll(".lib-marker")].map((node) => node.getAttribute("aria-label"))).toEqual(["已分享"]);
       expect(host.querySelector('[data-row-key="a-ep"] .lib-marker')).toBeNull();
+    });
+
+    it("does not draw a 完整版 mark first and the share mark after: it waits to know, and remembers for next time", async () => {
+      seed([]);
+      vi.mocked(api.fullVersionStatuses).mockResolvedValue([
+        { episode_id: "b-ep", programme_id: "b", status: "ready", progress: 100 },
+      ]);
+      let answer: (items: ReturnType<typeof publication>[]) => void = () => undefined;
+      vi.mocked(api.publicationStatuses).mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+      await mount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      const marks = () => [...host.querySelectorAll('[data-row-key="b-ep"] .lib-marker')].map((node) => node.getAttribute("aria-label"));
+      expect(marks()).toEqual([]);
+
+      await act(async () => answer([publication("b-ep")]));
+      expect(marks()).toEqual(["已分享"]);
+
+      // Coming back to the page: what was known is drawn at once, before the server answers again.
+      await act(async () => root.unmount());
+      root = createRoot(host);
+      vi.mocked(api.publicationStatuses).mockReturnValueOnce(new Promise(() => undefined));
+      await mount();
+      expect(marks()).toEqual(["已分享"]);
     });
 
     it("deleting a shared programme stops sharing it, and 撤销 brings the sharing back", async () => {
