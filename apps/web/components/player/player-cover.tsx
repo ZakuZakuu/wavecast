@@ -13,14 +13,19 @@ const CARD_SHARE = 0.912;
 
 export type LoadedCover = { current: string | null; previous: string | null };
 
+// Covers loaded earlier in this visit: coming back to the player shows the stack at once instead of
+// the programme's cover alone for as long as the picture takes to arrive.
+const loadedBefore = new Set<string>();
+
 /**
  * The song cover to show for `src`: only an image that has loaded (so the stack never opens on an
  * empty card), the one before it kept underneath for the cross-fade, and nothing at all when the
  * address is missing or the image fails.
  */
 export function useLoadedCover(src: string | null): LoadedCover {
-  const [shown, setShown] = useState<LoadedCover>({ current: null, previous: null });
-  const settled = useRef<string | null>(null);
+  const known = src !== null && loadedBefore.has(src) ? src : null;
+  const [shown, setShown] = useState<LoadedCover>({ current: known, previous: null });
+  const settled = useRef<string | null>(known);
 
   useEffect(() => {
     if (!src) {
@@ -36,6 +41,7 @@ export function useLoadedCover(src: string | null): LoadedCover {
     image.onload = () => {
       if (cancelled) return;
       const before = settled.current;
+      loadedBefore.add(src);
       settled.current = src;
       setShown({ current: src, previous: before });
       if (before) timer = window.setTimeout(() => setShown({ current: src, previous: null }), FADE_MS);
@@ -79,7 +85,7 @@ export function PlayerCover({
 }) {
   if (!song.current) {
     return (
-      <div className="player-cover" data-drag-handle style={{ width: size, height: size }}>
+      <div key="single" className="player-cover" data-drag-handle style={{ width: size, height: size }}>
         <TypeCover params={params} radius={12} />
       </div>
     );
@@ -87,6 +93,7 @@ export function PlayerCover({
   const card = Math.round(size * CARD_SHARE);
   return (
     <div
+      key="stack"
       className="player-cover-stack"
       data-drag-handle
       data-front={front}

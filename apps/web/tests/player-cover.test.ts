@@ -71,6 +71,17 @@ describe("PlayerCover", () => {
     expect(toggle).toHaveBeenCalledTimes(1);
   });
 
+  it("is a new element when the stack replaces the lone cover, so a leftover transform cannot follow it", () => {
+    render({ current: null, previous: null }, "show");
+    const lone = container.querySelector(".player-cover") as HTMLElement;
+    lone.style.transform = "translate3d(0, -100px, 0) scale(0.28)"; // what the open animation leaves behind
+    render({ current: "https://x/a.jpg", previous: null }, "song");
+    const stack = container.querySelector(".player-cover-stack") as HTMLElement;
+    expect(stack).not.toBe(lone);
+    expect(stack.style.transform).toBe("");
+    expect(container.querySelector(".player-cover")).toBeNull();
+  });
+
   it("keeps the previous song's cover underneath while the next one comes in", () => {
     render({ current: "https://x/b.jpg", previous: "https://x/a.jpg" }, "song");
     const sources = [...container.querySelectorAll(".is-song img")].map((node) => node.getAttribute("src"));
@@ -87,31 +98,36 @@ describe("useLoadedCover", () => {
   const show = (src: string | null) => act(() => root.render(createElement(Probe, { src })));
 
   it("offers a cover only once it has loaded", () => {
-    show("https://x/a.jpg");
+    show("https://x/one.jpg");
     expect(latest.current).toBeNull();
     act(() => images[0].onload?.());
-    expect(latest.current).toBe("https://x/a.jpg");
+    expect(latest.current).toBe("https://x/one.jpg");
+  });
+
+  it("offers a cover it has loaded before at once, so coming back to the player shows the stack", () => {
+    show("https://x/one.jpg");
+    expect(latest.current).toBe("https://x/one.jpg");
   });
 
   it("drops a cover that fails to load, so the programme's cover stands alone", () => {
-    show("https://x/a.jpg");
+    show("https://x/bad.jpg");
     act(() => images[0].onerror?.());
     expect(latest).toEqual({ current: null, previous: null });
   });
 
   it("keeps showing the last song's cover until the next one has loaded, then lets go of it", () => {
-    show("https://x/a.jpg");
+    show("https://x/first.jpg");
     act(() => images[0].onload?.());
-    show("https://x/b.jpg");
-    expect(latest).toEqual({ current: "https://x/a.jpg", previous: null });
+    show("https://x/second.jpg");
+    expect(latest).toEqual({ current: "https://x/first.jpg", previous: null });
     act(() => images[1].onload?.());
-    expect(latest).toEqual({ current: "https://x/b.jpg", previous: "https://x/a.jpg" });
+    expect(latest).toEqual({ current: "https://x/second.jpg", previous: "https://x/first.jpg" });
     act(() => vi.advanceTimersByTime(500));
-    expect(latest).toEqual({ current: "https://x/b.jpg", previous: null });
+    expect(latest).toEqual({ current: "https://x/second.jpg", previous: null });
   });
 
   it("shows nothing for a song without a cover", () => {
-    show("https://x/a.jpg");
+    show("https://x/third.jpg");
     act(() => images[0].onload?.());
     show(null);
     expect(latest).toEqual({ current: null, previous: null });

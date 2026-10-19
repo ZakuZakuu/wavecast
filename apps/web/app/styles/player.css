@@ -155,7 +155,7 @@
 }
 /* Two covers of one size, the second a little up and to the right behind the first; tapping brings
    the other forward. */
-.player-cover-stack { position: relative; flex: 0 0 auto; touch-action: none; }
+.player-cover-stack { position: relative; flex: 0 0 auto; touch-action: none; transform-origin: 50% 50%; }
 .player-cover-card {
   position: absolute;
   left: 0;
@@ -172,7 +172,7 @@
   content: "";
   position: absolute;
   inset: 0;
-  background: rgba(20, 14, 8, .34);
+  background: rgba(20, 14, 8, .14);
   opacity: 0;
   transition: opacity 250ms var(--ease);
   pointer-events: none;
