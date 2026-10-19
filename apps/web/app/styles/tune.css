@@ -6,6 +6,10 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* Scrolls only when the page does not fit (a short screen, the mini player up); the picture flying off never scrolls it sideways. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   /* The station under the dial, for everything on the page that wears its colour. */
   --deep: #8F6B25;
   --deep-text: #4A3510;
@@ -22,7 +26,8 @@
 /* ---------- The card: tint, words, pictures, dial ---------- */
 .tuner-card {
   --card-h: 250px;
-  --poster: 188px;
+  /* 188px where there is room (390px wide and up); on a narrower screen it leaves the words their column. */
+  --poster: clamp(120px, calc(100vw - 202px), 188px);
   position: relative;
   flex: 0 0 auto;
   height: var(--card-h);
@@ -187,10 +192,11 @@
   place-items: center;
   transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
 }
-.tw-step:active:not(:disabled) { color: rgba(29, 29, 31, .7); }
-.tw-step:active:not(:disabled) > span { background: #DDDDE3; transform: scale(.94); }
-.tw-step:disabled { color: rgba(29, 29, 31, .18); cursor: default; }
-.tw-step:disabled > span { background: transparent; box-shadow: none; }
+.tw-step:active:not([aria-disabled="true"]) { color: rgba(29, 29, 31, .7); }
+.tw-step:active:not([aria-disabled="true"]) > span { background: #DDDDE3; transform: scale(.94); }
+/* Off at the end of the band, but still focusable (a focused button must not vanish from under the keyboard). */
+.tw-step[aria-disabled="true"] { color: rgba(29, 29, 31, .18); cursor: default; }
+.tw-step[aria-disabled="true"] > span { background: transparent; box-shadow: none; }
 .tw-step:focus-visible { outline: 2px solid var(--ink); outline-offset: -4px; border-radius: 20px; }
 /* The needle starts below the names, so that it does not cross the one it points at. */
 .tw-pointer {
@@ -394,7 +400,7 @@
   .tune-box textarea { padding-top: 10px; }
 }
 @media (max-height: 700px) {
-  .tune { padding-top: 16px; gap: 10px; overflow-y: auto; overscroll-behavior: contain; }
+  .tune { padding-top: 16px; gap: 10px; }
   .tuner-card { margin-top: 10px; }
   .tune .page-title { font-size: 28px; height: 34px; line-height: 34px; }
   .tune-box { height: 72px; }

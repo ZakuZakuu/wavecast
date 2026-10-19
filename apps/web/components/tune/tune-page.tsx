@@ -8,7 +8,7 @@ import { claimVisitPrompt } from "../../lib/login-nudge";
 import { openOverlayCount } from "../../lib/overlay-stack";
 import { stationExamples, stationPlaceholder } from "../../lib/station-guide";
 import { markStationGuideSeen, stationGuideSeen } from "../../lib/station-guide-state";
-import { formatFreq, type Station } from "../../lib/stations";
+import { formatFreq, hostToSend, type Station } from "../../lib/stations";
 import { useSoftKeyboard } from "../../lib/soft-keyboard";
 import type { DurationIntent, HostMode } from "../../lib/types";
 import { AppShell } from "../app-shell";
@@ -46,13 +46,19 @@ export function TunePage() {
 
   const examples = stationExamples(station.id);
 
+  const openerRef = useRef<HTMLElement | null>(null);
   const openGuide = useCallback((first = false) => {
+    openerRef.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     setGuideFirst(first);
     setGuideOpen(true);
   }, []);
   const closeGuide = useCallback(() => {
     setGuideOpen(false);
     markStationGuideSeen();
+    // Back to what had the focus (the link, say), once the page is interactive again.
+    const opener = openerRef.current;
+    openerRef.current = null;
+    if (opener) requestAnimationFrame(() => { if (opener.isConnected) opener.focus({ preventScroll: true }); });
   }, []);
 
   // The first visit: the guide opens by itself, once nothing else is on screen and this visit's prompt slot is free.
@@ -73,7 +79,8 @@ export function TunePage() {
   }, [openGuide]);
 
   const pickHost = (value: HostMode) => setHostPick(value === station.host ? null : value);
-  const startFrom = (target: Station) => void tune.start(target, text, duration, undefined, hostPick);
+  const sentHost = hostToSend(hostPick, station);
+  const startFrom = (target: Station) => void tune.start(target, text, duration, undefined, hostToSend(hostPick, target));
 
   /** Fill the box with the next example of this station (what the grey placeholder shows comes first). */
   const nextExample = () => {
@@ -111,7 +118,7 @@ export function TunePage() {
         </>
       )}
     >
-      <div className={guideOpen ? "tune is-guiding" : "tune"} style={tone}>
+      <div className={guideOpen ? "tune is-guiding" : "tune"} style={tone} inert={guideOpen}>
         <h1 className="page-title">调频</h1>
 
         <TunerCard tuner={tuner} cardRef={cardRef} onOpenGuide={() => openGuide(false)} />
@@ -128,7 +135,8 @@ export function TunePage() {
               maxLength={200}
               rows={2}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                // keyCode 229: Safari's Enter that confirms an input-method composition (it reports isComposing false there).
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
                   event.preventDefault();
                   startFrom(station);
                 }
@@ -153,7 +161,7 @@ export function TunePage() {
             data-guide="tune-prepare"
             aria-label={creating ? "正在准备完整版" : started ? "已开始准备完整版" : "准备完整版"}
             disabled={creating}
-            onClick={() => void prepareFullVersionFromTuner(station, text, duration, hostPick)}
+            onClick={() => void prepareFullVersionFromTuner(station, text, duration, sentHost)}
           >
             {creating ? <span className="on-air-spinner" aria-hidden="true" /> : started ? <CheckIcon size={22} strokeWidth={2.6} /> : <QueuePlusIcon size={26} strokeWidth={2.1} />}
           </button>

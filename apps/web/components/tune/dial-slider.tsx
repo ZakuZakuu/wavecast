@@ -65,10 +65,10 @@ export function DialSlider({
       >
         <TuningWindow freq={freq} width={width} activeStation={reading.locked ? station : null} noise={reading.noise} />
       </div>
-      <button type="button" className="tw-step tw-step-down" aria-label="上一个台" disabled={!canStep.down} onClick={() => onStep(-1)}>
+      <button type="button" className="tw-step tw-step-down" aria-label="上一个台" aria-disabled={!canStep.down || undefined} onClick={() => { if (canStep.down) onStep(-1); }}>
         <span><ChevronLeftIcon size={16} strokeWidth={2.4} /></span>
       </button>
-      <button type="button" className="tw-step tw-step-up" aria-label="下一个台" disabled={!canStep.up} onClick={() => onStep(1)}>
+      <button type="button" className="tw-step tw-step-up" aria-label="下一个台" aria-disabled={!canStep.up || undefined} onClick={() => { if (canStep.up) onStep(1); }}>
         <span><ChevronRightIcon size={16} strokeWidth={2.4} /></span>
       </button>
     </div>

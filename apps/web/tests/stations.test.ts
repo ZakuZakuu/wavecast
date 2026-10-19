@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { DURATION_CHIPS, DURATIONS, FIRST_VISIT_STATION_ID, HOST_CHOICES, hostChoiceLabel, matchStation, rememberProgrammeStation, STATIONS, stationById, stationForProgramme } from "../lib/stations";
+import { DURATION_CHIPS, DURATIONS, FIRST_VISIT_STATION_ID, HOST_CHOICES, hostChoiceLabel, hostToSend, matchStation, rememberProgrammeStation, STATIONS, stationById, stationForProgramme } from "../lib/stations";
 
 describe("matchStation", () => {
   it("maps free text to stations by keyword", () => {
@@ -45,5 +45,15 @@ describe("the tuner's stations", () => {
     expect(HOST_CHOICES.map((choice) => choice.value)).toEqual(["NONE", "LIGHT", "FULL"]);
     expect(hostChoiceLabel("NONE")).toBe("只听歌");
     expect(hostChoiceLabel("FULL")).toBe("多讲解");
+  });
+});
+
+describe("hostToSend", () => {
+  it("sends the host control only when it differs from the station's own default", () => {
+    const night = stationById("night");
+    expect(hostToSend(null, night)).toBeNull();
+    expect(hostToSend(night.host, night)).toBeNull();
+    expect(hostToSend("FULL", night)).toBe("FULL");
+    expect(hostToSend(night.host, stationById("portrait"))).toBe(night.host);
   });
 });

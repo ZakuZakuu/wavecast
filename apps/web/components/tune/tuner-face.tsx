@@ -1,4 +1,4 @@
-import { memo, type CSSProperties } from "react";
+import { memo, useId, type CSSProperties } from "react";
 
 import { rgba } from "../../lib/cover/styled/color";
 import { formatFreq, STATIONS, type Station } from "../../lib/stations";
@@ -31,6 +31,8 @@ const StationWords = memo(function StationWords({ station, weight }: { station: 
  * A function of the frequency alone, so dragging back plays it in reverse and a stopped finger stops it.
  */
 export function TunerFace({ freq }: { freq: number }) {
+  // Two faces can be on screen at once (the page's and the guide's): each needs its own pattern id.
+  const dustId = `tuner-dust-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
   const blends = stationBlends(freq);
   const tint = tintBlend(freq);
   const nearest = blends.reduce((best, item) => (item.distance < best.distance ? item : best), blends[0]);
@@ -41,11 +43,11 @@ export function TunerFace({ freq }: { freq: number }) {
       <span className="face-gloss" aria-hidden="true" />
       <svg className="face-dust" style={{ opacity: cardNoise(nearest.distance) }} aria-hidden="true">
         <defs>
-          <pattern id="tuner-dust" width="120" height="120" patternUnits="userSpaceOnUse">
+          <pattern id={dustId} width="120" height="120" patternUnits="userSpaceOnUse">
             <path d={DUST} />
           </pattern>
         </defs>
-        <rect width="100%" height="100%" fill="url(#tuner-dust)" />
+        <rect width="100%" height="100%" fill={`url(#${dustId})`} />
       </svg>
       {blends.map((item) => (item.weight > 0 ? <StationWords key={item.station.id} station={item.station} weight={item.weight} /> : null))}
       {STATIONS.map((station, index) => {

@@ -112,4 +112,17 @@ describe("the tuner", () => {
     await run(1200);
     expect(tuner.freq).toBeCloseTo(tuner.reading.station.freq, 1);
   });
+
+  it("does not stay in a drag when the mouse button was released outside the dial", async () => {
+    await mount();
+    const mouse = (x: number, buttons: number) => ({ ...pointer(x), pointerType: "mouse", buttons }) as unknown as React.PointerEvent<HTMLElement>;
+    await act(async () => tuner.dial.onPointerDown(mouse(200, 1)));
+    await act(async () => tuner.dial.onPointerMove(mouse(150, 1)));
+    expect(tuner.dragging).toBe(true);
+    // The button came up elsewhere, so no pointer-up ever arrived; the next move says nothing is pressed.
+    await act(async () => tuner.dial.onPointerMove(mouse(120, 0)));
+    expect(tuner.dragging).toBe(false);
+    await run(1200);
+    expect(tuner.freq).toBeCloseTo(tuner.reading.station.freq, 1);
+  });
 });

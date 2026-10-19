@@ -159,6 +159,14 @@ export const HOST_CHOICES: Array<{ value: HostMode; label: string; hint: string 
   { value: "FULL", label: "多讲解", hint: "每首歌前后讲背后的故事" },
 ];
 
+/**
+ * The host to send with a request: only a choice that differs from the station's own default. A listener who picked
+ * 多讲解 on 夜里 and then tuned 人物志 (whose default it is) has, as far as the server needs to know, not chosen.
+ */
+export function hostToSend(pick: HostMode | null, station: Station): HostMode | null {
+  return pick !== null && pick !== station.host ? pick : null;
+}
+
 export function hostChoiceLabel(value: HostMode): string {
   return HOST_CHOICES.find((choice) => choice.value === value)?.label ?? "偶尔说";
 }

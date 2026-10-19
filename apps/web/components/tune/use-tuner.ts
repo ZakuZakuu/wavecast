@@ -171,13 +171,13 @@ export function useTuner(): Tuner {
   useLayoutEffect(() => {
     let fromQuery: Station | null = null;
     let last: Station | null = null;
+    const id = new URLSearchParams(window.location.search).get("station");
+    fromQuery = id ? stationById(id) : null;
     try {
-      const id = new URLSearchParams(window.location.search).get("station");
-      fromQuery = id ? stationById(id) : null;
       const lastId = window.localStorage.getItem(LAST_STATION_KEY);
       last = lastId ? stationById(lastId) : null;
     } catch {
-      fromQuery = null;
+      // Storage blocked: the first-visit station, or the one the link asks for.
     }
     if (last) setFreq(last.freq);
     // From a home station card: slide from where the dial was to that station.
@@ -219,6 +219,15 @@ export function useTuner(): Tuner {
   const moveDrag = (event: React.PointerEvent<HTMLElement>): void => {
     const drag = dragState.current;
     if (!drag) return;
+    // A mouse button released outside the card never reached it: this is not a drag, whatever the press said.
+    if (event.pointerType === "mouse" && event.buttons === 0) {
+      dragState.current = null;
+      if (drag.captured) {
+        setDragging(false);
+        snapWithSpring(0);
+      }
+      return;
+    }
     const dx = event.clientX - drag.x;
     if (!drag.captured) {
       // A card swipe: wait until it is clearly sideways, then take the pointer and start from here.
