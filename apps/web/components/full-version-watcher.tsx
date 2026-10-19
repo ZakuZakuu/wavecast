@@ -11,7 +11,12 @@ import {
   subscribeFullVersions,
   type WatchedFullVersion,
 } from "../lib/full-versions";
-import { useCreatingFullVersions, useFullVersionFailure } from "../lib/full-version-requests";
+import {
+  FULL_VERSION_REQUEST_POLL_MS,
+  settlePendingFullVersions,
+  useCreatingFullVersions,
+  useFullVersionFailure,
+} from "../lib/full-version-requests";
 import { openPlayer } from "../lib/player-nav";
 import { stationForProgramme } from "../lib/stations";
 import { ProgrammeCoverView } from "./cover/programme-cover-view";
@@ -29,19 +34,6 @@ export function useUnseenFullVersionCount(): number {
   return count;
 }
 
-/** What 节目库's tab says: something finished that has not been looked at (ready), or is still being made (busy). */
-export function useLibraryTabState(): "ready" | "busy" | null {
-  const unseen = useUnseenFullVersionCount();
-  const [pending, setPending] = useState(false);
-  const creating = useCreatingFullVersions().length > 0;
-  useEffect(() => {
-    const refresh = () => setPending(readWatchedFullVersions().length > 0);
-    refresh();
-    return subscribeFullVersions(refresh);
-  }, []);
-  return unseen > 0 ? "ready" : creating || pending ? "busy" : null;
-}
-
 /**
  * Keeps an eye on the 完整版 this device asked for (nothing runs while there are none) and, when one
  * finishes, says so with a banner over whatever page the listener is on. Hidden over the player, which
@@ -49,6 +41,7 @@ export function useLibraryTabState(): "ready" | "busy" | null {
  */
 export function FullVersionWatcher({ hidden }: { hidden: boolean }) {
   const [pending, setPending] = useState(false);
+  const making = useCreatingFullVersions().length > 0;
   const [banner, setBanner] = useState<WatchedFullVersion | null>(null);
 
   useEffect(() => {
@@ -72,6 +65,17 @@ export function FullVersionWatcher({ hidden }: { hidden: boolean }) {
       window.clearInterval(timer);
     };
   }, [pending]);
+
+  // Programmes still being made on the server: ask after them until they are filed.
+  useEffect(() => {
+    if (!making) return;
+    const poll = () => {
+      if (document.visibilityState !== "hidden") void settlePendingFullVersions();
+    };
+    poll();
+    const timer = window.setInterval(poll, FULL_VERSION_REQUEST_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [making]);
 
   useEffect(() => {
     if (!banner) return;

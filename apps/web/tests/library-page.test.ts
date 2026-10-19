@@ -8,6 +8,7 @@ vi.mock("../lib/api", () => ({
   api: {
     program: vi.fn(() => Promise.resolve(null)),
     prepareFullVersion: vi.fn(),
+    fullVersionRequests: vi.fn(() => Promise.resolve([])),
     fullVersionStatuses: vi.fn(() => Promise.resolve([])),
     materialize: vi.fn(() => Promise.resolve({})),
   },
@@ -18,10 +19,9 @@ vi.mock("../components/cover/programme-cover-view", () => ({ ProgrammeCoverView:
 
 import { api } from "../lib/api";
 import { LibraryPage, UNDO_MS } from "../components/library/library-page";
-import { prepareFullVersionFromTuner } from "../lib/full-version-requests";
+import { prepareFullVersionFromTuner, settlePendingFullVersions } from "../lib/full-version-requests";
 import { readUnseenFullVersions, watchFullVersion } from "../lib/full-versions";
 import { STATIONS } from "../lib/stations";
-import type { LiveEpisode } from "../lib/types";
 import { isFavoriteSeed, readUserLibrary } from "../lib/user-library";
 
 let root: Root;
@@ -224,16 +224,16 @@ describe("LibraryPage", () => {
 
     it("holds a place at the top for a programme still being made, until the server has made it", async () => {
       seed([]);
-      let finish: (value: LiveEpisode) => void = () => undefined;
-      vi.mocked(api.prepareFullVersion).mockReturnValue(new Promise((done) => { finish = done; }));
+      vi.mocked(api.prepareFullVersion).mockResolvedValue({ request_id: "r1" });
       await mountAndSettle();
-      let started: Promise<void> = Promise.resolve();
-      await act(async () => { started = prepareFullVersionFromTuner(STATIONS[1], "夜里听爵士", "SHORT"); });
+      await act(async () => { await prepareFullVersionFromTuner(STATIONS[1], "夜里听爵士", "SHORT"); });
       const making = host.querySelector(".lib-making");
       expect(making?.textContent).toContain("夜里听爵士");
       expect(making?.textContent).toContain("正在编排");
       expect(host.querySelector(".lib-list")?.firstElementChild).toBe(making);
-      await act(async () => { finish({ id: "e", seed_id: "s", title: "夜里听爵士", state: "MATERIALIZING", playback_position_seconds: 0, timeline_duration_seconds: 60, program_estimated_duration_seconds: 2100 } as LiveEpisode); await started; });
+
+      vi.mocked(api.fullVersionRequests).mockResolvedValue([{ request_id: "r1", status: "failed", episode_id: null, programme_id: null, title: null, message: null }]);
+      await act(async () => { await settlePendingFullVersions(); });
       expect(host.querySelector(".lib-making")).toBeNull();
     });
 

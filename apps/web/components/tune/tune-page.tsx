@@ -25,7 +25,7 @@ import {
 import type { DurationIntent } from "../../lib/types";
 import { AppShell } from "../app-shell";
 import { CheckIcon, DownloadIcon } from "../icons";
-import { prepareFullVersionFromTuner, useCreatingFullVersions, useFullVersionFailure, useFullVersionStarted } from "../../lib/full-version-requests";
+import { prepareFullVersionFromTuner, useFullVersionFailure, useFullVersionStarted, useFullVersionStarting } from "../../lib/full-version-requests";
 import { Guide } from "../guide/guide";
 import { Segmented } from "../segmented";
 import { easeStandard, prefersReducedMotion, tween } from "../../lib/motion/easing";
@@ -45,7 +45,7 @@ const GLIDE_STOP_SPEED = 0.05;
 
 export function TunePage() {
   const tune = useTuneStart();
-  const creating = useCreatingFullVersions().length > 0;
+  const creating = useFullVersionStarting();
   const started = useFullVersionStarted();
   const failure = useFullVersionFailure();
   useSoftKeyboard();

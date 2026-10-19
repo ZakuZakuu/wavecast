@@ -136,6 +136,16 @@ export type FullVersionItem = {
   progress: number;
 };
 
+/** A 完整版 asked for from the tuner: the server is still making the programme, or has, or could not. */
+export type FullVersionRequestItem = {
+  request_id: string;
+  status: "creating" | "ready" | "failed";
+  episode_id: string | null;
+  programme_id: string | null;
+  title: string | null;
+  message: string | null;
+};
+
 export type LiveEpisode = {
   id: string;
   seed_id: string;

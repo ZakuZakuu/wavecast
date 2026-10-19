@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from itertools import combinations
@@ -1617,9 +1618,14 @@ async def adopt_program(program_id: str, request: Request) -> ProgramProposal:
 async def create_program_proposals(
     body: ProposalGenerationRequest, request: Request,
 ) -> ProgramProposalBatch:
+    return await _make_proposals(body, principal(request))
+
+
+async def _make_proposals(
+    body: ProposalGenerationRequest, owner: AuthPrincipal,
+) -> ProgramProposalBatch:
     if proposal_generator is None:
         raise HTTPException(status_code=503, detail="Program proposal generation is not configured")
-    owner = principal(request)
     try:
         reservations = await to_thread.run_sync(
             lambda: generation_quota_repository.reserve(
@@ -1797,7 +1803,10 @@ async def _prepare_opening_host(
 
 @app.post("/api/episodes/from-seed/{seed_id}", response_model=LiveEpisode)
 async def create_episode(seed_id: str, request: Request) -> LiveEpisode:
-    actor = principal(request)
+    return await _start_episode(seed_id, principal(request))
+
+
+async def _start_episode(seed_id: str, actor: AuthPrincipal) -> LiveEpisode:
     seed = _static_seed(seed_id)
     if seed is None:
         proposal = await to_thread.run_sync(_proposal_for_program, seed_id, actor)
@@ -2955,7 +2964,8 @@ def _full_versions_in_progress(actor: AuthPrincipal, *, excluding: str | None = 
 
 
 def _require_full_version_slot(actor: AuthPrincipal, *, excluding: str | None = None) -> None:
-    if _full_versions_in_progress(actor, excluding=excluding) >= MAX_CONCURRENT_FULL_VERSIONS:
+    busy = _full_versions_in_progress(actor, excluding=excluding) + _creating_requests(actor)
+    if busy >= MAX_CONCURRENT_FULL_VERSIONS:
         raise HTTPException(
             status_code=429,
             detail=f"最多同时准备 {MAX_CONCURRENT_FULL_VERSIONS} 档",
@@ -2985,6 +2995,10 @@ async def materialize(episode_id: str, request: Request) -> LiveEpisode:
     actor = principal(request)
     await to_thread.run_sync(owned, episode_id, actor)
     await to_thread.run_sync(_admit_full_version, episode_id, actor)
+    return await _queue_full_generation(episode_id)
+
+
+async def _queue_full_generation(episode_id: str) -> LiveEpisode:
     episode = await to_thread.run_sync(orchestrator.request_full_generation, episode_id)
     if episode.state is EpisodeState.MATERIALIZED:
         return episode
@@ -3004,19 +3018,112 @@ async def materialize(episode_id: str, request: Request) -> LiveEpisode:
     return episode
 
 
-@app.post("/api/full-versions", response_model=LiveEpisode, status_code=202)
+@dataclass
+class _FullVersionRequest:
+    """A 完整版 asked for from the tuner while its programme is still being made."""
+
+    id: str
+    listener_id: str
+    user_id: str | None
+    created_at: datetime
+    status: str = "creating"
+    episode_id: str | None = None
+    programme_id: str | None = None
+    title: str | None = None
+    message: str | None = None
+
+
+_full_version_requests: dict[str, _FullVersionRequest] = {}
+_background_tasks: set[asyncio.Task[None]] = set()
+_FULL_VERSION_REQUEST_KEEP_SECONDS = 60 * 60
+
+
+def _owns_request(item: _FullVersionRequest, actor: AuthPrincipal) -> bool:
+    return item.listener_id == actor.listener_id or (
+        actor.user_id is not None and item.user_id == actor.user_id
+    )
+
+
+def _creating_requests(actor: AuthPrincipal) -> int:
+    return sum(
+        1
+        for item in list(_full_version_requests.values())
+        if item.status == "creating" and _owns_request(item, actor)
+    )
+
+
+async def _run_full_version_request(
+    item: _FullVersionRequest, body: ProposalGenerationRequest, actor: AuthPrincipal,
+) -> None:
+    try:
+        batch = await _make_proposals(body, actor)
+        proposal = batch.proposals[0]
+        started = await _start_episode(proposal.id, actor)
+        # The slot was taken when the request was accepted, so it is not asked for again here.
+        await _queue_full_generation(started.id)
+        await to_thread.run_sync(orchestrator.leave, started.id)
+        item.episode_id = started.id
+        item.programme_id = started.seed_id
+        item.title = started.title
+        item.status = "ready"
+    except HTTPException as error:
+        item.status = "failed"
+        item.message = error.detail if isinstance(error.detail, str) else None
+    except Exception:  # noqa: BLE001 - the listener is told it did not work; the log has the rest
+        logger.exception("full_version_request_failed request_id=%s", item.id)
+        item.status = "failed"
+
+
+@app.post("/api/full-versions", status_code=202)
 async def prepare_full_version(
     body: ProposalGenerationRequest, request: Request,
-) -> LiveEpisode:
-    """Tune a programme and prepare its 完整版 without playing it (the listener is not there)."""
+) -> dict[str, str]:
+    """Tune a programme and prepare its 完整版 without playing it.
+
+    Answers at once: making the programme takes seconds, and the listener is free to leave. The
+    work carries on here, and ``GET /api/full-versions/requests`` says how it went.
+    """
     actor = principal(request)
-    # Before a proposal is made, so a refusal costs the listener none of their allowance.
+    # Before anything is made, so a refusal costs the listener none of their allowance.
     await to_thread.run_sync(_require_full_version_slot, actor)
-    batch = await create_program_proposals(body.model_copy(update={"count": 1}), request)
-    started = await create_episode(batch.proposals[0].id, request)
-    await materialize(started.id, request)
-    await to_thread.run_sync(orchestrator.leave, started.id)
-    return await to_thread.run_sync(orchestrator.get, started.id)
+    now = datetime.now(UTC)
+    for key, old in list(_full_version_requests.items()):
+        if (now - old.created_at).total_seconds() > _FULL_VERSION_REQUEST_KEEP_SECONDS:
+            _full_version_requests.pop(key, None)
+    item = _FullVersionRequest(
+        id=uuid4().hex, listener_id=actor.listener_id, user_id=actor.user_id, created_at=now,
+    )
+    _full_version_requests[item.id] = item
+    task = asyncio.create_task(
+        _run_full_version_request(item, body.model_copy(update={"count": 1}), actor)
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return {"request_id": item.id}
+
+
+class FullVersionRequestItem(BaseModel):
+    request_id: str
+    status: str
+    episode_id: str | None = None
+    programme_id: str | None = None
+    title: str | None = None
+    message: str | None = None
+
+
+@app.get("/api/full-versions/requests", response_model=list[FullVersionRequestItem])
+async def full_version_requests(ids: str, request: Request) -> list[FullVersionRequestItem]:
+    """How each listed 完整版 request went: still being made, ready (with its episode), or failed."""
+    actor = principal(request)
+    wanted = [value for value in dict.fromkeys(ids.split(",")) if value][:10]
+    return [
+        FullVersionRequestItem(
+            request_id=item.id, status=item.status, episode_id=item.episode_id,
+            programme_id=item.programme_id, title=item.title, message=item.message,
+        )
+        for value in wanted
+        if (item := _full_version_requests.get(value)) is not None and _owns_request(item, actor)
+    ]
 
 
 class FullVersionItem(BaseModel):

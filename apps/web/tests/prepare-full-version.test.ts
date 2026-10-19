@@ -5,13 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/overlay-stack", () => ({ useOverlay: vi.fn() }));
 vi.mock("../lib/api", () => ({
-  api: { prepareFullVersion: vi.fn() },
+  api: { prepareFullVersion: vi.fn(), fullVersionRequests: vi.fn(), get: vi.fn() },
   ApiRequestError: class extends Error { constructor(message: string, readonly status: number) { super(message); } },
 }));
 
 import { MoreSheet } from "../components/player/more-sheet";
 import { api, ApiRequestError } from "../lib/api";
-import { prepareFullVersionFromTuner, useCreatingFullVersions, useFullVersionFailure, useFullVersionStarted } from "../lib/full-version-requests";
 import { readWatchedFullVersions } from "../lib/full-versions";
 import { STATIONS } from "../lib/stations";
 import type { LiveEpisode } from "../lib/types";
@@ -36,73 +35,114 @@ const render = (element: ReactElement) => act(async () => root.render(element));
 const episode = { id: "ep-1", seed_id: "proposal-1", title: "夜里的爵士", topic: "爵士", state: "MATERIALIZING", is_listener_active: false, playback_position_seconds: 0, timeline_duration_seconds: 60, program_estimated_duration_seconds: 2100 } as unknown as LiveEpisode;
 
 describe("准备完整版 from the tuner", () => {
-  function Probe() {
-    const creating = useCreatingFullVersions();
-    const started = useFullVersionStarted();
-    const failure = useFullVersionFailure();
-    return createElement("div", null,
-      createElement("p", { id: "creating" }, creating.map((item) => item.title).join("|")),
-      createElement("p", { id: "started" }, String(started)),
-      createElement("p", { id: "failure" }, failure ?? ""),
-    );
+  // The requests live in the module (and the device's storage), so each test starts from a fresh one.
+  async function fresh() {
+    vi.resetModules();
+    const store = await import("../lib/full-version-requests");
+    function Probe() {
+      const creating = store.useCreatingFullVersions();
+      return createElement("div", null,
+        createElement("p", { id: "creating" }, creating.map((item) => item.title).join("|")),
+        createElement("p", { id: "starting" }, String(store.useFullVersionStarting())),
+        createElement("p", { id: "started" }, String(store.useFullVersionStarted())),
+        createElement("p", { id: "failure" }, store.useFullVersionFailure() ?? ""),
+      );
+    }
+    await render(createElement(Probe));
+    return store;
   }
   const text = (id: string) => host.querySelector(`#${id}`)?.textContent;
+  const request = (id: string, status: "creating" | "ready" | "failed", extra: object = {}) =>
+    ({ request_id: id, status, episode_id: null, programme_id: null, title: null, message: null, ...extra });
 
-  it("shows at once that it is under way, files the programme when it is made, and waits for it", async () => {
-    let finish: (value: LiveEpisode) => void = () => undefined;
-    vi.mocked(api.prepareFullVersion).mockReturnValue(new Promise((done) => { finish = done; }));
-    await render(createElement(Probe));
-
-    let started: Promise<void> = Promise.resolve();
-    await act(async () => { started = prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
-    expect(text("creating")).toBe("爵士");
-    expect(text("started")).toBe("false");
+  it("is answered at once: the button is busy only while the server takes the request, then says it started", async () => {
+    const store = await fresh();
+    let accept: (value: { request_id: string }) => void = () => undefined;
+    vi.mocked(api.prepareFullVersion).mockReturnValue(new Promise((done) => { accept = done; }));
+    let sent: Promise<void> = Promise.resolve();
+    await act(async () => { sent = store.prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
+    expect(text("starting")).toBe("true");
     expect(api.prepareFullVersion).toHaveBeenCalledWith(expect.objectContaining({ prompt: "爵士", duration_intent: "SHORT", station: STATIONS[0].id }));
 
-    // A second one is not started while the first is being made.
-    await act(async () => { await prepareFullVersionFromTuner(STATIONS[1], "别的", "SHORT"); });
-    expect(api.prepareFullVersion).toHaveBeenCalledTimes(1);
-
-    await act(async () => { finish(episode); await started; });
-    expect(text("creating")).toBe("");
+    await act(async () => { accept({ request_id: "r1" }); await sent; });
+    expect(text("starting")).toBe("false");
     expect(text("started")).toBe("true");
-    expect(readUserLibrary().createdProgramIds).toContain("proposal-1");
-    expect(readUserLibrary().recentPrograms.map((item) => item.episodeId)).toEqual(["ep-1"]);
-    expect(readWatchedFullVersions().map((item) => item.episodeId)).toEqual(["ep-1"]);
+    // The programme is not made yet: it holds a place in 节目库, and is remembered on the device.
+    expect(text("creating")).toBe("爵士");
+    expect(window.localStorage.getItem("wavecast-full-requests-v1")).toContain("r1");
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
     expect(text("started")).toBe("false");
+    expect(text("creating")).toBe("爵士");
   });
 
-  it("is not tied to the page: it carries on and still says how it ended after the page is gone", async () => {
-    let finish: (value: LiveEpisode) => void = () => undefined;
-    vi.mocked(api.prepareFullVersion).mockReturnValue(new Promise((done) => { finish = done; }));
-    await render(createElement(Probe));
-    let started: Promise<void> = Promise.resolve();
-    await act(async () => { started = prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
+  it("files the programme when the server has made it, and keeps waiting while it has not", async () => {
+    const store = await fresh();
+    vi.mocked(api.prepareFullVersion).mockResolvedValue({ request_id: "r1" });
+    await act(async () => { await store.prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
+
+    vi.mocked(api.fullVersionRequests).mockResolvedValue([request("r1", "creating")]);
+    await act(async () => { await store.settlePendingFullVersions(); });
+    expect(text("creating")).toBe("爵士");
+    expect(readUserLibrary().recentPrograms).toEqual([]);
+
+    vi.mocked(api.fullVersionRequests).mockResolvedValue([request("r1", "ready", { episode_id: "ep-1", programme_id: "proposal-1" })]);
+    vi.mocked(api.get).mockResolvedValue(episode);
+    await act(async () => { await store.settlePendingFullVersions(); });
+    expect(api.get).toHaveBeenCalledWith("ep-1");
+    expect(text("creating")).toBe("");
+    expect(readUserLibrary().createdProgramIds).toContain("proposal-1");
+    expect(readUserLibrary().recentPrograms.map((item) => item.episodeId)).toEqual(["ep-1"]);
+    expect(readWatchedFullVersions().map((item) => item.episodeId)).toEqual(["ep-1"]);
+    expect(window.localStorage.getItem("wavecast-full-requests-v1")).toBe("[]");
+  });
+
+  it("is not tied to the page or the session: a request is still waited on after the app was closed", async () => {
+    const store = await fresh();
+    vi.mocked(api.prepareFullVersion).mockResolvedValue({ request_id: "r1" });
+    await act(async () => { await store.prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
     await act(async () => root.unmount());
     root = createRoot(host);
-    await render(createElement(Probe));
+
+    const reopened = await fresh();
     expect(text("creating")).toBe("爵士");
-    await act(async () => { finish(episode); await started; });
+    vi.mocked(api.fullVersionRequests).mockResolvedValue([request("r1", "ready", { episode_id: "ep-1", programme_id: "proposal-1" })]);
+    vi.mocked(api.get).mockResolvedValue(episode);
+    await act(async () => { await reopened.settlePendingFullVersions(); });
     expect(text("creating")).toBe("");
-    expect(text("started")).toBe("true");
+    expect(readUserLibrary().recentPrograms.map((item) => item.episodeId)).toEqual(["ep-1"]);
   });
 
-  it("passes on the server's reason when it is Chinese (too many at once), and a plain one otherwise", async () => {
-    await render(createElement(Probe));
+  it("says why it did not work: the server's reason when it is Chinese, a plain line otherwise; and gives up on one it has lost", async () => {
+    const store = await fresh();
     vi.mocked(api.prepareFullVersion).mockRejectedValueOnce(new ApiRequestError("最多同时准备 2 档", 429));
-    await act(async () => { await prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
+    await act(async () => { await store.prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
     expect(text("failure")).toBe("最多同时准备 2 档");
-    expect(text("started")).toBe("false");
     expect(text("creating")).toBe("");
-    expect(readWatchedFullVersions()).toEqual([]);
 
     vi.mocked(api.prepareFullVersion).mockRejectedValueOnce(new Error("Bad gateway"));
-    await act(async () => { await prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
+    await act(async () => { await store.prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
     expect(text("failure")).toBe("没有准备成功，再试一次");
     await act(async () => { await vi.advanceTimersByTimeAsync(3300); });
     expect(text("failure")).toBe("");
+
+    // Accepted, but then the server says it failed to make the programme.
+    vi.mocked(api.prepareFullVersion).mockResolvedValueOnce({ request_id: "r2" });
+    await act(async () => { await store.prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
+    vi.mocked(api.fullVersionRequests).mockResolvedValue([request("r2", "failed", { message: "访客可以先创建 3 档节目。" })]);
+    await act(async () => { await store.settlePendingFullVersions(); });
+    expect(text("failure")).toBe("访客可以先创建 3 档节目。");
+    expect(text("creating")).toBe("");
+
+    // Accepted, and then the server forgets it (it was restarted): given up on after a couple of minutes.
+    vi.mocked(api.prepareFullVersion).mockResolvedValueOnce({ request_id: "r3" });
+    await act(async () => { await store.prepareFullVersionFromTuner(STATIONS[0], "爵士", "SHORT"); });
+    vi.mocked(api.fullVersionRequests).mockResolvedValue([]);
+    await act(async () => { await store.settlePendingFullVersions(); });
+    expect(text("creating")).toBe("爵士");
+    await act(async () => { await vi.advanceTimersByTimeAsync(2 * 60 * 1000 + 1000); await store.settlePendingFullVersions(); });
+    expect(text("creating")).toBe("");
+    expect(text("failure")).toBe("没有准备成功，再试一次");
   });
 });
 
