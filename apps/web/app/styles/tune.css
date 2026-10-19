@@ -531,6 +531,8 @@ html.kb-open .tune .tuner-card { display: none; }
 /* ---------- The 电台指南: the tuner card, grown ---------- */
 .sg { position: absolute; inset: 0; z-index: 10; pointer-events: none; }
 .sg:not([aria-hidden="true"]) { pointer-events: auto; }
+/* Shrinking back: taps already belong to the page again (so tapping the card at once opens it again). */
+.sg.is-closing { pointer-events: none; }
 /* Where the card ends up; measured, so that the card can move to it from the tuner card by left/top/width/height. */
 .sg-slot {
   position: absolute;

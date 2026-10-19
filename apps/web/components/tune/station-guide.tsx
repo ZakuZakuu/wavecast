@@ -102,6 +102,7 @@ export function StationGuide({
   };
 
   // Open: start exactly on the tuner card, then (next frames) move to the full-size slot; close: the way back.
+  // (Also when it was asked to open again while still shrinking back: it opens as soon as it has closed.)
   useEffect(() => {
     if (open && phase === "closed") {
       setBox(relative(originRef.current));
@@ -110,8 +111,7 @@ export function StationGuide({
       setBox(relative(originRef.current));
       setPhase("closing");
     }
-    // `phase` is the machine's own state; only `open` drives it.
-  }, [open]);
+  }, [open, phase]);
 
   useLayoutEffect(() => {
     if (phase !== "opening") return;
@@ -175,7 +175,7 @@ export function StationGuide({
   const blends = stationBlends(tuner.freq);
   const showing = phase === "open";
   return (
-    <div ref={rootRef} className="sg" aria-hidden={phase === "closed" ? true : undefined}>
+    <div ref={rootRef} className={phase === "closing" ? "sg is-closing" : "sg"} aria-hidden={phase === "closed" ? true : undefined}>
       <div ref={slotRef} className="sg-slot" aria-hidden="true" />
       {phase !== "closed" && box ? (
         <>
@@ -189,6 +189,13 @@ export function StationGuide({
             className={showing ? "tuner-card sg-card is-expanded" : "tuner-card sg-card"}
             style={{ left: box.left, top: box.top, width: box.width, height: box.height, "--card-shadow": rgba(station.light, 0.3), touchAction: "pan-y" } as CSSProperties}
             {...tuner.swipe}
+            onClick={(event) => {
+              // It was opened by tapping up here, so tapping up here (above the middle of the card, off the
+              // buttons, the dial and the things to write) takes it back, not only 选择.
+              if ((event.target as Element).closest("button, [data-tuner-dial]")) return;
+              const rect = event.currentTarget.getBoundingClientRect();
+              if (event.clientY < rect.top + rect.height / 2) onClose();
+            }}
           >
             <TunerFace freq={tuner.freq} />
             <div className={showing ? "sg-fade is-on" : "sg-fade"}>
