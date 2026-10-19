@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dedupeByProgramme, isFinished, listeningStatus, progressRatio, relativeWhen } from "../lib/library-view";
+import { dedupeByProgramme, isFinished, listeningStatus, progressRatio, recentEntries, relativeWhen } from "../lib/library-view";
 
 const now = new Date(2026, 9, 2, 15, 0, 0).getTime(); // Friday
 const record = (seedId: string, episodeId: string, updatedAt: number, progressSeconds = 0, durationSeconds = 1800) => ({
@@ -16,6 +16,21 @@ describe("library dedupe", () => {
       record("a", "a0", now - 99999),
     ]);
     expect(rows.map((row) => row.episodeId)).toEqual(["a2", "b1"]);
+  });
+});
+
+describe("recent entries", () => {
+  it("lists recent and saved programmes together, one row each, marking the ones saved whole", () => {
+    const saved = (seedId: string, episodeId: string, updatedAt: number) => ({ ...record(seedId, episodeId, updatedAt), savedAt: updatedAt });
+    const rows = recentEntries(
+      [record("a", "a1", now - 3000), record("b", "b1", now - 1000)],
+      [saved("a", "a2", now - 2000), saved("c", "c1", now - 4000)],
+    );
+    expect(rows.map(({ record: item, full }) => [item.episodeId, full])).toEqual([
+      ["b1", false],
+      ["a2", true],
+      ["c1", true],
+    ]);
   });
 });
 
@@ -48,5 +63,7 @@ describe("swipe decision", () => {
     expect(swipeDecision(-211, 350, 0)).toBe("delete");
     expect(swipeDecision(-20, 350, -0.8)).toBe("open");
     expect(swipeDecision(-80, 350, 0.8)).toBe("close");
+    // A row whose last button does not remove it never commits on a long swipe.
+    expect(swipeDecision(-211, 350, 0, false)).toBe("open");
   });
 });

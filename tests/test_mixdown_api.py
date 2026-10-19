@@ -147,11 +147,15 @@ def test_mixdown_reads_the_repository_off_the_request_loop(
     def owned_probe(episode_id: str, actor: object) -> None:
         on_loop["owned"] = has_running_loop()
 
+    def reject_probe(episode_id: str) -> None:
+        on_loop["reject"] = has_running_loop()
+
     def plan_probe(episode_id: str, actor: object) -> object:
         on_loop["plan"] = has_running_loop()
         raise ValueError("stop after the probes")
 
     monkeypatch.setattr(api_module, "owned", owned_probe)
+    monkeypatch.setattr(api_module, "_reject_published_copy", reject_probe)
     monkeypatch.setattr(api_module, "canonical_mix_plan_for_episode", plan_probe)
 
     response = TestClient(api_module.app).post(
@@ -159,4 +163,4 @@ def test_mixdown_reads_the_repository_off_the_request_loop(
     )
 
     assert response.status_code == 409
-    assert on_loop == {"owned": False, "plan": False}
+    assert on_loop == {"owned": False, "reject": False, "plan": False}

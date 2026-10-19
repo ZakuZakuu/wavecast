@@ -109,6 +109,38 @@ def test_an_authored_tts_text_is_the_base_for_substitution() -> None:
     assert spoken.tts_text == "朗读用的Jody"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("NO MUSIC, NO LIFE?", "No music, no life?"),
+        ("NO LIFE NO MUSIC", "No life no music"),
+        ("NO MUSIC，NO LIFE", "No music，no life"),
+        ("NO LIFE, NO MUSIC", "No life, no music"),
+        ("NO MUSIC\nNO LIFE", "No music no life"),
+        ("No music, no life?", "No music, no life?"),
+    ],
+)
+def test_music_life_slogans_are_spoken_as_words(text: str, expected: str) -> None:
+    spoken = to_spoken_form(text)
+
+    assert spoken.tts_text == expected and spoken.ok
+    assert to_spoken_form(spoken.tts_text).tts_text == spoken.tts_text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "FM 97.4 的 DJ 在聊 R&B、ABBA 和 USA for Africa。",
+        "NO 是一氧化氮的化学式。",
+        "NO SYNTHASE 与 N2、O2。",
+        "NO、YES、NASA、Cmaj7、Ddim、Eb9(13)。",
+        "MONO MUSIC NO LIFE 与 NO MUSIC NO LIFELINE。",
+    ],
+)
+def test_spoken_case_does_not_guess_acronyms_formulas_or_unrelated_names(text: str) -> None:
+    assert to_spoken_form(text).tts_text == text
+
+
 def test_unspeakable_script_detection() -> None:
     assert has_unspeakable_script("ラピュタ")
     assert has_unspeakable_script("한국어")
@@ -155,6 +187,17 @@ def test_writer_blocks_keep_display_text_and_get_a_speakable_tts_text() -> None:
 
     assert result.blocks[0].text == "刚才是《天空の城ラピュタ》，接下来是山下達郎的《Jody》。"
     assert result.blocks[0].tts_text == "刚才是这首歌，接下来是山下达郎的Jody。"
+
+
+def test_single_host_writer_preserves_the_slogan_display_and_changes_only_speech() -> None:
+    text = "那句话写的是 NO MUSIC, NO LIFE?，后来反过来成了 NO LIFE NO MUSIC。"
+
+    result = _write([_block(text)])
+
+    assert result.blocks[0].text == text
+    assert result.blocks[0].tts_text == (
+        "那句话写的是 No music, no life?，后来反过来成了 No life no music。"
+    )
 
 
 def test_writer_block_that_cannot_be_spoken_is_dropped_not_sent_to_tts() -> None:

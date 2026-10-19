@@ -1,31 +1,28 @@
 # WaveCast Project State
 
-Updated: 2026-10-17（北京时间）。唯一当前状态入口。旧过程记录已归档，不能把其中“未发布／待试听”等描述当成当前事实。
+Updated: 2026-10-19（北京时间）。唯一当前状态入口。旧过程记录已归档，不能把其中“未发布／待试听”等描述当成当前事实。
 
 ## 当前任务
 
-用户已完成#316版人物志试听，认可当前版本并明确授权发布正式环境，本轮不再追加代码修复。待发布代码为integration `e85241c8722224aac4657f5aed51209e582d3f59`（#312–#316）；本发布分支只更新状态文档，应用代码与已试听版本一致。正式当前仍为main `6be4919`，需完成发布PR全套CI、普通merge、正式API/Web部署终态和只读冒烟后记录新检查点。
+Claude 正在推进界面与完整版后台生成；Codex 独立处理英文口号 TTS 发音。用户已授权小修通过检查后合入 integration 测试，不发布 main。核心仅改 `spoken_form.py` 与 `dialogue_pipeline.py`：完整 music/life 口号的朗读大小写消歧、双人纯中英文也经过既有发音转换、Writer 使用自然英文大小写。展示稿、事实引用、真正缩写、已发布音频保持原样；不新增模型调用、复审、数据库迁移或前端改动。详见[发音与短测记录](design/tts-pronunciation-checks.md)。
 
-本轮交付：外文名称可说形式及可靠中文歌名；节目编辑方法与首曲主题约束；人物志/来龙去脉FULL主持的正文讨论交付；首两个音乐间隙独立60–90秒完整开篇，结尾30–45秒；节目方向/章节任务进入曲目要点、背景与双人素材选择，Curator优先主题贴合。没有新增模型复审或摘要流水线，旧节目不补稿。见[ADR 0032](adr/0032-editorial-opening.md)、[0033](adr/0033-hosted-programme-delivery.md)、[0034](adr/0034-grounded-spoken-song-titles.md)、[0035](adr/0035-substantive-opening-and-closing.md)。
+本地相关回归285通过，Ruff/Mypy通过；完整回归交CI。当前环境未注入豆包播客密钥，提供三种大小写的显式短测脚本，真实读音仍待新节目试听。和弦符号读法仍留在[#317](https://github.com/ZakuZakuu/wavecast/issues/317)，本次不扩大；心跳失活后恢复问题见[#319](https://github.com/ZakuZakuu/wavecast/issues/319)，不重构租约。
 
-#316 head `5bb7c20`的[完整CI](https://github.com/ZakuZakuu/wavecast/actions/runs/39050660723)全绿：后端1741通过/3跳过、Web299通过、Ruff/Mypy/Docker冒烟通过；本地相关回归366通过。测试API部署`65311344-0c35-4ada-b39f-d0bc53f166e0` SUCCESS、Web `dpl_92tqQFq6J8zfpfH1iVyXTWaS958s` READY，两端均为`e85241c`，API及受保护网页同源公开读/健康检查通过。
+已发布的开篇/收尾、正文讨论交付、中文口播名与节目方向传递见[ADR 0032](adr/0032-editorial-opening.md)至[0035](adr/0035-substantive-opening-and-closing.md)。用户此前已接受听感后发布#318，旧节目不补稿。开场方法论见[原设计](design/programme-editorial-method-and-opening.md)，台标音乐留后续。之前的[UI只读调研](design/ui-next-round-research-2026-10-18.md)与[辅助文案盘点](design/ui-microcopy-inventory-2026-10-18.md)仅供背景，当前UI实现以本节下方和最新代码为准。
 
-已知后续事项：和弦符号/乐理缩写的TTS读法（dim被拆成字母）记入[#317](https://github.com/ZakuZakuu/wavecast/issues/317)，优先由Writer口语化，准确保留音乐含义，不新增翻译/复审。此前Lite连续429由免费额度耗尽自动停用造成，用户已关闭；最新线上Lite成功，授权的临时key最小调用也200（212 token），未写仓库或更换部署密钥。另有渐进任务心跳失活后取消、resume成功但未观察到重启，以及偶发编排/素材格式问题，继续按具体日志排查；用户明确本轮不再堆修复，不据此重构租约。
+## 界面优化第二轮（仅前端为主，在integration测试环境）
 
-认可的#314节目`db15f6cb-2e47-434c-b387-096ddd4f33b1`为31:37、三段双人，TTS估价¥0.565（非实付）；本轮不以demo成本限制口播。开场方法论见[设计文档](design/programme-editorial-method-and-opening.md)，台标音乐仍留后续。
+首页推荐在前（特色卡+横滑），电台瓦片在后，下拉刷新（#324/#326）；封面库9风格×20图案×5构图（`apps/web/lib/cover/styled`，#323），分享预览图与锁屏封面同步（#328）；上下首含口播（#321）；新手引导（#325，`lib/guide`）：清单驱动，新功能只需在`registry.ts`加一条并给元素加`data-guide`，账户页可重看。收藏红心与节目库左滑收藏/删除/撤销（#330）；“我调的”不再依赖服务器逐个回答。
 
-## 界面优化第二轮（仅前端，在integration测试环境）
+**调频页改版**（设计与规则见[调频页改版](design/tune-redesign.md)）：面板+台色海报（切台时飞出飞入，与刻度窗同步；刻度窗两端可点击切台，点海报也能进电台指南）、加高的输入框、时长/主持弹出菜单、开播旁的圆形“准备完整版”、点面板里的“电台指南”展开成一页一个台（首次进入自动展开）；第一次落在唱片行；主持选择经新的可选请求字段 `host_mode` 传给后端。示例写法都跑过真实提案。提案偶发失败见[#333](https://github.com/ZakuZakuu/wavecast/issues/333)。
 
-首页推荐在前（特色卡+横滑），电台瓦片在后，下拉刷新（#324/#326）；封面库9风格×20图案×5构图（`apps/web/lib/cover/styled`，#323），分享预览图与锁屏封面同步（#328）；上下首含口播（#321）；新手引导（#325，`lib/guide`）：清单驱动，新功能只需在`registry.ts`加一条并给元素加`data-guide`，账户页可重看。#322文案盘点暂不处理。待定：#327、#320、#204、深色模式。
+**完整版（#204，见[ADR 0036](adr/0036-full-version-in-background.md)）**：整档节目在后台准备，播放页标题行/更多菜单和调频页“准备完整版”进入，节目库行显示准备中/已准备好/准备失败（重试），完成后顶部横幅+节目库红点。每个听众同时最多2档，20分钟未完成算失败；游客可用。新增后端接口 `POST/GET /api/full-versions`、`materialize` 加限制；前端 `lib/full-versions.ts`。**已发布节目（#331，见[ADR 0037](adr/0037-published-programmes.md)）**：分享的是做好的节目本身。分享面板（播放页、详情页）先问要不要准备完整版→整期一次混完（界面只说一般1–2分钟，不编百分比）→校验→链接可用；别人打开链接得到自己的一份副本（进度、收藏各自，不生成、不占额度），共用同一份固定音频；撤回/删除不影响已有副本；节目库那一行只有一个标记（分享中=分享图标，听过的完整版=打钩圆圈）。新增表 `published_programmes`、`programme_listens`（迁移0009，**部署前需跑迁移**）；旧的“每个访客重新生成”链接返回410“已失效”。容量：每人最多10档、同时2个混音、已发布音频预算默认卷的一半（`WAVECAST_PUBLISHED_AUDIO_BUDGET_MB`）、给生成永远留150 MB；**真实节目发布测试前测试卷要先扩容，正式发布前扩生产卷**。下架开关 `WAVECAST_TAKEN_DOWN_PROGRAMMES`。**大家都在听（#327，见[ADR 0038](adr/0038-public-shelf.md)）**：首页“猜你想听”下面的横滑板块，内容是别人选了“所有人”的已发布节目；近7天被听次数+时间衰减+新鲜度，每个作者最多10档，一批6档，缓存3分钟，换一批按已显示id翻页，不足3档整块不显示；`GET /api/public-shelf`；已发布节目封面一律由自己的id生成，分享链接不再带`?c=`。**播放页歌曲封面（#320）**：网易云专辑封面经 sidecar 的 `cover_url`（[wavecast-music-dev#11](https://github.com/ZakuZakuu/wavecast-music-dev/pull/11)，**sidecar 需重新部署，新节目才带封面**）一路带到 `MusicSegment.cover_url`（可选，旧节目没有）；播放页用“叠放”：两张同样大的封面错开26px，点一下前后互换；开播前节目封面在前，开播后歌曲封面在前，旁白时保持上一首的封面；手动选过就按选的（本次访问内记住）；图片没加载成功或没有封面就只显示节目封面。前端 `lib/song-cover.ts`、`components/player/player-cover.tsx`。#322/深色模式待定。
 
 ## 已发布基线
 
-- 正式站：**https://wavecast.space**。#299–#310 经 [#311](https://github.com/ZakuZakuu/wavecast/pull/311) 发布；main 发布提交 `6be49197cce31a5a87afe7f5c1cd4d184babc083`；integration已在此基础上合入#312至#315。
-- [release CI](https://github.com/ZakuZakuu/wavecast/actions/runs/38898753313)：1660 通过、3 跳过；Web／Docker 冒烟通过。[main CI](https://github.com/ZakuZakuu/wavecast/actions/runs/38907140961) 全绿。
-- Vercel正式部署仍为`dpl_2fzNxTHMXzm4LMUWktEzjgtcimFd`；正式API随后仅做配置重部署，见下。
-- 2026-10-17北京时间约00:50，用户授权修正正式API变量`WAVECAST_TRACK_RESEARCH_PROVIDER=deepseek`；新API部署`a9910361-5488-4483-9459-17cc89082f73`已观测SUCCESS，启动和健康检查200。该次只改正式API配置，源码仍固定在上述main发布SHA；随后测试服务的变化见下。新变量名称已回读确认；OAuth不提供变量值读回，写入工具确认设置成功。新节目素材整理的付费调用尚未验收，不能据部署成功断言整期生成质量已恢复。
-- 最新测试检查点为上面的#315（中文歌名沿素材、持久化、单双人写稿复用，见[ADR 0034](adr/0034-grounded-spoken-song-titles.md)）。#314的[完整CI](https://github.com/ZakuZakuu/wavecast/actions/runs/39013104444)1709通过/3跳过；#315的[完整CI](https://github.com/ZakuZakuu/wavecast/actions/runs/39018855425)后端/Web/Docker均通过。预览保护保留；未启动额外付费节目，正式API与main未变。
-
+- 正式站 **https://wavecast.space**。#318 `485ea12` 已发布，后端1741通过/3跳过、Web299通过、Docker通过；main后来合入界面#329，当前分支头`467687b`。不要将旧的“#318待发布”记录当作现状。
+- 正式API仍观测为`a96c34f9-82be-469d-93bf-c6ea2b37bffe` SUCCESS，固定源码`485ea12`；main分支前进不代表固定SHA的API自动更新。正式Web构建与API分别核对，不强求两端SHA一致。
+- integration已包含Claude的UI二轮与完整版后台任务；TTS修复基于`bcd4e2b`独立开发，合并时保留后续并行提交。测试环境更新可能打断正在生成的任务，完成检查点需观察实际部署成功及健康信号。
 
 - 当前链路：Pro 研究规划／素材、Lite 写稿，豆包单人 TTS 与双人播客，Exa 检索。单人取消常规模型核对、改写和逐句删减；完整前文、来源、日期／人物状态约束和必要代码检查保留。见 [ADR 0031](adr/0031-one-pass-radio-writing.md)。
 - 已发布播放器恢复、主持词窗口、旁白时长取整、响度和旧清单兼容、写稿防重复、按节目用量持久化。旧稿和已发布音频不重写；没有新增数据库迁移。上一轮用户确认播放无硬性阻塞，接受文笔剩余问题后发布。

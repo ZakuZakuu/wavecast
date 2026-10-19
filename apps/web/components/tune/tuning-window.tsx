@@ -3,7 +3,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { STATIONS, type Station } from "../../lib/stations";
-import { FULL_SCALE_WIDTH, fullScaleGeometry, noisePath, scaleTranslate, scaleX } from "../../lib/tuner";
+import { DIAL_HEIGHT, FULL_SCALE_WIDTH, fullScaleGeometry, noisePath, scaleTranslate, scaleX } from "../../lib/tuner";
 
 export function useElementWidth<T extends HTMLElement>(fallback = 310) {
   const ref = useRef<T | null>(null);
@@ -30,7 +30,7 @@ const FULL = fullScaleGeometry();
 const ScaleContent = memo(function ScaleContent({ activeId }: { activeId: string | null }) {
   return (
     <>
-      <svg className="tw-scale" width={FULL_SCALE_WIDTH} height={96} viewBox={`0 0 ${FULL_SCALE_WIDTH} 96`} aria-hidden="true">
+      <svg className="tw-scale" width={FULL_SCALE_WIDTH} height={DIAL_HEIGHT} viewBox={`0 0 ${FULL_SCALE_WIDTH} ${DIAL_HEIGHT}`} aria-hidden="true">
         <path d={FULL.minor} className="tw-minor" />
         <path d={FULL.major} className="tw-major" />
       </svg>
@@ -49,11 +49,6 @@ const ScaleContent = memo(function ScaleContent({ activeId }: { activeId: string
           </span>
         );
       })}
-      {FULL.numbers.map((number) => (
-        <span key={number.label} className="tw-number tabular" style={{ left: number.x - 16 }} aria-hidden="true">
-          {number.label}
-        </span>
-      ))}
     </>
   );
 });
@@ -84,7 +79,7 @@ export function TuningWindow({
       <div className="tw-layer" style={{ transform: `translate3d(${scaleTranslate(freq, width)}px, 0, 0)` }}>
         <ScaleContent activeId={activeStation?.id ?? null} />
       </div>
-      <svg className="tw-noise-layer" width={width} height={96} viewBox={`0 0 ${width} 96`} aria-hidden="true" style={{ opacity: noise }}>
+      <svg className="tw-noise-layer" width={width} height={DIAL_HEIGHT} viewBox={`0 0 ${width} ${DIAL_HEIGHT}`} aria-hidden="true" style={{ opacity: noise }}>
         <path d={noiseD} className="tw-noise" />
       </svg>
       <span className="tw-fade tw-fade-left" aria-hidden="true" />
@@ -95,6 +90,7 @@ export function TuningWindow({
           <span className="tw-ghost" style={{ left: width / 2 + 7 }} aria-hidden="true" />
         </>
       ) : null}
+      <span className="tw-pointer-glow" style={{ left: width / 2 - 3 }} aria-hidden="true" />
       <span className="tw-pointer" style={{ left: width / 2 - 1 }} aria-hidden="true" />
       {children}
     </>

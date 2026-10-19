@@ -107,6 +107,13 @@ export const RouteIcon = (p: IconProps) => (
   <svg {...stroke(p)}><path d="M8 6h12M8 12h12M8 18h12" /><path d="M4 6h.01M4 12h.01M4 18h.01" strokeWidth={2.4} /></svg>
 );
 
+/** A heart: outline, or filled in the favourite colour when `filled`. */
+export const HeartIcon = ({ filled = false, ...p }: IconProps & { filled?: boolean }) => (
+  <svg {...stroke(p)} fill={filled ? "#FF4D6A" : "none"} stroke={filled ? "#FF4D6A" : "currentColor"}>
+    <path d="M12 20.2s-7.5-4.5-7.5-10.1A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.5c0 5.6-7.5 10.1-7.5 10.1z" />
+  </svg>
+);
+
 export const ShareIcon = (p: IconProps) => (
   <svg {...stroke(p)}><path d="M12 3.5v11M8 7.5l4-4 4 4" /><path d="M6.5 11H6a1.5 1.5 0 0 0-1.5 1.5v6A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5v-6A1.5 1.5 0 0 0 18 11h-.5" /></svg>
 );
@@ -115,12 +122,12 @@ export const PlusSquareIcon = (p: IconProps) => (
   <svg {...stroke(p)}><rect x="4" y="4" width="16" height="16" rx="4" /><path d="M12 8.5v7M8.5 12h7" /></svg>
 );
 
-export const SaveIcon = (p: IconProps) => (
-  <svg {...stroke(p)}><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1z" /></svg>
-);
-
 export const DownloadIcon = (p: IconProps) => (
   <svg {...stroke(p)}><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14" /></svg>
+);
+
+export const CheckIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
 );
 
 export const StopIcon = (p: IconProps) => (
@@ -129,4 +136,30 @@ export const StopIcon = (p: IconProps) => (
 
 export const InfoIcon = (p: IconProps) => (
   <svg {...stroke(p)}><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5M12 8h.01" strokeWidth={2.4} /></svg>
+);
+
+export const ChevronRightIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><path d="m9.5 5.5 6.5 6.5-6.5 6.5" /></svg>
+);
+
+export const ClockIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
+);
+
+export const MicIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" /></svg>
+);
+
+/** A list with a plus: add to the queue (准备完整版 puts the programme in 节目库 for later). */
+export const QueuePlusIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><path d="M4 7h11M4 12h7M4 17h7M17.5 13.5v7M14 17h7" /></svg>
+);
+
+export const ShuffleIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>
+);
+
+/** An arrow up and to the left: this goes into the box above. */
+export const FillIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><path d="M17 17 7 7M7 17V7h10" /></svg>
 );

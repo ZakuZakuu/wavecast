@@ -1,5 +1,7 @@
 import { parseMixPlan, type MixPlan } from "./mix-timeline";
 import type {
+  FullVersionItem,
+  FullVersionRequestItem,
   UserEventInput,
   UserEventType,
   UserPreferences,
@@ -11,6 +13,9 @@ import type {
   PublicProgramme,
   ProgramRenderManifest,
   ProposalGenerationRequest,
+  PublicationItem,
+  PublicShelfPage,
+  Visibility,
   Seed,
 } from "./types";
 import type { MixdownArtifact, MixdownPreparationResult } from "./episode-export";
@@ -20,6 +25,8 @@ export class ApiRequestError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    /** Why the server refused, when it says (for publishing: limit, space, busy). */
+    public readonly code?: string,
   ) {
     super(message);
     this.name = "ApiRequestError";
@@ -57,7 +64,7 @@ async function request<T>(
   });
   if (!response.ok) {
     const detail = (await response.json().catch(() => null))?.detail ?? "Request failed";
-    throw new ApiRequestError(detail, response.status);
+    throw new ApiRequestError(detail, response.status, response.headers.get("x-wavecast-refusal") ?? undefined);
   }
   return response.json() as Promise<T>;
 }
@@ -66,9 +73,35 @@ export const api = {
   seeds: () => request<Seed[]>("/seeds"),
   program: (id: string) => request<ProgramProposal>(`/programs/${id}`),
   publicProgramme: (id: string) => request<PublicProgramme>(`/programs/${encodeURIComponent(id)}/public`),
-  /** The caller's own copy of a shared programme (the same one when they already hold it). */
-  adoptProgramme: (id: string) =>
-    request<ProgramProposal>(`/programs/${encodeURIComponent(id)}/adopt`, { method: "POST" }),
+  /** The caller's own copy of a published programme: nothing is generated, no allowance is spent. */
+  copyPublished: (id: string) =>
+    request<LiveEpisode>(`/published/${encodeURIComponent(id)}/copy`, { method: "POST" }),
+  /** The next programmes for 「大家都在听」; `shown` are the ids already offered (换一批 asks for others). */
+  publicShelf: (shown: string[] = []) =>
+    request<PublicShelfPage>(`/public-shelf${shown.length ? `?shown=${encodeURIComponent(shown.join(","))}` : ""}`),
+  /** A listener pressed play on a published programme (counted once per listener). */
+  recordPublishedListen: (id: string) =>
+    request<unknown>(`/published/${encodeURIComponent(id)}/listen`, { method: "POST" }).catch(() => undefined),
+  /** Share one of the caller's own programmes as itself; its 完整版, mix and checks follow on the server. */
+  publishProgramme: (programmeId: string, visibility: Visibility) =>
+    request<PublicationItem>(`/programs/${encodeURIComponent(programmeId)}/publish`, {
+      method: "POST",
+      body: JSON.stringify({ visibility }),
+    }),
+  /** Where the publication of the caller's own programme stands (rejects with 404 when it has none). */
+  programmePublication: (programmeId: string) =>
+    request<PublicationItem>(`/programs/${encodeURIComponent(programmeId)}/publication`),
+  publicationStatuses: (episodeIds: string[]) =>
+    request<PublicationItem[]>(`/publications?episode_ids=${encodeURIComponent(episodeIds.join(","))}`),
+  revokePublication: (id: string) =>
+    request<PublicationItem>(`/publications/${encodeURIComponent(id)}/revoke`, { method: "POST" }),
+  restorePublication: (id: string) =>
+    request<PublicationItem>(`/publications/${encodeURIComponent(id)}/restore`, { method: "POST" }),
+  setPublicationVisibility: (id: string, visibility: Visibility) =>
+    request<PublicationItem>(`/publications/${encodeURIComponent(id)}/visibility`, {
+      method: "POST",
+      body: JSON.stringify({ visibility }),
+    }),
   userPreferences: (expectedUserId: string) =>
     request<UserPreferences>("/user-preferences/me", undefined, expectedUserId),
   saveUserPreferences: (input: UserPreferencesUpdate, expectedUserId: string) =>
@@ -163,6 +196,16 @@ export const api = {
   pause: (id: string) => request<LiveEpisode>(`/episodes/${id}/pause`, { method: "POST" }),
   resume: (id: string) => request<LiveEpisode>(`/episodes/${id}/resume`, { method: "POST" }),
   materialize: (id: string) => request<LiveEpisode>(`/episodes/${id}/materialize`, { method: "POST" }),
+  /** Tune a programme and prepare its 完整版 without playing it. Answers at once; the work carries on. */
+  prepareFullVersion: (input: ProposalGenerationRequest) =>
+    request<{ request_id: string }>("/full-versions", {
+      method: "POST",
+      body: JSON.stringify({ ...input, count: 1 }),
+    }),
+  fullVersionRequests: (requestIds: string[]) =>
+    request<FullVersionRequestItem[]>(`/full-versions/requests?ids=${encodeURIComponent(requestIds.join(","))}`),
+  fullVersionStatuses: (episodeIds: string[]) =>
+    request<FullVersionItem[]>(`/full-versions?episode_ids=${encodeURIComponent(episodeIds.join(","))}`),
   prepareMixdown: (id: string) => request<MixdownPreparationResult>(`/episodes/${id}/prepare-mixdown`, { method: "POST" }),
   mixdown: (id: string) => request<MixdownArtifact>(`/episodes/${id}/mixdown`, { method: "POST" }),
   myLibrary: (expectedUserId: string) => request<unknown>("/me/library", undefined, expectedUserId),
@@ -189,6 +232,11 @@ export const api = {
       body: JSON.stringify(record),
     }, expectedUserId);
   },
+  removeLibraryRecent: (id: string, expectedUserId: string) => request<unknown>(
+    `/me/library/recents/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+    expectedUserId,
+  ),
   removeLibraryEpisode: (id: string, expectedUserId: string) => request<unknown>(
     `/me/library/saved/${encodeURIComponent(id)}`,
     { method: "DELETE" },

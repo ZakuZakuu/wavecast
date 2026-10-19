@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, musicChaptersForEpisode, nextJumpStart, nextVisibleSegment, previousJumpStart, programmeJumpPoints, reconcileBrowserPosition, remainingSegmentSeconds, segmentAtPosition, segmentOffset, shouldArmHandoff, shouldSuppressSeekConflict } from "../lib/playback";
+import { canUseArmedHandoff, isPlaybackReadySegment, isProgramPlaybackComplete, isSeekAllowed, musicChaptersForEpisode, nextJumpStart, nextVisibleSegment, previousJumpStart, programmeJumpPoints, reconcileBrowserPosition, remainingSegmentSeconds, segmentAtPosition, segmentOffset, shouldArmHandoff, shouldExtendRender, shouldSuppressSeekConflict } from "../lib/playback";
 import type { MixPlan } from "../lib/mix-timeline";
 import type { LiveEpisode } from "../lib/types";
 
@@ -363,5 +363,24 @@ describe("local seek target resolution", () => {
       expect(previousJumpStart(plan, 1)).toBe(0);
       expect(previousJumpStart(plan, 0)).toBe(0);
     });
+  });
+});
+
+describe("shouldExtendRender", () => {
+  const manifest = (frontier: number, complete = false, chunks = 5) =>
+    ({ complete, renderedFrontierSeconds: frontier, chunks: new Array(chunks).fill(null) }) as never;
+
+  it("asks for more of a finished programme when the listener is within four minutes of the end of what is rendered", () => {
+    expect(shouldExtendRender({ episodeState: "MATERIALIZED", manifest: manifest(300), positionSeconds: 0 })).toBe(false);
+    expect(shouldExtendRender({ episodeState: "MATERIALIZED", manifest: manifest(300), positionSeconds: 70 })).toBe(true);
+    expect(shouldExtendRender({ episodeState: "PUBLISHED", manifest: manifest(600), positionSeconds: 400 })).toBe(true);
+  });
+
+  it("leaves alone what is whole, what has nothing rendered yet, and a programme still being made", () => {
+    expect(shouldExtendRender({ episodeState: "MATERIALIZED", manifest: manifest(300, true), positionSeconds: 290 })).toBe(false);
+    expect(shouldExtendRender({ episodeState: "MATERIALIZED", manifest: manifest(0, false, 0), positionSeconds: 0 })).toBe(false);
+    expect(shouldExtendRender({ episodeState: "MATERIALIZED", manifest: null, positionSeconds: 0 })).toBe(false);
+    // Those are asked for as they are made, at the end of what is rendered.
+    expect(shouldExtendRender({ episodeState: "STREAMING", manifest: manifest(300), positionSeconds: 290 })).toBe(false);
   });
 });

@@ -89,9 +89,7 @@
   :where(.player-sheet, .sheet-dark) :where(button, a[href], [role="button"]):not(:disabled):hover {
     filter: brightness(1.15);
   }
-  [data-drag-handle],
-  .knurl { cursor: grab; }
+  [data-drag-handle] { cursor: grab; }
   [data-drag-handle]:active,
-  .knurl:active,
   .tuning-window:active { cursor: grabbing; }
 }

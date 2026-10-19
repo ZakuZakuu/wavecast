@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Final
@@ -72,6 +73,7 @@ class GenerationWorker:
         *,
         worker_id: str,
         policy: GenerationWorkerPolicy | None = None,
+        after_full_generation: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         normalized = worker_id.strip()
         if not normalized:
@@ -80,6 +82,8 @@ class GenerationWorker:
         self.orchestrator = orchestrator
         self.worker_id = normalized
         self.policy = policy or GenerationWorkerPolicy()
+        # Run once an episode's full generation is done, still inside the job: what makes its first listen quick.
+        self.after_full_generation = after_full_generation
         self._enrichment_tasks: set[asyncio.Task[None]] = set()
         self._enrichment_episode_ids: set[str] = set()
 
@@ -132,14 +136,33 @@ class GenerationWorker:
                     job.mode is GenerationJobMode.PROGRESSIVE
                     and "inactive" in str(error).casefold()
                 ):
-                    await asyncio.to_thread(
-                        self.jobs.cancel_for_episode,
-                        job.episode_id,
+                    # The listener left. But a 完整版 may have been asked for while this run was
+                    # in flight (it upgrades the very same job): that request is not theirs to
+                    # cancel, so hand the job back to be run again as the full one.
+                    current = await asyncio.to_thread(
+                        self.jobs.get_for_episode, job.episode_id
                     )
-                    logger.info(
-                        "generation_job_cancelled episode_id=%s reason=inactive_listener",
-                        job.episode_id,
-                    )
+                    if current is not None and current.request_version != job.request_version:
+                        await asyncio.to_thread(
+                            self.jobs.complete,
+                            job.id,
+                            self.worker_id,
+                            job.request_version,
+                        )
+                        logger.info(
+                            "generation_job_superseded episode_id=%s mode=%s",
+                            job.episode_id,
+                            current.mode.value,
+                        )
+                    else:
+                        await asyncio.to_thread(
+                            self.jobs.cancel_for_episode,
+                            job.episode_id,
+                        )
+                        logger.info(
+                            "generation_job_cancelled episode_id=%s reason=inactive_listener",
+                            job.episode_id,
+                        )
                 else:
                     logger.warning(
                         "generation_job_execution_failed episode_id=%s "
@@ -255,6 +278,16 @@ class GenerationWorker:
     ) -> str | None:
         if job.mode is GenerationJobMode.FULL:
             await self.orchestrator.materialize_all_async(job.episode_id)
+            if self.after_full_generation is not None:
+                try:
+                    await self.after_full_generation(job.episode_id)
+                except Exception as error:  # noqa: BLE001 - the content is done; playing renders it then
+                    logger.warning(
+                        "full_generation_after_step_failed episode_id=%s error_type=%s reason=%s",
+                        job.episode_id,
+                        type(error).__name__,
+                        str(getattr(error, "detail", ""))[:80],
+                    )
             return None
         fast_start = getattr(self.orchestrator, "ensure_fast_start_async", None)
         if callable(fast_start):

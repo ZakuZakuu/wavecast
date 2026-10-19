@@ -159,3 +159,36 @@
 .ss-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink-2); text-align: center; }
 .ss-note.is-error { color: var(--danger); }
 .ss-close { width: 44px; height: 44px; margin-right: -10px; padding: 0; border: 0; background: transparent; color: var(--ink-2); display: grid; place-items: center; }
+.ss-skeleton { min-height: 160px; border-radius: var(--radius-group); background: var(--fill); opacity: .5; }
+.ss-message { display: flex; flex-direction: column; gap: 6px; padding: 2px 4px 0; }
+.ss-message h3 { margin: 0; font-size: 19px; font-weight: 700; line-height: 1.35; }
+.ss-message p { margin: 0; font-size: 15px; line-height: 1.55; color: var(--ink-2); }
+.ss-vis { display: flex; flex-direction: column; gap: 8px; }
+.ss-label { padding: 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-3); }
+.ss-hint { padding: 0 4px; font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+.ss-choices { margin: 0; padding: 0; list-style: none; border-radius: var(--radius-group); background: var(--surface); overflow: hidden; }
+.ss-choices li + li { border-top: 0.5px solid var(--hairline, rgba(60,60,67,.18)); }
+.ss-choices button { width: 100%; min-height: 64px; padding: 10px 16px; border: 0; background: transparent; color: var(--ink); display: flex; align-items: center; gap: 12px; text-align: left; font: inherit; }
+.ss-choices button span { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ss-choices strong { font-size: 16px; font-weight: 600; }
+.ss-choices small { font-size: 13px; color: var(--ink-2); }
+.ss-choices svg { flex: 0 0 auto; color: var(--live); }
+.ss-steps { margin: 0; padding: 0; list-style: none; border-radius: var(--radius-group); background: var(--surface); overflow: hidden; }
+.ss-step { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 10px 16px; }
+.ss-step + .ss-step { border-top: 0.5px solid var(--hairline, rgba(60,60,67,.18)); }
+.ss-step-mark { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center; box-sizing: border-box; }
+.ss-step-mark.is-done { background: #1E9E52; color: #fff; }
+.ss-step-mark.is-ring span { width: 22px; height: 22px; border-radius: 50%; background: var(--surface); }
+.ss-step-mark.is-spin { border: 3px solid rgba(29,29,31,.1); border-top-color: var(--live); animation: full-spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .ss-step-mark.is-spin { animation: none; } }
+.ss-step-mark.is-wait { border: 2px solid rgba(29,29,31,.12); }
+.ss-step-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ss-step-name { font-size: 16px; font-weight: 600; }
+.ss-step.is-wait .ss-step-name { color: var(--ink-3); }
+.ss-step-hint { font-size: 13px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.ss-step.is-done .ss-step-hint { color: #1E9E52; }
+.ss-step.is-active .ss-step-hint { color: #E8570F; }
+.ss-revoke { min-height: 44px; border: 0; background: transparent; color: var(--danger); font: inherit; font-size: 16px; font-weight: 600; }
+.ss-revoke:disabled { opacity: .5; }
+
+.pd-chip { margin-top: 2px; height: 24px; padding: 0 10px; border-radius: 12px; background: rgba(118, 118, 128, .14); color: var(--ink-2); display: grid; place-items: center; font-size: 12px; font-weight: 500; }

@@ -10,16 +10,14 @@ import { DUR } from "../../lib/motion/easing";
 import { isPlaybackReadySegment } from "../../lib/playback";
 import { openPlayer } from "../../lib/player-nav";
 import { rememberProgrammeStation, type Station } from "../../lib/stations";
-import { lessLikeThisArtists } from "../../lib/listener-feedback";
-import { readLocalTaste, tasteContext } from "../../lib/taste";
-import type { DurationIntent, ProgramProposal } from "../../lib/types";
+import { PROGRAMME_LANGUAGE, proposalRequest } from "../../lib/proposal-request";
+import type { DurationIntent, HostMode, ProgramProposal } from "../../lib/types";
 import { recordCreatedProgram } from "../../lib/user-library";
 import { useNowPlaying, usePlaybackControl } from "../player/playback-provider";
 import type { TuningStep } from "./tuning-in";
 
 export const LAST_STATION_KEY = "wavecast-last-station-v1";
-/** Spoken language of generated programmes; follows the (Chinese-only) interface language. */
-export const PROGRAMME_LANGUAGE = "zh-CN" as const;
+export { PROGRAMME_LANGUAGE };
 /** 开播中 stays under the player until its fade-in (DUR.slow) has finished. */
 const HANDOVER_MS = DUR.slow + 150;
 
@@ -31,6 +29,7 @@ type Phase =
     label: string;
     prompt: string;
     duration: DurationIntent;
+    hostMode?: HostMode | null;
     coverId?: string;
     proposal: ProgramProposal | null;
     error: string | null;
@@ -56,11 +55,11 @@ export function useTuneStart() {
   useImmersiveOverlay("tuning-in", phase.kind === "tuning");
 
   /** `coverId`: the card the listener clicked, whose cover the programme keeps. */
-  const start = useCallback(async (target: Station, prompt: string, duration: DurationIntent, coverId?: string) => {
+  const start = useCallback(async (target: Station, prompt: string, duration: DurationIntent, coverId?: string, hostMode?: HostMode | null) => {
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     const label = prompt.trim() || target.name;
-    const base = { kind: "tuning" as const, station: target, label, prompt, duration, coverId };
+    const base = { kind: "tuning" as const, station: target, label, prompt, duration, hostMode, coverId };
     handedOver.current = null;
     setPhase({ ...base, proposal: null, error: null });
     try {
@@ -69,15 +68,7 @@ export function useTuneStart() {
       // Ignore.
     }
     try {
-      const batch = await api.createProgramProposals({
-        prompt: prompt.trim().length >= 2 ? prompt.trim() : target.defaultTopic,
-        duration_intent: duration,
-        count: 1,
-        taste_context: tasteContext(readLocalTaste(), lessLikeThisArtists()),
-        // The interface is Chinese: the programme follows it, not the language of the keyword.
-        output_language: PROGRAMME_LANGUAGE,
-        station: target.id,
-      });
+      const batch = await api.createProgramProposals({ ...proposalRequest(target, prompt, duration, hostMode), count: 1 });
       if (requestRef.current !== requestId) return;
       const proposal = batch.proposals[0];
       if (!proposal) throw new Error("没有拿到节目方案");
@@ -161,7 +152,7 @@ export function useTuneStart() {
       reload();
       return;
     }
-    void start(phase.station, phase.prompt, phase.duration, phase.coverId);
+    void start(phase.station, phase.prompt, phase.duration, phase.coverId, phase.hostMode);
   };
 
   const steps: TuningStep[] = phase.kind === "tuning" ? [

@@ -1,4 +1,4 @@
-import type { LiveEpisode, Segment } from "./types";
+import type { LiveEpisode, ProgramRenderManifest, Segment } from "./types";
 import type { MixPlan } from "./mix-timeline";
 
 export type MusicChapter = { id: string; segments: Segment[] };
@@ -267,4 +267,22 @@ export function nextVisibleSegment(
 
 export function formatSeconds(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, "0")}`;
+}
+
+/** How far ahead of the listener a finished programme's rendered audio should reach. */
+export const RENDER_LEAD_SECONDS = 240;
+
+/**
+ * A finished programme is rendered a few minutes at a time: while the audio rendered so far is not
+ * the whole programme, more is asked for before the listener gets to the end of it.
+ */
+export function shouldExtendRender(options: {
+  episodeState: LiveEpisode["state"] | null;
+  manifest: Pick<ProgramRenderManifest, "complete" | "renderedFrontierSeconds" | "chunks"> | null;
+  positionSeconds: number;
+}): boolean {
+  const { episodeState, manifest, positionSeconds } = options;
+  if (episodeState !== "MATERIALIZED" && episodeState !== "PUBLISHED") return false;
+  if (!manifest || manifest.complete || manifest.chunks.length === 0) return false;
+  return manifest.renderedFrontierSeconds - positionSeconds < RENDER_LEAD_SECONDS;
 }

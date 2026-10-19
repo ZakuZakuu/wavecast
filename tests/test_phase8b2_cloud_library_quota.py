@@ -298,6 +298,45 @@ def test_authenticated_recent_write_claims_current_listener_episode(monkeypatch)
     ).status_code == 200
 
 
+def test_authenticated_recent_can_be_removed_from_the_cloud_library(monkeypatch) -> None:
+    generator = CountingGenerator()
+    install_api(monkeypatch, generator)
+    client = TestClient(api_module.app)
+    listener_id = "recent-delete-listener"
+    episode = client.post(
+        "/api/episodes/from-seed/city-pop-misunderstood",
+        headers={"X-Wavecast-Listener": listener_id},
+    ).json()
+    headers = {"X-Wavecast-Listener": listener_id, "Authorization": "Bearer token-a"}
+    record = {
+        "episodeId": episode["id"],
+        "seedId": episode["seed_id"],
+        "title": "client title",
+        "topic": None,
+        "currentTitle": None,
+        "updatedAt": 10,
+        "progressSeconds": 0,
+        "durationSeconds": 100,
+    }
+    assert client.put(f"/api/me/library/recents/{episode['id']}", headers=headers, json=record).status_code == 200
+    recents = client.get("/api/me/library", headers=headers).json()["recentPrograms"]
+    assert [item["episodeId"] for item in recents] == [episode["id"]]
+
+    deleted = client.delete(f"/api/me/library/recents/{episode['id']}", headers=headers)
+
+    assert deleted.status_code == 200
+    assert deleted.json()["recentPrograms"] == []
+    assert client.get("/api/me/library", headers=headers).json()["recentPrograms"] == []
+    # Only the library entry goes; the episode is untouched and can be listened to again.
+    assert client.get(f"/api/episodes/{episode['id']}", headers=headers).status_code == 200
+    # Another account's library is not affected, and guests cannot delete.
+    other = {"X-Wavecast-Listener": "other-device", "Authorization": "Bearer token-b"}
+    assert client.delete(f"/api/me/library/recents/{episode['id']}", headers=other).status_code == 200
+    assert client.delete(
+        f"/api/me/library/recents/{episode['id']}", headers={"X-Wavecast-Listener": listener_id},
+    ).status_code == 401
+
+
 def test_cloud_library_requires_authenticated_principal() -> None:
     client = TestClient(api_module.app)
     response = client.get("/api/me/library", headers={"X-Wavecast-Listener": "guest-only"})

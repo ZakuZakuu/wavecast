@@ -182,3 +182,19 @@ def test_cancelled_job_can_be_reactivated_by_new_request() -> None:
     assert reactivated.status is GenerationJobStatus.PENDING
     assert reactivated.attempts == 0
     assert reactivated.request_version == original.request_version + 1
+
+
+def test_list_active_gives_only_queued_or_running_jobs_of_the_mode() -> None:
+    repository = InMemoryGenerationJobRepository()
+    repository.request("queued-full", GenerationJobMode.FULL)
+    repository.request("queued-progressive")
+    running = repository.request("running-full", GenerationJobMode.FULL)
+    repository.request("done-full", GenerationJobMode.FULL)
+
+    claimed = repository.claim("worker")
+    assert claimed is not None and claimed.episode_id == "queued-full"
+    repository.complete(claimed.id, "worker", claimed.request_version)
+
+    active = {job.episode_id for job in repository.list_active(GenerationJobMode.FULL)}
+    assert active == {running.episode_id, "done-full"}
+    assert {job.episode_id for job in repository.list_active(GenerationJobMode.PROGRESSIVE)} == {"queued-progressive"}

@@ -1,3 +1,4 @@
+import { resetStationGuide } from "../station-guide-state";
 import { GUIDES, type GuideDef, type GuideStep, type GuideTrigger } from "./registry";
 
 // Which guides this device has seen, and which one is next. Kept on the device: a guest has no account.
@@ -33,6 +34,7 @@ export function resetGuides(): void {
   } catch {
     // Nothing stored, nothing to clear.
   }
+  resetStationGuide();
 }
 
 /** The steps of a guide for a guest or a signed-in person. */

@@ -1,14 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { rememberCoverSource } from "../lib/cover/programme-cover";
 import {
-  adoptedCopies,
   displayShareUrl,
-  forgetAdoptedCopy,
-  GUEST_IDENTITY,
+  isGeneratedProgramme,
   programmeShareUrl,
-  rememberAdoptedCopy,
-  shortCodeFor,
+  publicationCode,
+  publishedShareUrl,
 } from "../lib/share";
 
 function installStorage() {
@@ -21,6 +18,8 @@ function installStorage() {
   Object.defineProperty(globalThis, "window", { value: { localStorage: storage }, configurable: true });
 }
 
+const PUBLISHED = "pub-3fa9c2b1d4e84f0a9b7c5d6e7f801234";
+
 describe("programme share links", () => {
   beforeEach(installStorage);
 
@@ -30,43 +29,23 @@ describe("programme share links", () => {
     );
   });
 
-  it("gives a generated programme a short link made of the first ten digits of its id", () => {
-    const id = "proposal-3fa9c2b1d4e84f0a9b7c5d6e7f801234";
-    expect(shortCodeFor(id)).toBe("3fa9c2b1d4");
-    expect(programmeShareUrl(id, "https://wavecast.space")).toBe("https://wavecast.space/p/3fa9c2b1d4");
-    expect(shortCodeFor("proposal-abc")).toBeNull();
-    expect(shortCodeFor("featured-casual-commute")).toBeNull();
+  it("gives a published programme a short link made of the first ten digits of its id", () => {
+    expect(publicationCode(PUBLISHED)).toBe("3fa9c2b1d4");
+    expect(publicationCode("proposal-3fa9c2b1d4e84f0a9b7c5d6e7f801234")).toBeNull();
+    expect(publicationCode("pub-abc")).toBeNull();
   });
 
-  it("carries the cover a card was made from, so the recipient sees the same cover", () => {
-    const id = "proposal-3fa9c2b1d4e84f0a9b7c5d6e7f801234";
-    rememberCoverSource(id, "idea-7");
-    expect(programmeShareUrl(id, "https://wavecast.space")).toBe("https://wavecast.space/p/3fa9c2b1d4?c=idea-7");
+  it("carries no cover hint: a published programme's cover is made from its own id, the same for everyone", () => {
+    expect(publishedShareUrl(PUBLISHED, "https://wavecast.space")).toBe("https://wavecast.space/p/3fa9c2b1d4");
+  });
+
+  it("knows which programmes are shared by publishing them", () => {
+    expect(isGeneratedProgramme("proposal-3fa9c2b1d4e84f0a9b7c5d6e7f801234")).toBe(true);
+    expect(isGeneratedProgramme(PUBLISHED)).toBe(false);
+    expect(isGeneratedProgramme("city-pop-misunderstood")).toBe(false);
   });
 
   it("shows the address without its scheme", () => {
-    expect(displayShareUrl("https://wavecast.space/program/k3f9x2")).toBe("wavecast.space/program/k3f9x2");
-  });
-
-  it("keeps a visitor's copy per identity: another account does not inherit it", () => {
-    rememberAdoptedCopy("proposal-orig", "proposal-copy-a", "user-a");
-    expect(adoptedCopies("proposal-orig", "user-a")).toEqual(["proposal-copy-a"]);
-    expect(adoptedCopies("proposal-orig", "user-b")).toEqual([]);
-    expect(adoptedCopies("proposal-orig", GUEST_IDENTITY)).toEqual([]);
-  });
-
-  it("offers a guest's copy to the account the guest signs in to, to be checked with the server", () => {
-    rememberAdoptedCopy("proposal-orig", "proposal-guest-copy", GUEST_IDENTITY);
-    expect(adoptedCopies("proposal-orig", "user-a")).toEqual(["proposal-guest-copy"]);
-    rememberAdoptedCopy("proposal-orig", "proposal-own-copy", "user-a");
-    expect(adoptedCopies("proposal-orig", "user-a")).toEqual(["proposal-own-copy", "proposal-guest-copy"]);
-  });
-
-  it("forgets a copy the server does not know, wherever it was recorded", () => {
-    rememberAdoptedCopy("proposal-orig", "proposal-copy", GUEST_IDENTITY);
-    rememberAdoptedCopy("proposal-orig", "proposal-copy", "user-a");
-    forgetAdoptedCopy("proposal-orig", "proposal-copy");
-    expect(adoptedCopies("proposal-orig", "user-a")).toEqual([]);
-    expect(adoptedCopies("proposal-orig", GUEST_IDENTITY)).toEqual([]);
+    expect(displayShareUrl("https://wavecast.space/p/3fa9c2b1d4")).toBe("wavecast.space/p/3fa9c2b1d4");
   });
 });

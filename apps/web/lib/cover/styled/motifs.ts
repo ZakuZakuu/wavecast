@@ -1,7 +1,7 @@
 // The twenty pictures. Each is drawn once, on a 100 x 100 box, as roles (primary, secondary by depth,
 // detail, accent, cut = see-through, lit = lights); every style colours the roles its own way.
 import { r2 } from "./color";
-import { blob, circle, crescent, leaf, polygon, rect, rrect, wave } from "./shapes";
+import { circle, crescent, leaf, nestedBlobs, polygon, rect, rrect, wave } from "./shapes";
 import type { CoverMotif, Motif, Rng } from "./types";
 
 const ring = (cx: number, cy: number, radii: number[]) => radii.map((r) => circle(cx, cy, r)).join("");
@@ -201,10 +201,11 @@ export const MOTIFS: Record<CoverMotif, (random: Rng) => Motif> = {
   ] }),
   strings,
   contour(random) {
-    const lines = [12, 20, 28, 36, 44].map((r) => blob(54, 48, r, random)).join("");
+    // One set of nested rings: the filled summit and the contour lines around it never cross.
+    const [summit, ...rings] = nestedBlobs(54, 48, [7, 12, 20, 28, 36, 44], random);
     return { focus: [54, 48], view: [54, 48], items: [
-      { role: "primary", mode: "fill", d: blob(54, 48, 7, random) },
-      { role: "detail", mode: "stroke", sw: 0.55, d: lines },
+      { role: "primary", mode: "fill", d: summit },
+      { role: "detail", mode: "stroke", sw: 0.55, d: rings.join("") },
       { role: "accent", mode: "fill", d: circle(54, 48, 2.2) },
     ] };
   },

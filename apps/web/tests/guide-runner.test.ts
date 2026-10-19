@@ -15,7 +15,7 @@ let root: Root;
 let host: HTMLDivElement;
 const onNavigate = vi.fn();
 
-const MARKERS = ["home-feature", "home-stations", "nav-tune", "home-picks-head", "tune-dial", "tune-input", "tune-duration", "tune-onair"];
+const MARKERS = ["home-feature", "home-stations", "nav-tune", "home-picks-head", "tune-dial", "tune-input", "tune-choices", "tune-onair", "tune-prepare"];
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -147,13 +147,12 @@ describe("GuideRunner", () => {
     expect(window.sessionStorage.getItem("wavecast-visit-prompt-v1")).toBe("guide");
   });
 
-  it("guides the tune page by its own steps", async () => {
+  it("points out the round 准备完整版 button on the tune page, the one thing the 电台指南 leaves", async () => {
     await mount({ trigger: "tune" });
-    expect(text()).toContain("先对准一个台");
-    for (const label of ["下一步", "下一步", "下一步"]) await press(label);
-    expect(text()).toContain("对准了就点开播");
+    expect(text()).toContain("准备完整版");
+    expect(document.querySelector(".guide")?.textContent).not.toContain("下一步");
     await press("知道了");
-    expect(readSeenGuides()).toEqual({ "tune-intro": 1 });
+    expect(readSeenGuides()).toEqual({ "tune-full": 1 });
   });
 
   it("closes on Escape as a skip", async () => {

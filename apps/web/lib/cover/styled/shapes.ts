@@ -42,6 +42,46 @@ export function leaf(x: number, y: number, length: number, width: number, angle:
   return `M${r2(x)} ${r2(y)}Q${r2(a[0])} ${r2(a[1])} ${r2(b[0])} ${r2(b[1])}Q${r2(d[0])} ${r2(d[1])} ${r2(x)} ${r2(y)}Z`;
 }
 
+const NESTED_STEPS = 48;
+
+/**
+ * Radii (angle by angle) of closed contour lines that never touch: every ring follows the same wobble,
+ * with a little of its own that is dropped whenever it would bring two rings closer than `minGap`.
+ * Rings drawn independently (`blob`) cross each other; a contour map's lines never do.
+ */
+export function nestedBlobRadii(radii: number[], random: Rng, minGap = 3): number[][] {
+  const shared = [random() * 6, random() * 6, random() * 6];
+  const own = radii.map(() => [random() * 6, random() * 6, random() * 6]);
+  const build = (blend: number) => radii.map((radius, ring) => {
+    const out: number[] = [];
+    for (let i = 0; i < NESTED_STEPS; i += 1) {
+      const a = (i / NESTED_STEPS) * Math.PI * 2;
+      const wobble = 0.16 * Math.sin(a * 2 + shared[0]) + 0.1 * Math.sin(a * 3 + shared[1]) + 0.06 * Math.sin(a * 5 + shared[2]);
+      const mine = 0.05 * Math.sin(a * 2 + own[ring][0]) + 0.04 * Math.sin(a * 3 + own[ring][1]) + 0.03 * Math.sin(a * 5 + own[ring][2]);
+      out.push(radius * (1 + wobble + blend * mine));
+    }
+    return out;
+  });
+  for (const blend of [1, 0.6, 0.3]) {
+    const rings = build(blend);
+    if (rings.every((ring, r) => r === 0 || ring.every((value, i) => value - rings[r - 1][i] >= minGap))) return rings;
+  }
+  return build(0);
+}
+
+/** Closed contour lines around (cx, cy) from the smallest radius out, none touching another. */
+export function nestedBlobs(cx: number, cy: number, radii: number[], random: Rng): string[] {
+  return nestedBlobRadii(radii, random).map((ring) => {
+    let d = "";
+    for (let i = 0; i <= NESTED_STEPS; i += 1) {
+      const a = ((i % NESTED_STEPS) / NESTED_STEPS) * Math.PI * 2;
+      const radius = ring[i % NESTED_STEPS];
+      d += `${i ? "L" : "M"}${r2(cx + radius * Math.cos(a))} ${r2(cy + radius * Math.sin(a) * 0.85)}`;
+    }
+    return d + "Z";
+  });
+}
+
 /** A wobbly closed contour line around (cx, cy). */
 export function blob(cx: number, cy: number, radius: number, random: Rng): string {
   const phase = [random() * 6, random() * 6, random() * 6];

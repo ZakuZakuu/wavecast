@@ -50,6 +50,41 @@ export type PublicProgramme = {
   opening_track_title: string;
   opening_track_artist: string;
   is_owner: boolean;
+  /** A published programme: listeners play the programme itself, nothing is made for them. */
+  published?: boolean;
+  /** The author has stopped sharing it; only people who already hold a copy can still open it. */
+  revoked?: boolean;
+};
+
+/** One card of 「大家都在听」: what it shows, nothing about who made it or who listened. */
+export type PublicShelfItem = {
+  id: string;
+  title: string;
+  cover_title: string | null;
+  station: "casual" | "crate" | "portrait" | "lineage" | "night" | null;
+  estimated_duration_seconds: number;
+};
+export type PublicShelfPage = {
+  /** Empty on a first page: too few public programmes, the section is left out. */
+  items: PublicShelfItem[];
+  /** Asking again with these as `shown` could offer more. */
+  has_more: boolean;
+};
+
+/** Where the publication of one of the listener's own programmes stands. */
+export type PublicationStatus = "preparing" | "mixing" | "published" | "revoked" | "failed";
+export type Visibility = "link" | "public";
+export type PublicationItem = {
+  id: string;
+  /** The ten digits of the short link (/p/<code>). */
+  code: string;
+  episode_id: string;
+  status: PublicationStatus;
+  visibility: Visibility;
+  /** The step being worked on: making the 完整版, mixing it, or nothing more to do. */
+  step: "full" | "mix" | "done";
+  progress: number;
+  error_code?: string | null;
 };
 
 export type ProgramProposalBatch = {
@@ -66,6 +101,8 @@ export type ProposalGenerationRequest = {
   output_language?: "zh-CN" | "en-US" | "ja-JP";
   /** The station the listener tuned: sets the default hosting (夜里 means no host). */
   station?: "casual" | "crate" | "portrait" | "lineage" | "night";
+  /** Only when the listener touched the host control; it then outranks the station's default and the wording. */
+  host_mode?: HostMode;
 };
 
 type SegmentBase = {
@@ -88,6 +125,8 @@ export type MusicSegment = SegmentBase & {
   kind: "MUSIC";
   track_ref: string;
   artist: string | null;
+  /** The album artwork the catalog lists for the recording (https); absent for older programmes. */
+  cover_url?: string | null;
 };
 
 export type NarrationSegment = SegmentBase & {
@@ -125,6 +164,26 @@ export type ProgramRenderManifest = {
 };
 
 export type SourceNotice = { kind: "UNPLAYABLE_ARTISTS"; artists: string[] };
+
+/** Where the 完整版 (the whole episode, prepared in the background) of an episode stands. */
+export type FullVersionState = "none" | "preparing" | "ready" | "failed";
+export type FullVersionItem = {
+  episode_id: string;
+  programme_id: string;
+  status: FullVersionState;
+  /** 0–100, estimated from the audio finished so far. */
+  progress: number;
+};
+
+/** A 完整版 asked for from the tuner: the server is still making the programme, or has, or could not. */
+export type FullVersionRequestItem = {
+  request_id: string;
+  status: "creating" | "ready" | "failed";
+  episode_id: string | null;
+  programme_id: string | null;
+  title: string | null;
+  message: string | null;
+};
 
 export type LiveEpisode = {
   id: string;

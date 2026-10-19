@@ -10,14 +10,14 @@ import { programmeCover, rememberCoverSource } from "../../lib/cover/programme-c
 import { listeningStatus, isFinished } from "../../lib/library-view";
 import { lastTabPathOr } from "../../lib/nav-memory";
 import { openPlayer } from "../../lib/player-nav";
-import { adoptedCopies, forgetAdoptedCopy, GUEST_IDENTITY, rememberAdoptedCopy } from "../../lib/share";
 import { formatFreq, rememberProgrammeStation, stationById, stationForProgramme } from "../../lib/stations";
 import type { PublicProgramme } from "../../lib/types";
 import { emptyUserLibrary, readUserLibrary, subscribeUserLibrary, type RecentProgramRecord } from "../../lib/user-library";
 import { formatClock } from "../../lib/now-playing";
-import { ChevronLeftIcon, ShareIcon } from "../icons";
+import { ChevronLeftIcon, HeartIcon, ShareIcon } from "../icons";
 import { TypeCover } from "../cover/type-cover";
 import { useNowPlaying } from "../player/playback-provider";
+import { useFavourite } from "../../lib/use-favourite";
 import { ShareSheet } from "./share-sheet";
 
 const PROGRESS_PREFIX = "wavecast-program-progress:";
@@ -36,7 +36,10 @@ function storedPosition(episodeId: string): number | null {
   }
 }
 
-type LoadState = { kind: "loading" } | { kind: "ready"; programme: PublicProgramme } | { kind: "missing" };
+/** Why a link does not open: nothing is there, the author stopped sharing it, or it is an old one that made a copy per visitor. */
+export type GoneKind = "missing" | "revoked" | "legacy";
+
+type LoadState = { kind: "loading" } | { kind: "ready"; programme: PublicProgramme } | { kind: "missing"; why: GoneKind };
 
 /** Forget how far an episode was heard, here and on the server, so it plays from the top. */
 function restartEpisode(episodeId: string): void {
@@ -70,7 +73,23 @@ function PlayGlyph() {
   );
 }
 
-export function NotFound() {
+const GONE_COPY: Record<GoneKind, { title: string; body: string }> = {
+  missing: {
+    title: "这档节目找不到了",
+    body: "链接可能不完整，或者这档节目已经被删除。可以去首页挑一档，或者自己调一个。",
+  },
+  revoked: {
+    title: "这档节目不再分享了",
+    body: "作者已经撤回了分享。可以去首页挑一档，或者自己调一个。",
+  },
+  legacy: {
+    title: "这个链接已经失效了",
+    body: "以前的分享链接，打开后是各自重新生成一份。现在分享的是做好的节目本身，请让对方重新发一个新链接。",
+  },
+};
+
+export function NotFound({ kind = "missing" }: { kind?: GoneKind }) {
+  const copy = GONE_COPY[kind];
   return (
     <div className="pd pd-missing">
       <span className="glow" aria-hidden="true" style={{ left: -100, top: -160, width: 420, height: 340, background: "#8E8E93", opacity: 0.16 }} />
@@ -79,8 +98,8 @@ export function NotFound() {
       </header>
       <main className="pd-missing-body">
         <span className="pd-missing-mark" aria-hidden="true"><RadioGlyph size={44} /></span>
-        <h1>这档节目找不到了</h1>
-        <p>链接可能不完整，或者这档节目已经被删除。可以去首页挑一档，或者自己调一个。</p>
+        <h1>{copy.title}</h1>
+        <p>{copy.body}</p>
       </main>
       <div className="pd-bar">
         <Link href="/" className="pill-button pd-primary">去首页看看</Link>
@@ -104,7 +123,8 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
   const [library, setLibrary] = useState(emptyUserLibrary);
   const [now, setNow] = useState(() => Date.now());
   const [shareOpen, setShareOpen] = useState(false);
-  const [phase, setPhase] = useState<"idle" | "preparing" | "error" | "quota">("idle");
+  const { favourite, toggle: toggleFavourite } = useFavourite(programmeId);
+  const [phase, setPhase] = useState<"idle" | "preparing" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
 
   const coverFromLink = search.get("c");
@@ -131,8 +151,10 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
         if (programme.station) rememberProgrammeStation(programmeId, programme.station);
         setLoad({ kind: "ready", programme });
       })
-      .catch(() => {
-        if (active) setLoad({ kind: "missing" });
+      .catch((error: unknown) => {
+        if (!active) return;
+        const gone = error instanceof ApiRequestError && error.status === 410;
+        setLoad({ kind: "missing", why: gone ? (error.message === "revoked" ? "revoked" : "legacy") : "missing" });
       });
     return () => {
       active = false;
@@ -148,10 +170,9 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
     [programme, station.id],
   );
 
-  // Where this listener is in the programme: playing now, heard before, or not yet.
-  // A visitor's own copy of a shared programme has another id than the one in the link.
-  const identity = session?.user?.id ?? GUEST_IDENTITY;
-  const mineId = adoptedCopies(programmeId, identity)[0] ?? programmeId;
+  // Where this listener is in the programme: playing now, heard before, or not yet. A listener's
+  // copy of a published programme is filed under the published programme's id, the one in the link.
+  const mineId = programmeId;
   const record: RecentProgramRecord | undefined = library.recentPrograms
     .filter((item) => item.seedId === mineId)
     .sort((left, right) => right.updatedAt - left.updatedAt)[0];
@@ -161,7 +182,7 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
   const finished = heard ? isFinished(heard.progressSeconds, heard.durationSeconds) : false;
   const started = heard ? heard.progressSeconds >= 1 : false;
 
-  if (load.kind === "missing") return <NotFound />;
+  if (load.kind === "missing") return <NotFound kind={load.why} />;
   if (!programme || !cover) {
     return (
       <div className="pd" aria-busy="true">
@@ -174,6 +195,8 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
   }
 
   const visitor = !programme.is_owner;
+  const published = Boolean(programme.published);
+  const revoked = Boolean(programme.revoked);
   const minutes = Math.max(1, Math.round(programme.estimated_duration_seconds / 60));
 
   let primary = "播放";
@@ -188,10 +211,10 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
     primary = "继续播放";
     note = `上次听到 ${formatClock(heard.progressSeconds)}，全长约 ${minutes} 分钟。`;
   }
+  if (!playingNow && !heard && published) note = "这是一档做好的完整节目，点播放就能听。";
+  if (revoked) note = heard ? "作者撤回了分享，你已加进节目库的这一份还能继续听。" : note;
   if (phase === "preparing") note = "正在开播…";
   if (phase === "error") note = message ?? "开播失败了，可以再试一次";
-  if (phase === "quota") note = message ?? "今天的次数用完了。";
-  const needLogin = phase === "quota" && !signedIn;
 
   const play = async () => {
     if (phase === "preparing") return;
@@ -203,46 +226,30 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
     if (heard && (started || finished)) {
       // 再听一次 starts over; 继续播放 picks up the stored checkpoint.
       if (finished) restartEpisode(heard.episodeId);
+      if (published) void api.recordPublishedListen(programmeId);
       openPlayer(`/episode/materialized/${encodeURIComponent(heard.episodeId)}`);
       return;
     }
     setPhase("preparing");
     try {
-      let target = programmeId;
-      if (visitor) {
-        // A copy remembered on this device may belong to someone else (the account changed) or
-        // be gone: ask the server, forget what it does not know, and make a new one.
-        let held: string | null = null;
-        for (const candidate of adoptedCopies(programmeId, identity)) {
-          try {
-            await api.program(candidate);
-            held = candidate;
-            break;
-          } catch (error) {
-            if (!(error instanceof ApiRequestError && error.status === 404)) throw error;
-            forgetAdoptedCopy(programmeId, candidate);
-          }
-        }
-        if (held) {
-          rememberAdoptedCopy(programmeId, held, identity);
-          target = held;
-        } else {
-          const copy = await api.adoptProgramme(programmeId);
-          rememberAdoptedCopy(programmeId, copy.id, identity);
-          rememberProgrammeStation(copy.id, station.id);
-          rememberCoverSource(copy.id, coverFromLink ?? programmeId);
-          target = copy.id;
-        }
+      if (published) {
+        // A published programme is played as it is: the listener gets their own copy of it (their own
+        // progress), and nothing is generated for them.
+        const copy = await api.copyPublished(programmeId);
+        void api.recordPublishedListen(programmeId);
+        setPhase("idle");
+        openPlayer(`/episode/materialized/${encodeURIComponent(copy.id)}`);
+        return;
       }
-      openPlayer(`/episode/${encodeURIComponent(target)}`);
+      openPlayer(`/episode/${encodeURIComponent(programmeId)}`);
       setPhase("idle");
     } catch (error) {
-      if (error instanceof ApiRequestError && error.status === 429) {
-        setMessage(error.message);
-        setPhase("quota");
-      } else {
-        setPhase("error");
+      if (error instanceof ApiRequestError && error.status === 410) {
+        setLoad({ kind: "missing", why: "revoked" });
+        return;
       }
+      setMessage(null);
+      setPhase("error");
     }
   };
 
@@ -261,9 +268,14 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
           <button type="button" className="pd-icon" aria-label="返回" onClick={back}><ChevronLeftIcon size={24} strokeWidth={1.8} /></button>
         )}
         <div className="pd-head-actions">
-          <button type="button" className="pd-icon" aria-label="分享这档节目" onClick={() => setShareOpen(true)}>
-            <ShareIcon size={22} strokeWidth={1.8} />
+          <button type="button" className="pd-icon" aria-label={favourite ? "取消收藏" : "收藏"} aria-pressed={favourite} onClick={toggleFavourite}>
+            <HeartIcon size={22} strokeWidth={1.8} filled={favourite} />
           </button>
+          {revoked ? null : (
+            <button type="button" className="pd-icon" aria-label="分享这档节目" onClick={() => setShareOpen(true)}>
+              <ShareIcon size={22} strokeWidth={1.8} />
+            </button>
+          )}
           {visitor && !signedIn ? <Link href="/account" className="pd-login">登录</Link> : null}
         </div>
       </header>
@@ -278,6 +290,7 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
             约 {minutes} 分钟
           </span>
           <h1 className="pd-title">{programme.title}</h1>
+          {revoked ? <span className="pd-chip">作者已撤回分享</span> : null}
         </section>
 
         <p className="pd-description">{programme.description}</p>
@@ -307,31 +320,27 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
       </main>
 
       <div className="pd-bar">
-        {needLogin ? (
-          <Link href="/account" className="pill-button pd-primary">登录</Link>
-        ) : (
-          <button
-            type="button"
-            className="pill-button pd-primary"
-            onClick={() => void play()}
-            disabled={phase === "preparing"}
-            aria-busy={phase === "preparing"}
-          >
-            {phase === "preparing" ? "正在准备…" : (
-              <>
-                <PlayGlyph />
-                {phase === "error" ? "重试" : primary}
-              </>
-            )}
-          </button>
-        )}
+        <button
+          type="button"
+          className="pill-button pd-primary"
+          onClick={() => void play()}
+          disabled={phase === "preparing"}
+          aria-busy={phase === "preparing"}
+        >
+          {phase === "preparing" ? "正在准备…" : (
+            <>
+              <PlayGlyph />
+              {phase === "error" ? "重试" : primary}
+            </>
+          )}
+        </button>
         <p className={phase === "error" ? "pd-note is-error" : "pd-note"} role="status">{note}</p>
       </div>
 
       <ShareSheet
         open={shareOpen}
         onClose={() => setShareOpen(false)}
-        target={{ id: programme.id, title: programme.title, coverTitle: programme.cover_title, stationId: station.id }}
+        target={{ id: programme.id, title: programme.title, coverTitle: programme.cover_title, stationId: station.id, episodeId: record?.episodeId ?? null }}
       />
     </div>
   );

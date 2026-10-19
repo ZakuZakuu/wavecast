@@ -1,7 +1,7 @@
 // First-use guides: a list of guides, each a few steps that light up a real element (`data-guide="…"`).
 // To guide a new feature, add a guide here (and mark its element); people who have seen the others
 // are shown only the new one. Rewording a guide that people should see again: raise its `version`.
-export type GuideTrigger = "home" | "tune";
+export type GuideTrigger = "home" | "tune" | "library";
 
 export type GuideStep = {
   /** `data-guide` value of the element to light up; none = a plain card over the dimmed screen. */
@@ -68,14 +68,35 @@ export const GUIDES: readonly GuideDef[] = [
     ],
   },
   {
-    id: "tune-intro",
+    // The 电台指南 (components/tune/station-guide) opens by itself on the first visit and covers the tuner, the
+    // box and the choices; what is left to point out is the round button, once that has closed.
+    id: "tune-full",
     version: 1,
     trigger: "tune",
     steps: [
-      { target: "tune-dial", title: "先对准一个台", text: "左右拖动，对准一个电台。每个电台有自己的风格和节奏。" },
-      { target: "tune-input", text: "想听什么，在这里说：一个歌手、一首歌，或者你在做什么。" },
-      { target: "tune-duration", text: "选一档的长度：短节目 30–40 分钟，长节目约 1 小时。" },
-      { target: "tune-onair", side: "above", text: "对准了就点开播。音乐几秒内响起，后面的内容边听边准备。" },
+      { target: "tune-prepare", side: "above", text: "想先备好、晚点再听？点这里准备完整版，做好后会留在节目库。", primary: "知道了", skip: false },
+    ],
+  },
+  {
+    id: "home-public",
+    version: 1,
+    trigger: "home",
+    requires: "home-intro",
+    steps: [
+      { target: "home-public", text: "这是别人公开的整期节目，点一档就能直接听，不用等它生成。", primary: "知道了", skip: false },
+    ],
+  },
+  {
+    id: "library-marks",
+    version: 1,
+    trigger: "library",
+    steps: [
+      {
+        target: "lib-marker",
+        text: "灰色打钩的圆圈表示完整版，分享图标表示正在分享，分享的节目一定是完整版。",
+        primary: "知道了",
+        skip: false,
+      },
     ],
   },
 ];

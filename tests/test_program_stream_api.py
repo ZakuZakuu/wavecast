@@ -901,3 +901,96 @@ def test_program_render_does_not_drop_narration_already_in_frozen_prefix(
 
     assert skipped == []
     assert repository.get(episode.id).segment("frozen-host").state is SegmentState.AUDIO_READY
+
+
+def _finished_programme(count: int, seconds: int = 40) -> LiveEpisode:
+    return LiveEpisode(
+        seed_id="finished", listener_id="listener-f", state=EpisodeState.MATERIALIZED,
+        generation_mode=GenerationMode.FULL, program_estimated_duration_seconds=count * seconds,
+        segments=[
+            MusicSegment(
+                id=f"music-{index}", chapter_id=f"chapter-{index}", order=index - 1,
+                state=SegmentState.AUDIO_READY, planned_duration_seconds=seconds,
+                actual_duration_seconds=seconds, track_ref=f"mock:music-{index}",
+                audio_source_url="/api/assets/audio/music.wav", title=f"Music {index}",
+            ) for index in range(1, count + 1)
+        ],
+    )
+
+
+def test_ready_prefix_takes_whole_segments_until_what_may_be_published_reaches_what_is_wanted() -> None:
+    episode = _finished_programme(8)
+    everything, more = api_module._ready_prefix(episode)
+    assert (len(everything), more) == (8, False)
+    # 40 s wanted, plus the held-back tail and a little slack: a plan of at least ~80 s, i.e. three 40 s songs.
+    prefix, more = api_module._ready_prefix(episode, 40.0)
+    assert ([segment.id for segment in prefix], more) == (["music-1", "music-2", "music-3"], True)
+    plan = api_module._canonical_render_plan(episode, 40.0)
+    assert plan.duration_seconds - 30.0 >= 40.0
+    # Wanting more than there is leaves nothing out.
+    assert api_module._ready_prefix(episode, 10_000.0) == (everything, False)
+
+
+def test_a_finished_programme_is_rendered_in_steps_from_the_start_until_it_is_whole(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage_root = tmp_path / "audio"
+    storage = LocalObjectStorageProvider(storage_root)
+    asyncio.run(storage.put("music.wav", _wav_bytes(40, 220), "audio/wav"))
+    repository = EventLoopRejectingEpisodeRepository()
+    monkeypatch.setattr(api_module, "repository", repository)
+    monkeypatch.setattr(api_module, "orchestrator", EpisodeOrchestrator(repository))
+    monkeypatch.setattr(api_module, "audio_storage", storage)
+    monkeypatch.setattr(api_module, "PROGRAMME_RENDER_AHEAD_SECONDS", 40.0)
+    episode = _finished_programme(6)
+    repository.save(episode)
+    headers = {"X-Wavecast-Listener": "listener-f"}
+    with TestClient(api_module.app) as client:
+        first = client.post(f"/api/episodes/{episode.id}/program-render", headers=headers)
+        assert first.status_code == 200, first.text
+        steps = [first.json()]
+        # The first listen needs only the start of it, not all six songs' worth of mixing.
+        assert steps[0]["complete"] is False
+        assert 0 < steps[0]["renderedFrontierSeconds"] < 6 * 40 - 30
+        assert "#EXT-X-ENDLIST" not in client.get(steps[0]["streamUrl"]).text
+
+        for _ in range(10):
+            if steps[-1]["complete"]:
+                break
+            response = client.post(f"/api/episodes/{episode.id}/program-render", headers=headers)
+            assert response.status_code == 200, response.text
+            step = response.json()
+            # Each step only adds: what was published before is untouched, and it reaches further.
+            assert step["chunks"][:len(steps[-1]["chunks"])] == steps[-1]["chunks"]
+            assert step["renderedFrontierSeconds"] > steps[-1]["renderedFrontierSeconds"]
+            steps.append(step)
+        assert len(steps) >= 3
+        assert steps[-1]["complete"] is True
+        assert "#EXT-X-ENDLIST" in client.get(steps[-1]["streamUrl"]).text
+        # Asked again once whole, it just says so.
+        again = client.post(f"/api/episodes/{episode.id}/program-render", headers=headers)
+        assert again.json() == steps[-1]
+    assert repository.get(episode.id).state is EpisodeState.MATERIALIZED
+
+
+def test_only_the_songs_of_the_part_being_rendered_are_fetched(tmp_path, monkeypatch) -> None:
+    storage = LocalObjectStorageProvider(tmp_path)
+    fetcher = FakeFetcher()
+    repository = InMemoryEpisodeRepository()
+    episode = _finished_programme(4)
+    for index, segment in enumerate(episode.segments, start=1):
+        segment.audio_source_url = f"/api/audio/sidecar/netease/{index}"
+        segment.track_ref = f"netease:{index}"
+    repository.save(episode)
+    monkeypatch.setattr(api_module, "repository", repository)
+    monkeypatch.setattr(api_module, "audio_storage", storage)
+    monkeypatch.setattr(api_module, "music_snapshot_store", MusicSnapshotStore(storage, fetcher))
+    monkeypatch.setattr(api_module, "orchestrator", EpisodeOrchestrator(repository))
+
+    prepared = asyncio.run(api_module._prepare_owned_music_assets(
+        episode.id, ready_only=True, only_segment_ids={"music-1", "music-2"},
+    ))
+    assert prepared.ready and prepared.snapshotted_music_count == 2
+    assert fetcher.calls == 2
+    saved = repository.get(episode.id)
+    assert [segment.audio_source_url.startswith("/api/assets/audio/") for segment in saved.segments] == [True, True, False, False]

@@ -10,8 +10,8 @@ title (and cannot mistranslate one):
 * Titles or names in any other script are replaced by a plain phrase ("这首歌"), or by a known
   Chinese name where one is on record.
 
-Only entities already known to the application (the tracks of a narration slot) are
-substituted; free text is never rewritten with broad patterns.
+Only known entities and unambiguous pronunciation forms are substituted; free text is
+never rewritten with broad patterns.
 """
 
 from __future__ import annotations
@@ -53,7 +53,11 @@ SPOKEN_NAME_GUIDANCE = (
     "A missing spoken_title means the name is unavailable, not that its name is 这首歌. "
     "Write the entire reference naturally; never put a generic reference in title brackets "
     "or append it to another 这首/这支. "
-    "Do not simply remove foreign characters or insert the original name again in parentheses."
+    "Do not simply remove foreign characters or insert the original name again in parentheses. "
+    "Use normal English capitalization for full sentences and slogans instead of copying "
+    "ALL CAPS source typography. "
+    "Keep actual acronyms such as FM, DJ and R&B, and established artist/name spellings; "
+    "do not lowercase all English or expand an ordinary word into an acronym."
 )
 _TRAILING_GROUP = re.compile(r"\s*[\(\[（][^\)\]）]*[\)\]）]\s*$")
 _CATALOGUE_NUMBER = re.compile(r"\b(?:no|op|bwv|k|rv|hob|d|kv|woo)\.?\s*\d", re.IGNORECASE)
@@ -69,6 +73,11 @@ _YEAR = re.compile(r"(?<![\d.])(\d{4})(\s*)(年代?)")
 _DECADE = re.compile(r"(?<![\d.])(\d)0(\s*)年代")
 _DECADE_WORDS = {"1": "十", "2": "二十", "3": "三十", "4": "四十", "5": "五十",
                  "6": "六十", "7": "七十", "8": "八十", "9": "九十"}
+# A complete English slogan is unambiguous; standalone NO may be a formula or initials.
+# Keep the visible quotation and genuine acronyms intact instead of case-folding all speech.
+_MUSIC_LIFE_SLOGAN = re.compile(
+    r"(?<![A-Za-z0-9_])NO\s+(?:MUSIC[,，\s]+NO\s+LIFE|LIFE[,，\s]+NO\s+MUSIC)(?![A-Za-z0-9_])"
+)
 
 
 def speak_years(text: str) -> str:
@@ -154,6 +163,16 @@ def catalog_album(metadata: Mapping[str, Any] | None) -> str | None:
         return None
     text = value.strip()
     return text[:160] if text else None
+
+
+def catalog_cover(metadata: Mapping[str, Any] | None) -> str | None:
+    """The album artwork address the catalog supplies for a recording; https only."""
+
+    value = (metadata or {}).get("cover_url")
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text if text.startswith("https://") and len(text) <= 500 else None
 
 
 def spoken_artist(artist: str) -> str | None:
@@ -259,6 +278,7 @@ def to_spoken_form(
         spoken = spoken.replace(f"{GENERIC_SONG}{GENERIC_SONG}", GENERIC_SONG)
     spoken = spoken.replace(f"{GENERIC_SONG}这首", GENERIC_SONG).replace(f"{GENERIC_SONG}这支", GENERIC_SONG)
     spoken = speak_years(spoken)
+    spoken = _MUSIC_LIFE_SLOGAN.sub(lambda match: match.group(0).capitalize(), spoken)
     spoken = " ".join(spoken.split()) if "\n" in spoken else spoken
     leftovers = sorted(set(re.findall(rf"\S*{UNSPEAKABLE_SCRIPTS.pattern}\S*", spoken)))
     return SpokenForm(tts_text=spoken, unspeakable=leftovers)

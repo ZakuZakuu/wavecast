@@ -48,7 +48,7 @@ export function PlayerOverlay() {
 
   const height = () => sheetRef.current?.offsetHeight || window.innerHeight;
 
-  const coverElement = () => sheetRef.current?.querySelector<HTMLElement>(".player-cover") ?? null;
+  const coverElement = () => sheetRef.current?.querySelector<HTMLElement>(".player-cover, .player-cover-stack") ?? null;
 
   /** Untransformed cover position vs. a mini-player thumbnail rect. */
   const measureFlip = useCallback((mini: DOMRect | null): Flip => {
