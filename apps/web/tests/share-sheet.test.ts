@@ -92,7 +92,7 @@ describe("ShareSheet", () => {
     await press("发布");
 
     expect(api.publishProgramme).toHaveBeenCalledWith(OWN, "public");
-    expect(text()).toContain("合成中 60%");
+    expect(text()).toContain("合成中，一般 1–2 分钟");
     expect(text()).toContain("已完成");
   });
 

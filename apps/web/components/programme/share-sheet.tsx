@@ -258,6 +258,9 @@ function PublishSheet({ open, onClose, target }: { open: boolean; onClose: () =>
             <li key={step.name} className={`ss-step is-${step.state}`}>
               {step.state === "done" ? (
                 <span className="ss-step-mark is-done" aria-label="已完成"><CheckIcon size={16} strokeWidth={3} /></span>
+              ) : step.state === "active" && step.name === "合成分享音频" ? (
+                // One pass whose progress is not known: a spinner and the usual time, not a made-up number.
+                <span className="ss-step-mark is-spin" role="img" aria-label="合成中" />
               ) : step.state === "active" ? (
                 <span className="ss-step-mark is-ring" role="img" aria-label={`进行中 ${step.pct}%`} style={{ background: `conic-gradient(var(--live) ${step.pct}%, rgba(29,29,31,.1) 0)` }}><span /></span>
               ) : (
@@ -266,7 +269,11 @@ function PublishSheet({ open, onClose, target }: { open: boolean; onClose: () =>
               <span className="ss-step-text">
                 <span className="ss-step-name">{step.name}</span>
                 <span className="ss-step-hint">
-                  {step.state === "done" ? "已完成" : step.state === "active" ? `${step.name === "准备完整版" ? "准备中" : "合成中"} ${step.pct}%` : "等上一步做完"}
+                  {step.state === "done"
+                    ? "已完成"
+                    : step.state === "active"
+                      ? step.name === "准备完整版" ? `准备中 ${step.pct}%` : "合成中，一般 1–2 分钟"
+                      : "等上一步做完"}
                 </span>
               </span>
             </li>

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import math
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
@@ -37,8 +38,10 @@ from wavecast.storage.publications import PublicationConflictError, PublicationR
 
 logger = logging.getLogger(__name__)
 
-#: A mix is made in steps this long, so that how far it has got is real, and a step can be retried.
-MIX_STEP_SECONDS = 900.0
+#: The mix is made in one pass by default: each step re-renders everything before it (to check the part
+#: already frozen), so steps cost more in total, and a listener's own position must not decide how far
+#: a step goes. A shorter step gives real progress at the price of a longer wait.
+MIX_STEP_SECONDS = math.inf
 
 
 class MixFailure(Exception):

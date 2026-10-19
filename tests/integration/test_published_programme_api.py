@@ -379,3 +379,16 @@ def test_a_programme_never_played_can_be_published_from_its_page(client, rig) ->
     assert client.post(f"/api/published/{item.json()['id']}/copy", headers=visitor).status_code == 200
     # A programme that is not the caller's cannot be published at all.
     assert client.post(f"/api/programs/{programme_id}/publish", json={}, headers=visitor).status_code == 404
+
+
+def test_a_publication_mixes_in_one_pass_whatever_the_owner_has_listened_to() -> None:
+    """The owner's own position decided how far a step went, which made the first one nearly the whole mix."""
+    from wavecast.models.episode import EpisodeState, LiveEpisode
+
+    episode = LiveEpisode(
+        seed_id="s", state=EpisodeState.MATERIALIZED, program_estimated_duration_seconds=1800,
+        program_playback_position_seconds=800, segments=[],
+    )
+    assert api_module._render_ahead_seconds(episode, None, float("inf")) is None
+    # Without a step it is still the listener's few minutes ahead of where they are.
+    assert api_module._render_ahead_seconds(episode, None) == 800 + api_module.PROGRAMME_RENDER_AHEAD_SECONDS

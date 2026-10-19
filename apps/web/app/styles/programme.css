@@ -179,6 +179,8 @@
 .ss-step-mark { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center; box-sizing: border-box; }
 .ss-step-mark.is-done { background: #1E9E52; color: #fff; }
 .ss-step-mark.is-ring span { width: 22px; height: 22px; border-radius: 50%; background: var(--surface); }
+.ss-step-mark.is-spin { border: 3px solid rgba(29,29,31,.1); border-top-color: var(--live); animation: full-spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .ss-step-mark.is-spin { animation: none; } }
 .ss-step-mark.is-wait { border: 2px solid rgba(29,29,31,.12); }
 .ss-step-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .ss-step-name { font-size: 16px; font-weight: 600; }

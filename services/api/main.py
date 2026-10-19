@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -2623,6 +2624,8 @@ def _render_ahead_seconds(
 
     if current.state not in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
         return None
+    if step is not None and math.isinf(step):
+        return None  # everything that is ready, in one pass
     reached = manifest.rendered_frontier_seconds if manifest is not None else 0.0
     return max(reached, current.program_playback_position_seconds) + (
         PROGRAMME_RENDER_AHEAD_SECONDS if step is None else step
@@ -2638,11 +2641,13 @@ async def _render_programme_locked(episode_id: str, ahead_step: float | None = N
         ahead = _render_ahead_seconds(before, manifest, ahead_step)
         # Only the songs of the part about to be rendered are fetched, not the whole programme's.
         wanted, _ = _ready_prefix(before, None if ahead is None else ahead + _PROGRAMME_FETCH_EXTRA_SECONDS)
+        fetch_started = monotonic()
         preparation = await _prepare_owned_music_assets(
             episode_id,
             ready_only=True,
             only_segment_ids={segment.id for segment in wanted},
         )
+        fetch_seconds = monotonic() - fetch_started
         if not preparation.ready:
             raise HTTPException(
                 status_code=409,
@@ -2710,6 +2715,12 @@ async def _render_programme_locked(episode_id: str, ahead_step: float | None = N
                 audio_storage,
                 complete=complete,
             )
+        # Where the time goes: fetching the songs, or encoding.
+        logger.info(
+            "program_render_timing episode_id=%s audio_s=%.0f fetch_s=%.1f total_s=%.1f complete=%s",
+            episode_id, rendered.rendered_frontier_seconds, fetch_seconds,
+            monotonic() - started_at, rendered.complete,
+        )
         if rendered.complete:
             await to_thread.run_sync(
                 _finish_rendered_progressive_programme,
@@ -3411,10 +3422,9 @@ def _publication_item(publication: Publication, episode: LiveEpisode) -> Publica
             ),
         )
     elif status is PublicationStatus.MIXING:
+        # One pass: how far it has got is not known, and a made-up number would only mislead.
         step = "mix"
-        progress = min(99, round(
-            100 * publication.audio_seconds / max(1, episode.program_estimated_duration_seconds)
-        ))
+        progress = 0
     else:
         step = "done"
         progress = 100 if status in {PublicationStatus.PUBLISHED, PublicationStatus.REVOKED} else 0
