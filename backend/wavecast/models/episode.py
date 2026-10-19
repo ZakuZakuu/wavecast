@@ -225,6 +225,9 @@ class LiveEpisode(BaseModel):
     listener_id: str = "test-listener"
     # Account ownership is separate from immutable runtime listener identity.
     owner_user_id: str | None = Field(default=None, exclude=True)
+    # Set on a listener's copy of a published programme. Its audio is the published programme's, fixed
+    # and shared; only the playback position and the rest of the listener's state are the copy's own.
+    published_programme_id: str | None = None
     version: int = Field(default=0, ge=0)
     state: EpisodeState = EpisodeState.STARTED
     generation_mode: GenerationMode = GenerationMode.PROGRESSIVE

@@ -22,6 +22,12 @@ from .library import (
     UserLibraryRepository,
 )
 from .proposals import PostgresProgramProposalRepository
+from .publications import (
+    InMemoryPublicationRepository,
+    PostgresPublicationRepository,
+    PublicationConflictError,
+    PublicationRepository,
+)
 from .quota import (
     GenerationQuotaRepository,
     InMemoryGenerationQuotaRepository,
@@ -48,6 +54,10 @@ __all__ = [
     "StoredObject",
     "metadata",
     "PostgresProgramProposalRepository",
+    "InMemoryPublicationRepository",
+    "PostgresPublicationRepository",
+    "PublicationConflictError",
+    "PublicationRepository",
     "InMemoryUserLibraryRepository",
     "PostgresUserLibraryRepository",
     "UserLibraryRepository",

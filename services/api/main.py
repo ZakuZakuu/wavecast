@@ -13,7 +13,7 @@ from itertools import combinations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import quote
 from uuid import uuid4
 from wave import open as open_wave
@@ -83,7 +83,6 @@ from wavecast.proposals import (
     ProgramProposalRepository,
     ProposalGenerationRequest,
     ProposalPersistenceConflict,
-    shared_copy,
 )
 from wavecast.providers.ark import ArkLLMProvider
 from wavecast.providers.audius import AudiusMusicProvider
@@ -114,6 +113,16 @@ from wavecast.providers.usage import (
     diagnostics_of,
     merge_events,
     usage_scope,
+)
+from wavecast.publication_service import PublicationService
+from wavecast.publishing import (
+    ProgrammeSnapshot,
+    Publication,
+    PublicationStatus,
+    PublishRefusal,
+    Visibility,
+    is_publication_id,
+    published_budget_bytes,
 )
 from wavecast.recommendations import (
     DeterministicRecommendationPlanner,
@@ -151,12 +160,15 @@ from wavecast.storage import (
     GenerationQuotaRepository,
     InMemoryGenerationJobRepository,
     InMemoryGenerationQuotaRepository,
+    InMemoryPublicationRepository,
     InMemoryUserLibraryRepository,
     LocalObjectStorageProvider,
     PostgresEpisodeRepository,
     PostgresGenerationJobRepository,
     PostgresGenerationQuotaRepository,
+    PostgresPublicationRepository,
     PostgresUserLibraryRepository,
+    PublicationRepository,
     QuotaExceededError,
     UserLibraryRepository,
 )
@@ -211,6 +223,7 @@ proposal_repository: ProgramProposalRepository = InMemoryProgramProposalReposito
 user_library_repository: UserLibraryRepository = InMemoryUserLibraryRepository()
 generation_quota_repository: GenerationQuotaRepository = InMemoryGenerationQuotaRepository()
 generation_job_repository: GenerationJobRepository = InMemoryGenerationJobRepository()
+publication_repository: PublicationRepository = InMemoryPublicationRepository()
 if DATABASE_URL:
     from wavecast.storage import PostgresProgramProposalRepository
 
@@ -218,10 +231,18 @@ if DATABASE_URL:
     user_library_repository = PostgresUserLibraryRepository(DATABASE_URL)
     generation_quota_repository = PostgresGenerationQuotaRepository(DATABASE_URL)
     generation_job_repository = PostgresGenerationJobRepository(DATABASE_URL)
+    publication_repository = PostgresPublicationRepository(DATABASE_URL)
 
 GUEST_PROGRAM_LIMIT = int(os.getenv("WAVECAST_GUEST_PROGRAM_LIMIT", "3"))
 AUTH_DAILY_PROGRAM_LIMIT = int(os.getenv("WAVECAST_AUTH_DAILY_PROGRAM_LIMIT", "20"))
 GLOBAL_DAILY_PROGRAM_LIMIT = int(os.getenv("WAVECAST_GLOBAL_DAILY_PROGRAM_LIMIT", "100"))
+# Published audio is kept for good, so it has a budget of its own (a share of the volume unless set).
+_published_budget_mb = os.getenv("WAVECAST_PUBLISHED_AUDIO_BUDGET_MB", "").strip()
+PUBLISHED_AUDIO_BUDGET_BYTES = int(_published_budget_mb) * 1024 * 1024 if _published_budget_mb else None
+# Programmes switched off by hand (ids, comma separated): not listed, no new copies, no playback.
+TAKEN_DOWN_PROGRAMMES = frozenset(
+    item.strip() for item in os.getenv("WAVECAST_TAKEN_DOWN_PROGRAMMES", "").split(",") if item.strip()
+)
 
 # Programme HLS is a rebuildable cache. Keep enough headroom on the small
 # Railway volume for source snapshots/TTS instead of allowing old renders to
@@ -273,6 +294,15 @@ def _gc_program_render_cache(current_episode_id: str) -> tuple[int, int | None]:
         episodes = repository.all()
     except Exception:
         logger.warning("program_render_gc_protection_unavailable")
+        return 0, usage.free
+    try:
+        # Published audio is what listeners' copies play; it is never a cache.
+        protected_ids |= {
+            re.sub(r"[^a-zA-Z0-9_-]", "_", episode_id)
+            for episode_id in publication_repository.pinned_episode_ids()
+        }
+    except Exception:
+        logger.warning("program_render_gc_publications_unavailable")
         return 0, usage.free
     for episode in episodes:
         if episode.id != current_episode_id and (
@@ -604,6 +634,8 @@ scheduler = InlineGenerationScheduler(orchestrator)
 async def _prepare_first_listen(episode_id: str) -> None:
     """The start of a finished programme is mixed before it is called ready, so its first play is quick."""
     await _render_programme(episode_id)
+    # A publication waiting for this episode's 完整版 can go on to its mix.
+    await to_thread.run_sync(_advance_publication_for, episode_id)
 
 
 generation_worker = GenerationWorker(
@@ -1510,9 +1542,50 @@ class PublicProgramme(BaseModel):
     opening_track_artist: str
     cover: CoverParams
     is_owner: bool
+    #: A published programme: listeners play the programme itself, nothing is made for them.
+    published: bool = False
+    #: The author has stopped sharing it; only people who already hold a copy can still open it.
+    revoked: bool = False
+
+
+class LegacyProgrammeLink(Exception):
+    """A link made before sharing meant the programme itself: it asked each visitor for a new one."""
+
+
+def _public_published(publication: Publication, actor: AuthPrincipal) -> PublicProgramme:
+    if publication.id in TAKEN_DOWN_PROGRAMMES:
+        raise HTTPException(status_code=404, detail="Program not found")
+    owner = _owns_publication(publication, actor)
+    revoked = publication.status is PublicationStatus.REVOKED
+    if publication.status not in {PublicationStatus.PUBLISHED, PublicationStatus.REVOKED}:
+        # Being made or failed: only its owner has a use for the page.
+        if not owner:
+            raise HTTPException(status_code=404, detail="Program not found")
+    elif revoked and not owner and _published_copy_of(publication, actor) is None:
+        raise HTTPException(status_code=410, detail="revoked")
+    snapshot = publication.programme
+    return PublicProgramme(
+        id=publication.id,
+        title=snapshot.title,
+        cover_title=snapshot.cover_title,
+        description=snapshot.description,
+        estimated_duration_seconds=snapshot.estimated_duration_seconds,
+        station=snapshot.station,
+        route=snapshot.route,
+        tags=snapshot.tags,
+        opening_track_title=snapshot.opening_track_title,
+        opening_track_artist=snapshot.opening_track_artist,
+        cover=snapshot.cover,
+        is_owner=owner,
+        published=True,
+        revoked=revoked,
+    )
 
 
 def _public_programme(program_id: str, actor: AuthPrincipal) -> PublicProgramme | None:
+    if is_publication_id(program_id):
+        publication = publication_repository.get(program_id)
+        return _public_published(publication, actor) if publication is not None else None
     stored = proposal_repository.get(program_id)
     seed = None if stored is not None else _static_seed(program_id)
     proposal = stored or (ProgramProposal.from_episode_seed(seed) if seed is not None else None)
@@ -1526,6 +1599,10 @@ def _public_programme(program_id: str, actor: AuthPrincipal) -> PublicProgramme 
             or (owner[1] is None and owner[0] == actor.listener_id)
         )
     )
+    if not is_owner:
+        # Someone else's own programme. Links to it used to hand every visitor a fresh copy; they
+        # no longer open, and never quietly turn into one.
+        raise LegacyProgrammeLink()
     tags = list(dict.fromkeys([*proposal.genre_tags, *proposal.mood_tags]))[:6]
     return PublicProgramme(
         id=proposal.id,
@@ -1553,74 +1630,34 @@ class ResolvedProgramme(BaseModel):
 
 @app.get("/api/programs/by-code/{code}", response_model=ResolvedProgramme)
 def program_by_short_code(code: str) -> ResolvedProgramme:
-    """The programme behind a short link: the first characters of a `proposal-` id."""
+    """The published programme behind a short link."""
 
-    program_id = (
-        proposal_repository.find_id_by_prefix(f"proposal-{code}")
-        if _SHORT_CODE.fullmatch(code)
-        else None
-    )
-    if program_id is None:
+    if not _SHORT_CODE.fullmatch(code):
         raise HTTPException(status_code=404, detail="Program not found")
-    return ResolvedProgramme(id=program_id)
+    publication = publication_repository.get_by_code(code)
+    if publication is not None:
+        return ResolvedProgramme(id=publication.id)
+    if proposal_repository.find_id_by_prefix(f"proposal-{code}") is not None:
+        raise HTTPException(status_code=410, detail="legacy")
+    raise HTTPException(status_code=404, detail="Program not found")
 
 
 @app.get("/api/programs/{program_id}/public", response_model=PublicProgramme)
 def public_program(program_id: str, request: Request) -> PublicProgramme:
-    programme = _public_programme(program_id, principal(request))
+    try:
+        programme = _public_programme(program_id, principal(request))
+    except LegacyProgrammeLink as error:
+        raise HTTPException(status_code=410, detail="legacy") from error
     if programme is None:
         raise HTTPException(status_code=404, detail="Program not found")
     return programme
 
 
-@app.post("/api/programs/{program_id}/adopt", response_model=ProgramProposal)
-async def adopt_program(program_id: str, request: Request) -> ProgramProposal:
-    """Give the caller their own copy of a shared programme (it is made fresh for them).
-
-    Nothing is generated here, so only a quota slot is spent; listening then starts the
-    usual episode flow on the copy.
-    """
-    owner = principal(request)
-    mine = _proposal_for_program(program_id, owner)
-    if mine is not None:
-        return mine
-    original = proposal_repository.get(program_id)
-    if original is None:
-        raise HTTPException(status_code=404, detail="Program not found")
-    try:
-        reservations = await to_thread.run_sync(
-            lambda: generation_quota_repository.reserve(
-                owner.listener_id, owner.user_id, 1,
-                guest_limit=GUEST_PROGRAM_LIMIT,
-                auth_daily_limit=AUTH_DAILY_PROGRAM_LIMIT,
-                global_daily_limit=GLOBAL_DAILY_PROGRAM_LIMIT,
-            )
-        )
-    except QuotaExceededError as error:
-        if error.reason == "guest_limit":
-            detail = "今天的游客次数用完了。登录后，每天能听更多。"
-        elif error.reason == "account_daily_limit":
-            detail = "今天的调频次数已达上限，请明天再试。"
-        else:
-            detail = "今天的调频服务已达到使用上限，请稍后再试。"
-        raise HTTPException(status_code=429, detail=detail) from error
-    try:
-        copy = shared_copy(original, new_id=f"proposal-{uuid4().hex}")
-        await to_thread.run_sync(
-            lambda: proposal_repository.save_many(
-                [copy], owner_listener_id=owner.listener_id,
-                owner_user_id=owner.user_id, source="shared",
-            )
-        )
-        await to_thread.run_sync(generation_quota_repository.charge, reservations, [copy.id])
-        if owner.user_id is not None:
-            await to_thread.run_sync(
-                user_library_repository.put, owner.user_id, "CREATED", copy.id, {"id": copy.id},
-            )
-        return copy
-    except BaseException:
-        await to_thread.run_sync(generation_quota_repository.release, reservations)
-        raise
+@app.post("/api/programs/{program_id}/adopt", status_code=410)
+async def adopt_program(program_id: str) -> None:
+    """Sharing used to mean a fresh copy made for each visitor. It now means the programme itself
+    (see ``POST /api/published/{id}/copy``); links of the old kind do not open and never fall back."""
+    raise HTTPException(status_code=410, detail="legacy")
 
 
 @app.post("/api/program-proposals", response_model=ProgramProposalBatch)
@@ -2516,6 +2553,7 @@ def episode_mix_plan(episode_id: str, request: Request) -> MixPlan:
     """Return the deterministic server-owned arrangement for the ready prefix."""
     actor = principal(request)
     owned(episode_id, actor)
+    _reject_published_copy(episode_id)
     try:
         return canonical_mix_plan_for_episode(episode_id, actor)
     except ValueError as error:
@@ -2530,6 +2568,7 @@ async def prepare_mixdown(episode_id: str, request: Request) -> MixdownPreparati
     """Snapshot provider-backed music into owned assets without rendering."""
     actor = principal(request)
     await to_thread.run_sync(owned, episode_id, actor)
+    await to_thread.run_sync(_reject_published_copy, episode_id)
     try:
         return await _prepare_owned_music_assets(episode_id)
     except EpisodeConcurrencyError as error:
@@ -2548,36 +2587,56 @@ async def render_program_stream(
 
     actor = principal(request)
     await to_thread.run_sync(owned, episode_id, actor)
+    episode = await to_thread.run_sync(orchestrator.get, episode_id)
+    if episode.published_programme_id is not None:
+        # A copy plays the published feed as it is; there is nothing of its own to render.
+        return await _published_manifest(episode)
     return await _render_programme(episode_id)
 
 
 _render_locks: dict[str, asyncio.Lock] = {}
 
 
-async def _render_programme(episode_id: str) -> ProgramRenderManifest:
+async def _published_manifest(episode: LiveEpisode) -> ProgramRenderManifest:
+    """The fixed, complete feed behind a listener's copy of a published programme."""
+    source_id = await to_thread.run_sync(_published_manifest_source, episode)
+    try:
+        manifest = await load_program_manifest(audio_storage, source_id)
+    except ProgramImmutabilityError as error:
+        raise HTTPException(status_code=500, detail="Program render manifest is invalid") from error
+    if manifest is None or not manifest.complete:
+        raise HTTPException(status_code=404, detail="Program stream is not available")
+    return manifest
+
+
+async def _render_programme(episode_id: str, ahead_step: float | None = None) -> ProgramRenderManifest:
     """One render at a time per programme: they extend one append-only feed."""
 
     lock = _render_locks.setdefault(episode_id, asyncio.Lock())
     async with lock:
-        return await _render_programme_locked(episode_id)
+        return await _render_programme_locked(episode_id, ahead_step)
 
 
-def _render_ahead_seconds(current: LiveEpisode, manifest: ProgramRenderManifest | None) -> float | None:
+def _render_ahead_seconds(
+    current: LiveEpisode, manifest: ProgramRenderManifest | None, step: float | None = None,
+) -> float | None:
     """How far a finished programme is rendered up to now (None: render everything that is ready)."""
 
     if current.state not in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
         return None
     reached = manifest.rendered_frontier_seconds if manifest is not None else 0.0
-    return max(reached, current.program_playback_position_seconds) + PROGRAMME_RENDER_AHEAD_SECONDS
+    return max(reached, current.program_playback_position_seconds) + (
+        PROGRAMME_RENDER_AHEAD_SECONDS if step is None else step
+    )
 
 
-async def _render_programme_locked(episode_id: str) -> ProgramRenderManifest:
+async def _render_programme_locked(episode_id: str, ahead_step: float | None = None) -> ProgramRenderManifest:
     started_at = monotonic()
     await to_thread.run_sync(_gc_program_render_cache, episode_id)
     try:
         manifest = await load_program_manifest(audio_storage, episode_id)
         before = await to_thread.run_sync(orchestrator.get, episode_id)
-        ahead = _render_ahead_seconds(before, manifest)
+        ahead = _render_ahead_seconds(before, manifest, ahead_step)
         # Only the songs of the part about to be rendered are fetched, not the whole programme's.
         wanted, _ = _ready_prefix(before, None if ahead is None else ahead + _PROGRAMME_FETCH_EXTRA_SECONDS)
         preparation = await _prepare_owned_music_assets(
@@ -2713,6 +2772,9 @@ async def program_render_status(
 ) -> ProgramRenderManifest:
     actor = principal(request)
     await to_thread.run_sync(owned, episode_id, actor)
+    episode = await to_thread.run_sync(orchestrator.get, episode_id)
+    if episode.published_programme_id is not None:
+        return await _published_manifest(episode)
     try:
         manifest = await load_program_manifest(audio_storage, episode_id)
     except ProgramImmutabilityError as error:
@@ -2726,6 +2788,9 @@ async def program_render_status(
 async def program_stream_playlist(episode_id: str) -> Response:
     """Serve the mutable EVENT playlist; referenced transport chunks are immutable."""
 
+    taken_down = await to_thread.run_sync(publication_repository.get_for_episode, episode_id)
+    if taken_down is not None and taken_down.id in TAKEN_DOWN_PROGRAMMES:
+        raise HTTPException(status_code=404, detail="Program stream is not ready")
     try:
         manifest = await load_program_manifest(audio_storage, episode_id)
     except ProgramImmutabilityError as error:
@@ -2746,6 +2811,7 @@ async def program_stream_playlist(episode_id: str) -> Response:
 async def episode_mixdown(episode_id: str, request: Request) -> MixdownArtifact:
     """Render the current canonical plan from already-owned local audio assets."""
     actor = principal(request)
+    await to_thread.run_sync(_reject_published_copy, episode_id)
     # The repository facade is synchronous (asyncio.run() under Postgres), so it must not run
     # on the request loop.
     await to_thread.run_sync(owned, episode_id, actor)
@@ -3230,6 +3296,380 @@ async def full_version_statuses(episode_ids: str, request: Request) -> list[Full
         return items
 
     return await to_thread.run_sync(collect)
+
+
+# --- Published programmes ---------------------------------------------------------------------------
+# A finished programme shared as itself: mixed once, checked, and played by every listener's own copy
+# from that one fixed feed (see docs/adr/0037-published-programmes.md).
+
+
+def _published_budget() -> int:
+    try:
+        total = shutil.disk_usage(Path(AUDIO_ROOT)).total
+    except OSError:
+        total = 0
+    return published_budget_bytes(total, PUBLISHED_AUDIO_BUDGET_BYTES)
+
+
+def _publication_snapshot(episode: LiveEpisode) -> ProgrammeSnapshot | None:
+    stored = proposal_repository.get(episode.seed_id)
+    seed = None if stored is not None else _static_seed(episode.seed_id)
+    proposal = stored or (ProgramProposal.from_episode_seed(seed) if seed is not None else None)
+    if proposal is None:
+        return None
+    return ProgrammeSnapshot(
+        title=proposal.title,
+        cover_title=proposal.cover_title,
+        description=proposal.short_description,
+        estimated_duration_seconds=max(
+            episode.timeline_duration_seconds, episode.program_estimated_duration_seconds,
+        ),
+        station=proposal.station,
+        # Built-in programmes carry a generic outline that says nothing.
+        route=list(proposal.editorial_route) if stored is not None else [],
+        tags=list(dict.fromkeys([*proposal.genre_tags, *proposal.mood_tags]))[:6],
+        opening_track_title=proposal.opening_track_title,
+        opening_track_artist=proposal.opening_track_artist,
+        cover=proposal.cover,
+    )
+
+
+def _mark_episode_published(episode_id: str) -> None:
+    """The episode that was published is frozen: its audio is what listeners' copies play."""
+    for _ in range(5):
+        episode = repository.get(episode_id).model_copy(deep=True)
+        if episode.state is EpisodeState.PUBLISHED:
+            return
+        episode.state = EpisodeState.PUBLISHED
+        episode.last_activity_at = datetime.now(UTC)
+        try:
+            repository.save(episode)
+            return
+        except EpisodeConcurrencyError:
+            continue
+
+
+def _publication_plan_info(episode_id: str) -> tuple[float, str]:
+    plan = _canonical_render_plan(orchestrator.get(episode_id))
+    return plan.duration_seconds, mix_plan_fingerprint(plan)
+
+
+publication_service = PublicationService(
+    repository=publication_repository,
+    episode=lambda episode_id: orchestrator.get(episode_id),
+    mark_published=lambda episode_id: _mark_episode_published(episode_id),
+    render=lambda episode_id, step: _render_programme(episode_id, step),
+    plan_info=lambda episode_id: _publication_plan_info(episode_id),
+    full_state=lambda episode: full_version_status(
+        episode, generation_job_repository.get_for_episode(episode.id), datetime.now(UTC),
+    ),
+    storage=audio_storage,
+    free_bytes=lambda: _program_render_free_bytes(),
+    budget_bytes=lambda: _published_budget(),
+    snapshot_for=lambda episode: _publication_snapshot(episode),
+    taken_down=lambda publication_id: publication_id in TAKEN_DOWN_PROGRAMMES,
+)
+
+
+def _advance_publication_for(episode_id: str) -> None:
+    publication = publication_repository.get_for_episode(episode_id)
+    if publication is not None:
+        publication_service.advance(publication.id)
+
+
+def _owns_publication(publication: Publication, actor: AuthPrincipal) -> bool:
+    return publication.owner_listener_id == actor.listener_id or (
+        actor.user_id is not None and publication.owner_user_id == actor.user_id
+    )
+
+
+class PublishRequest(BaseModel):
+    visibility: Literal["link", "public"] = "link"
+
+
+class PublicationItem(BaseModel):
+    """Where the publication of one of the caller's episodes stands."""
+
+    id: str
+    code: str
+    episode_id: str
+    status: str
+    visibility: str
+    #: The step being worked on: making the 完整版, mixing it, or nothing more to do.
+    step: str
+    progress: int
+    error_code: str | None = None
+
+
+def _publication_item(publication: Publication, episode: LiveEpisode) -> PublicationItem:
+    status = publication.status
+    if status is PublicationStatus.PREPARING:
+        step = "full"
+        progress = full_version_progress(
+            episode,
+            full_version_status(
+                episode, generation_job_repository.get_for_episode(episode.id), datetime.now(UTC),
+            ),
+        )
+    elif status is PublicationStatus.MIXING:
+        step = "mix"
+        progress = min(99, round(
+            100 * publication.audio_seconds / max(1, episode.program_estimated_duration_seconds)
+        ))
+    else:
+        step = "done"
+        progress = 100 if status in {PublicationStatus.PUBLISHED, PublicationStatus.REVOKED} else 0
+    return PublicationItem(
+        id=publication.id, code=publication.code, episode_id=publication.source_episode_id,
+        status=status.value.lower(), visibility=publication.visibility.value.lower(),
+        step=step, progress=progress, error_code=publication.error_code,
+    )
+
+
+def _refusal(error: PublishRefusal) -> HTTPException:
+    status = {"limit": 429, "busy": 503, "space": 503}.get(error.code, 409)
+    return HTTPException(
+        status_code=status, detail=error.message, headers={"X-Wavecast-Refusal": error.code},
+    )
+
+
+@app.post("/api/episodes/{episode_id}/publish", response_model=PublicationItem, status_code=202)
+async def publish_episode(episode_id: str, body: PublishRequest, request: Request) -> PublicationItem:
+    """Share an episode of the caller's own as the programme itself.
+
+    A programme that is not whole yet has its 完整版 made first; the mix and the checks follow, and
+    the link opens once they are done. Answers at once, the rest is the server's work.
+    """
+    actor = principal(request)
+    await to_thread.run_sync(owned, episode_id, actor)
+    return await _publish(episode_id, body, actor)
+
+
+def _own_episode_of_programme(program_id: str, actor: AuthPrincipal) -> LiveEpisode | None:
+    found = (
+        repository.find_by_user_seed(actor.user_id, program_id) if actor.user_id is not None else None
+    )
+    return found or repository.find_by_listener_seed(actor.listener_id, program_id)
+
+
+@app.post("/api/programs/{program_id}/publish", response_model=PublicationItem, status_code=202)
+async def publish_programme(program_id: str, body: PublishRequest, request: Request) -> PublicationItem:
+    """The same, from a programme: its episode is started first when the caller has none yet."""
+    actor = principal(request)
+    existing = await to_thread.run_sync(_own_episode_of_programme, program_id, actor)
+    if existing is not None:
+        return await _publish(existing.id, body, actor)
+    proposal = await to_thread.run_sync(_proposal_for_program, program_id, actor)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    started = await _start_episode(program_id, actor)
+    try:
+        return await _publish(started.id, body, actor)
+    finally:
+        # Nobody is listening yet: the 完整版 is made while the listener is elsewhere.
+        await to_thread.run_sync(orchestrator.leave, started.id)
+
+
+@app.get("/api/programs/{program_id}/publication", response_model=PublicationItem)
+async def programme_publication(program_id: str, request: Request) -> PublicationItem:
+    """Where the publication of the caller's own programme stands (404: it has none)."""
+    actor = principal(request)
+    publication_service.bind_loop(asyncio.get_running_loop())
+
+    def look() -> PublicationItem:
+        episode = _own_episode_of_programme(program_id, actor)
+        publication = (
+            publication_repository.get_for_episode(episode.id) if episode is not None else None
+        )
+        if episode is None or publication is None or not _owns_publication(publication, actor):
+            raise HTTPException(status_code=404, detail="Publication not found")
+        publication = publication_service.advance(publication.id) or publication
+        return _publication_item(publication, orchestrator.get(episode.id))
+
+    return await to_thread.run_sync(look)
+
+
+async def _publish(episode_id: str, body: PublishRequest, actor: AuthPrincipal) -> PublicationItem:
+    episode = await to_thread.run_sync(orchestrator.get, episode_id)
+    if episode.published_programme_id is not None:
+        raise HTTPException(status_code=409, detail="Only your own programme can be shared")
+    publication_service.bind_loop(asyncio.get_running_loop())
+    existing = await to_thread.run_sync(publication_repository.get_for_episode, episode_id)
+    needs_full = episode.state not in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
+    try:
+        if needs_full and (existing is None or existing.status in {
+            PublicationStatus.FAILED, PublicationStatus.PREPARING,
+        }):
+            await to_thread.run_sync(_admit_full_version, episode_id, actor)
+            await _queue_full_generation(episode_id)
+        publication = await to_thread.run_sync(
+            lambda: publication_service.publish(
+                episode_id,
+                owner_listener_id=episode.listener_id,
+                owner_user_id=episode.owner_user_id,
+                visibility=Visibility(body.visibility.upper()),
+            )
+        )
+    except PublishRefusal as error:
+        raise _refusal(error) from error
+    current = await to_thread.run_sync(orchestrator.get, episode_id)
+    return _publication_item(publication, current)
+
+
+@app.get("/api/publications", response_model=list[PublicationItem])
+async def publication_statuses(episode_ids: str, request: Request) -> list[PublicationItem]:
+    """The publication of each listed episode (the caller's own; the rest are left out)."""
+    actor = principal(request)
+    publication_service.bind_loop(asyncio.get_running_loop())
+    wanted = [item for item in dict.fromkeys(episode_ids.split(",")) if item][:30]
+
+    def collect() -> list[PublicationItem]:
+        items: list[PublicationItem] = []
+        for episode_id in wanted:
+            publication = publication_repository.get_for_episode(episode_id)
+            if publication is None or not _owns_publication(publication, actor):
+                continue
+            publication = publication_service.advance(publication.id) or publication
+            try:
+                episode = orchestrator.get(episode_id)
+            except EpisodeRuntimeError:
+                continue
+            items.append(_publication_item(publication, episode))
+        return items
+
+    return await to_thread.run_sync(collect)
+
+
+def _owned_publication(publication_id: str, actor: AuthPrincipal) -> Publication:
+    publication = publication_repository.get(publication_id)
+    if publication is None or not _owns_publication(publication, actor):
+        raise HTTPException(status_code=404, detail="Publication not found")
+    return publication
+
+
+class VisibilityRequest(BaseModel):
+    visibility: Literal["link", "public"]
+
+
+def _item_for(publication: Publication) -> PublicationItem:
+    return _publication_item(publication, orchestrator.get(publication.source_episode_id))
+
+
+@app.post("/api/publications/{publication_id}/revoke", response_model=PublicationItem)
+async def revoke_publication(publication_id: str, request: Request) -> PublicationItem:
+    """Stop sharing: no new copies and no listing. Copies that exist keep playing."""
+    actor = principal(request)
+
+    def revoke() -> PublicationItem:
+        current = _owned_publication(publication_id, actor)
+        return _item_for(publication_service.revoke(current.id) or current)
+
+    return await to_thread.run_sync(revoke)
+
+
+@app.post("/api/publications/{publication_id}/restore", response_model=PublicationItem)
+async def restore_publication(publication_id: str, request: Request) -> PublicationItem:
+    """Undo a revoke."""
+    actor = principal(request)
+
+    def restore() -> PublicationItem:
+        current = _owned_publication(publication_id, actor)
+        return _item_for(
+            publication_service.restore(current.id, current.owner_listener_id, current.owner_user_id)
+            or current
+        )
+
+    return await to_thread.run_sync(restore)
+
+
+@app.post("/api/publications/{publication_id}/visibility", response_model=PublicationItem)
+async def set_publication_visibility(
+    publication_id: str, body: VisibilityRequest, request: Request,
+) -> PublicationItem:
+    actor = principal(request)
+
+    def change() -> PublicationItem:
+        current = _owned_publication(publication_id, actor)
+        return _item_for(publication_service.set_visibility(current.id, Visibility(body.visibility.upper())) or current)
+
+    return await to_thread.run_sync(change)
+
+
+def _published_copy_of(publication: Publication, actor: AuthPrincipal) -> LiveEpisode | None:
+    """The caller's own copy of a published programme, when they hold one."""
+    found = (
+        repository.find_by_user_seed(actor.user_id, publication.id)
+        if actor.user_id is not None else None
+    )
+    return found or repository.find_by_listener_seed(actor.listener_id, publication.id)
+
+
+@app.post("/api/published/{publication_id}/copy", response_model=LiveEpisode)
+async def copy_published_programme(publication_id: str, request: Request) -> LiveEpisode:
+    """The caller's own copy of a published programme: nothing is generated and no allowance is spent.
+
+    Revoked programmes can only be reopened by people who already hold a copy.
+    """
+    actor = principal(request)
+
+    def make() -> LiveEpisode:
+        publication = publication_repository.get(publication_id)
+        if publication is None or publication.id in TAKEN_DOWN_PROGRAMMES:
+            raise HTTPException(status_code=404, detail="Program not found")
+        held = _published_copy_of(publication, actor)
+        if publication.status is PublicationStatus.REVOKED and held is None:
+            raise HTTPException(status_code=410, detail="revoked")
+        if publication.status not in {PublicationStatus.PUBLISHED, PublicationStatus.REVOKED}:
+            raise HTTPException(status_code=404, detail="Program not found")
+        try:
+            return orchestrator.listen_to_published(
+                orchestrator.get(publication.source_episode_id),
+                programme_id=publication.id,
+                title=publication.programme.title,
+                listener_id=actor.listener_id,
+                owner_user_id=actor.user_id,
+            )
+        except EpisodeConcurrencyError as error:
+            raise HTTPException(status_code=409, detail="Episode creation raced; retry") from error
+        except EpisodeRuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    return await to_thread.run_sync(make)
+
+
+@app.post("/api/published/{publication_id}/listen", status_code=204)
+async def record_published_listen(publication_id: str, request: Request) -> Response:
+    """A listener pressed play on a published programme: counted once per listener."""
+    actor = principal(request)
+
+    def record() -> None:
+        publication = publication_repository.get(publication_id)
+        if publication is None or publication.status is not PublicationStatus.PUBLISHED:
+            return
+        key = f"user:{actor.user_id}" if actor.user_id is not None else f"guest:{actor.listener_id}"
+        publication_repository.record_listen(publication.id, key)
+
+    await to_thread.run_sync(record)
+    return Response(status_code=204)
+
+
+def _published_manifest_source(episode: LiveEpisode) -> str:
+    """The episode whose programme feed an episode plays: the published one for a copy."""
+    if episode.published_programme_id is None:
+        return episode.id
+    publication = publication_repository.get(episode.published_programme_id)
+    if (
+        publication is None
+        or publication.id in TAKEN_DOWN_PROGRAMMES
+        or publication.status not in {PublicationStatus.PUBLISHED, PublicationStatus.REVOKED}
+    ):
+        raise HTTPException(status_code=404, detail="Program stream is not available")
+    return publication.source_episode_id
+
+
+def _reject_published_copy(episode_id: str) -> None:
+    if orchestrator.get(episode_id).published_programme_id is not None:
+        raise HTTPException(status_code=409, detail="A shared programme cannot be re-mixed or exported")
 
 
 @app.post("/api/episodes/{episode_id}/replan", response_model=LiveEpisode)

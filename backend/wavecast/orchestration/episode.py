@@ -327,6 +327,70 @@ class EpisodeOrchestrator:
         )
         return self.repository.save(episode)
 
+    def listen_to_published(
+        self,
+        source: LiveEpisode,
+        *,
+        programme_id: str,
+        title: str,
+        listener_id: str,
+        owner_user_id: str | None = None,
+    ) -> LiveEpisode:
+        """The listener's own copy of a published programme (the same one when they hold it already).
+
+        The copy keeps the programme's timeline so the player can show it, but its audio is the
+        published programme's fixed feed: nothing here is generated, and the copy has its own
+        position, favourite and history. Its seed is the published programme's id, so everything
+        keyed by programme (favourites, recents) is keyed by the one thing everybody shares.
+        """
+
+        existing = (
+            self.repository.find_by_user_seed(owner_user_id, programme_id)
+            if owner_user_id is not None else None
+        ) or self.repository.find_by_listener_seed(listener_id, programme_id)
+        if existing is not None:
+            if (
+                owner_user_id is not None
+                and existing.owner_user_id is None
+                and self.repository.claim_user(existing.id, listener_id, owner_user_id)
+            ):
+                existing.owner_user_id = owner_user_id
+            return self.resume(existing.id)
+
+        now = self.now()
+        segments = cast(list[MusicSegment | NarrationSegment], [
+            segment.model_copy(
+                update={
+                    "state": SegmentState.COMMITTED if index == 0 else SegmentState.AUDIO_READY,
+                    "committed_at": now if index == 0 else None,
+                }
+            )
+            for index, segment in enumerate(source.timeline_segments)
+        ])
+        if not segments:
+            raise EpisodeRuntimeError("published programme has no segments")
+        episode = LiveEpisode(
+            seed_id=programme_id,
+            title=title,
+            cover_title=source.cover_title,
+            topic=title,
+            listener_id=listener_id,
+            owner_user_id=owner_user_id,
+            published_programme_id=programme_id,
+            state=EpisodeState.PUBLISHED,
+            generation_mode=GenerationMode.FULL,
+            program_estimated_duration_seconds=source.program_estimated_duration_seconds,
+            presentation_intent=source.presentation_intent,
+            output_language=source.output_language,
+            station=source.station,
+            segments=segments,
+            current_segment_id=segments[0].id,
+            program_rendered_frontier_seconds=source.program_rendered_frontier_seconds,
+            last_activity_at=now,
+            last_heartbeat_at=now,
+        )
+        return self.repository.save(episode)
+
     def get(self, episode_id: str, listener_id: str | None = None) -> LiveEpisode:
         try:
             episode = self.repository.get(episode_id)
