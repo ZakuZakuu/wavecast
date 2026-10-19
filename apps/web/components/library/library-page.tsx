@@ -83,7 +83,8 @@ export function LibraryPage() {
   const [tab, setTab] = useState<TabId>("recent");
   const [filter, setFilter] = useState<StationId | "all">("all");
   const [library, setLibrary] = useState<UserLibraryState>(emptyUserLibrary);
-  const [created, setCreated] = useState<ProgramProposal[]>([]);
+  // Programmes of 我调的 with no listening record, as the server describes them (null: it would not).
+  const [created, setCreated] = useState<Record<string, ProgramProposal | null>>({});
   // Favourites with no recent or saved record (hearted from a detail page): their programme, once fetched.
   const [favProgrammes, setFavProgrammes] = useState<Record<string, ProgramProposal>>({});
   const [undo, setUndo] = useState<Undo | null>(null);
@@ -109,17 +110,26 @@ export function LibraryPage() {
     return subscribeUserLibrary(refresh);
   }, []);
 
+  const entries = useMemo(
+    () => recentEntries(library.recentPrograms, library.savedEpisodes),
+    [library.recentPrograms, library.savedEpisodes],
+  );
+  const recentBySeed = useMemo(() => new Map(entries.map((entry) => [entry.record.seedId, entry])), [entries]);
+  // A programme the listener has a record of needs no request; only the rest are asked for.
+  const mineIds = useMemo(() => library.createdProgramIds.slice(0, 30), [library.createdProgramIds]);
+  const unfetched = mineIds.filter((id) => !recentBySeed.has(id) && !(id in created));
+  const unfetchedKey = unfetched.join(",");
   useEffect(() => {
-    if (tab !== "mine") return;
+    if (tab !== "mine" || !unfetchedKey) return;
     let active = true;
-    void Promise.all(library.createdProgramIds.slice(0, 30).map((id) => api.program(id).catch(() => null)))
-      .then((items) => {
-        if (active) setCreated(items.filter((item): item is ProgramProposal => Boolean(item)));
-      });
+    const ids = unfetchedKey.split(",");
+    void Promise.all(ids.map((id) => api.program(id).catch(() => null))).then((items) => {
+      if (active) setCreated((current) => ({ ...current, ...Object.fromEntries(ids.map((id, index) => [id, items[index]])) }));
+    });
     return () => {
       active = false;
     };
-  }, [library.createdProgramIds, tab]);
+  }, [tab, unfetchedKey]);
 
   useEffect(() => {
     if (!undo) return;
@@ -128,11 +138,6 @@ export function LibraryPage() {
   }, [undo]);
 
   const favouriteSet = useMemo(() => new Set(library.favoriteSeedIds), [library.favoriteSeedIds]);
-  const entries = useMemo(
-    () => recentEntries(library.recentPrograms, library.savedEpisodes),
-    [library.recentPrograms, library.savedEpisodes],
-  );
-
   const missingFavourites = useMemo(() => {
     const known = new Set(entries.map(({ record }) => record.seedId));
     return library.favoriteSeedIds.filter((id) => !known.has(id));
@@ -246,14 +251,14 @@ export function LibraryPage() {
         return programme ? [proposalRow(programme, notStarted(programme), [unfavourite])] : [];
       });
     }
-    const recentBySeed = new Map(entries.map((entry) => [entry.record.seedId, entry]));
-    return created.map((programme) => {
-      const recent = recentBySeed.get(programme.id);
-      return recent
-        ? recordRow(recent.record, recent.full, [])
-        : proposalRow(programme, notStarted(programme), []);
+    return mineIds.flatMap((id) => {
+      const recent = recentBySeed.get(id);
+      if (recent) return [recordRow(recent.record, recent.full, [])];
+      const programme = created[id];
+      return programme ? [proposalRow(programme, notStarted(programme), [])] : [];
     });
-  }, [created, entries, favProgrammes, favouriteSet, library.favoriteSeedIds, now, tab]);
+  }, [created, entries, favProgrammes, favouriteSet, library.favoriteSeedIds, mineIds, now, recentBySeed, tab]);
+  const loadingMine = tab === "mine" && unfetched.length > 0;
 
   const visible = filter === "all" ? rows : rows.filter((row) => row.stationId === filter);
 
@@ -331,6 +336,8 @@ export function LibraryPage() {
               </SwipeRow>
             ))}
           </ul>
+        ) : loadingMine ? (
+          <div className="lib-empty"><p>正在载入…</p></div>
         ) : (
           <div className="lib-empty">
             <p>

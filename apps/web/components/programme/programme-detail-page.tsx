@@ -13,7 +13,7 @@ import { openPlayer } from "../../lib/player-nav";
 import { adoptedCopies, forgetAdoptedCopy, GUEST_IDENTITY, rememberAdoptedCopy } from "../../lib/share";
 import { formatFreq, rememberProgrammeStation, stationById, stationForProgramme } from "../../lib/stations";
 import type { PublicProgramme } from "../../lib/types";
-import { emptyUserLibrary, readUserLibrary, subscribeUserLibrary, type RecentProgramRecord } from "../../lib/user-library";
+import { emptyUserLibrary, readUserLibrary, recordCreatedProgram, subscribeUserLibrary, type RecentProgramRecord } from "../../lib/user-library";
 import { formatClock } from "../../lib/now-playing";
 import { ChevronLeftIcon, HeartIcon, ShareIcon } from "../icons";
 import { TypeCover } from "../cover/type-cover";
@@ -236,6 +236,7 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
           target = copy.id;
         }
       }
+      if (target !== programmeId) recordCreatedProgram(target);
       openPlayer(`/episode/${encodeURIComponent(target)}`);
       setPhase("idle");
     } catch (error) {

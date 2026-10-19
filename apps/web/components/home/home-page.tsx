@@ -19,6 +19,7 @@ import {
   type StationId,
 } from "../../lib/stations";
 import type { ProgramIdea, Seed } from "../../lib/types";
+import { recordCreatedProgram } from "../../lib/user-library";
 import { AppShell } from "../app-shell";
 import { Guide } from "../guide/guide";
 import { TypeCover } from "../cover/type-cover";
@@ -172,6 +173,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
         ideaStation(idea) ?? stationForProgramme(idea.id, idea.title).id,
       );
       rememberCoverSource(proposal.id, idea.id);
+      recordCreatedProgram(proposal.id);
       openPlayer(`/episode/${proposal.id}`);
     } catch {
       setError("这档节目暂时开不了，换一档试试");

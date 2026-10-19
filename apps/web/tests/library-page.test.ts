@@ -8,6 +8,7 @@ vi.mock("../lib/api", () => ({ api: { program: vi.fn(() => Promise.resolve(null)
 vi.mock("../lib/player-nav", () => ({ openPlayer: vi.fn() }));
 vi.mock("../components/cover/programme-cover-view", () => ({ ProgrammeCoverView: () => null }));
 
+import { api } from "../lib/api";
 import { LibraryPage, UNDO_MS } from "../components/library/library-page";
 import { isFavoriteSeed, readUserLibrary } from "../lib/user-library";
 
@@ -118,5 +119,52 @@ describe("LibraryPage", () => {
     await click(".undo-toast button");
     expect(isFavoriteSeed("b")).toBe(true);
     expect(titles()).toEqual(["睡前半小时"]);
+  });
+
+  describe("我调的", () => {
+    const proposal = (id: string, title: string) => ({ id, title, estimated_duration_seconds: 1800 }) as never;
+    const seedMine = (createdProgramIds: string[]) => {
+      seed([]);
+      const stored = JSON.parse(window.localStorage.getItem("wavecast-user-library-v1")!);
+      window.localStorage.setItem("wavecast-user-library-v1", JSON.stringify({ ...stored, createdProgramIds }));
+    };
+    const openMine = async () => {
+      await mount();
+      await act(async () => [...host.querySelectorAll<HTMLElement>('[role="tab"]')][2].click());
+    };
+
+    it("lists a programme from its own listening record without asking the server", async () => {
+      vi.mocked(api.program).mockClear();
+      seedMine(["a"]);
+      await openMine();
+      expect(titles()).toEqual(["雨天开车"]);
+      expect(api.program).not.toHaveBeenCalled();
+    });
+
+    it("still lists a programme the server no longer has, when it has been listened to", async () => {
+      vi.mocked(api.program).mockRejectedValue(new Error("404"));
+      seedMine(["gone", "a"]);
+      await openMine();
+      expect(titles()).toEqual(["雨天开车"]);
+    });
+
+    it("shows a programme that was only made, once the server describes it, and 载入 rather than 空 meanwhile", async () => {
+      let resolve: (value: never) => void = () => undefined;
+      vi.mocked(api.program).mockReturnValue(new Promise((done) => { resolve = done; }));
+      seedMine(["fresh"]);
+      await openMine();
+      expect(host.querySelector(".lib-empty")?.textContent).toContain("正在载入");
+      expect(host.querySelector(".lib-empty")?.textContent).not.toContain("在调频页开播");
+      await act(async () => resolve(proposal("fresh", "刚调的节目")));
+      expect(titles()).toEqual(["刚调的节目"]);
+    });
+
+    it("says it is empty only when there is nothing", async () => {
+      vi.mocked(api.program).mockRejectedValue(new Error("404"));
+      seedMine(["gone"]);
+      await openMine();
+      expect(titles()).toEqual([]);
+      expect(host.querySelector(".lib-empty")?.textContent).toContain("在调频页开播的节目会留在这里");
+    });
   });
 });
