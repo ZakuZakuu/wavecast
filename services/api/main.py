@@ -38,6 +38,7 @@ from wavecast.full_version import (
     is_active,
     is_stale,
 )
+from wavecast.intelligence.research import FastResearchService
 from wavecast.materialization import (
     MusicSnapshotError,
     MusicSnapshotStore,
@@ -476,7 +477,8 @@ def _provider_error_summary(error: Exception) -> str:
 
 
 def _build_proposal_generator(
-    settings: ProviderSettings, ledger: UsageLedger
+    settings: ProviderSettings, ledger: UsageLedger,
+    *, opening_research: FastResearchService | None = None,
 ) -> ProgramProposalGenerator:
     """``ledger`` is the shared one: a proposal's calls are recorded (under the proposal's own id,
     before any episode exists) and persisted like the episode's, instead of in a private ledger."""
@@ -498,6 +500,17 @@ def _build_proposal_generator(
     return LLMProgramProposalGenerator(
         proposal_llm,
         retrieval,
+        opening_research=(
+            FastResearchService(
+                discovery=opening_research.discovery,
+                research=opening_research.research,
+                ledger=ledger,
+                deadline_seconds=3.0,
+                research_label=opening_research.research_label,
+            )
+            if opening_research is not None and settings.resolved_research_provider != "mock"
+            else None
+        ),
         pool_builder=(
             CatalogPoolBuilder(
                 retrieval,
@@ -621,7 +634,8 @@ _usage_ledger().attach_sink(_usage_event_store)
 # record into it rather than into ledgers nobody reads.
 _tts_provider = _build_tts_provider(_provider_settings, audio_storage, _usage_ledger())
 proposal_generator: ProgramProposalGenerator | None = _build_proposal_generator(
-    _provider_settings, _usage_ledger()
+    _provider_settings, _usage_ledger(),
+    opening_research=progressive_runtime.assembly.fast_path.research if progressive_runtime else None,
 )
 narration_materializer = _build_narration_materializer(
     _provider_settings, _tts_provider, audio_storage, _usage_ledger()

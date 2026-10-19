@@ -196,6 +196,7 @@ class EpisodeOrchestrator:
             cover_title=seed.cover_title,
             topic=seed.topic,
             editorial_brief=seed.short_description,
+            opening_evidence=list(seed.opening_evidence),
             program_estimated_duration_seconds=seed.estimated_duration_seconds,
             presentation_intent=seed.presentation_intent,
             output_language=seed.output_language,
@@ -494,7 +495,9 @@ class EpisodeOrchestrator:
         ]
         latest.segments.extend(normalized)
         if chapter.chapter_id == "chapter-2" and chapter.research_evidence:
-            latest.opening_evidence = list(chapter.research_evidence)
+            by_id = {item.id: item for item in latest.opening_evidence}
+            by_id.update((item.id, item) for item in chapter.research_evidence)
+            latest.opening_evidence = list(by_id.values())
         latest.last_activity_at = self.now()
         return self.repository.save(latest)
 
@@ -1062,6 +1065,10 @@ class EpisodeOrchestrator:
                     segment = segment.model_copy(update={"order": segment.order + delta})
                 retained.append(segment)
             episode.segments = retained + replacement
+            if generated is not None and generated.research_evidence:
+                episode.opening_evidence = list({
+                    item.id: item for item in [*episode.opening_evidence, *generated.research_evidence]
+                }.values())
             session = episode.progressive_session
             if session is not None and "chapter-2" not in session.narration_authored_chapter_ids:
                 episode.progressive_session = session.model_copy(

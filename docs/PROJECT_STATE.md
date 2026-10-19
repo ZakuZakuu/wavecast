@@ -4,11 +4,11 @@ Updated: 2026-10-19（北京时间）。唯一当前状态入口。旧过程记�
 
 ## 当前任务
 
-Claude 正在推进界面与完整版后台生成；Codex 独立处理英文口号 TTS 发音。用户已授权小修通过检查后合入 integration 测试，不发布 main。核心仅改 `spoken_form.py` 与 `dialogue_pipeline.py`：完整 music/life 口号的朗读大小写消歧、双人纯中英文也经过既有发音转换、Writer 使用自然英文大小写。展示稿、事实引用、真正缩写、已发布音频保持原样；不新增模型调用、复审、数据库迁移或前端改动。详见[发音与短测记录](design/tts-pronunciation-checks.md)。
+Codex 正在修复开播可靠性和开场质量，基于 Claude 最新 integration `8ff6d22`，独立分支开发。见 [ADR0039](adr/0039-researched-openings-and-proposal-recovery.md)：提案多返回只取所需数量，格式/数量不足和开场曲换组共用最多两次模型调用；音乐故障不重试模型。提案先用现有检索客户端做最多3秒的轻研究，资料随提案/seed/episode服务端保存；第二首继承编辑方向和资料，首曲播放期间研究真实曲目对并优先写完整开场，后续策划沿用。四个候选均尝试，同艺人任意曲兜底需显式许可。不改前端、已发布音频或增加复审流水线；无迁移。当前仅本地，检查和真实试听尚待完成，不代表已部署。
 
-本地相关回归285通过，Ruff/Mypy通过；完整回归交CI。当前环境未注入豆包播客密钥，提供三种大小写的显式短测脚本，真实读音仍待新节目试听。和弦符号读法仍留在[#317](https://github.com/ZakuZakuu/wavecast/issues/317)，本次不扩大；心跳失活后恢复问题见[#319](https://github.com/ZakuZakuu/wavecast/issues/319)，不重构租约。
+英文口号 TTS 修复已随 [#332](https://github.com/ZakuZakuu/wavecast/pull/332) 合入 integration `c2a6ce5`，CI通过、测试API部署成功；展示稿、事实引用、真正缩写和旧音频保留。详见[发音与短测记录](design/tts-pronunciation-checks.md)，新口播真实读音待试听。和弦读法留在[#317](https://github.com/ZakuZakuu/wavecast/issues/317)，心跳恢复见[#319](https://github.com/ZakuZakuu/wavecast/issues/319)。
 
-已发布的开篇/收尾、正文讨论交付、中文口播名与节目方向传递见[ADR 0032](adr/0032-editorial-opening.md)至[0035](adr/0035-substantive-opening-and-closing.md)。用户此前已接受听感后发布#318，旧节目不补稿。开场方法论见[原设计](design/programme-editorial-method-and-opening.md)，台标音乐留后续。之前的[UI只读调研](design/ui-next-round-research-2026-10-18.md)与[辅助文案盘点](design/ui-microcopy-inventory-2026-10-18.md)仅供背景，当前UI实现以本节下方和最新代码为准。
+已发布的开篇/收尾、正文讨论、中文口播名与节目方向传递见[ADR0032](adr/0032-editorial-opening.md)至[0035](adr/0035-substantive-opening-and-closing.md)。原[开场方法论](design/programme-editorial-method-and-opening.md)继续使用；用户反馈开头仍弱于正文，本轮改善研究材料与交接，不重复增加段数或模板。下方UI状态以Claude最新代码为准。
 
 ## 界面优化第二轮（仅前端为主，在integration测试环境）
 

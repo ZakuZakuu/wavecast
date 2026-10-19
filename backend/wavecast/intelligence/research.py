@@ -189,7 +189,13 @@ class FastResearchService:
         }
         results_by_provider: dict[str, list[SearchResult]] = {}
         failures: list[str] = []
-        done, pending = await asyncio.wait(tasks, timeout=self.deadline_seconds)
+        try:
+            done, pending = await asyncio.wait(tasks, timeout=self.deadline_seconds)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         for task in pending:
             task.cancel()
         if pending:
@@ -533,7 +539,7 @@ def validate_background_research_plan(plan: ResearchPlan) -> ResearchPlan:
 
 def build_fast_queries(request: FastResearchInput) -> tuple[str, str]:
     anchors = ", ".join([*request.anchor_tracks, *request.anchor_artists])
-    subject = " — ".join(part for part in (request.topic, anchors) if part)
+    subject = " — ".join(part for part in (request.topic, request.editorial_brief, anchors) if part)
     discovery = f"{subject}; relevant sources and related context"
     research = f"{subject}; background evidence and primary sources"
     return discovery, research

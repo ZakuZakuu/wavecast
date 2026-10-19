@@ -89,7 +89,12 @@ class FastStartPlanner:
             "analysis, history/context, or discovery. Interpret the actual topic and anchors. "
             "Taste hypotheses may be empty when the request does not support them. Choose a "
             "small immediate direction and write one spoken first narration without unsupported "
-            "facts. Also produce a ResearchPlan: state the central question, define open-ended "
+            "facts. Preserve the programme editorial brief and make the next track an explicit "
+            "continuation or contrast to the opening, supported by the evidence. Set "
+            "allow_artist_fallback=true only for a broad request where another recording by "
+            "the opening artist would still fit; keep it false for a particular style, facet "
+            "or work. Artist identity does not establish musical style. Also produce a "
+            "ResearchPlan: state the central question, define open-ended "
             "facets with stable IDs, and propose a small pool of zero to eight bounded background "
             "queries; application code will select at most three for execution. "
             "Use research_mode=adaptive when more evidence is useful. If no additional background "
@@ -173,6 +178,7 @@ class FastPathCoordinator:
                 elapsed_ms=int((perf_counter() - started) * 1000),
                 queries=[],
             )
+            research.bundle.evidence = list(request.prior_evidence)
             trace.mark("fallback_used", reason="deadline")
             fallback_plan = deterministic_fallback(request, research)
             trace.mark(
@@ -192,6 +198,9 @@ class FastPathCoordinator:
         self, request: FastResearchInput, *, trace: GenerationTrace
     ) -> FastPathResult:
         research = await self.research.run(request, trace=trace)
+        research.bundle.evidence = list({
+            item.id: item for item in [*request.prior_evidence, *research.bundle.evidence]
+        }.values())
         plan = await self.planner.plan(request, research, trace=trace)
         return FastPathResult(
             research=research,

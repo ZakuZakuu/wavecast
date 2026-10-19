@@ -73,6 +73,7 @@ class EpisodeSeed(BaseModel):
     id: str
     title: str
     topic: str
+    opening_evidence: list[Evidence] = Field(default_factory=list, exclude=True, repr=False)
     short_description: str
     # A short label for the cover (see title_style); None for programmes made before it existed.
     cover_title: str | None = Field(default=None, max_length=40)
@@ -407,3 +408,4 @@ from wavecast.intelligence.models import Evidence  # noqa: E402
 from wavecast.models.progressive import ProgressiveAssemblySession  # noqa: E402
 
 LiveEpisode.model_rebuild()
+EpisodeSeed.model_rebuild()
