@@ -1969,6 +1969,14 @@ def put_my_recent(episode_id: str, body: LibraryRecentRecord, request: Request) 
     return user_library_repository.put(actor.user_id, "RECENT", episode_id, payload)
 
 
+@app.delete("/api/me/library/recents/{episode_id}")
+def delete_my_recent(episode_id: str, request: Request) -> dict[str, Any]:
+    """Take one recent record out of the account's Library. The episode itself is untouched."""
+    actor = require_user(request)
+    assert actor.user_id is not None
+    return user_library_repository.delete(actor.user_id, "RECENT", episode_id)
+
+
 @app.put("/api/me/library/saved/{episode_id}")
 def put_my_saved(episode_id: str, body: LibrarySavedRecord, request: Request) -> dict[str, Any]:
     actor = require_user(request)

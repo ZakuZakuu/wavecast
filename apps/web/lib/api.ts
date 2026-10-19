@@ -189,6 +189,11 @@ export const api = {
       body: JSON.stringify(record),
     }, expectedUserId);
   },
+  removeLibraryRecent: (id: string, expectedUserId: string) => request<unknown>(
+    `/me/library/recents/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+    expectedUserId,
+  ),
   removeLibraryEpisode: (id: string, expectedUserId: string) => request<unknown>(
     `/me/library/saved/${encodeURIComponent(id)}`,
     { method: "DELETE" },

@@ -282,6 +282,22 @@ function persistCloudResultForCurrentAccount(
   persistUserLibrary(normalizeUserLibrary(value));
 }
 
+// Cloud writes run one after another. Each reply is the whole Library as the account then stands, so
+// replies applied out of order would put back what a later write had just taken away (a deleted row
+// coming back). The last reply applied is therefore the state after every write.
+let cloudQueue: Promise<unknown> = Promise.resolve();
+function writeToCloud(call: (accountId: string) => Promise<unknown>): void {
+  if (!activeAccountId) return;
+  const accountId = activeAccountId;
+  const generation = identityGeneration;
+  cloudQueue = cloudQueue
+    .then(() => (generation === identityGeneration && activeAccountId === accountId ? call(accountId) : undefined))
+    .then((value) => {
+      if (value !== undefined) persistCloudResultForCurrentAccount(accountId, generation, value);
+    })
+    .catch(() => undefined);
+}
+
 export function subscribeUserLibrary(listener: () => void): () => void {
   if (typeof window === "undefined") return () => undefined;
   const onStorage = (event: StorageEvent) => {
@@ -298,15 +314,9 @@ export function subscribeUserLibrary(listener: () => void): () => void {
 export function toggleFavoriteSeed(seedId: string): boolean {
   const next = toggleFavoriteInState(readUserLibrary(), seedId);
   persistUserLibrary(next);
-  if (activeAccountId) {
-    const accountId = activeAccountId;
-    const generation = identityGeneration;
-    const enabled = next.favoriteSeedIds.includes(seedId);
-    void api.favoriteProgram(seedId, enabled, accountId)
-      .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
-      .catch(() => undefined);
-  }
-  return next.favoriteSeedIds.includes(seedId);
+  const enabled = next.favoriteSeedIds.includes(seedId);
+  writeToCloud((accountId) => api.favoriteProgram(seedId, enabled, accountId));
+  return enabled;
 }
 
 export function isFavoriteSeed(seedId: string): boolean {
@@ -354,19 +364,8 @@ export function recordRecentEpisode(
       ),
     ),
   );
-  if (activeAccountId) {
-    const accountId = activeAccountId;
-    const generation = identityGeneration;
-    const record = recentRecordFromEpisode(
-      episode,
-      currentTitle,
-      Date.now(),
-      progressSeconds,
-    );
-    void api.recordLibraryRecent(record, accountId)
-      .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
-      .catch(() => undefined);
-  }
+  const record = recentRecordFromEpisode(episode, currentTitle, Date.now(), progressSeconds);
+  writeToCloud((accountId) => api.recordLibraryRecent(record, accountId));
   return next;
 }
 
@@ -389,25 +388,13 @@ export function saveMaterializedEpisode(
       saved,
     ),
   );
-  if (activeAccountId) {
-    const accountId = activeAccountId;
-    const generation = identityGeneration;
-    void api.saveLibraryEpisode(saved, accountId)
-      .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
-      .catch(() => undefined);
-  }
+  writeToCloud((accountId) => api.saveLibraryEpisode(saved, accountId));
   return true;
 }
 
 export function removeSavedEpisode(episodeId: string): void {
   persistUserLibrary(removeSavedFromState(readUserLibrary(), episodeId));
-  if (activeAccountId) {
-    const accountId = activeAccountId;
-    const generation = identityGeneration;
-    void api.removeLibraryEpisode(episodeId, accountId)
-      .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
-      .catch(() => undefined);
-  }
+  writeToCloud((accountId) => api.removeLibraryEpisode(episodeId, accountId));
 }
 
 export function isEpisodeSaved(episodeId: string): boolean {
@@ -426,29 +413,26 @@ export function recordCreatedProgram(programId: string): UserLibraryState {
   });
 }
 
-/** Puts recent records back after 撤销 (the inverse of removeRecentProgramme). */
+/** Puts recent records back after 撤销 (the inverse of removeRecentProgramme), in the cloud Library too. */
 export function restoreRecentPrograms(records: RecentProgramRecord[]): void {
   if (!records.length) return;
   persistUserLibrary(records.reduce(upsertRecentInState, readUserLibrary()));
+  for (const record of records) writeToCloud((accountId) => api.recordLibraryRecent(record, accountId));
 }
 
 /** Puts a saved episode back after 撤销 (the inverse of removeSavedEpisode), in the cloud Library too. */
 export function restoreSavedEpisode(record: SavedEpisodeRecord): void {
   persistUserLibrary(upsertSavedInState(readUserLibrary(), record));
-  if (activeAccountId) {
-    const accountId = activeAccountId;
-    const generation = identityGeneration;
-    void api.saveLibraryEpisode(record, accountId)
-      .then((value) => persistCloudResultForCurrentAccount(accountId, generation, value))
-      .catch(() => undefined);
-  }
+  writeToCloud((accountId) => api.saveLibraryEpisode(record, accountId));
 }
 
-/** Removes every recent record of a programme (local; cloud recents may re-merge). */
+/** Removes every recent record of a programme, here and in the account's Library (the episodes are untouched). */
 export function removeRecentProgramme(seedId: string): void {
   const current = readUserLibrary();
+  const removed = current.recentPrograms.filter((item) => item.seedId === seedId);
   persistUserLibrary({
     ...current,
     recentPrograms: current.recentPrograms.filter((item) => item.seedId !== seedId),
   });
+  for (const record of removed) writeToCloud((accountId) => api.removeLibraryRecent(record.episodeId, accountId));
 }
