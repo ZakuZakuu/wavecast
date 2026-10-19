@@ -362,6 +362,19 @@ html.kb-open .tune .tuner-number { font-size: 44px; }
   -webkit-backdrop-filter: blur(20px);
   color: var(--ink);
 }
+.on-air.is-secondary { position: relative; overflow: hidden; }
+.on-air.is-secondary > * { position: relative; }
+.on-air.is-secondary:disabled { opacity: 1; }
+.on-air.is-secondary.is-done { color: #1E9E52; }
+.on-air-sweep {
+  position: absolute !important;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 107, 44, .2), transparent);
+  animation: full-sweep 1.4s linear infinite;
+}
+@keyframes full-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.tune-note { margin: -6px 0 0; font-size: 13px; line-height: 1.4; color: var(--danger); text-align: center; }
+@media (prefers-reduced-motion: reduce) { .on-air-sweep { animation: none; } }
 .on-air-spinner {
   width: 18px;
   height: 18px;

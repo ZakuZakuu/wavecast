@@ -13,10 +13,13 @@ import { recordCreatedProgram, recordRecentEpisode } from "./user-library";
 // are on can show that it is under way, and say how it ended.
 export type CreatingFullVersion = { id: string; title: string; stationId: StationId };
 
-const NOTICE_MS = 3200;
+const FAILURE_MS = 3200;
+const STARTED_MS = 1500;
 let creating: CreatingFullVersion[] = [];
-let notice: string | null = null;
-let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+let failure: string | null = null;
+let started = false;
+let failureTimer: ReturnType<typeof setTimeout> | null = null;
+let startedTimer: ReturnType<typeof setTimeout> | null = null;
 let nextId = 0;
 const listeners = new Set<() => void>();
 
@@ -29,14 +32,14 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-function say(text: string): void {
-  notice = text;
-  if (noticeTimer !== null) clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => {
-    notice = null;
-    emit();
-  }, NOTICE_MS);
+function briefly(set: () => void, clear: () => void, ms: number, timer: ReturnType<typeof setTimeout> | null): ReturnType<typeof setTimeout> {
+  if (timer !== null) clearTimeout(timer);
+  set();
   emit();
+  return setTimeout(() => {
+    clear();
+    emit();
+  }, ms);
 }
 
 /** Programmes being made for a 完整版 right now (they are not in 节目库 until the server has made them). */
@@ -44,9 +47,14 @@ export function useCreatingFullVersions(): CreatingFullVersion[] {
   return useSyncExternalStore(subscribe, () => creating, () => creating);
 }
 
-/** The line to tell the listener about a request, wherever they are. */
-export function useFullVersionNotice(): string | null {
-  return useSyncExternalStore(subscribe, () => notice, () => notice);
+/** The last request was made: the tuner's button says so for a moment. */
+export function useFullVersionStarted(): boolean {
+  return useSyncExternalStore(subscribe, () => started, () => started);
+}
+
+/** Why the last request did not work, for a few seconds. */
+export function useFullVersionFailure(): string | null {
+  return useSyncExternalStore(subscribe, () => failure, () => failure);
 }
 
 /** Starts one; a second is not started while one is still being made. */
@@ -62,7 +70,9 @@ export async function prepareFullVersionFromTuner(
     stationId: target.id,
   };
   creating = [placeholder];
-  say("正在创建节目，可以离开");
+  failure = null;
+  started = false;
+  emit();
   try {
     const episode = await api.prepareFullVersion(proposalRequest(target, prompt, duration));
     rememberProgrammeStation(episode.seed_id, target.id);
@@ -73,9 +83,10 @@ export async function prepareFullVersionFromTuner(
       programmeId: episode.seed_id,
       title: episode.title ?? "WaveCast 节目",
     });
-    say("开始准备完整版");
+    startedTimer = briefly(() => { started = true; }, () => { started = false; }, STARTED_MS, startedTimer);
   } catch (reason: unknown) {
-    say(friendlyError(reason instanceof Error ? reason.message : null, "没有准备成功，可以再试一次"));
+    const text = friendlyError(reason instanceof Error ? reason.message : null, "没有准备成功，再试一次");
+    failureTimer = briefly(() => { failure = text; }, () => { failure = null; }, FAILURE_MS, failureTimer);
   } finally {
     creating = [];
     emit();

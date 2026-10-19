@@ -207,8 +207,8 @@ export function PlayerScreen({
 
   const prepareFull = () => {
     void np.prepareFullVersion().then((result) => {
-      if (result === "started") toast.show("开始准备完整版", 2200, "top");
-      else if (result === "limit") toast.show("最多同时准备 2 档", 2200, "top");
+      // Started needs no word: the button itself turns to 准备中.
+      if (result === "limit") toast.show("最多同时准备 2 档", 2200, "top");
     });
   };
 

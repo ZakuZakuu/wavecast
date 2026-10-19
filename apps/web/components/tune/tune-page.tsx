@@ -24,8 +24,8 @@ import {
 } from "../../lib/tuner";
 import type { DurationIntent } from "../../lib/types";
 import { AppShell } from "../app-shell";
-import { DownloadIcon } from "../icons";
-import { prepareFullVersionFromTuner, useCreatingFullVersions } from "../../lib/full-version-requests";
+import { CheckIcon, DownloadIcon } from "../icons";
+import { prepareFullVersionFromTuner, useCreatingFullVersions, useFullVersionFailure, useFullVersionStarted } from "../../lib/full-version-requests";
 import { Guide } from "../guide/guide";
 import { Segmented } from "../segmented";
 import { easeStandard, prefersReducedMotion, tween } from "../../lib/motion/easing";
@@ -46,6 +46,8 @@ const GLIDE_STOP_SPEED = 0.05;
 export function TunePage() {
   const tune = useTuneStart();
   const creating = useCreatingFullVersions().length > 0;
+  const started = useFullVersionStarted();
+  const failure = useFullVersionFailure();
   useSoftKeyboard();
 
   const [freq, setFreqState] = useState(STATIONS[0].freq);
@@ -351,10 +353,18 @@ export function TunePage() {
           <span className="on-air-light" aria-hidden="true" />
           {cta}
         </button>
-        <button type="button" className="on-air is-secondary" data-guide="tune-prepare" disabled={between || creating} onClick={() => void prepareFullVersionFromTuner(station, text, duration)}>
-          {creating ? <span className="on-air-spinner" aria-hidden="true" /> : <DownloadIcon size={20} strokeWidth={2} />}
-          {creating ? "准备中" : "准备完整版"}
+        <button
+          type="button"
+          className={creating ? "on-air is-secondary is-busy" : started ? "on-air is-secondary is-done" : "on-air is-secondary"}
+          data-guide="tune-prepare"
+          disabled={between || creating}
+          onClick={() => void prepareFullVersionFromTuner(station, text, duration)}
+        >
+          {creating ? <span className="on-air-sweep" aria-hidden="true" /> : null}
+          {creating ? <span className="on-air-spinner" aria-hidden="true" /> : started ? <CheckIcon size={20} strokeWidth={2.4} /> : <DownloadIcon size={20} strokeWidth={2} />}
+          <span>{creating ? "准备中" : started ? "已开始" : "准备完整版"}</span>
         </button>
+        {failure ? <p className="tune-note" role="alert">{failure}</p> : null}
       </div>
 
       <Guide trigger="tune" />

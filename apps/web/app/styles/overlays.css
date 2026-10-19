@@ -206,4 +206,6 @@
 @keyframes banner-in { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @media (prefers-reduced-motion: reduce) { .full-banner { animation: none; } }
 .bottom-nav-item { position: relative; }
+.nav-dot.is-busy { width: 9px; height: 9px; border: 2px solid rgba(255, 107, 44, .25); border-top-color: var(--live); background: transparent; box-sizing: content-box; animation: full-spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .nav-dot.is-busy { animation: none; } }
 .nav-dot { position: absolute; top: 5px; left: calc(50% + 10px); width: 9px; height: 9px; border-radius: 50%; background: #FF3B30; border: 1.5px solid var(--bg, #F2F2F4); box-sizing: content-box; }

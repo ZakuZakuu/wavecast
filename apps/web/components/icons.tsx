@@ -126,6 +126,10 @@ export const DownloadIcon = (p: IconProps) => (
   <svg {...stroke(p)}><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14" /></svg>
 );
 
+export const CheckIcon = (p: IconProps) => (
+  <svg {...stroke(p)}><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+);
+
 export const StopIcon = (p: IconProps) => (
   <svg {...stroke(p)}><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
 );

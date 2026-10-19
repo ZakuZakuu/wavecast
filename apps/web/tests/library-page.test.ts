@@ -231,7 +231,7 @@ describe("LibraryPage", () => {
       await act(async () => { started = prepareFullVersionFromTuner(STATIONS[1], "夜里听爵士", "SHORT"); });
       const making = host.querySelector(".lib-making");
       expect(making?.textContent).toContain("夜里听爵士");
-      expect(making?.textContent).toContain("正在编排 · 可以离开");
+      expect(making?.textContent).toContain("正在编排");
       expect(host.querySelector(".lib-list")?.firstElementChild).toBe(making);
       await act(async () => { finish({ id: "e", seed_id: "s", title: "夜里听爵士", state: "MATERIALIZING", playback_position_seconds: 0, timeline_duration_seconds: 60, program_estimated_duration_seconds: 2100 } as LiveEpisode); await started; });
       expect(host.querySelector(".lib-making")).toBeNull();

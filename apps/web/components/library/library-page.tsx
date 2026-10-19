@@ -383,7 +383,7 @@ export function LibraryPage() {
                     <span className="lib-title-line"><span className="lib-title">{item.title}</span></span>
                     <span className="lib-status">
                       <span className="filter-dot" style={{ background: STATIONS.find((s) => s.id === item.stationId)?.light }} />
-                      正在编排 · 可以离开
+                      正在编排
                     </span>
                   </span>
                   <span className="lib-making-ring" aria-hidden="true" />

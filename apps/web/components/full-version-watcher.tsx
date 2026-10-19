@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import {
@@ -10,7 +11,7 @@ import {
   subscribeFullVersions,
   type WatchedFullVersion,
 } from "../lib/full-versions";
-import { useFullVersionNotice } from "../lib/full-version-requests";
+import { useCreatingFullVersions, useFullVersionFailure } from "../lib/full-version-requests";
 import { openPlayer } from "../lib/player-nav";
 import { stationForProgramme } from "../lib/stations";
 import { ProgrammeCoverView } from "./cover/programme-cover-view";
@@ -26,6 +27,19 @@ export function useUnseenFullVersionCount(): number {
     return subscribeFullVersions(refresh);
   }, []);
   return count;
+}
+
+/** What 节目库's tab says: something finished that has not been looked at (ready), or is still being made (busy). */
+export function useLibraryTabState(): "ready" | "busy" | null {
+  const unseen = useUnseenFullVersionCount();
+  const [pending, setPending] = useState(false);
+  const creating = useCreatingFullVersions().length > 0;
+  useEffect(() => {
+    const refresh = () => setPending(readWatchedFullVersions().length > 0);
+    refresh();
+    return subscribeFullVersions(refresh);
+  }, []);
+  return unseen > 0 ? "ready" : creating || pending ? "busy" : null;
 }
 
 /**
@@ -65,11 +79,13 @@ export function FullVersionWatcher({ hidden }: { hidden: boolean }) {
     return () => window.clearTimeout(timer);
   }, [banner]);
 
-  const notice = useFullVersionNotice();
+  // A request that did not work says why on the tuner's own button; anywhere else, here.
+  const failure = useFullVersionFailure();
+  const onTuner = usePathname() === "/tune";
   if (hidden) return null;
   return (
     <>
-      {notice ? <div className="undo-toast" role="status"><span>{notice}</span></div> : null}
+      {failure && !onTuner ? <div className="undo-toast" role="status"><span>{failure}</span></div> : null}
       {banner ? <FinishedBanner banner={banner} onDone={() => setBanner(null)} /> : null}
     </>
   );
