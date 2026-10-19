@@ -1,21 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import { STATIONS } from "../lib/stations";
-import { cardNoise, clampFreq, DIAL_HEIGHT, freqAfterDrag, freqToX, fullScaleGeometry, nearestStation, noiseForDistance, posterPose, PX_PER_MHZ, readTuner, scaleTranslate, scaleX, snapTarget, STATION_FADE_MHZ, stationBlends, stepStation, tickGeometry, tintBlend, wheelDeltaPx } from "../lib/tuner";
+import { cardNoise, clampFreq, DIAL_HEIGHT, freqAfterDrag, freqToX, fullScaleGeometry, nearestStation, neighbourStation, noiseForDistance, posterPose, PX_PER_MHZ, readTuner, scaleTranslate, scaleX, snapTarget, STATION_FADE_MHZ, stationBlends, stepStation, tickGeometry, tintBlend, wheelDeltaPx } from "../lib/tuner";
 
 describe("scale conversion", () => {
-  it("maps 23px to 1 MHz around the centred pointer", () => {
-    expect(PX_PER_MHZ).toBe(23);
+  it("maps 28px to 1 MHz around the centred pointer", () => {
+    expect(PX_PER_MHZ).toBe(28);
     expect(freqToX(97.4, 97.4, 310)).toBe(155);
-    expect(freqToX(98.4, 97.4, 310)).toBeCloseTo(178);
-    expect(freqAfterDrag(97.4, 23)).toBeCloseTo(96.4);
-    expect(freqAfterDrag(97.4, -46)).toBeCloseTo(99.4);
+    expect(freqToX(98.4, 97.4, 310)).toBeCloseTo(183);
+    expect(freqAfterDrag(97.4, 28)).toBeCloseTo(96.4);
+    expect(freqAfterDrag(97.4, -56)).toBeCloseTo(99.4);
   });
 
-  it("puts a station and its neighbours in the window, and about 100px between two stations", () => {
-    expect(Math.round((97.4 - 93.1) * PX_PER_MHZ)).toBe(99);
-    // A 322px window shows 14 MHz: the neighbours on both sides are on screen.
-    expect(322 / PX_PER_MHZ).toBeGreaterThan(2 * 4.4);
+  it("puts about 120px between two stations, with a whole neighbour on each side of a 322px window", () => {
+    expect(Math.round((97.4 - 93.1) * PX_PER_MHZ)).toBe(120);
+    // A neighbour's name (about 66px with its dot) must lie inside the window's half width of 161px.
+    const widest = Math.max(...[88.7, 93.1, 97.4, 101.5, 105.8].slice(1).map((f, i) => (f - [88.7, 93.1, 97.4, 101.5, 105.8][i]) * PX_PER_MHZ));
+    expect(widest + 33).toBeLessThan(161);
   });
 
   it("clamps to 87.5–108", () => {
@@ -63,7 +64,7 @@ describe("full scale layer", () => {
   it("draws 87.5–108 once and positions it with translateX only", () => {
     const full = fullScaleGeometry();
     expect(scaleX(87.5)).toBe(0);
-    expect(scaleX(88)).toBeCloseTo(11.5);
+    expect(scaleX(88)).toBeCloseTo(14);
     expect(scaleTranslate(97.4, 310)).toBeCloseTo(155 - (97.4 - 87.5) * PX_PER_MHZ);
     const first = full.major.match(/M([\d.]+) /);
     expect(Number(first![1])).toBeCloseTo(scaleX(88), 1);
@@ -135,5 +136,17 @@ describe("the card between stations", () => {
     expect(cardNoise(0.9)).toBe(0);
     expect(cardNoise(STATION_FADE_MHZ)).toBeCloseTo(0.7);
     expect(cardNoise(1.5)).toBeGreaterThan(cardNoise(1.1));
+  });
+});
+
+describe("stepping along the band", () => {
+  it("finds the next station up or down from any frequency, and none past the ends", () => {
+    expect(neighbourStation(93.1, 1)?.name).toBe("人物志");
+    expect(neighbourStation(93.1, -1)?.name).toBe("随便听");
+    expect(neighbourStation(95.2, -1)?.name).toBe("唱片行");
+    expect(neighbourStation(95.2, 1)?.name).toBe("人物志");
+    expect(neighbourStation(88.7, -1)).toBeNull();
+    expect(neighbourStation(105.8, 1)).toBeNull();
+    expect(neighbourStation(87.5, 1)?.name).toBe("随便听");
   });
 });

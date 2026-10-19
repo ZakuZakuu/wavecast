@@ -2,10 +2,11 @@
 import { FREQ_MAX, FREQ_MIN, STATIONS, type Station } from "./stations";
 
 /**
- * Pixels of dial travel per MHz. Stations sit about 4.3 MHz apart, so about 100px of drag moves from one to the next,
- * and the dial window (about 320px wide) shows a station and a neighbour on each side.
+ * Pixels of dial travel per MHz. Stations sit about 4.3 MHz apart, so about 120px of drag moves from one to the next,
+ * and the dial window (about 320px wide) shows a station and a whole neighbour on each side (wider and the
+ * neighbours' names run into the window's edge).
  */
-export const PX_PER_MHZ = 23;
+export const PX_PER_MHZ = 28;
 export const LOCK_RANGE = 0.15;
 export const BETWEEN_THRESHOLD = 0.3;
 export const TICK_BASELINE = 56;
@@ -218,4 +219,11 @@ export function posterPose(away: number): { x: number; y: number; rotate: number
 export function cardNoise(distance: number): number {
   const t = Math.min(1, Math.max(0, (distance - 0.9) / (STATION_FADE_MHZ - 0.9)));
   return 0.7 * t * t * (3 - 2 * t);
+}
+
+/** The station after `fromFreq` in a direction (1 = higher, -1 = lower), or null at the end of the band. */
+export function neighbourStation(fromFreq: number, direction: 1 | -1): Station | null {
+  const epsilon = 1e-6;
+  if (direction > 0) return STATIONS.find((station) => station.freq > fromFreq + epsilon) ?? null;
+  return [...STATIONS].reverse().find((station) => station.freq < fromFreq - epsilon) ?? null;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 
 import { rgba } from "../../lib/cover/styled/color";
 import { prefersReducedMotion } from "../../lib/motion/easing";
@@ -8,7 +8,7 @@ import { useOverlay } from "../../lib/overlay-stack";
 import { hostLevel, STATION_GUIDES } from "../../lib/station-guide";
 import { hostChoiceLabel, STATIONS, type Station } from "../../lib/stations";
 import { stationBlends } from "../../lib/tuner";
-import { ChevronLeftIcon, ChevronRightIcon, FillIcon } from "../icons";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, FillIcon } from "../icons";
 import { DialSlider } from "./dial-slider";
 import { TunerFace } from "./tuner-face";
 import type { Tuner } from "./use-tuner";
@@ -88,6 +88,8 @@ export function StationGuide({
   const rootRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
   const [phase, setPhase] = useState<Phase>("closed");
   const [box, setBox] = useState<Box | null>(null);
 
@@ -147,6 +149,26 @@ export function StationGuide({
     if (phase === "open") cardRef.current?.focus({ preventScroll: true });
   }, [phase]);
 
+  // On a short screen (a browser with its bars) the pages scroll inside the card: while there is more below, the
+  // body fades out at its foot and a chevron says so, so that a row cut off exactly at the edge is not taken for the end.
+  const measureMore = useCallback(() => {
+    const element = bodyRef.current;
+    if (element) setMore(element.scrollHeight - element.scrollTop - element.clientHeight > 6);
+  }, []);
+  useEffect(() => {
+    const element = bodyRef.current;
+    if (phase !== "open" || !element) return;
+    measureMore();
+    element.addEventListener("scroll", measureMore, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measureMore);
+    observer?.observe(element);
+    if (element.firstElementChild) observer?.observe(element.firstElementChild);
+    return () => {
+      element.removeEventListener("scroll", measureMore);
+      observer?.disconnect();
+    };
+  }, [phase, box, measureMore]);
+
   useOverlay(phase === "opening" || phase === "open", onClose);
 
   const { station } = tuner;
@@ -170,13 +192,14 @@ export function StationGuide({
           >
             <TunerFace freq={tuner.freq} />
             <div className={showing ? "sg-fade is-on" : "sg-fade"}>
-              <div className="sg-body">
+              <div ref={bodyRef} className={more ? "sg-body has-more" : "sg-body"}>
                 <div className="sg-stack">
                   {STATIONS.map((item, index) => (
                     <StationPage key={item.id} station={item} weight={blends[index].weight} onPick={onPick} />
                   ))}
                 </div>
               </div>
+              <span className={more ? "sg-more is-on" : "sg-more"} aria-hidden="true"><ChevronDownIcon size={18} strokeWidth={2.4} /></span>
               <button
                 type="button"
                 className="sg-choose"
@@ -198,6 +221,8 @@ export function StationGuide({
               dragging={tuner.dragging}
               handlers={tuner.dial}
               onKeyDown={tuner.dial.onKeyDown}
+              onStep={tuner.step}
+              canStep={tuner.canStep}
             />
           </section>
         </>

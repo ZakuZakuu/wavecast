@@ -9,7 +9,10 @@ import { ChevronLeftIcon, ChevronRightIcon } from "../icons";
 import type { TunerPointerHandlers } from "./use-tuner";
 import { TuningWindow, useElementWidth } from "./tuning-window";
 
-/** The dial window: a slider over the scale, with a faint arrow at each end to say it can be dragged. */
+/**
+ * The dial window: a slider over the scale, and at each end a button that steps one station down or up the band
+ * (dragging works as before; this is the quick way to the next station).
+ */
 export function DialSlider({
   freq,
   reading,
@@ -18,6 +21,8 @@ export function DialSlider({
   wheelRef,
   handlers,
   onKeyDown,
+  onStep,
+  canStep,
   guide,
 }: {
   freq: number;
@@ -28,6 +33,9 @@ export function DialSlider({
   wheelRef?: MutableRefObject<HTMLDivElement | null>;
   handlers: TunerPointerHandlers;
   onKeyDown: (event: React.KeyboardEvent) => void;
+  onStep: (direction: 1 | -1) => void;
+  /** No station further down (the first one) or up (the last one): that end's button is off. */
+  canStep: { down: boolean; up: boolean };
   /** `data-guide` marker for the first-use guide. */
   guide?: string;
 }) {
@@ -55,11 +63,14 @@ export function DialSlider({
         onPointerCancel={handlers.onPointerCancel}
         onKeyDown={onKeyDown}
       >
-        <TuningWindow freq={freq} width={width} activeStation={reading.locked ? station : null} noise={reading.noise}>
-          <span className="tw-arrow tw-arrow-left" aria-hidden="true"><ChevronLeftIcon size={16} strokeWidth={2.4} /></span>
-          <span className="tw-arrow tw-arrow-right" aria-hidden="true"><ChevronRightIcon size={16} strokeWidth={2.4} /></span>
-        </TuningWindow>
+        <TuningWindow freq={freq} width={width} activeStation={reading.locked ? station : null} noise={reading.noise} />
       </div>
+      <button type="button" className="tw-step tw-step-down" aria-label="上一个台" disabled={!canStep.down} onClick={() => onStep(-1)}>
+        <span><ChevronLeftIcon size={16} strokeWidth={2.4} /></span>
+      </button>
+      <button type="button" className="tw-step tw-step-up" aria-label="下一个台" disabled={!canStep.up} onClick={() => onStep(1)}>
+        <span><ChevronRightIcon size={16} strokeWidth={2.4} /></span>
+      </button>
     </div>
   );
 }

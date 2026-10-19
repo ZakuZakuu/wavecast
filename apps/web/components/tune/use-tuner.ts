@@ -9,6 +9,8 @@ import { FIRST_VISIT_STATION_ID, FREQ_MAX, FREQ_MIN, stationById, type Station }
 import {
   clampFreq,
   freqAfterDrag,
+  nearestStation,
+  neighbourStation,
   PX_PER_MHZ,
   readTuner,
   stepStation,
@@ -59,6 +61,10 @@ export type Tuner = {
   tuneTo: (station: Station) => void;
   /** Move straight to a station, no slide (the card has not been seen yet). */
   jumpTo: (station: Station) => void;
+  /** One station down (-1) or up (1) the band, from where a slide in progress is heading. */
+  step: (direction: 1 | -1) => void;
+  /** Whether there is a station that way, for the dial's end buttons. */
+  canStep: { down: boolean; up: boolean };
 };
 
 /**
@@ -71,6 +77,8 @@ export function useTuner(): Tuner {
   const freqRef = useRef(freq);
   const [dragging, setDragging] = useState(false);
   const animRef = useRef<Cancel | null>(null);
+  /** The station a slide or snap is heading for, so that repeated taps on a step button keep going. */
+  const headingRef = useRef<Station | null>(null);
   const lastLockedRef = useRef<string | null>(null);
   const dragState = useRef<DragState | null>(null);
   const justSwiped = useRef(false);
@@ -86,6 +94,7 @@ export function useTuner(): Tuner {
   const stopAnimation = useCallback(() => {
     animRef.current?.();
     animRef.current = null;
+    headingRef.current = null;
   }, []);
 
   /** Slide the scale to a station (tap, keyboard, home card): 500ms ease-standard. */
@@ -95,31 +104,40 @@ export function useTuner(): Tuner {
       setFreq(target);
       return;
     }
+    headingRef.current = nearestStation(target).station;
     animRef.current = tween({
       from: freqRef.current,
       to: target,
       duration: durationMs,
       easing: easeStandard,
       onUpdate: setFreq,
-      onComplete: () => { animRef.current = null; },
+      onComplete: () => {
+        animRef.current = null;
+        headingRef.current = null;
+      },
     });
   }, [setFreq, stopAnimation]);
 
   /** Spring onto the nearest station, carrying the release velocity (px/ms). */
   const snapWithSpring = useCallback((velocityPx: number) => {
     stopAnimation();
-    const target = readTuner(freqRef.current).station.freq;
+    const nearest = readTuner(freqRef.current).station;
+    const target = nearest.freq;
     if (prefersReducedMotion()) {
       setFreq(target);
       return;
     }
+    headingRef.current = nearest;
     animRef.current = animateSpring({
       from: freqRef.current * PX_PER_MHZ,
       to: target * PX_PER_MHZ,
       velocity: velocityPx,
       epsilon: 0.2,
       onUpdate: (px) => setFreq(px / PX_PER_MHZ),
-      onComplete: () => { animRef.current = null; },
+      onComplete: () => {
+        animRef.current = null;
+        headingRef.current = null;
+      },
     });
   }, [setFreq, stopAnimation]);
 
@@ -185,8 +203,12 @@ export function useTuner(): Tuner {
   }, [reading.locked, station.id]);
 
   const startDrag = (event: React.PointerEvent<HTMLElement>, captured: boolean): void => {
-    stopAnimation();
-    if (captured) event.currentTarget.setPointerCapture(event.pointerId);
+    // Grabbing the dial stops what it was doing. A press on the card might only be a tap (on the picture, on the
+    // link), which must leave a slide in progress alone, so that stops only once it turns into a swipe.
+    if (captured) {
+      stopAnimation();
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
     const label = (event.target as HTMLElement).closest?.("[data-station]")?.getAttribute("data-station") ?? null;
     const tracker = new VelocityTracker();
     tracker.reset(performance.now(), freqRef.current * PX_PER_MHZ);
@@ -202,6 +224,7 @@ export function useTuner(): Tuner {
       // A card swipe: wait until it is clearly sideways, then take the pointer and start from here.
       const dy = event.clientY - drag.y;
       if (Math.abs(dx) < SWIPE_START_PX || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+      stopAnimation();
       event.currentTarget.setPointerCapture(event.pointerId);
       drag.captured = true;
       drag.x = event.clientX;
@@ -217,6 +240,11 @@ export function useTuner(): Tuner {
   };
 
   const tuneTo = useCallback((target: Station) => animateTo(target.freq), [animateTo]);
+  const step = useCallback((direction: 1 | -1) => {
+    // From where a slide in progress is heading, else from where the dial is: two quick taps are two stations.
+    const next = neighbourStation(headingRef.current?.freq ?? freqRef.current, direction);
+    if (next) animateTo(next.freq);
+  }, [animateTo]);
   const jumpTo = useCallback((target: Station) => {
     stopAnimation();
     setFreq(target.freq);
@@ -226,6 +254,7 @@ export function useTuner(): Tuner {
     const drag = dragState.current;
     dragState.current = null;
     setDragging(false);
+    // A tap that never became a swipe: nothing was moved, nothing to settle.
     if (!drag || !drag.captured) return;
     if (!drag.moved && drag.label) {
       // A tap on a station name tunes straight to it.
@@ -241,6 +270,17 @@ export function useTuner(): Tuner {
     if (Math.abs(velocity) < GLIDE_STOP_SPEED) snapWithSpring(velocity);
     else glide(velocity);
   };
+
+  // Whatever happened (a tap that stopped a slide, a lost pointer), the dial never rests between two stations.
+  useEffect(() => {
+    if (dragging) return;
+    const timer = window.setTimeout(() => {
+      if (dragState.current?.captured || animRef.current) return;
+      const { station: nearest } = nearestStation(freqRef.current);
+      if (Math.abs(nearest.freq - freqRef.current) > 1e-3) snapWithSpring(0);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [freq, dragging, snapWithSpring]);
 
   // Mouse wheel / trackpad: scroll moves the scale, snapping 150ms after it stops.
   useEffect(() => {
@@ -303,6 +343,8 @@ export function useTuner(): Tuner {
     },
   };
 
-  return { freq, reading, station, dragging, dialRef, dial, swipe, tuneTo, jumpTo };
+  const heading = headingRef.current?.freq ?? freq;
+  const canStep = { down: neighbourStation(heading, -1) !== null, up: neighbourStation(heading, 1) !== null };
+  return { freq, reading, station, dragging, dialRef, dial, swipe, tuneTo, jumpTo, step, canStep };
 }
 
