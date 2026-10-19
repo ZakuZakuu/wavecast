@@ -125,6 +125,31 @@ def test_catalog_recovery_cannot_add_a_third_call_after_schema_repair():
     assert len(llm.prompts) == 2
 
 
+def test_catalog_repair_timeout_cancels_the_call_and_preserves_safe_failure(monkeypatch):
+    from wavecast import proposals as module
+
+    cancelled = []
+
+    class SlowRepair(Replies):
+        async def structured(self, prompt, output_type, **kwargs):
+            if self.prompts:
+                self.prompts.append(prompt)
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cancelled.append(True)
+            return await super().structured(prompt, output_type, **kwargs)
+
+    generator, _ = generator_with(batch(missing=True))
+    llm = SlowRepair(batch(missing=True))
+    generator.llm = llm
+    monkeypatch.setattr(module, "_RECOVERY_TIMEOUT_SECONDS", 0.01)
+    with pytest.raises(ProgramProposalGenerationError, match="opening_track_not_found"):
+        asyncio.run(generator.generate(ProposalGenerationRequest(prompt="相近的歌")))
+    assert len(llm.prompts) == 2
+    assert cancelled == [True]
+
+
 def test_research_survives_persistence_and_start_but_stays_out_of_public_json(monkeypatch):
     generator, llm = generator_with(batch())
     facts = evidence()

@@ -4,7 +4,7 @@ Updated: 2026-10-19（北京时间）。唯一当前状态入口。旧过程记�
 
 ## 当前任务
 
-Codex 正在修复开播可靠性和开场质量，基于 Claude 最新 integration `8ff6d22`，独立分支开发。见 [ADR0039](adr/0039-researched-openings-and-proposal-recovery.md)：提案多返回只取所需数量，格式/数量不足和开场曲换组共用最多两次模型调用；音乐故障不重试模型。提案先用现有检索客户端做最多3秒的轻研究，资料随提案/seed/episode服务端保存；第二首继承编辑方向和资料，首曲播放期间研究真实曲目对并优先写完整开场，后续策划沿用。四个候选均尝试，同艺人任意曲兜底需显式许可。不改前端、已发布音频或增加复审流水线；无迁移。当前仅本地，检查和真实试听尚待完成，不代表已部署。
+Codex 正在修复开播可靠性和开场质量，基于 Claude 最新 integration `8ff6d22`，独立分支开发。见 [ADR0039](adr/0039-researched-openings-and-proposal-recovery.md)：提案多返回只取所需数量，格式/数量不足和开场曲换组共用最多两次模型调用；音乐故障不重试模型。提案先用现有检索客户端做最多3秒的轻研究，资料随提案/seed/episode服务端保存；第二首继承编辑方向和资料，首曲播放期间研究真实曲目对并优先写完整开场，后续策划沿用。四个候选均尝试，同艺人任意曲兜底需显式许可。不改前端、已发布音频或增加复审流水线；无迁移。已提交 [#335](https://github.com/ZakuZakuu/wavecast/pull/335)，未合并或部署。相关离线回归272通过，Ruff/Mypy通过，完整CI进行中。真实提案小测复现格式重试后多返回三档，已正常取一档；未生成整期或配音，选曲可播性和完整开头仍待测试站试听。
 
 英文口号 TTS 修复已随 [#332](https://github.com/ZakuZakuu/wavecast/pull/332) 合入 integration `c2a6ce5`，CI通过、测试API部署成功；展示稿、事实引用、真正缩写和旧音频保留。详见[发音与短测记录](design/tts-pronunciation-checks.md)，新口播真实读音待试听。和弦读法留在[#317](https://github.com/ZakuZakuu/wavecast/issues/317)，心跳恢复见[#319](https://github.com/ZakuZakuu/wavecast/issues/319)。
 

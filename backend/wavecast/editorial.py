@@ -14,6 +14,10 @@ EDITORIAL_METHOD = (
     "programme develops rather than listing tracks. A song's narrator is not the artist: "
     "do not turn lyrics into the artist's biography or intentions. The opening sets an "
     "expectation the actual programme can fulfil; do not promise unconfirmed songs or facts. "
+    "When a listener asks for music with a similar feel to a reference recording, follow "
+    "its supported musical style, rhythm, vocal or production context; a shared song title, "
+    "translated word or lyrical theme does not establish musical similarity. Do not infer "
+    "the recording's sound or lyrical meaning just from its name. "
 )
 
 _STATION_APPROACH = {

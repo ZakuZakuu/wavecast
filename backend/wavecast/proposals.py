@@ -187,6 +187,7 @@ class ProgramProposalBatch(BaseModel):
 
 
 logger = logging.getLogger(__name__)
+_RECOVERY_TIMEOUT_SECONDS = 15.0
 
 # Why no opening track could be resolved.  Only these codes (plus the legacy
 # ``opening_track_unresolved``) are safe to map to listener-facing guidance.
@@ -726,7 +727,8 @@ class LLMProgramProposalGenerator:
                     + "\nUse these sources to choose a specific, supported listening direction and "
                     "suitable recordings. Artist identity alone does not establish a recording's "
                     "style. A reference song can open a request for similar music before the "
-                    "programme branches out. Keep the short lead relevant to any candidate."
+                    "programme branches out. Keep the short lead relevant to any candidate; "
+                    "research does not relax the short lead's restrictions above."
                 )
             raw, attempts = await self._draft_batch(prompt, request.count)
 
@@ -748,7 +750,7 @@ class LLMProgramProposalGenerator:
                 failed = ", ".join(f"{t.artist} — {t.title}" for t in draft.opening_track_candidates)
                 with usage_scope(proposal_ids[0]):
                     try:
-                        async with asyncio.timeout(15):
+                        async with asyncio.timeout(_RECOVERY_TIMEOUT_SECONDS):
                             repaired, _ = await self._draft_batch(
                                 prompt + "\nRecover exactly one proposal for the SAME listening direction. "
                                 "The previous opening candidates did not resolve to playable recordings: "
