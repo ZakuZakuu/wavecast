@@ -113,6 +113,9 @@
   min-width: 0;
 }
 .pick:disabled { opacity: .6; }
+.pick-link { text-decoration: none; }
+.pick-meta-station { display: flex; align-items: center; gap: 6px; }
+.pick-end { padding: 0 6px; font-size: 14px; color: var(--ink-3); }
 .pick-cover {
   display: block;
   border-radius: var(--radius-cover);

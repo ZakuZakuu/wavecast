@@ -115,6 +115,7 @@ from wavecast.providers.usage import (
     merge_events,
     usage_scope,
 )
+from wavecast.public_shelf import PublicShelf
 from wavecast.publication_service import PublicationService
 from wavecast.publishing import (
     ProgrammeSnapshot,
@@ -3364,6 +3365,12 @@ def _publication_plan_info(episode_id: str) -> tuple[float, str]:
     return plan.duration_seconds, mix_plan_fingerprint(plan)
 
 
+public_shelf = PublicShelf(
+    publication_repository,
+    taken_down=lambda publication_id: publication_id in TAKEN_DOWN_PROGRAMMES,
+)
+
+
 publication_service = PublicationService(
     repository=publication_repository,
     episode=lambda episode_id: orchestrator.get(episode_id),
@@ -3378,6 +3385,7 @@ publication_service = PublicationService(
     budget_bytes=lambda: _published_budget(),
     snapshot_for=lambda episode: _publication_snapshot(episode),
     taken_down=lambda publication_id: publication_id in TAKEN_DOWN_PROGRAMMES,
+    on_change=lambda: public_shelf.invalidate(),
 )
 
 
@@ -3654,11 +3662,65 @@ async def record_published_listen(publication_id: str, request: Request) -> Resp
         publication = publication_repository.get(publication_id)
         if publication is None or publication.status is not PublicationStatus.PUBLISHED:
             return
+        if _owns_publication(publication, actor):
+            return  # an author's own listens do not make their programme more popular
         key = f"user:{actor.user_id}" if actor.user_id is not None else f"guest:{actor.listener_id}"
         publication_repository.record_listen(publication.id, key)
 
     await to_thread.run_sync(record)
     return Response(status_code=204)
+
+
+class PublicShelfItem(BaseModel):
+    """One card of 「大家都在听」: what the card shows, nothing about who made it or who listened."""
+
+    id: str
+    title: str
+    cover_title: str | None = None
+    station: StationId | None = None
+    estimated_duration_seconds: int
+
+
+class PublicShelfResponse(BaseModel):
+    #: Empty on a first page: too few public programmes, the section is left out.
+    items: list[PublicShelfItem]
+    #: Asking again with these as `shown` could offer more.
+    has_more: bool
+
+
+@app.get("/api/public-shelf", response_model=PublicShelfResponse)
+async def public_shelf_page(request: Request, shown: str = "") -> PublicShelfResponse:
+    """The next programmes for 「大家都在听」: public ones, not the caller's own, not ones they hold.
+
+    ``shown`` are the ids already offered (a 换一批 asks for others). Nothing is generated, so
+    there is no daily limit; guests may ask too.
+    """
+    actor = principal(request)
+    already = [item for item in dict.fromkeys(shown.split(",")) if item][:200]
+
+    def build() -> PublicShelfResponse:
+        page = public_shelf.page(
+            is_mine=lambda publication: _owns_publication(publication, actor),
+            holds_copy=lambda publication: _published_copy_of(publication, actor) is not None,
+            shown=already,
+        )
+        if page.hidden:
+            return PublicShelfResponse(items=[], has_more=False)
+        return PublicShelfResponse(
+            items=[
+                PublicShelfItem(
+                    id=item.id,
+                    title=item.programme.title,
+                    cover_title=item.programme.cover_title,
+                    station=item.programme.station,
+                    estimated_duration_seconds=item.programme.estimated_duration_seconds,
+                )
+                for item in page.items
+            ],
+            has_more=page.has_more,
+        )
+
+    return await to_thread.run_sync(build)
 
 
 def _published_manifest_source(episode: LiveEpisode) -> str:

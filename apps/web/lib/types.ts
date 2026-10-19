@@ -56,6 +56,21 @@ export type PublicProgramme = {
   revoked?: boolean;
 };
 
+/** One card of 「大家都在听」: what it shows, nothing about who made it or who listened. */
+export type PublicShelfItem = {
+  id: string;
+  title: string;
+  cover_title: string | null;
+  station: "casual" | "crate" | "portrait" | "lineage" | "night" | null;
+  estimated_duration_seconds: number;
+};
+export type PublicShelfPage = {
+  /** Empty on a first page: too few public programmes, the section is left out. */
+  items: PublicShelfItem[];
+  /** Asking again with these as `shown` could offer more. */
+  has_more: boolean;
+};
+
 /** Where the publication of one of the listener's own programmes stands. */
 export type PublicationStatus = "preparing" | "mixing" | "published" | "revoked" | "failed";
 export type Visibility = "link" | "public";

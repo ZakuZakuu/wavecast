@@ -135,3 +135,25 @@ def test_a_listener_is_counted_once_per_programme(repository) -> None:
     assert repository.record_listen(created.id, "user:1") is False
     assert repository.record_listen(created.id, "guest:2") is True
     assert repository.listen_count(created.id) == 2
+
+
+def test_public_programmes_and_the_week_of_listens_can_be_asked_for(repository) -> None:
+    from datetime import timedelta
+
+    from wavecast.publishing import Visibility
+
+    now = datetime.now(UTC)
+    public = repository.create(make(owner="owner-public-" + uuid4().hex, status=PublicationStatus.PUBLISHED))
+    repository.update(public.id, visibility=Visibility.PUBLIC, published_at=now)
+    link_only = repository.create(make(owner="owner-link-" + uuid4().hex, status=PublicationStatus.PUBLISHED))
+    revoked = repository.create(make(owner="owner-revoked-" + uuid4().hex, status=PublicationStatus.REVOKED))
+    repository.update(revoked.id, visibility=Visibility.PUBLIC)
+
+    listed = {item.id for item in repository.list_public(100)}
+    assert public.id in listed and link_only.id not in listed and revoked.id not in listed
+
+    repository.record_listen(public.id, "user:1", at=now - timedelta(days=2))
+    repository.record_listen(public.id, "user:2", at=now - timedelta(days=9))
+    found = repository.listens_since([public.id, link_only.id], now - timedelta(days=7))
+    assert list(found) == [public.id] and len(found[public.id]) == 1
+    assert repository.listens_since([], now) == {}

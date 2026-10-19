@@ -14,6 +14,7 @@ import type {
   ProgramRenderManifest,
   ProposalGenerationRequest,
   PublicationItem,
+  PublicShelfPage,
   Visibility,
   Seed,
 } from "./types";
@@ -75,6 +76,9 @@ export const api = {
   /** The caller's own copy of a published programme: nothing is generated, no allowance is spent. */
   copyPublished: (id: string) =>
     request<LiveEpisode>(`/published/${encodeURIComponent(id)}/copy`, { method: "POST" }),
+  /** The next programmes for 「大家都在听」; `shown` are the ids already offered (换一批 asks for others). */
+  publicShelf: (shown: string[] = []) =>
+    request<PublicShelfPage>(`/public-shelf${shown.length ? `?shown=${encodeURIComponent(shown.join(","))}` : ""}`),
   /** A listener pressed play on a published programme (counted once per listener). */
   recordPublishedListen: (id: string) =>
     request<unknown>(`/published/${encodeURIComponent(id)}/listen`, { method: "POST" }).catch(() => undefined),

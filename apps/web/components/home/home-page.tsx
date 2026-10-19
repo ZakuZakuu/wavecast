@@ -11,6 +11,7 @@ import { programmeCover, rememberCoverSource } from "../../lib/cover/programme-c
 import { dedupeByTitle, featureEyebrow, ideaStation, pickMeta, RECOMMENDATION_MINUTES } from "../../lib/home-picks";
 import { FEATURED_PROGRAMMES, featuredDurationIntent, type FeaturedProgramme } from "../../lib/featured";
 import { requestLoginHint } from "../../lib/login-nudge";
+import { usePublicShelf } from "../../lib/public-shelf";
 import {
   rememberProgrammeStation,
   stationById,
@@ -29,6 +30,7 @@ import { useNowPlaying } from "../player/playback-provider";
 import { TuningInScreen } from "../tune/tuning-in";
 import { useTuneStart } from "../tune/use-tune-start";
 import { ProgrammeSheet, type ProgrammePreview } from "./programme-sheet";
+import { PublicShelf } from "./public-shelf";
 import { PullToRefresh } from "./pull-to-refresh";
 import { StationTile } from "./station-tile";
 
@@ -115,6 +117,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
   const [rotating, setRotating] = useState(false);
   const [rotationNote, setRotationNote] = useState<string | null>(null);
   const tune = useTuneStart();
+  const shelf = usePublicShelf(user?.id ?? null, !sessionPending);
   const askToSignIn = () => requestLoginHint({ title: "登录后才能换一批", note: "登录后可以获得完整推荐" });
 
   useEffect(() => {
@@ -310,6 +313,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
               <p className="inline-note">还没有可以推荐的节目。<Link href="/tune">去调一档</Link></p>
             ) : null}
           </section>
+          <PublicShelf shelf={shelf} />
           <section className="home-section home-stations" aria-labelledby="home-stations">
             <h2 id="home-stations" className="section-title">电台</h2>
             <div className="station-row" data-guide="home-stations">

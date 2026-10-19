@@ -88,6 +88,15 @@ export const GUIDES: readonly GuideDef[] = [
     ],
   },
   {
+    id: "home-public",
+    version: 1,
+    trigger: "home",
+    requires: "home-intro",
+    steps: [
+      { target: "home-public", text: "这是别人公开的整期节目，点一档就能直接听，不用等它生成。", primary: "知道了", skip: false },
+    ],
+  },
+  {
     id: "library-marks",
     version: 1,
     trigger: "library",

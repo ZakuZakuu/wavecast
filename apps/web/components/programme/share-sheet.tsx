@@ -80,7 +80,7 @@ function Frame({
 /** The link of a programme that needs nothing made: a built-in one, or one already published. */
 function LinkSheet({ open, onClose, target }: { open: boolean; onClose: () => void; target: ShareTarget }) {
   const published = target.id.startsWith("pub-");
-  const url = published ? publishedShareUrl(target.id, target.id) : programmeShareUrl(target.id);
+  const url = published ? publishedShareUrl(target.id) : programmeShareUrl(target.id);
   const { copied, failed, native, copy, reset } = useCopy(url);
   useEffect(() => {
     if (!open) reset();
@@ -151,7 +151,7 @@ function PublishSheet({ open, onClose, target }: { open: boolean; onClose: () =>
   const [problem, setProblem] = useState<Problem | null>(null);
   const [revoked, setRevoked] = useState(false);
   // The link is only shown once it opens: before that the card has nothing to point at.
-  const url = item?.status === "published" ? publishedShareUrl(item.id, target.id) : undefined;
+  const url = item?.status === "published" ? publishedShareUrl(item.id) : undefined;
   const { copied, failed, native, copy, reset } = useCopy(url ?? "");
 
   useEffect(() => {

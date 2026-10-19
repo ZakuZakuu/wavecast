@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { rememberCoverSource } from "../lib/cover/programme-cover";
 import {
   displayShareUrl,
   isGeneratedProgramme,
@@ -36,15 +35,8 @@ describe("programme share links", () => {
     expect(publicationCode("pub-abc")).toBeNull();
   });
 
-  it("carries the cover of the card a programme was made from, so the recipient sees the same cover", () => {
-    rememberCoverSource("proposal-own", "idea-7");
-    expect(publishedShareUrl(PUBLISHED, "proposal-own", "https://wavecast.space")).toBe(
-      "https://wavecast.space/p/3fa9c2b1d4?c=idea-7",
-    );
-    // Without a card of its own the cover follows the source programme's id.
-    expect(publishedShareUrl(PUBLISHED, "proposal-plain", "https://wavecast.space")).toBe(
-      "https://wavecast.space/p/3fa9c2b1d4?c=proposal-plain",
-    );
+  it("carries no cover hint: a published programme's cover is made from its own id, the same for everyone", () => {
+    expect(publishedShareUrl(PUBLISHED, "https://wavecast.space")).toBe("https://wavecast.space/p/3fa9c2b1d4");
   });
 
   it("knows which programmes are shared by publishing them", () => {

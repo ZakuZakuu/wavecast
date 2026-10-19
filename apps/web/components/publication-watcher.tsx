@@ -76,7 +76,7 @@ function FinishedBanner({ banner, onDone }: { banner: FinishedPublication; onDon
       <button
         type="button"
         onClick={() => {
-          void copyText(publishedShareUrl(banner.item.id, banner.programmeId)).then((done) => {
+          void copyText(publishedShareUrl(banner.item.id)).then((done) => {
             setCopied(done);
             window.setTimeout(onDone, done ? 1400 : 0);
           });

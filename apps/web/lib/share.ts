@@ -18,15 +18,13 @@ export function isGeneratedProgramme(programmeId: string): boolean {
 }
 
 /**
- * The address people paste for a published programme. `c` keeps the cover of the card it was made
- * from, so the person who opens it sees the same cover.
+ * The address people paste for a published programme. Its cover is made from its own id, the same
+ * for everyone who sees it (the home page, the link, the library), so the link carries no hint.
  */
-export function publishedShareUrl(publicationId: string, coverSourceId: string, origin?: string): string {
+export function publishedShareUrl(publicationId: string, origin?: string): string {
   const base = origin ?? (typeof window === "undefined" ? "" : window.location.origin);
   const code = publicationCode(publicationId);
-  const cover = coverIdFor(coverSourceId);
-  const query = cover !== publicationId ? `?c=${encodeURIComponent(cover)}` : "";
-  return code ? `${base}/p/${code}${query}` : `${base}/program/${encodeURIComponent(publicationId)}${query}`;
+  return code ? `${base}/p/${code}` : `${base}/program/${encodeURIComponent(publicationId)}`;
 }
 
 /** The page of a built-in programme. */

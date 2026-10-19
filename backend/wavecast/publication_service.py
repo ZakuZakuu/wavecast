@@ -67,6 +67,7 @@ class PublicationService:
         taken_down: Callable[[str], bool] = lambda _id: False,
         now: Callable[[], datetime] = utc_now,
         step_seconds: float = MIX_STEP_SECONDS,
+        on_change: Callable[[], None] = lambda: None,
     ) -> None:
         self.repository = repository
         self._episode = episode
@@ -81,6 +82,7 @@ class PublicationService:
         self._taken_down = taken_down
         self._now = now
         self._step_seconds = step_seconds
+        self._on_change = on_change
         self._running: dict[str, asyncio.Task[None] | None] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -140,7 +142,9 @@ class PublicationService:
 
         if existing.status is PublicationStatus.PUBLISHED:
             if existing.visibility is not visibility:
-                return self.repository.update(existing.id, visibility=visibility) or existing
+                changed = self.repository.update(existing.id, visibility=visibility)
+                self._on_change()
+                return changed or existing
             return existing
         if existing.status is PublicationStatus.REVOKED:
             if existing.published_at is None:
@@ -150,10 +154,12 @@ class PublicationService:
                 owner_live_count=self.repository.count_for_owner(owner_listener_id, owner_user_id, LIVE_STATUSES),
                 mixing_count=0, pinned_bytes=0, budget_bytes=1, free_bytes=None,
             )
-            return self.repository.update(
+            back = self.repository.update(
                 existing.id, only_from={PublicationStatus.REVOKED},
                 status=PublicationStatus.PUBLISHED, visibility=visibility, revoked_at=None,
-            ) or existing
+            )
+            self._on_change()
+            return back or existing
         if existing.status is PublicationStatus.FAILED:
             self._admit(episode, owner_listener_id, owner_user_id)
             restarted = self.repository.update(
@@ -174,10 +180,12 @@ class PublicationService:
         if current is None:
             return None
         if current.status is PublicationStatus.PUBLISHED:
-            return self.repository.update(
+            revoked = self.repository.update(
                 publication_id, only_from={PublicationStatus.PUBLISHED},
                 status=PublicationStatus.REVOKED, revoked_at=self._now(),
-            ) or current
+            )
+            self._on_change()
+            return revoked or current
         if current.status in {PublicationStatus.PREPARING, PublicationStatus.MIXING}:
             return self.repository.update(
                 publication_id, only_from={PublicationStatus.PREPARING, PublicationStatus.MIXING},
@@ -193,16 +201,20 @@ class PublicationService:
             return current
         if self.is_taken_down(publication_id):
             return current
-        return self.repository.update(
+        restored = self.repository.update(
             publication_id, only_from={PublicationStatus.REVOKED},
             status=PublicationStatus.PUBLISHED, revoked_at=None,
-        ) or current
+        )
+        self._on_change()
+        return restored or current
 
     def set_visibility(self, publication_id: str, visibility: Visibility) -> Publication | None:
         current = self.repository.get(publication_id)
         if current is None or current.status is PublicationStatus.REVOKED:
             return current
-        return self.repository.update(publication_id, visibility=visibility) or current
+        changed = self.repository.update(publication_id, visibility=visibility)
+        self._on_change()
+        return changed or current
 
     # -- moving along --------------------------------------------------------------------------
 
@@ -320,6 +332,7 @@ class PublicationService:
             )
             if published is not None:
                 await asyncio.to_thread(self._mark_published, episode_id)
+                self._on_change()
                 logger.info(
                     "publication_published publication_id=%s episode_id=%s bytes=%s seconds=%.1f",
                     publication_id, episode_id, total, frontier,

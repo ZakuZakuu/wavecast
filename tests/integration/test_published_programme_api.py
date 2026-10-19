@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from wavecast.full_version import full_version_status
 from wavecast.orchestration.worker import GenerationWorker
 from wavecast.proposals import InMemoryProgramProposalRepository
+from wavecast.public_shelf import PublicShelf
 from wavecast.publication_service import PublicationService
 from wavecast.publishing import PublicationStatus
 from wavecast.rendering import ProgramRenderChunk, ProgramRenderManifest
@@ -44,6 +45,8 @@ class Rig:
             GenerationWorker(self.jobs, api_module.orchestrator, worker_id="publish-test"),
         )
         monkeypatch.setattr(api_module, "TAKEN_DOWN_PROGRAMMES", frozenset())
+        self.shelf = PublicShelf(self.publications, taken_down=lambda item: item in api_module.TAKEN_DOWN_PROGRAMMES)
+        monkeypatch.setattr(api_module, "public_shelf", self.shelf)
         monkeypatch.setattr(api_module, "_render_programme", self.render)
         self.service = PublicationService(
             repository=self.publications,
@@ -59,6 +62,7 @@ class Rig:
             budget_bytes=lambda: 10 * 1024**3,
             snapshot_for=lambda episode: api_module._publication_snapshot(episode),
             taken_down=lambda publication_id: publication_id in api_module.TAKEN_DOWN_PROGRAMMES,
+            on_change=lambda: self.shelf.invalidate(),
         )
         monkeypatch.setattr(api_module, "publication_service", self.service)
 
@@ -392,3 +396,82 @@ def test_a_publication_mixes_in_one_pass_whatever_the_owner_has_listened_to() ->
     assert api_module._render_ahead_seconds(episode, None, float("inf")) is None
     # Without a step it is still the listener's few minutes ahead of where they are.
     assert api_module._render_ahead_seconds(episode, None) == 800 + api_module.PROGRAMME_RENDER_AHEAD_SECONDS
+
+
+def public_by_others(rig: Rig, count: int) -> list[str]:
+    """Programmes other people made public, put in the store as they would be once published."""
+    from wavecast.models.episode import CoverParams
+    from wavecast.publishing import ProgrammeSnapshot, Publication, new_publication_id, short_code
+
+    ids = []
+    for index in range(count):
+        identifier = new_publication_id()
+        now = datetime.now(UTC)
+        rig.publications.create(Publication(
+            id=identifier, code=short_code(identifier), source_episode_id=f"other-{identifier}",
+            owner_listener_id=f"someone-{index}", status=PublicationStatus.PUBLISHED,
+            visibility=__import__("wavecast.publishing", fromlist=["Visibility"]).Visibility.PUBLIC,
+            published_at=now, created_at=now, updated_at=now,
+            programme=ProgrammeSnapshot(
+                title=f"别人的节目 {index}", description="d", estimated_duration_seconds=1800,
+                opening_track_title="s", opening_track_artist="a",
+                cover=CoverParams(family="f", seed=1, palette=("#000000", "#ffffff")),
+            ),
+        ))
+        ids.append(identifier)
+    rig.shelf.invalidate()
+    return ids
+
+
+def test_the_shelf_offers_public_programmes_to_anyone_and_leaves_out_what_would_not_fill_it(client, rig) -> None:
+    viewer = who()
+    assert client.get("/api/public-shelf", headers=viewer).json() == {"items": [], "has_more": False}
+    public_by_others(rig, 2)
+    assert client.get("/api/public-shelf", headers=viewer).json()["items"] == []
+
+    ids = public_by_others(rig, 7)
+    first = client.get("/api/public-shelf", headers=viewer).json()
+    assert len(first["items"]) == 6 and first["has_more"] is True
+    assert set(first["items"][0]) == {"id", "title", "cover_title", "station", "estimated_duration_seconds"}
+    # 换一批: the others, nothing generated, nothing counted against the viewer.
+    more = client.get("/api/public-shelf", params={"shown": ",".join(item["id"] for item in first["items"])}, headers=viewer).json()
+    assert len(more["items"]) == 3 and more["has_more"] is False
+    everyone = {item["id"] for item in first["items"]} | {item["id"] for item in more["items"]}
+    assert len(everyone) == 9 and set(ids) <= everyone
+    end = client.get("/api/public-shelf", params={"shown": ",".join(everyone)}, headers=viewer).json()
+    assert end == {"items": [], "has_more": False}
+
+
+def test_what_an_author_publishes_for_everyone_appears_for_others_and_leaves_when_revoked(client, rig) -> None:
+    owner, visitor = who(), who()
+    public_by_others(rig, 3)
+    made = finished_episode(client, owner)
+    item = published(client, owner, made["episode_id"], "public")
+
+    def ids(headers):
+        return {entry["id"] for entry in client.get("/api/public-shelf", headers=headers).json()["items"]}
+
+    assert item["id"] in ids(visitor)
+    assert item["id"] not in ids(owner)  # their own programme is not offered back
+    # Once the visitor holds a copy it is not offered again.
+    client.post(f"/api/published/{item['id']}/copy", headers=visitor)
+    assert item["id"] not in ids(visitor)
+
+    client.post(f"/api/publications/{item['id']}/revoke", headers=owner)
+    assert item["id"] not in ids(who())
+    client.post(f"/api/publications/{item['id']}/restore", headers=owner)
+    assert item["id"] in ids(who())
+    # Only "所有人" is listed: back to those who have the link only, it leaves.
+    client.post(f"/api/publications/{item['id']}/visibility", json={"visibility": "link"}, headers=owner)
+    assert item["id"] not in ids(who())
+
+
+def test_an_authors_own_listens_do_not_make_their_programme_more_popular(client, rig) -> None:
+    owner, visitor = who(), who()
+    made = finished_episode(client, owner)
+    item = published(client, owner, made["episode_id"], "public")
+
+    client.post(f"/api/published/{item['id']}/listen", headers=owner)
+    assert rig.publications.listen_count(item["id"]) == 0
+    client.post(f"/api/published/{item['id']}/listen", headers=visitor)
+    assert rig.publications.listen_count(item["id"]) == 1

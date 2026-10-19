@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Collection
+from datetime import datetime
 from threading import RLock
 from typing import Any, Protocol, cast
 
@@ -31,6 +32,7 @@ from wavecast.publishing import (
     PINNING_STATUSES,
     Publication,
     PublicationStatus,
+    Visibility,
     utc_now,
 )
 from wavecast.storage.schema import metadata
@@ -83,11 +85,19 @@ class PublicationRepository(Protocol):
 
     def pinned_bytes(self) -> int: ...
 
-    def record_listen(self, publication_id: str, listener_key: str) -> bool:
+    def record_listen(self, publication_id: str, listener_key: str, at: datetime | None = None) -> bool:
         """True when this listener had not been counted for the programme before."""
         ...
 
     def listen_count(self, publication_id: str) -> int: ...
+
+    def list_public(self, limit: int) -> list[Publication]:
+        """Published programmes anyone may be shown (visibility `PUBLIC`), newest first."""
+        ...
+
+    def listens_since(self, publication_ids: Collection[str], since: datetime) -> dict[str, list[datetime]]:
+        """When each listener first played each of the programmes, from `since` on."""
+        ...
 
 
 def _owned_by(publication: Publication, listener_id: str, user_id: str | None) -> bool:
@@ -105,7 +115,7 @@ _FIELDS = (
 class InMemoryPublicationRepository:
     def __init__(self) -> None:
         self._by_id: dict[str, Publication] = {}
-        self._listens: set[tuple[str, str]] = set()
+        self._listens: dict[tuple[str, str], datetime] = {}
         self._lock = RLock()
 
     def create(self, publication: Publication) -> Publication:
@@ -181,13 +191,31 @@ class InMemoryPublicationRepository:
         with self._lock:
             return sum(item.bytes_total for item in self._by_id.values() if item.pins_audio)
 
-    def record_listen(self, publication_id: str, listener_key: str) -> bool:
+    def record_listen(self, publication_id: str, listener_key: str, at: datetime | None = None) -> bool:
         with self._lock:
             key = (publication_id, listener_key)
             if key in self._listens:
                 return False
-            self._listens.add(key)
+            self._listens[key] = at or utc_now()
             return True
+
+    def list_public(self, limit: int) -> list[Publication]:
+        with self._lock:
+            items = [
+                item for item in self._by_id.values()
+                if item.status is PublicationStatus.PUBLISHED and item.visibility is Visibility.PUBLIC
+            ]
+            items.sort(key=lambda item: item.published_at or item.created_at, reverse=True)
+            return [item.model_copy(deep=True) for item in items[:limit]]
+
+    def listens_since(self, publication_ids: Collection[str], since: datetime) -> dict[str, list[datetime]]:
+        wanted = set(publication_ids)
+        with self._lock:
+            found: dict[str, list[datetime]] = {}
+            for (publication_id, _key), at in self._listens.items():
+                if publication_id in wanted and at >= since:
+                    found.setdefault(publication_id, []).append(at)
+            return found
 
     def listen_count(self, publication_id: str) -> int:
         with self._lock:
@@ -306,8 +334,14 @@ class PostgresPublicationRepository:
     def pinned_bytes(self) -> int:
         return cast(int, self._run(self._pinned_bytes()))
 
-    def record_listen(self, publication_id: str, listener_key: str) -> bool:
-        return cast(bool, self._run(self._record_listen(publication_id, listener_key)))
+    def record_listen(self, publication_id: str, listener_key: str, at: datetime | None = None) -> bool:
+        return cast(bool, self._run(self._record_listen(publication_id, listener_key, at)))
+
+    def list_public(self, limit: int) -> list[Publication]:
+        return cast(list[Publication], self._run(self._list_public(limit)))
+
+    def listens_since(self, publication_ids: Collection[str], since: datetime) -> dict[str, list[datetime]]:
+        return cast(dict[str, list[datetime]], self._run(self._listens_since(list(publication_ids), since)))
 
     def listen_count(self, publication_id: str) -> int:
         return cast(int, self._run(self._listen_count(publication_id)))
@@ -399,12 +433,43 @@ class PostgresPublicationRepository:
                 )
             )).scalar_one())
 
-    async def _record_listen(self, publication_id: str, listener_key: str) -> bool:
+    async def _list_public(self, limit: int) -> list[Publication]:
+        async with self.engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    select(published_programmes_table)
+                    .where(
+                        published_programmes_table.c.status == PublicationStatus.PUBLISHED.value,
+                        published_programmes_table.c.visibility == Visibility.PUBLIC.value,
+                    )
+                    .order_by(published_programmes_table.c.published_at.desc())
+                    .limit(limit)
+                )
+            ).mappings().all()
+        return [_publication_from_row(row) for row in rows]
+
+    async def _listens_since(self, publication_ids: list[str], since: datetime) -> dict[str, list[datetime]]:
+        if not publication_ids:
+            return {}
+        async with self.engine.connect() as connection:
+            rows = await connection.execute(
+                select(programme_listens_table.c.publication_id, programme_listens_table.c.created_at)
+                .where(
+                    programme_listens_table.c.publication_id.in_(publication_ids),
+                    programme_listens_table.c.created_at >= since,
+                )
+            )
+        found: dict[str, list[datetime]] = {}
+        for publication_id, at in rows:
+            found.setdefault(publication_id, []).append(at)
+        return found
+
+    async def _record_listen(self, publication_id: str, listener_key: str, at: datetime | None) -> bool:
         async with self.engine.begin() as connection:
             row = (
                 await connection.execute(
                     insert(programme_listens_table)
-                    .values(publication_id=publication_id, listener_key=listener_key, created_at=utc_now())
+                    .values(publication_id=publication_id, listener_key=listener_key, created_at=at or utc_now())
                     .on_conflict_do_nothing()
                     .returning(programme_listens_table.c.publication_id)
                 )
