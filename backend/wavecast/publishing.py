@@ -162,17 +162,22 @@ def check_publish_admission(
     pinned_bytes: int,
     budget_bytes: int,
     free_bytes: int | None,
+    reuses_audio: bool = False,
 ) -> None:
     """Raises PublishRefusal when a new publication must not start now.
 
     Three separate protections: the owner's own limit, the number of mixes running, and space (a
-    budget for published audio, and a reserve that is never spent on it).
+    budget for published audio, and a reserve that is never spent on it). A publication that brings
+    back audio already kept (a revoked one shared again) mixes and stores nothing, so only the
+    owner's limit applies to it.
     """
 
     if owner_live_count >= MAX_PUBLISHED_PER_OWNER:
         raise PublishRefusal(
             "limit", f"最多同时分享 {MAX_PUBLISHED_PER_OWNER} 档。撤回一档之后，就能发布这一档。",
         )
+    if reuses_audio:
+        return
     if mixing_count >= MAX_CONCURRENT_MIXES:
         raise PublishRefusal("busy", "现在发布的人比较多，请过一会儿再试。")
     output = estimated_audio_bytes(duration_seconds)

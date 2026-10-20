@@ -215,6 +215,21 @@ def test_revoking_stops_new_copies_but_not_the_ones_that_exist(client, rig) -> N
     assert client.post(f"/api/published/{item['id']}/copy", headers=late).status_code == 200
 
 
+def test_sharing_again_after_revoking_never_needs_room(client, rig) -> None:
+    owner = who()
+    made = finished_episode(client, owner)
+    item = published(client, owner, made["episode_id"], "public")
+    assert client.post(f"/api/publications/{item['id']}/revoke", headers=owner).json()["status"] == "revoked"
+
+    # The audio is still kept, so a full disk does not matter.
+    rig.free = 0
+    again = client.post(f"/api/episodes/{made['episode_id']}/publish", json={"visibility": "link"}, headers=owner)
+
+    assert again.status_code == 202, again.text
+    assert again.json()["id"] == item["id"] and again.json()["status"] == "published"
+    assert again.json()["visibility"] == "link"
+
+
 def test_only_the_owner_manages_a_publication(client, rig) -> None:
     owner, stranger = who(), who()
     made = finished_episode(client, owner)

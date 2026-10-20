@@ -150,9 +150,10 @@ class PublicationService:
             if existing.published_at is None:
                 raise PublishRefusal("unavailable", "这档节目现在没法分享。")
             check_publish_admission(
-                duration_seconds=1,
+                duration_seconds=0,
                 owner_live_count=self.repository.count_for_owner(owner_listener_id, owner_user_id, LIVE_STATUSES),
-                mixing_count=0, pinned_bytes=0, budget_bytes=1, free_bytes=None,
+                mixing_count=0, pinned_bytes=0, budget_bytes=0, free_bytes=None,
+                reuses_audio=True,
             )
             back = self.repository.update(
                 existing.id, only_from={PublicationStatus.REVOKED},
