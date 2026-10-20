@@ -53,6 +53,12 @@ def test_only_a_few_mixes_run_at_once() -> None:
     assert refusal(mixing_count=MAX_CONCURRENT_MIXES) == "busy"
 
 
+def test_bringing_back_kept_audio_needs_no_room_only_the_owners_limit() -> None:
+    # A revoked programme shared again mixes and stores nothing: a full budget or disk cannot stop it.
+    admit(reuses_audio=True, budget_bytes=0, pinned_bytes=GB, free_bytes=0, mixing_count=MAX_CONCURRENT_MIXES)
+    assert refusal(reuses_audio=True, owner_live_count=MAX_PUBLISHED_PER_OWNER) == "limit"
+
+
 def test_published_audio_has_a_budget() -> None:
     output = estimated_audio_bytes(38 * 60)
     admit(budget_bytes=output, pinned_bytes=0)
