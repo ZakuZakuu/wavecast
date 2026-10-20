@@ -126,6 +126,10 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
   const { favourite, toggle: toggleFavourite } = useFavourite(programmeId);
   const [phase, setPhase] = useState<"idle" | "preparing" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
+  // Someone who arrived from inside the app (the 大家都在听 shelf, the library) can go back; someone who
+  // opened a shared link has nowhere to go back to, so they get the WaveCast home link instead.
+  const [cameFromApp, setCameFromApp] = useState(false);
+  useEffect(() => setCameFromApp(window.history.length > 1), []);
 
   const coverFromLink = search.get("c");
   useEffect(() => {
@@ -262,7 +266,7 @@ export function ProgrammeDetailPage({ programmeId }: { programmeId: string }) {
     <div className="pd">
       <span className="glow" aria-hidden="true" style={{ left: -100, top: -160, width: 420, height: 340, background: station.light, opacity: 0.2 }} />
       <header className="pd-head">
-        {visitor ? (
+        {visitor && !cameFromApp ? (
           <Link href="/" className="pd-brand" aria-label="WaveCast 首页"><RadioGlyph size={26} />WaveCast</Link>
         ) : (
           <button type="button" className="pd-icon" aria-label="返回" onClick={back}><ChevronLeftIcon size={24} strokeWidth={1.8} /></button>

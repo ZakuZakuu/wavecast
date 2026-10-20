@@ -1208,6 +1208,14 @@ async def materialize_recommendation(
         idea_id,
     )
     if claimed is None:
+        # Asked again for a recommendation that was already made into a programme (a reply that never
+        # reached the phone, or a second tap): hand back that programme instead of an error.
+        made_id = await to_thread.run_sync(
+            user_library_repository.created_for_recommendation, user_id, idea_id,
+        )
+        made = await to_thread.run_sync(proposal_repository.get, made_id) if made_id else None
+        if made is not None:
+            return ProgramProposalBatch(proposals=[made])
         raise HTTPException(status_code=409, detail="Recommendation is no longer available")
     owner = principal(request)
     seed = claimed.to_proposal_seed()

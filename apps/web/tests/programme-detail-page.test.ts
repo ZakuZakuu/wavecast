@@ -75,6 +75,22 @@ describe("a published programme's page", () => {
     expect(openPlayer).toHaveBeenCalledWith("/episode/materialized/copy-1");
   });
 
+  it("gives a way back to someone who came from inside the app, and the home link to someone who opened a shared link", async () => {
+    vi.mocked(api.publicProgramme).mockResolvedValue(published());
+    const history = vi.spyOn(window.history, "length", "get");
+
+    history.mockReturnValue(1);
+    await mount();
+    expect(host.querySelector("a.pd-brand")).not.toBeNull();
+    expect(host.querySelector("button[aria-label=返回]")).toBeNull();
+
+    history.mockReturnValue(3);
+    await mount();
+    expect(host.querySelector("button[aria-label=返回]")).not.toBeNull();
+    expect(host.querySelector("a.pd-brand")).toBeNull();
+    history.mockRestore();
+  });
+
   it("continues the copy the listener already has instead of making another", async () => {
     window.localStorage.setItem("wavecast-user-library-v1", JSON.stringify({
       version: 1, favoriteSeedIds: [], savedEpisodes: [], createdProgramIds: [],

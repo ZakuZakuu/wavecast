@@ -187,7 +187,9 @@ def test_recommendation_materialization_is_owned_quota_bound_and_single_use(monk
         f"/api/recommendations/me/{idea_id}/program-proposal",
         headers=headers_a,
     )
-    assert repeated.status_code == 409
+    # A second tap, or a reply that never reached the phone: the programme already made comes back.
+    assert repeated.status_code == 200
+    assert repeated.json()["proposals"][0]["id"] == proposal_id
 
     refreshed_inventory = client.get("/api/recommendations/me", headers=headers_a)
     assert refreshed_inventory.status_code == 200

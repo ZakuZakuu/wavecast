@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { api } from "../../lib/api";
 import { openPlayer } from "../../lib/player-nav";
@@ -190,8 +190,11 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
     }
   };
 
+  // A ref, not the state: a tap on a card the sheet remembers from an earlier render must not start a second request.
+  const opening = useRef(false);
   const openIdea = async (idea: ProgramIdea) => {
-    if (busyId || !user) return;
+    if (opening.current || !user) return;
+    opening.current = true;
     setBusyId(idea.id);
     setError(null);
     try {
@@ -206,6 +209,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
       recordCreatedProgram(proposal.id);
       openPlayer(`/episode/${proposal.id}`);
     } catch {
+      opening.current = false;
       setError("这档节目暂时开不了，换一档试试");
       setBusyId(null);
     }

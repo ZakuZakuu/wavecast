@@ -434,6 +434,28 @@ def test_library_merge_uses_union_and_newest_recent_and_saved_payload() -> None:
     })
     assert initial["favoriteSeedIds"] == ["favorite-a"]
     assert newer["favoriteSeedIds"] == ["favorite-a", "favorite-b"]
-    assert newer["createdProgramIds"] == ["created-a", "created-b"]
+    assert newer["createdProgramIds"] == ["created-b", "created-a"]
     assert stale["recentPrograms"][0]["title"] == "new"
     assert stale["savedEpisodes"][0]["title"] == "saved new"
+
+
+def test_created_programmes_list_newest_first_and_remember_which_recommendation_made_them() -> None:
+    import time
+
+    from wavecast.storage import InMemoryUserLibraryRepository
+
+    library = InMemoryUserLibraryRepository()
+    library.put("user-a", "CREATED", "proposal-zzz", {"id": "proposal-zzz", "recommendationId": "idea-1"})
+    time.sleep(0.01)
+    library.put("user-a", "CREATED", "proposal-aaa", {"id": "proposal-aaa", "recommendationId": "idea-2"})
+    time.sleep(0.01)
+    snapshot = library.put("user-a", "CREATED", "proposal-mmm", {"id": "proposal-mmm"})
+
+    # Not in the order of their ids: the one made last is first, so a cut-off list never drops it.
+    assert snapshot["createdProgramIds"] == ["proposal-mmm", "proposal-aaa", "proposal-zzz"]
+    # Putting a programme again does not move it up.
+    again = library.put("user-a", "CREATED", "proposal-zzz", {"id": "proposal-zzz", "recommendationId": "idea-1"})
+    assert again["createdProgramIds"][-1] == "proposal-zzz"
+    assert library.created_for_recommendation("user-a", "idea-2") == "proposal-aaa"
+    assert library.created_for_recommendation("user-a", "idea-9") is None
+    assert library.created_for_recommendation("user-b", "idea-2") is None
