@@ -20,8 +20,8 @@ Claude 正在推进界面与完整版后台生成；Codex 独立处理英文口�
 
 ## 已发布基线
 
-- 正式站 **https://wavecast.space**。#318 `485ea12` 已发布，后端1741通过/3跳过、Web299通过、Docker通过；main后来合入界面#329，当前分支头`467687b`。不要将旧的“#318待发布”记录当作现状。
-- 正式API仍观测为`a96c34f9-82be-469d-93bf-c6ea2b37bffe` SUCCESS，固定源码`485ea12`；main分支前进不代表固定SHA的API自动更新。正式Web构建与API分别核对，不强求两端SHA一致。
+- 正式站 **https://wavecast.space**。2026-10-20 发布 [#334](https://github.com/ZakuZakuu/wavecast/pull/334)（main 合并提交 `030f3c4`）：调频页重做与电台指南、已发布节目分享（#331）、大家都在听（#327）、完整版后台准备（#204）、播放页歌曲封面（#320）。CI 全绿（web、backend、deployment-smoke）；正式网页部署 READY，正式 API 部署 `3a85c6ab-4fe0-4879-bf4d-c69c7b224af1` SUCCESS，固定源码 `030f3c4`，迁移 0009 已在启动时执行，健康检查 200。此前基线 #318 `485ea12`。
+- 正式 API 固定在已验收 SHA，main 前进不会自动更新它；网页和 API 要分别核对。**未做**：生产卷扩容（已发布音频预算默认是卷的一半，大量分享前先扩）、音乐 sidecar（wavecast-music-dev#11）重新部署（新节目要等它才带歌曲封面）。真机 iOS Safari 未测。
 - integration已包含Claude的UI二轮与完整版后台任务；TTS修复基于`bcd4e2b`独立开发，合并时保留后续并行提交。测试环境更新可能打断正在生成的任务，完成检查点需观察实际部署成功及健康信号。
 
 - 当前链路：Pro 研究规划／素材、Lite 写稿，豆包单人 TTS 与双人播客，Exa 检索。单人取消常规模型核对、改写和逐句删减；完整前文、来源、日期／人物状态约束和必要代码检查保留。见 [ADR 0031](adr/0031-one-pass-radio-writing.md)。
