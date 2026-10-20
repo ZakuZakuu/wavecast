@@ -539,9 +539,10 @@ def validate_background_research_plan(plan: ResearchPlan) -> ResearchPlan:
 
 def build_fast_queries(request: FastResearchInput) -> tuple[str, str]:
     anchors = ", ".join([*request.anchor_tracks, *request.anchor_artists])
-    subject = " — ".join(part for part in (request.topic, request.editorial_brief, anchors) if part)
-    discovery = f"{subject}; relevant sources and related context"
-    research = f"{subject}; background evidence and primary sources"
+    # Keep confirmed identities even with a long request; full editorial context stays in prompts.
+    subject = " — ".join(part for part in (anchors, request.topic, request.editorial_brief) if part)
+    discovery = f"{subject}; relevant sources and related context"[:500]
+    research = f"{subject}; background evidence and primary sources"[:500]
     return discovery, research
 
 
@@ -555,33 +556,33 @@ def generic_research_plan(request: FastResearchInput) -> ResearchPlan:
     """Build a topic-neutral plan when the structured fast planner is unavailable."""
 
     anchors = ", ".join([*request.anchor_tracks, *request.anchor_artists])
-    subject = " — ".join(part for part in (request.topic, anchors) if part)
+    subject = " — ".join(part for part in (anchors, request.topic, request.editorial_brief) if part)
     return ResearchPlan(
-        central_question=f"What reliable evidence best answers the listener's request about {request.topic}?",
+        central_question=f"What reliable evidence best answers the listener's request about {request.topic}?"[:500],
         facets=[
             ResearchFacet(
                 id="context",
                 label="Context",
-                question=f"What context helps explain the topic and its relevant examples: {request.topic}?",
+                question=f"What context helps explain the topic and its relevant examples: {request.topic}?"[:500],
                 priority=80,
                 source_preferences=["primary", "interview", "reference"],
             )
         ],
         background_queries=[
             PlannedResearchQuery(
-                query=f"{subject}; related context and perspectives",
+                query=f"{subject}; related context and perspectives"[:500],
                 intent=SearchIntent.DISCOVERY,
                 facet_ids=["context"],
                 rationale="find relevant context without assuming a show type",
             ),
             PlannedResearchQuery(
-                query=f"{subject}; background evidence and primary sources",
+                query=f"{subject}; background evidence and primary sources"[:500],
                 intent=SearchIntent.RESEARCH,
                 facet_ids=["context"],
                 rationale="ground the episode in reliable evidence",
             ),
             PlannedResearchQuery(
-                query=f"{subject}; exact references and named entities",
+                query=f"{subject}; exact references and named entities"[:500],
                 intent=SearchIntent.EXACT,
                 facet_ids=["context"],
                 rationale="verify concrete references when available",

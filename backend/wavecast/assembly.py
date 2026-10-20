@@ -210,7 +210,7 @@ class NarrationPlacementError(ValueError):
 class LiveEpisodeAssemblyRequest(BaseModel):
     """Provider-neutral input for one bounded episode assembly run."""
 
-    topic: str = Field(min_length=1, max_length=300)
+    topic: str = Field(min_length=1, max_length=500)
     editorial_brief: str | None = Field(default=None, max_length=500)
     opening_evidence: list[Evidence] = Field(default_factory=list, exclude=True, repr=False)
     anchor_tracks: list[str] = Field(default_factory=list, max_length=8)
