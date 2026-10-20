@@ -7,7 +7,7 @@ from wavecast.providers.contracts import MusicProvider, TrackMetadata
 from wavecast.providers.errors import ProviderError
 from wavecast.providers.retrieval import MusicRetrievalService
 from wavecast.spoken_form import catalog_album, catalog_cover, chinese_title
-from wavecast.text_identity import same_catalog_name
+from wavecast.text_identity import artist_credit_includes, same_catalog_name
 
 from .models import (
     ResolvedTrack,
@@ -32,7 +32,7 @@ def _resolved_track(metadata: TrackMetadata) -> ResolvedTrack | None:
 
 
 def _exact_identity(metadata: TrackMetadata, proposal: TrackProposal) -> bool:
-    return same_catalog_name(metadata.artist, proposal.artist) and same_catalog_name(
+    return artist_credit_includes(metadata.artist, proposal.artist) and same_catalog_name(
         metadata.title, proposal.title
     )
 
@@ -120,7 +120,7 @@ async def resolve_track_proposal_across_providers(
         for candidate in candidates:
             if not candidate.track_ref.startswith(f"{candidate.provider}:"):
                 continue
-            if not same_catalog_name(candidate.artist, proposal.artist) or not same_catalog_name(
+            if not artist_credit_includes(candidate.artist, proposal.artist) or not same_catalog_name(
                 candidate.title, proposal.title
             ):
                 continue

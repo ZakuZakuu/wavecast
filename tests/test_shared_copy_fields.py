@@ -33,7 +33,8 @@ COPIED_AS_IS = {
     "anchor_artists", "presentation_intent", "output_language", "station", "required_artists",
     "generation_profile", "opening_host_note",
 }
-MADE_AGAIN = {"id", "topic", "opening_narration_text", "created_at"}
+# Internal research stays with the owner's proposal; a legacy copy starts without it.
+MADE_AGAIN = {"id", "topic", "opening_narration_text", "created_at", "opening_evidence"}
 
 
 def test_every_field_of_a_shared_copy_is_decided() -> None:

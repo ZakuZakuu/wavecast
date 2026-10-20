@@ -55,7 +55,8 @@ class _CountingRuntime:
         return self.delegate.create_generator(session)
 
 
-def test_staged_session_is_persisted_and_reconstructed_without_reprepare() -> None:
+@pytest.mark.parametrize("topic", ["A deterministic staged route", "爵士" * 250], ids=["short", "500-characters"])
+def test_staged_session_is_persisted_and_reconstructed_without_reprepare(topic: str) -> None:
     assembly = create_episode_assembly_service(
         ProviderSettings(mode="mock"),
     )
@@ -63,7 +64,7 @@ def test_staged_session_is_persisted_and_reconstructed_without_reprepare() -> No
     runtime_adapter = _CountingRuntime(delegate)
     repository = InMemoryEpisodeRepository()
     first = EpisodeOrchestrator(repository, progressive_runtime=runtime_adapter)
-    episode = first.start(_seed())
+    episode = first.start(_seed().model_copy(update={"topic": topic}))
 
     first_buffer = asyncio.run(
         first.ensure_buffer_async(
@@ -74,6 +75,7 @@ def test_staged_session_is_persisted_and_reconstructed_without_reprepare() -> No
     )
 
     assert first_buffer.progressive_session is not None
+    assert first_buffer.progressive_session.topic == topic
     assert runtime_adapter.prepare_calls == 1
     assert "progressive_session" not in first_buffer.model_dump(mode="json")
     assert {segment.chapter_id for segment in first_buffer.segments} >= {
@@ -95,6 +97,7 @@ def test_staged_session_is_persisted_and_reconstructed_without_reprepare() -> No
 
     assert reconstructed_adapter.prepare_calls == 0
     assert second_buffer.progressive_session is not None
+    assert second_buffer.progressive_session.topic == topic
     assert "chapter-3" in {segment.chapter_id for segment in second_buffer.segments}
 
 

@@ -20,13 +20,17 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_generated_proposal_survives_repository_reconstruction() -> None:
+    from tests.dialogue_fixtures import evidence
+
     assert DATABASE_URL is not None
     proposal = asyncio.run(
         DeterministicMockProgramProposalGenerator().generate(
             ProposalGenerationRequest(prompt="持久化回归测试", count=1)
         )
     )[0]
-    proposal = proposal.model_copy(update={"id": f"persistence-test-{uuid4().hex}"})
+    proposal = proposal.model_copy(update={
+        "id": f"persistence-test-{uuid4().hex}", "opening_evidence": evidence(),
+    })
 
     async def remove_test_row() -> None:
         engine = create_async_engine(DATABASE_URL)
@@ -51,6 +55,15 @@ def test_generated_proposal_survives_repository_reconstruction() -> None:
     recovered = PostgresProgramProposalRepository(DATABASE_URL)
     try:
         assert recovered.get(proposal.id) == proposal
+        # An idempotent save compares the durable private evidence as well as public copy.
+        recovered.save_many(
+            [proposal], owner_listener_id="durable-listener",
+            owner_user_id="durable-user", source="tune",
+        )
+        restored = recovered.get(proposal.id)
+        assert restored is not None
+        assert restored.to_episode_seed().opening_evidence == evidence()
+        assert "opening_evidence" not in restored.model_dump(mode="json")
     finally:
         recovered.close()
         asyncio.run(remove_test_row())
