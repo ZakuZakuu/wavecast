@@ -57,6 +57,11 @@ def _merge_row(
     date_field = "savedAt" if kind == "SAVED" else "updatedAt"
     if current is None or _timestamp(payload, date_field) >= _timestamp(current, date_field):
         rows[key] = payload
+    if kind == "CREATED":
+        # When it was first made decides where it lists: newest first, and a programme made now must
+        # not fall behind older ones (the list shown is cut to a few dozen).
+        earlier = _timestamp(current, "createdAt") if current else 0.0
+        rows[key]["createdAt"] = earlier or _timestamp(rows[key], "createdAt") or datetime.now(UTC).timestamp() * 1000
 
 
 def _library_rows(value: Mapping[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
@@ -70,9 +75,14 @@ def _library_rows(value: Mapping[str, Any]) -> dict[tuple[str, str], dict[str, A
         items = value.get(list_key, [])
         if not isinstance(items, list):
             continue
-        for item in items:
+        # The device lists the newest first; keep that order among what one merge brings in.
+        base = datetime.now(UTC).timestamp() * 1000
+        for position, item in enumerate(items):
             if id_key is None and isinstance(item, str) and item:
-                _merge_row(rows, kind, item, {"id": item})
+                row: dict[str, Any] = {"id": item}
+                if kind == "CREATED":
+                    row["createdAt"] = base - position
+                _merge_row(rows, kind, item, row)
             elif id_key is not None and isinstance(item, dict):
                 resource_id = item.get(id_key)
                 if isinstance(resource_id, str) and resource_id:
@@ -82,7 +92,13 @@ def _library_rows(value: Mapping[str, Any]) -> dict[tuple[str, str], dict[str, A
 
 def _snapshot(rows: Mapping[tuple[str, str], dict[str, Any]]) -> dict[str, Any]:
     favorites = sorted(resource_id for (kind, resource_id) in rows if kind == "FAVORITE")
-    created = sorted(resource_id for (kind, resource_id) in rows if kind == "CREATED")
+    created = [
+        resource_id
+        for (_, resource_id), _payload in sorted(
+            ((key, payload) for key, payload in rows.items() if key[0] == "CREATED"),
+            key=lambda item: (-_timestamp(item[1], "createdAt"), item[0][1]),
+        )
+    ]
     recents = [payload for (kind, _), payload in rows.items() if kind == "RECENT"]
     saved = [payload for (kind, _), payload in rows.items() if kind == "SAVED"]
     recents.sort(key=lambda item: _timestamp(item, "updatedAt"), reverse=True)
@@ -101,6 +117,16 @@ class UserLibraryRepository(Protocol):
     def merge(self, user_id: str, library: Mapping[str, Any]) -> dict[str, Any]: ...
     def put(self, user_id: str, kind: str, resource_id: str, payload: Mapping[str, Any]) -> dict[str, Any]: ...
     def delete(self, user_id: str, kind: str, resource_id: str) -> dict[str, Any]: ...
+    def created_for_recommendation(self, user_id: str, idea_id: str) -> str | None: ...
+
+
+def _created_for(rows: Mapping[tuple[str, str], dict[str, Any]], idea_id: str) -> str | None:
+    """The programme already made from a recommendation, if any."""
+
+    for (kind, resource_id), payload in rows.items():
+        if kind == "CREATED" and payload.get("recommendationId") == idea_id:
+            return resource_id
+    return None
 
 
 class InMemoryUserLibraryRepository:
@@ -132,6 +158,10 @@ class InMemoryUserLibraryRepository:
             self._rows.setdefault(user_id, {}).pop((kind, resource_id), None)
             return _snapshot(self._rows[user_id])
 
+    def created_for_recommendation(self, user_id: str, idea_id: str) -> str | None:
+        with self._lock:
+            return _created_for(self._rows.get(user_id, {}), idea_id)
+
 
 class PostgresUserLibraryRepository:
     def __init__(self, database_url: str) -> None:
@@ -150,6 +180,13 @@ class PostgresUserLibraryRepository:
 
     def delete(self, user_id: str, kind: str, resource_id: str) -> dict[str, Any]:
         return cast(dict[str, Any], self._run(self._delete(user_id, kind, resource_id)))
+
+    def created_for_recommendation(self, user_id: str, idea_id: str) -> str | None:
+        return cast(str | None, self._run(self._created_for_recommendation(user_id, idea_id)))
+
+    async def _created_for_recommendation(self, user_id: str, idea_id: str) -> str | None:
+        async with self.engine.connect() as connection:
+            return _created_for(await self._rows(user_id, connection), idea_id)
 
     def close(self) -> None:
         self._run(self.engine.dispose())
