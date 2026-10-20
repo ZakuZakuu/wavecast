@@ -40,20 +40,31 @@
 .player-scrim { position: absolute; inset: 0; background: #000; opacity: .3; pointer-events: none; }
 .player-sheet { position: absolute; inset: 0; overflow: hidden; }
 
-.player-backdrop { position: absolute; inset: 0; pointer-events: none; }
+.player-backdrop { position: absolute; inset: 0; pointer-events: none; container-type: size; }
 /* The background is two blurred pictures that cross-fade: the programme's cover, and the song's while it is in
    front. Each picture carries its own blur and is its own layer, so a fade only moves opacity (a blur put on
    the group would be redone on every frame of the fade). The fade starts a little after the covers start
    to move and ends with them, so the colours arrive with the cover that comes forward; the shade deepens
-   with it instead of jumping. */
+   with it instead of jumping.
+   The pictures are larger than the screen on every side (by more than the blur reaches), so that no edge of a
+   blurred picture is ever on screen: the soft rim a blur leaves at an edge is drawn differently while a layer
+   is fading and once it is done (it brightened at the end of the fade in Safari). The darker foot of the
+   screen, where the controls are, is an explicit gradient. */
 .player { --bd-delay: 60ms; --bd-dur: 420ms; --bd-ease: cubic-bezier(.4, 0, .2, 1); }
 .player-backdrop-art {
   position: absolute;
   left: -40%;
-  top: -14%;
+  top: calc(-14% - 60px);
   width: 180%;
   opacity: .9;
 }
+@supports (width: 1cqw) {
+  .player-backdrop-art {
+    width: max(180cqw, calc(135cqh + 120px));
+    left: calc(50% - max(180cqw, calc(135cqh + 120px)) / 2);
+  }
+}
+.player-backdrop-fade { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(42, 36, 26, 0) 62%, rgba(42, 36, 26, .5) 78%, #2a241a 94%); }
 .player-backdrop-show { filter: blur(70px) saturate(1.3); will-change: transform; }
 .player-backdrop-shade { position: absolute; inset: 0; background: rgba(28, 22, 14, .35); }
 .player[data-cover-tone="light"] .player-backdrop-shade { background: rgba(28, 22, 14, .55); }

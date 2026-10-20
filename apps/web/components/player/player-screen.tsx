@@ -261,6 +261,7 @@ export function PlayerScreen({
               </div>
             ) : null}
           </div>
+          <span className="player-backdrop-fade" />
           <span className="player-backdrop-shade" />
           <span className="player-backdrop-shade player-backdrop-shade-song" />
         </div>
