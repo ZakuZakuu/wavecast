@@ -41,28 +41,46 @@
 .player-sheet { position: absolute; inset: 0; overflow: hidden; }
 
 .player-backdrop { position: absolute; inset: 0; pointer-events: none; }
+/* The background is two blurred pictures that cross-fade: the programme's cover, and the song's while it is in
+   front. Each picture carries its own blur and is its own layer, so a fade only moves opacity (a blur put on
+   the group would be redone on every frame of the fade). The fade starts a little after the covers start
+   to move and ends with them, so the colours arrive with the cover that comes forward; the shade deepens
+   with it instead of jumping. */
+.player { --bd-delay: 60ms; --bd-dur: 420ms; --bd-ease: cubic-bezier(.4, 0, .2, 1); }
 .player-backdrop-art {
   position: absolute;
   left: -40%;
   top: -14%;
   width: 180%;
-  filter: blur(70px) saturate(1.3);
   opacity: .9;
 }
+.player-backdrop-show { filter: blur(70px) saturate(1.3); will-change: transform; }
 .player-backdrop-shade { position: absolute; inset: 0; background: rgba(28, 22, 14, .35); }
-.player[data-cover-tone="light"] .player-backdrop-shade,
-.player[data-front="song"] .player-backdrop-shade { background: rgba(28, 22, 14, .55); }
-/* The song's cover colours the background while it is in front; the programme's stays underneath. */
+.player[data-cover-tone="light"] .player-backdrop-shade { background: rgba(28, 22, 14, .55); }
+/* The extra darkening while the song's cover is in front (.35 → .55 in all, as before), faded in with the picture. */
+.player-backdrop-shade-song { background: rgba(28, 22, 14, .3077); opacity: 0; transition: opacity var(--bd-dur) var(--bd-ease) var(--bd-delay); will-change: opacity; }
+.player[data-front="song"] .player-backdrop-shade-song { opacity: 1; }
+.player[data-cover-tone="light"] .player-backdrop-shade-song { display: none; }
 .player-backdrop-song {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity var(--bd-dur) var(--bd-ease) var(--bd-delay);
+  will-change: opacity;
+}
+.player[data-front="song"] .player-backdrop-song { opacity: 1; }
+.player-backdrop-img {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  opacity: 0;
-  transition: opacity 400ms var(--ease);
+  display: block;
+  filter: blur(70px) saturate(1.3);
+  will-change: transform;
 }
-.player[data-front="song"] .player-backdrop-song { opacity: 1; }
+.player-backdrop-img.is-entering { animation: player-backdrop-in 480ms var(--bd-ease) both; }
+@keyframes player-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 
 .player-body {
   position: relative;
@@ -220,7 +238,8 @@
 }
 .player-cover-hit:focus-visible { outline: 2px solid rgba(255, 255, 255, .85); outline-offset: 3px; border-radius: 12px; }
 @media (prefers-reduced-motion: reduce) {
-  .player-backdrop-song { transition: none; }
+  .player-backdrop-song, .player-backdrop-shade-song { transition: none; }
+  .player-backdrop-img.is-entering { animation: none; }
   .player-cover-stack[data-swap] .player-cover-card.player-cover-card,
   .player-cover-stack[data-swap] .player-cover-card.player-cover-card::after { animation: none; }
   .player-song-image.is-entering { animation: none; }
