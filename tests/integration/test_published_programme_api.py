@@ -423,11 +423,11 @@ def public_by_others(rig: Rig, count: int) -> list[str]:
     return ids
 
 
-def test_the_shelf_offers_public_programmes_to_anyone_and_leaves_out_what_would_not_fill_it(client, rig) -> None:
+def test_the_shelf_offers_public_programmes_to_anyone_even_when_there_is_only_one_or_two(client, rig) -> None:
     viewer = who()
     assert client.get("/api/public-shelf", headers=viewer).json() == {"items": [], "has_more": False}
     public_by_others(rig, 2)
-    assert client.get("/api/public-shelf", headers=viewer).json()["items"] == []
+    assert len(client.get("/api/public-shelf", headers=viewer).json()["items"]) == 2
 
     ids = public_by_others(rig, 7)
     first = client.get("/api/public-shelf", headers=viewer).json()
