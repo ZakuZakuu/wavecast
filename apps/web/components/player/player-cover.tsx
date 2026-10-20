@@ -15,6 +15,8 @@ const CARD_SHARE = 0.912;
 
 export type LoadedCover = { current: string | null; previous: string | null };
 
+type Turn = { front: CoverFront; stacked: boolean; swap: "to-show" | "to-song" | null };
+
 // Covers loaded earlier in this visit: coming back to the player shows the stack at once instead of
 // the programme's cover alone for as long as the picture takes to arrive.
 const loadedBefore = new Set<string>();
@@ -86,23 +88,24 @@ export function PlayerCover({
   onToggle: () => void;
 }) {
   // Which way the stack is turning, for as long as it turns. Only a change of `front` while the stack is
-  // already on screen counts: the stack appearing is not a swap, so nothing animates then.
-  const [swap, setSwap] = useState<"to-show" | "to-song" | null>(null);
-  const previousFront = useRef(front);
-  const wasStacked = useRef(false);
-  const swapTimer = useRef<number | undefined>(undefined);
+  // already on screen counts: the stack appearing is not a swap, so nothing animates then. The marker is
+  // worked out while rendering, so it reaches the page in the same commit as the new `front`: the
+  // transition and the animation then start on the same frame (an effect would add it one frame late, and
+  // the order of the two covers would flip while the one leaving is still half visible).
   const stacked = Boolean(song.current);
+  const [turn, setTurn] = useState<Turn>({ front, stacked, swap: null });
+  let current = turn;
+  if (turn.front !== front || turn.stacked !== stacked) {
+    const turned = turn.front !== front && turn.stacked && stacked;
+    current = { front, stacked, swap: turned ? (front === "show" ? "to-show" : "to-song") : stacked ? turn.swap : null };
+    setTurn(current);
+  }
+  const swap = current.swap;
   useEffect(() => {
-    const turned = previousFront.current !== front;
-    previousFront.current = front;
-    const wasOn = wasStacked.current;
-    wasStacked.current = stacked;
-    if (!turned || !wasOn || !stacked) return;
-    setSwap(front === "show" ? "to-show" : "to-song");
-    window.clearTimeout(swapTimer.current);
-    swapTimer.current = window.setTimeout(() => setSwap(null), SWAP_MS + 50);
-  }, [front, stacked]);
-  useEffect(() => () => window.clearTimeout(swapTimer.current), []);
+    if (!swap) return;
+    const timer = window.setTimeout(() => setTurn((now) => (now.swap ? { ...now, swap: null } : now)), SWAP_MS + 50);
+    return () => window.clearTimeout(timer);
+  }, [swap]);
 
   if (!song.current) {
     return (

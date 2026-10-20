@@ -157,8 +157,11 @@
    the other forward. The swap is 250ms. The order flips half-way, when the two overlap almost entirely, so
    the card leaving the front dissolves out right there (and comes back behind), while depth — a little
    smaller and lighter going back, a little larger and heavier coming forward — says which way it turns.
-   The marker (data-swap) is on the stack only while it turns, never when the stack first appears. */
-.player-cover-stack { --swap: 250ms; --cover-shadow-front: 0 22px 50px rgba(0, 0, 0, .35); --cover-shadow-back: 0 12px 28px rgba(0, 0, 0, .25); position: relative; flex: 0 0 auto; touch-action: none; transform-origin: 50% 50%; }
+   The leaving card stays fully clear for a short stretch around the flip, so a frame of drift between the
+   (main-thread) order flip and the (compositor) fade does not show. Only transform, scale and opacity move:
+   a shadow that changes every frame would repaint two big blurred layers. The marker (data-swap) is on the
+   stack only while it turns, never when the stack first appears. */
+.player-cover-stack { --swap: 250ms; position: relative; flex: 0 0 auto; touch-action: none; transform-origin: 50% 50%; }
 .player-cover-card {
   position: absolute;
   left: 0;
@@ -168,8 +171,9 @@
   border-radius: 12px;
   overflow: hidden;
   background: rgba(255, 255, 255, .08);
-  box-shadow: var(--cover-shadow-front);
-  transition: transform var(--swap) var(--ease), box-shadow var(--swap) var(--ease), z-index 0s calc(var(--swap) / 2);
+  box-shadow: 0 22px 50px rgba(0, 0, 0, .35);
+  will-change: transform, opacity;
+  transition: transform var(--swap) var(--ease), z-index 0s calc(var(--swap) / 2);
 }
 .player-cover-card::after {
   content: "";
@@ -182,9 +186,9 @@
 }
 .player-cover-card.is-show { view-transition-name: programme-cover; }
 .player-cover-stack[data-front="song"] .is-song,
-.player-cover-stack[data-front="show"] .is-show { transform: translate(0, var(--off)); z-index: 2; box-shadow: var(--cover-shadow-front); }
+.player-cover-stack[data-front="show"] .is-show { transform: translate(0, var(--off)); z-index: 2; }
 .player-cover-stack[data-front="song"] .is-show,
-.player-cover-stack[data-front="show"] .is-song { transform: translate(var(--off), 0); z-index: 1; box-shadow: var(--cover-shadow-back); }
+.player-cover-stack[data-front="show"] .is-song { transform: translate(var(--off), 0); z-index: 1; }
 .player-cover-stack[data-front="song"] .is-show::after,
 .player-cover-stack[data-front="show"] .is-song::after { opacity: 1; }
 .player-cover-stack[data-swap="to-show"] .is-song,
@@ -192,7 +196,7 @@
 .player-cover-stack[data-swap="to-show"] .is-show,
 .player-cover-stack[data-swap="to-song"] .is-song { animation: player-card-arrive-scale var(--swap) ease-in-out; }
 @keyframes player-card-leave-scale { 0%, 100% { scale: 1; } 50% { scale: .96; } }
-@keyframes player-card-leave-fade { 0%, 15% { opacity: 1; } 50% { opacity: 0; } 85%, 100% { opacity: 1; } }
+@keyframes player-card-leave-fade { 0%, 15% { opacity: 1; } 38%, 62% { opacity: 0; } 85%, 100% { opacity: 1; } }
 @keyframes player-card-arrive-scale { 0%, 100% { scale: 1; } 50% { scale: 1.04; } }
 .player-song-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .player-song-image.is-entering { animation: player-song-in 400ms var(--ease) both; }
