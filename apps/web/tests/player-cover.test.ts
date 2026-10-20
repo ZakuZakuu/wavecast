@@ -91,17 +91,31 @@ describe("PlayerCover", () => {
       expect(stack().dataset.swap).toBeUndefined();
       render(song, "show");
       expect(stack().dataset.swap).toBe("to-show");
-      act(() => vi.advanceTimersByTime(400));
+      act(() => vi.advanceTimersByTime(600));
       expect(stack().dataset.swap).toBeUndefined();
       render(song, "song");
       expect(stack().dataset.swap).toBe("to-song");
+    });
+
+    it("ignores a tap while it is turning, so the path is not restarted half-way", () => {
+      const toggle = vi.fn();
+      render(song, "song", toggle);
+      act(() => (container.querySelector("button") as HTMLButtonElement).click());
+      expect(toggle).toHaveBeenCalledTimes(1);
+      render(song, "show", toggle);
+      expect(stack().dataset.swap).toBe("to-show");
+      act(() => (container.querySelector("button") as HTMLButtonElement).click());
+      expect(toggle).toHaveBeenCalledTimes(1);
+      act(() => vi.advanceTimersByTime(600));
+      act(() => (container.querySelector("button") as HTMLButtonElement).click());
+      expect(toggle).toHaveBeenCalledTimes(2);
     });
 
     it("does not play when the stack first appears, whichever cover is in front", () => {
       render({ current: null, previous: null }, "show");
       render(song, "song");
       expect(stack().dataset.swap).toBeUndefined();
-      act(() => vi.advanceTimersByTime(400));
+      act(() => vi.advanceTimersByTime(600));
       expect(stack().dataset.swap).toBeUndefined();
     });
 

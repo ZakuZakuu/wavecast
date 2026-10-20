@@ -9,7 +9,7 @@ import { TypeCover } from "../cover/type-cover";
 /** How long the previous song's cover stays underneath while the next one fades in. */
 const FADE_MS = 400;
 /** How long a swap of the two stacked covers runs (player.css: --swap). The marker stays a little longer. */
-const SWAP_MS = 250;
+const SWAP_MS = 440;
 /** Of the cover area, the share one stacked cover takes; the rest is the offset of the one behind. */
 const CARD_SHARE = 0.912;
 
@@ -135,7 +135,10 @@ export function PlayerCover({
         type="button"
         className="player-cover-hit"
         aria-label={front === "song" ? "查看节目封面" : "查看歌曲封面"}
-        onClick={onToggle}
+        onClick={() => {
+          // A swap in progress finishes first: a tap half-way through would restart the path from the start.
+          if (!swap) onToggle();
+        }}
       />
     </div>
   );
