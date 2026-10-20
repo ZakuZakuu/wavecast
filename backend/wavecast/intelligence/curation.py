@@ -62,9 +62,20 @@ class CuratorService:
         catalog_pool: CatalogPool | None = None,
         required_artists: Sequence[str] = (),
         variety_seed: str = "",
+        continuation_music_seconds: int | None = None,
+        music_budget_seconds: int | None = None,
     ) -> ProgramSkeleton:
         committed = committed_chapters or []
         research_context, fast_context = _build_curator_context(bundle, fast_plan)
+        continuation_context = (
+            f"Confirmed route music: {continuation_music_seconds} seconds. "
+            f"Target music budget: {music_budget_seconds} seconds. "
+            f"Remaining music: {max(0, music_budget_seconds - continuation_music_seconds)} seconds. "
+            "Extend this route toward that budget with relevant whole recordings. "
+            "Use catalog durations rather than a fixed song count; leave narration density unchanged.\n"
+            if continuation_music_seconds is not None and music_budget_seconds is not None
+            else ""
+        )
         prompt = (
             "Sequence a deliberate chapter-ordered response to the listener's actual topic "
             "from normalized research, the FastStart plan, and the ResearchPlan. This may be a "
@@ -133,6 +144,7 @@ class CuratorService:
             f"{_required_artists_context(required_artists)}"
             f"{_long_programme_guidance(desired_duration_seconds, max_tracks)}"
             f"Duration: {desired_duration_seconds}\n"
+            f"{continuation_context}"
             f"Output language: {resolve_output_language(output_language, topic).value}"
         )
         skeleton = await self.llm.structured(

@@ -645,7 +645,7 @@ def test_progressive_preparation_counts_application_opening_as_first_resolved_tr
     ]
 
 
-def test_progressive_route_rejects_severely_underfilled_duration(tmp_path) -> None:
+def test_progressive_route_reports_underfilled_duration_after_bounded_repair(tmp_path) -> None:
     class OneFutureTrackLLM(RecordingAssemblyLLM):
         async def structured(
             self,
@@ -678,24 +678,16 @@ def test_progressive_route_rejects_severely_underfilled_duration(tmp_path) -> No
         canonical_title="Neon First Light",
     )
 
-    with pytest.raises(
-        EpisodeAssemblyError,
-        match="duration coverage is too short",
-    ) as failure:
-        asyncio.run(
-            assembly.prepare_progressive_session(
-                LiveEpisodeAssemblyRequest(
-                    topic="fixture",
-                    desired_duration_seconds=22 * 60,
-                    max_tracks=5,
-                ),
-                opening_track=opening,
-            )
+    session = asyncio.run(
+        assembly.prepare_progressive_session(
+            LiveEpisodeAssemblyRequest(
+                topic="fixture", desired_duration_seconds=22 * 60, max_tracks=5,
+            ),
+            opening_track=opening,
         )
-
-    assert failure.value.reason_code == "insufficient_progressive_duration_coverage"
-    assert failure.value.diagnostics["estimated_resolved_music_seconds"] == 360
-    assert failure.value.diagnostics["required_resolved_music_seconds"] > 360
+    )
+    assert any(d.code == "duration_shortfall" for d in session.diagnostics)
+    assert len([c for c in session.chapters if c.resolved_track]) == 1
 
 
 def test_locked_progressive_route_catalog_continuation_fills_duration_coverage(
