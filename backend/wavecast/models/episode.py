@@ -216,6 +216,13 @@ class SourceNotice(BaseModel):
     artists: list[str] = Field(default_factory=list, max_length=4)
 
 
+class DurationNotice(BaseModel):
+    """Application-measured duration difference after generation has finished."""
+
+    target_seconds: int = Field(gt=0)
+    actual_seconds: int = Field(ge=0)
+
+
 class LiveEpisode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     seed_id: str
@@ -286,6 +293,19 @@ class LiveEpisode(BaseModel):
         if session is None or not session.unfulfilled_artists:
             return None
         return SourceNotice(kind="UNPLAYABLE_ARTISTS", artists=list(session.unfulfilled_artists))
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def duration_notice(self) -> DurationNotice | None:
+        if self.state not in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+            return None
+        actual = self.timeline_duration_seconds
+        if actual * 5 >= self.program_estimated_duration_seconds * 4:
+            return None
+        return DurationNotice(
+            target_seconds=self.program_estimated_duration_seconds,
+            actual_seconds=actual,
+        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

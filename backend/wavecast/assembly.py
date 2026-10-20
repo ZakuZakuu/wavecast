@@ -331,35 +331,8 @@ class _PreparedIntelligence:
 
 
 _ESTIMATED_TRACK_DURATION_SECONDS = 180
-_MIN_PROGRESSIVE_DURATION_COVERAGE_NUMERATOR = 3
-_MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR = 4
 _CATALOG_REPLACEMENT_LIMIT = 3
 
-
-def _required_progressive_music_seconds(
-    request: LiveEpisodeAssemblyRequest,
-    narration_ratio: float,
-) -> int:
-    target_narration_ratio = narration_ratio_for_host_mode(
-        request.presentation_intent.host_mode,
-        full_ratio=narration_ratio,
-    )
-    requested_music_seconds = int(
-        request.desired_duration_seconds * (1.0 - target_narration_ratio)
-    )
-    # The floor below which a route is refused stays tied to the fixed route size even when
-    # duration scaling raises the track cap: a longer request may add tracks when the catalog
-    # has them, but a catalog with fewer playable tracks must yield a shorter programme, not
-    # a failed one.
-    bounded_music_target_seconds = min(
-        requested_music_seconds,
-        min(request.max_tracks, _FIXED_ROUTE_LIMITS[0]) * _ESTIMATED_TRACK_DURATION_SECONDS,
-    )
-    return (
-        bounded_music_target_seconds * _MIN_PROGRESSIVE_DURATION_COVERAGE_NUMERATOR
-        + _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR
-        - 1
-    ) // _MIN_PROGRESSIVE_DURATION_COVERAGE_DENOMINATOR
 
 def _route_underfilled(
     request: LiveEpisodeAssemblyRequest,
@@ -954,7 +927,7 @@ class LiveEpisodeAssemblyService:
         bundle: ResearchBundle,
         fast_plan: FastStartPlan,
         opening_track: ResolvedTrack,
-        locked_successor: ResolvedTrack,
+        locked_successor: ResolvedTrack | None,
         resolved_chapters: list[_ResolvedChapter],
         used_tracks: list[ResolvedTrack],
         trace: GenerationTrace,
@@ -970,13 +943,14 @@ class LiveEpisodeAssemblyService:
         )
         current_track_count = sum(item.track is not None for item in normalized)
         if (
-            not _route_underfilled(request, self.narration_ratio, normalized)
+            request.required_work
+            or not _route_underfilled(request, self.narration_ratio, normalized)
             or current_track_count >= request.max_tracks
             or len(normalized) >= request.max_chapters
         ):
             return resolved_chapters, []
 
-        if not any(
+        if locked_successor is not None and not any(
             _same_song_identity(locked_successor, item)
             for item in used_tracks
         ):
@@ -1011,9 +985,21 @@ class LiveEpisodeAssemblyService:
                 )
             )
 
+        music_seconds = sum(
+            track_seconds(item.track.duration_seconds)
+            for item in normalized if item.track is not None
+        )
+        music_budget = music_budget_seconds(
+            request.desired_duration_seconds,
+            narration_ratio_for_host_mode(
+                request.presentation_intent.host_mode, full_ratio=self.narration_ratio
+            ),
+        )
         trace.mark(
             "curator_continuation_started",
             committed_track_count=len(committed),
+            music_seconds=music_seconds,
+            remaining_music_seconds=max(0, music_budget - music_seconds),
         )
         try:
             continuation = await self.background_pipeline.curator.curate(
@@ -1033,6 +1019,8 @@ class LiveEpisodeAssemblyService:
                 catalog_pool=catalog_pool,
                 required_artists=request.required_artists,
                 variety_seed=request.variety_seed,
+                continuation_music_seconds=music_seconds,
+                music_budget_seconds=music_budget,
             )
         except (CuratorContractError, ProviderError) as error:
             trace.mark(
@@ -1062,7 +1050,12 @@ class LiveEpisodeAssemblyService:
                 opening_track=opening_track,
                 locked_successor=locked_successor,
             )
-            if not _route_underfilled(request, self.narration_ratio, normalized_now):
+            if (
+                sum(track_seconds(item.track.duration_seconds)
+                    for item in normalized_now if item.track is not None) >= music_budget
+                or sum(item.track is not None for item in normalized_now) >= request.max_tracks
+                or len(normalized_now) >= request.max_chapters
+            ):
                 break
 
             chapter = continuation_chapter.model_copy(
@@ -1117,7 +1110,7 @@ class LiveEpisodeAssemblyService:
                         artist_cap=artist_cap,
                         station=request.station,
                         required_work=request.required_work,
-                    )
+                    ) if locked_successor is not None else None
                     if replacement is not None:
                         resolved, selected_proposal, replacement_kind = replacement
                         used_tracks.append(resolved)
@@ -1693,7 +1686,7 @@ class LiveEpisodeAssemblyService:
                     music_index=None,
                 )
             )
-        if locked_successor is not None and reserved_tracks:
+        if reserved_tracks:
             opening_track = reserved_tracks[0]
             continuation_started = perf_counter()
             resolved_chapters, continuation_unresolved = (
@@ -1712,15 +1705,16 @@ class LiveEpisodeAssemblyService:
             curator_ms += _elapsed_ms(continuation_started)
             unresolved.extend(continuation_unresolved)
 
-            resolved_chapters = await self._extend_underfilled_locked_route_from_catalog(
-                request,
-                opening_track=opening_track,
-                locked_successor=locked_successor,
-                resolved_chapters=resolved_chapters,
-                used_tracks=used_tracks,
-                trace=trace,
-                catalog_pool=catalog_pool,
-            )
+            if locked_successor is not None and not request.required_work:
+                resolved_chapters = await self._extend_underfilled_locked_route_from_catalog(
+                    request,
+                    opening_track=opening_track,
+                    locked_successor=locked_successor,
+                    resolved_chapters=resolved_chapters,
+                    used_tracks=used_tracks,
+                    trace=trace,
+                    catalog_pool=catalog_pool,
+                )
         resolved_chapters = _reindex_resolved_chapters(resolved_chapters)
         resolved_chapters = _reconcile_route_text(
             resolved_chapters,
@@ -3045,34 +3039,19 @@ def _build_progressive_session(
         request.presentation_intent.host_mode,
         full_ratio=narration_ratio,
     )
-    required_resolved_music_seconds = _required_progressive_music_seconds(
-        request,
-        narration_ratio,
-    )
-    # Real lengths where the catalog reported them: a route of a few long songs is as full as
-    # one of many short ones (the route was fitted to its time budget above).  A catalog of
-    # very short clips (previews, the mock provider) is still judged by track count, as it was
-    # before lengths were known, so the real-length view can only accept more routes.
     resolved_lengths = [opening_track.duration_seconds] + [
         item.track.duration_seconds for item in future if item.track is not None
     ]
-    estimated_resolved_music_seconds = max(
-        sum(track_seconds(length) for length in resolved_lengths),
-        len(resolved_lengths) * _ESTIMATED_TRACK_DURATION_SECONDS,
-    )
-    if estimated_resolved_music_seconds < required_resolved_music_seconds and not request.required_work:
-        # (A request for the versions of one work ends where the confirmed versions end.)
-        raise EpisodeAssemblyError(
-            "progressive route duration coverage is too short to be finalized",
-            stage="resolution",
-            reason_code="insufficient_progressive_duration_coverage",
-            diagnostics={
-                "estimated_resolved_music_seconds": estimated_resolved_music_seconds,
-                "required_resolved_music_seconds": required_resolved_music_seconds,
-                "desired_duration_seconds": request.desired_duration_seconds,
-                "unresolved_track_count": len(prepared.unresolved),
-            },
-        )
+    music_seconds = sum(track_seconds(length) for length in resolved_lengths)
+    music_budget = music_budget_seconds(request.desired_duration_seconds, target_narration_ratio)
+    duration_diagnostics = []
+    if is_underfilled(resolved_lengths, music_budget):
+        # A bounded continuation has already been offered. Keep the playable route
+        # instead of spending on repeated whole-pipeline retries or padding speech.
+        reason = "limited_work" if request.required_work else "bounded_continuation_exhausted"
+        detail = f"music_seconds={music_seconds} target_music_seconds={music_budget} reason={reason}"
+        duration_diagnostics.append(ProgressiveSessionDiagnostic(code="duration_shortfall", detail=detail))
+        logger.info("route_duration_shortfall %s", detail)
 
     logger.info(
         "route_artists %s",
@@ -3169,7 +3148,7 @@ def _build_progressive_session(
                 detail=item.reason,
             )
             for item in prepared.unresolved
-        ],
+        ] + duration_diagnostics,
     )
 
 
