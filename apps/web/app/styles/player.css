@@ -40,29 +40,58 @@
 .player-scrim { position: absolute; inset: 0; background: #000; opacity: .3; pointer-events: none; }
 .player-sheet { position: absolute; inset: 0; overflow: hidden; }
 
-.player-backdrop { position: absolute; inset: 0; pointer-events: none; }
+.player-backdrop { position: absolute; inset: 0; pointer-events: none; container-type: size; }
+/* The background is two blurred pictures that cross-fade: the programme's cover, and the song's while it is in
+   front. Each picture carries its own blur and is its own layer, so a fade only moves opacity (a blur put on
+   the group would be redone on every frame of the fade). The fade starts a little after the covers start
+   to move and ends with them, so the colours arrive with the cover that comes forward; the shade deepens
+   with it instead of jumping.
+   The pictures are larger than the screen on every side (by more than the blur reaches), so that no edge of a
+   blurred picture is ever on screen: the soft rim a blur leaves at an edge is drawn differently while a layer
+   is fading and once it is done (it brightened at the end of the fade in Safari). The darker foot of the
+   screen, where the controls are, is an explicit gradient. */
+.player { --bd-delay: 60ms; --bd-dur: 420ms; --bd-ease: cubic-bezier(.4, 0, .2, 1); }
 .player-backdrop-art {
   position: absolute;
   left: -40%;
-  top: -14%;
+  top: calc(-14% - 60px);
   width: 180%;
-  filter: blur(70px) saturate(1.3);
   opacity: .9;
 }
+@supports (width: 1cqw) {
+  .player-backdrop-art {
+    width: max(180cqw, calc(135cqh + 120px));
+    left: calc(50% - max(180cqw, calc(135cqh + 120px)) / 2);
+  }
+}
+.player-backdrop-fade { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(42, 36, 26, 0) 62%, rgba(42, 36, 26, .5) 78%, #2a241a 94%); }
+.player-backdrop-show { filter: blur(70px) saturate(1.3); will-change: transform; }
 .player-backdrop-shade { position: absolute; inset: 0; background: rgba(28, 22, 14, .35); }
-.player[data-cover-tone="light"] .player-backdrop-shade,
-.player[data-front="song"] .player-backdrop-shade { background: rgba(28, 22, 14, .55); }
-/* The song's cover colours the background while it is in front; the programme's stays underneath. */
+.player[data-cover-tone="light"] .player-backdrop-shade { background: rgba(28, 22, 14, .55); }
+/* The extra darkening while the song's cover is in front (.35 → .55 in all, as before), faded in with the picture. */
+.player-backdrop-shade-song { background: rgba(28, 22, 14, .3077); opacity: 0; transition: opacity var(--bd-dur) var(--bd-ease) var(--bd-delay); will-change: opacity; }
+.player[data-front="song"] .player-backdrop-shade-song { opacity: 1; }
+.player[data-cover-tone="light"] .player-backdrop-shade-song { display: none; }
 .player-backdrop-song {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity var(--bd-dur) var(--bd-ease) var(--bd-delay);
+  will-change: opacity;
+}
+.player[data-front="song"] .player-backdrop-song { opacity: 1; }
+.player-backdrop-img {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  opacity: 0;
-  transition: opacity 400ms var(--ease);
+  display: block;
+  filter: blur(70px) saturate(1.3);
+  will-change: transform;
 }
-.player[data-front="song"] .player-backdrop-song { opacity: 1; }
+.player-backdrop-img.is-entering { animation: player-backdrop-in 480ms var(--bd-ease) both; }
+@keyframes player-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 
 .player-body {
   position: relative;
@@ -154,8 +183,16 @@
   view-transition-name: programme-cover;
 }
 /* Two covers of one size, the second a little up and to the right behind the first; tapping brings
-   the other forward. */
-.player-cover-stack { position: relative; flex: 0 0 auto; touch-action: none; transform-origin: 50% 50%; }
+   the other forward. The one in front slides out to the side, the one behind moves forward, the order flips
+   while the first is clear of the other (it is off to the side, so there is nothing to see), and then it
+   slides back in behind. Nothing fades and nothing changes size: only transform moves, plus the order
+   flip, which falls in the middle of the stretch where the leaving card is clear (about 100ms wide), so a
+   few frames of drift between the main thread and the compositor do not show. (Safari flickered on every
+   version that faded the card or flipped the order while the two overlapped.) The path and its timing
+   are sampled keyframes: the leaving card follows one smooth curve, resting at both ends, and the other
+   card moves on its own curve a little later. The marker (data-swap) is on the stack only while it turns,
+   never when the stack first appears; --fly is how far out the leaving card goes. */
+.player-cover-stack { --swap: 440ms; --fly: calc((var(--card) + var(--off)) * 1.3); position: relative; flex: 0 0 auto; touch-action: none; transform-origin: 50% 50%; }
 .player-cover-card {
   position: absolute;
   left: 0;
@@ -166,7 +203,7 @@
   overflow: hidden;
   background: rgba(255, 255, 255, .08);
   box-shadow: 0 22px 50px rgba(0, 0, 0, .35);
-  transition: transform 250ms var(--ease), z-index 0s 125ms;
+  will-change: transform;
 }
 .player-cover-card::after {
   content: "";
@@ -174,7 +211,6 @@
   inset: 0;
   background: rgba(20, 14, 8, .14);
   opacity: 0;
-  transition: opacity 250ms var(--ease);
   pointer-events: none;
 }
 .player-cover-card.is-show { view-transition-name: programme-cover; }
@@ -184,6 +220,20 @@
 .player-cover-stack[data-front="show"] .is-song { transform: translate(var(--off), 0); z-index: 1; }
 .player-cover-stack[data-front="song"] .is-show::after,
 .player-cover-stack[data-front="show"] .is-song::after { opacity: 1; }
+.player-cover-stack[data-swap="to-show"] .is-song,
+.player-cover-stack[data-swap="to-song"] .is-show { animation: player-card-leave var(--swap) linear, player-card-leave-z var(--swap) linear; }
+.player-cover-stack[data-swap="to-show"] .is-show,
+.player-cover-stack[data-swap="to-song"] .is-song { animation: player-card-arrive var(--swap) linear, player-card-arrive-z var(--swap) linear; }
+.player-cover-stack[data-swap="to-show"] .is-song::after,
+.player-cover-stack[data-swap="to-song"] .is-show::after { animation: player-card-dim-in var(--swap) linear; }
+.player-cover-stack[data-swap="to-show"] .is-show::after,
+.player-cover-stack[data-swap="to-song"] .is-song::after { animation: player-card-dim-out var(--swap) linear; }
+@keyframes player-card-leave{0.00%{transform:translate(calc(var(--off) * 0.0000 + (var(--fly) - var(--off)) * 0.0000), calc(var(--off) * 1.0000)) rotate(0.000deg)}2.50%{transform:translate(calc(var(--off) * 0.0014 + (var(--fly) - var(--off)) * 0.0289), calc(var(--off) * 0.9986)) rotate(0.026deg)}5.00%{transform:translate(calc(var(--off) * 0.0057 + (var(--fly) - var(--off)) * 0.0732), calc(var(--off) * 0.9943)) rotate(0.107deg)}7.50%{transform:translate(calc(var(--off) * 0.0135 + (var(--fly) - var(--off)) * 0.1279), calc(var(--off) * 0.9865)) rotate(0.254deg)}10.00%{transform:translate(calc(var(--off) * 0.0252 + (var(--fly) - var(--off)) * 0.1920), calc(var(--off) * 0.9748)) rotate(0.474deg)}12.50%{transform:translate(calc(var(--off) * 0.0414 + (var(--fly) - var(--off)) * 0.2651), calc(var(--off) * 0.9586)) rotate(0.778deg)}15.00%{transform:translate(calc(var(--off) * 0.0629 + (var(--fly) - var(--off)) * 0.3471), calc(var(--off) * 0.9371)) rotate(1.178deg)}17.50%{transform:translate(calc(var(--off) * 0.0904 + (var(--fly) - var(--off)) * 0.4373), calc(var(--off) * 0.9096)) rotate(1.681deg)}20.00%{transform:translate(calc(var(--off) * 0.1245 + (var(--fly) - var(--off)) * 0.5344), calc(var(--off) * 0.8755)) rotate(2.288deg)}22.50%{transform:translate(calc(var(--off) * 0.1659 + (var(--fly) - var(--off)) * 0.6356), calc(var(--off) * 0.8341)) rotate(2.988deg)}25.00%{transform:translate(calc(var(--off) * 0.2146 + (var(--fly) - var(--off)) * 0.7363), calc(var(--off) * 0.7854)) rotate(3.746deg)}27.50%{transform:translate(calc(var(--off) * 0.2699 + (var(--fly) - var(--off)) * 0.8294), calc(var(--off) * 0.7301)) rotate(4.500deg)}30.00%{transform:translate(calc(var(--off) * 0.3301 + (var(--fly) - var(--off)) * 0.9072), calc(var(--off) * 0.6699)) rotate(5.165deg)}32.50%{transform:translate(calc(var(--off) * 0.3927 + (var(--fly) - var(--off)) * 0.9630), calc(var(--off) * 0.6073)) rotate(5.662deg)}35.00%{transform:translate(calc(var(--off) * 0.4549 + (var(--fly) - var(--off)) * 0.9935), calc(var(--off) * 0.5451)) rotate(5.940deg)}37.50%{transform:translate(calc(var(--off) * 0.5146 + (var(--fly) - var(--off)) * 0.9993), calc(var(--off) * 0.4854)) rotate(5.994deg)}40.00%{transform:translate(calc(var(--off) * 0.5702 + (var(--fly) - var(--off)) * 0.9842), calc(var(--off) * 0.4298)) rotate(5.854deg)}42.50%{transform:translate(calc(var(--off) * 0.6212 + (var(--fly) - var(--off)) * 0.9528), calc(var(--off) * 0.3788)) rotate(5.570deg)}45.00%{transform:translate(calc(var(--off) * 0.6673 + (var(--fly) - var(--off)) * 0.9100), calc(var(--off) * 0.3327)) rotate(5.190deg)}47.50%{transform:translate(calc(var(--off) * 0.7088 + (var(--fly) - var(--off)) * 0.8596), calc(var(--off) * 0.2912)) rotate(4.754deg)}50.00%{transform:translate(calc(var(--off) * 0.7460 + (var(--fly) - var(--off)) * 0.8048), calc(var(--off) * 0.2540)) rotate(4.296deg)}52.50%{transform:translate(calc(var(--off) * 0.7792 + (var(--fly) - var(--off)) * 0.7477), calc(var(--off) * 0.2208)) rotate(3.836deg)}55.00%{transform:translate(calc(var(--off) * 0.8089 + (var(--fly) - var(--off)) * 0.6900), calc(var(--off) * 0.1911)) rotate(3.390deg)}57.50%{transform:translate(calc(var(--off) * 0.8353 + (var(--fly) - var(--off)) * 0.6328), calc(var(--off) * 0.1647)) rotate(2.967deg)}60.00%{transform:translate(calc(var(--off) * 0.8589 + (var(--fly) - var(--off)) * 0.5768), calc(var(--off) * 0.1411)) rotate(2.573deg)}62.50%{transform:translate(calc(var(--off) * 0.8799 + (var(--fly) - var(--off)) * 0.5225), calc(var(--off) * 0.1201)) rotate(2.210deg)}65.00%{transform:translate(calc(var(--off) * 0.8985 + (var(--fly) - var(--off)) * 0.4703), calc(var(--off) * 0.1015)) rotate(1.880deg)}67.50%{transform:translate(calc(var(--off) * 0.9151 + (var(--fly) - var(--off)) * 0.4204), calc(var(--off) * 0.0849)) rotate(1.582deg)}70.00%{transform:translate(calc(var(--off) * 0.9297 + (var(--fly) - var(--off)) * 0.3728), calc(var(--off) * 0.0703)) rotate(1.315deg)}72.50%{transform:translate(calc(var(--off) * 0.9425 + (var(--fly) - var(--off)) * 0.3276), calc(var(--off) * 0.0575)) rotate(1.078deg)}75.00%{transform:translate(calc(var(--off) * 0.9537 + (var(--fly) - var(--off)) * 0.2849), calc(var(--off) * 0.0463)) rotate(0.869deg)}77.50%{transform:translate(calc(var(--off) * 0.9635 + (var(--fly) - var(--off)) * 0.2445), calc(var(--off) * 0.0365)) rotate(0.687deg)}80.00%{transform:translate(calc(var(--off) * 0.9718 + (var(--fly) - var(--off)) * 0.2066), calc(var(--off) * 0.0282)) rotate(0.530deg)}82.50%{transform:translate(calc(var(--off) * 0.9789 + (var(--fly) - var(--off)) * 0.1711), calc(var(--off) * 0.0211)) rotate(0.397deg)}85.00%{transform:translate(calc(var(--off) * 0.9849 + (var(--fly) - var(--off)) * 0.1379), calc(var(--off) * 0.0151)) rotate(0.285deg)}87.50%{transform:translate(calc(var(--off) * 0.9897 + (var(--fly) - var(--off)) * 0.1073), calc(var(--off) * 0.0103)) rotate(0.193deg)}90.00%{transform:translate(calc(var(--off) * 0.9936 + (var(--fly) - var(--off)) * 0.0791), calc(var(--off) * 0.0064)) rotate(0.121deg)}92.50%{transform:translate(calc(var(--off) * 0.9965 + (var(--fly) - var(--off)) * 0.0537), calc(var(--off) * 0.0035)) rotate(0.067deg)}95.00%{transform:translate(calc(var(--off) * 0.9985 + (var(--fly) - var(--off)) * 0.0313), calc(var(--off) * 0.0015)) rotate(0.029deg)}97.50%{transform:translate(calc(var(--off) * 0.9996 + (var(--fly) - var(--off)) * 0.0125), calc(var(--off) * 0.0004)) rotate(0.007deg)}100.00%{transform:translate(calc(var(--off) * 1.0000 + (var(--fly) - var(--off)) * 0.0000), calc(var(--off) * 0.0000)) rotate(0.000deg)}}
+@keyframes player-card-arrive{0.00%{transform:translate(calc(var(--off) * 1.0000), calc(var(--off) * 0.0000))}2.50%{transform:translate(calc(var(--off) * 1.0000), calc(var(--off) * 0.0000))}5.00%{transform:translate(calc(var(--off) * 1.0000), calc(var(--off) * 0.0000))}7.50%{transform:translate(calc(var(--off) * 1.0000), calc(var(--off) * 0.0000))}10.00%{transform:translate(calc(var(--off) * 1.0000), calc(var(--off) * 0.0000))}12.50%{transform:translate(calc(var(--off) * 0.9965), calc(var(--off) * 0.0035))}15.00%{transform:translate(calc(var(--off) * 0.9847), calc(var(--off) * 0.0153))}17.50%{transform:translate(calc(var(--off) * 0.9625), calc(var(--off) * 0.0375))}20.00%{transform:translate(calc(var(--off) * 0.9274), calc(var(--off) * 0.0726))}22.50%{transform:translate(calc(var(--off) * 0.8765), calc(var(--off) * 0.1235))}25.00%{transform:translate(calc(var(--off) * 0.8085), calc(var(--off) * 0.1915))}27.50%{transform:translate(calc(var(--off) * 0.7256), calc(var(--off) * 0.2744))}30.00%{transform:translate(calc(var(--off) * 0.6349), calc(var(--off) * 0.3651))}32.50%{transform:translate(calc(var(--off) * 0.5454), calc(var(--off) * 0.4546))}35.00%{transform:translate(calc(var(--off) * 0.4634), calc(var(--off) * 0.5366))}37.50%{transform:translate(calc(var(--off) * 0.3913), calc(var(--off) * 0.6087))}40.00%{transform:translate(calc(var(--off) * 0.3289), calc(var(--off) * 0.6711))}42.50%{transform:translate(calc(var(--off) * 0.2754), calc(var(--off) * 0.7246))}45.00%{transform:translate(calc(var(--off) * 0.2294), calc(var(--off) * 0.7706))}47.50%{transform:translate(calc(var(--off) * 0.1900), calc(var(--off) * 0.8100))}50.00%{transform:translate(calc(var(--off) * 0.1562), calc(var(--off) * 0.8438))}52.50%{transform:translate(calc(var(--off) * 0.1271), calc(var(--off) * 0.8729))}55.00%{transform:translate(calc(var(--off) * 0.1023), calc(var(--off) * 0.8977))}57.50%{transform:translate(calc(var(--off) * 0.0810), calc(var(--off) * 0.9190))}60.00%{transform:translate(calc(var(--off) * 0.0630), calc(var(--off) * 0.9370))}62.50%{transform:translate(calc(var(--off) * 0.0478), calc(var(--off) * 0.9522))}65.00%{transform:translate(calc(var(--off) * 0.0352), calc(var(--off) * 0.9648))}67.50%{transform:translate(calc(var(--off) * 0.0248), calc(var(--off) * 0.9752))}70.00%{transform:translate(calc(var(--off) * 0.0165), calc(var(--off) * 0.9835))}72.50%{transform:translate(calc(var(--off) * 0.0100), calc(var(--off) * 0.9900))}75.00%{transform:translate(calc(var(--off) * 0.0053), calc(var(--off) * 0.9947))}77.50%{transform:translate(calc(var(--off) * 0.0021), calc(var(--off) * 0.9979))}80.00%{transform:translate(calc(var(--off) * 0.0004), calc(var(--off) * 0.9996))}82.50%{transform:translate(calc(var(--off) * 0.0000), calc(var(--off) * 1.0000))}85.00%{transform:translate(calc(var(--off) * 0.0000), calc(var(--off) * 1.0000))}87.50%{transform:translate(calc(var(--off) * 0.0000), calc(var(--off) * 1.0000))}90.00%{transform:translate(calc(var(--off) * 0.0000), calc(var(--off) * 1.0000))}92.50%{transform:translate(calc(var(--off) * 0.0000), calc(var(--off) * 1.0000))}95.00%{transform:translate(calc(var(--off) * 0.0000), calc(var(--off) * 1.0000))}97.50%{transform:translate(calc(var(--off) * 0.0000), calc(var(--off) * 1.0000))}100.00%{transform:translate(calc(var(--off) * 0.0000), calc(var(--off) * 1.0000))}}
+@keyframes player-card-leave-z{0%,39.10%{z-index:2}39.20%,100%{z-index:1}}
+@keyframes player-card-arrive-z{0%,39.10%{z-index:1}39.20%,100%{z-index:2}}
+@keyframes player-card-dim-in{0%,43.20%{opacity:0}92%,100%{opacity:1}}
+@keyframes player-card-dim-out{0%,10.00%{opacity:1}82.00%,100%{opacity:0}}
 .player-song-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .player-song-image.is-entering { animation: player-song-in 400ms var(--ease) both; }
 @keyframes player-song-in { from { opacity: 0; } to { opacity: 1; } }
@@ -199,7 +249,10 @@
 }
 .player-cover-hit:focus-visible { outline: 2px solid rgba(255, 255, 255, .85); outline-offset: 3px; border-radius: 12px; }
 @media (prefers-reduced-motion: reduce) {
-  .player-cover-card, .player-cover-card::after, .player-backdrop-song { transition: none; }
+  .player-backdrop-song, .player-backdrop-shade-song { transition: none; }
+  .player-backdrop-img.is-entering { animation: none; }
+  .player-cover-stack[data-swap] .player-cover-card.player-cover-card,
+  .player-cover-stack[data-swap] .player-cover-card.player-cover-card::after { animation: none; }
   .player-song-image.is-entering { animation: none; }
 }
 .player-cover-placeholder {

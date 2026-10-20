@@ -214,6 +214,7 @@ export type LiveEpisode = {
   timeline_duration_seconds: number;
   /** Present when the route cannot play artists the listener asked for. */
   source_notice?: SourceNotice | null;
+  duration_notice?: { target_seconds: number; actual_seconds: number } | null;
 };
 
 export type UserGenre =

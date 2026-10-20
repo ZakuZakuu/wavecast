@@ -82,6 +82,50 @@ describe("PlayerCover", () => {
     expect(container.querySelector(".player-cover")).toBeNull();
   });
 
+  describe("when the stack turns over", () => {
+    const song = { current: "https://x/a.jpg", previous: null };
+    const stack = () => container.querySelector(".player-cover-stack") as HTMLElement;
+
+    it("marks which way it turns while it turns, and lets go once it is done", () => {
+      render(song, "song");
+      expect(stack().dataset.swap).toBeUndefined();
+      render(song, "show");
+      expect(stack().dataset.swap).toBe("to-show");
+      act(() => vi.advanceTimersByTime(600));
+      expect(stack().dataset.swap).toBeUndefined();
+      render(song, "song");
+      expect(stack().dataset.swap).toBe("to-song");
+    });
+
+    it("ignores a tap while it is turning, so the path is not restarted half-way", () => {
+      const toggle = vi.fn();
+      render(song, "song", toggle);
+      act(() => (container.querySelector("button") as HTMLButtonElement).click());
+      expect(toggle).toHaveBeenCalledTimes(1);
+      render(song, "show", toggle);
+      expect(stack().dataset.swap).toBe("to-show");
+      act(() => (container.querySelector("button") as HTMLButtonElement).click());
+      expect(toggle).toHaveBeenCalledTimes(1);
+      act(() => vi.advanceTimersByTime(600));
+      act(() => (container.querySelector("button") as HTMLButtonElement).click());
+      expect(toggle).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not play when the stack first appears, whichever cover is in front", () => {
+      render({ current: null, previous: null }, "show");
+      render(song, "song");
+      expect(stack().dataset.swap).toBeUndefined();
+      act(() => vi.advanceTimersByTime(600));
+      expect(stack().dataset.swap).toBeUndefined();
+    });
+
+    it("stays quiet while only the song changes", () => {
+      render(song, "song");
+      render({ current: "https://x/b.jpg", previous: "https://x/a.jpg" }, "song");
+      expect(stack().dataset.swap).toBeUndefined();
+    });
+  });
+
   it("keeps the previous song's cover underneath while the next one comes in", () => {
     render({ current: "https://x/b.jpg", previous: "https://x/a.jpg" }, "song");
     const sources = [...container.querySelectorAll(".is-song img")].map((node) => node.getAttribute("src"));

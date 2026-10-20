@@ -459,6 +459,8 @@ class FastStartPlan(BaseModel):
     immediate_taste_hypotheses: list[TasteHypothesis]
     next_candidates: list[TrackProposal]
     selected_next_track: TrackProposal | None = None
+    # A style/facet request cannot be rescued with an arbitrary same-artist recording.
+    allow_artist_fallback: bool = False
     first_narration: NarrationScript
     uncertainties: list[str] = Field(default_factory=list)
     research_plan: ResearchPlan = Field(default_factory=empty_research_plan)
@@ -486,6 +488,8 @@ class ResearchDepth(StrEnum):
 
 class FastResearchInput(BaseModel):
     topic: str
+    editorial_brief: str | None = None
+    prior_evidence: list[Evidence] = Field(default_factory=list, exclude=True, repr=False)
     anchor_tracks: list[str] = Field(default_factory=list)
     anchor_artists: list[str] = Field(default_factory=list)
     desired_duration_seconds: int = Field(gt=0)

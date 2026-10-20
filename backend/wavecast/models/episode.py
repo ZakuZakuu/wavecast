@@ -73,6 +73,7 @@ class EpisodeSeed(BaseModel):
     id: str
     title: str
     topic: str
+    opening_evidence: list[Evidence] = Field(default_factory=list, exclude=True, repr=False)
     short_description: str
     # A short label for the cover (see title_style); None for programmes made before it existed.
     cover_title: str | None = Field(default=None, max_length=40)
@@ -215,6 +216,13 @@ class SourceNotice(BaseModel):
     artists: list[str] = Field(default_factory=list, max_length=4)
 
 
+class DurationNotice(BaseModel):
+    """Application-measured duration difference after generation has finished."""
+
+    target_seconds: int = Field(gt=0)
+    actual_seconds: int = Field(ge=0)
+
+
 class LiveEpisode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     seed_id: str
@@ -285,6 +293,19 @@ class LiveEpisode(BaseModel):
         if session is None or not session.unfulfilled_artists:
             return None
         return SourceNotice(kind="UNPLAYABLE_ARTISTS", artists=list(session.unfulfilled_artists))
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def duration_notice(self) -> DurationNotice | None:
+        if self.state not in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}:
+            return None
+        actual = self.timeline_duration_seconds
+        if actual * 5 >= self.program_estimated_duration_seconds * 4:
+            return None
+        return DurationNotice(
+            target_seconds=self.program_estimated_duration_seconds,
+            actual_seconds=actual,
+        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -407,3 +428,4 @@ from wavecast.intelligence.models import Evidence  # noqa: E402
 from wavecast.models.progressive import ProgressiveAssemblySession  # noqa: E402
 
 LiveEpisode.model_rebuild()
+EpisodeSeed.model_rebuild()

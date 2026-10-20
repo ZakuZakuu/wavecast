@@ -8,10 +8,14 @@ import { TypeCover } from "../cover/type-cover";
 
 /** How long the previous song's cover stays underneath while the next one fades in. */
 const FADE_MS = 400;
+/** How long a swap of the two stacked covers runs (player.css: --swap). The marker stays a little longer. */
+const SWAP_MS = 440;
 /** Of the cover area, the share one stacked cover takes; the rest is the offset of the one behind. */
 const CARD_SHARE = 0.912;
 
 export type LoadedCover = { current: string | null; previous: string | null };
+
+type Turn = { front: CoverFront; stacked: boolean; swap: "to-show" | "to-song" | null };
 
 // Covers loaded earlier in this visit: coming back to the player shows the stack at once instead of
 // the programme's cover alone for as long as the picture takes to arrive.
@@ -83,6 +87,26 @@ export function PlayerCover({
   front: CoverFront;
   onToggle: () => void;
 }) {
+  // Which way the stack is turning, for as long as it turns. Only a change of `front` while the stack is
+  // already on screen counts: the stack appearing is not a swap, so nothing animates then. The marker is
+  // worked out while rendering, so it reaches the page in the same commit as the new `front`: the
+  // transition and the animation then start on the same frame (an effect would add it one frame late, and
+  // the order of the two covers would flip while the one leaving is still half visible).
+  const stacked = Boolean(song.current);
+  const [turn, setTurn] = useState<Turn>({ front, stacked, swap: null });
+  let current = turn;
+  if (turn.front !== front || turn.stacked !== stacked) {
+    const turned = turn.front !== front && turn.stacked && stacked;
+    current = { front, stacked, swap: turned ? (front === "show" ? "to-show" : "to-song") : stacked ? turn.swap : null };
+    setTurn(current);
+  }
+  const swap = current.swap;
+  useEffect(() => {
+    if (!swap) return;
+    const timer = window.setTimeout(() => setTurn((now) => (now.swap ? { ...now, swap: null } : now)), SWAP_MS + 50);
+    return () => window.clearTimeout(timer);
+  }, [swap]);
+
   if (!song.current) {
     return (
       <div key="single" className="player-cover" data-drag-handle style={{ width: size, height: size }}>
@@ -97,6 +121,7 @@ export function PlayerCover({
       className="player-cover-stack"
       data-drag-handle
       data-front={front}
+      data-swap={swap ?? undefined}
       style={{ width: size, height: size, ["--card" as string]: `${card}px`, ["--off" as string]: `${size - card}px` }}
     >
       <div className="player-cover-card is-show">
@@ -110,7 +135,10 @@ export function PlayerCover({
         type="button"
         className="player-cover-hit"
         aria-label={front === "song" ? "查看节目封面" : "查看歌曲封面"}
-        onClick={onToggle}
+        onClick={() => {
+          // A swap in progress finishes first: a tap half-way through would restart the path from the start.
+          if (!swap) onToggle();
+        }}
       />
     </div>
   );

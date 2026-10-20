@@ -2,6 +2,7 @@
 
 import { formatClock, routeChapters, type RouteChapter } from "../../lib/now-playing";
 import { sourceNoticeText } from "../../lib/source-notice";
+import { durationNoticeText } from "../../lib/duration-notice";
 import { BottomSheet } from "../bottom-sheet";
 import { CloseIcon } from "../icons";
 import type { NowPlaying } from "./playback-provider";
@@ -77,6 +78,7 @@ export function RouteSheet({
     ? routeChapters(episode, playback.mixPlan, currentMusicId, playback.maxSeekPosition, playback.browserPosition)
     : [];
   const notice = sourceNoticeText(episode.source_notice);
+  const durationNotice = durationNoticeText(episode.duration_notice);
 
   return (
     <BottomSheet open={open} onClose={onClose} label="节目路线" tone="dark" height="min(640px, calc(100dvh - 60px))">
@@ -90,6 +92,7 @@ export function RouteSheet({
         </button>
       </header>
       {notice ? <p className="route-notice">{notice}</p> : null}
+      {durationNotice ? <p className="route-notice">{durationNotice}</p> : null}
 
       <RouteList
         chapters={chapters}

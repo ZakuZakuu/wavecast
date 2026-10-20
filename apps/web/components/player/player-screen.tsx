@@ -250,12 +250,20 @@ export function PlayerScreen({
       {cover ? (
         <div className="player-backdrop" aria-hidden="true">
           <div className="player-backdrop-art">
-            <TypeCover params={{ ...cover.params, bare: true }} radius={0} />
+            <div className="player-backdrop-show">
+              <TypeCover params={{ ...cover.params, bare: true }} radius={0} />
+            </div>
             {songCover.current ? (
-              <img className="player-backdrop-song" src={songCover.current} alt="" referrerPolicy="no-referrer" />
+              <div className="player-backdrop-song">
+                {/* The previous song's picture stays underneath while the new one fades in over it. */}
+                {songCover.previous ? <img className="player-backdrop-img" src={songCover.previous} alt="" referrerPolicy="no-referrer" /> : null}
+                <img key={songCover.current} className="player-backdrop-img is-entering" src={songCover.current} alt="" referrerPolicy="no-referrer" />
+              </div>
             ) : null}
           </div>
+          <span className="player-backdrop-fade" />
           <span className="player-backdrop-shade" />
+          <span className="player-backdrop-shade player-backdrop-shade-song" />
         </div>
       ) : null}
 

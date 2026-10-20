@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from wavecast.hosting import OPENING_SECONDS, discussion_counts
-from wavecast.intelligence.models import ResolvedTrack
+from wavecast.intelligence.models import FastResearchInput, ResolvedTrack
 from wavecast.models.episode import (
     GenerationMode,
     LiveEpisode,
@@ -97,6 +97,7 @@ class StagedProgressiveRuntimeAdapter:
         request = LiveEpisodeAssemblyRequest(
             topic=episode.topic,
             editorial_brief=episode.editorial_brief,
+            opening_evidence=list(episode.opening_evidence),
             anchor_tracks=[opening.title],
             desired_duration_seconds=episode.program_estimated_duration_seconds,
             max_tracks=max_tracks,
@@ -208,6 +209,25 @@ class StagedProgressiveRuntimeAdapter:
             cover_url=successor.cover_url,
             duration_seconds=_known_seconds(successor),
         )
+        # Both songs are already playable. Spend only the existing short search budget
+        # on their actual relationship before opening material/Writer, never before music.
+        evidence = list(episode.opening_evidence)
+        try:
+            pair_research = await self.assembly.fast_path.research.run(FastResearchInput(
+                topic=episode.topic,
+                editorial_brief=episode.editorial_brief,
+                anchor_tracks=[
+                    f"{opening_artist} — {opening_title}",
+                    f"{successor_artist} — {successor_title}",
+                ],
+                desired_duration_seconds=episode.program_estimated_duration_seconds,
+                output_language=episode.output_language,
+            ))
+            evidence = list({
+                item.id: item for item in [*evidence, *pair_research.bundle.evidence]
+            }.values())
+        except ProviderError:
+            pass  # Existing evidence still permits an honest, shorter opening.
         chapter = ChapterPlan(
             index=1,
             track=TrackProposal(
@@ -217,7 +237,7 @@ class StagedProgressiveRuntimeAdapter:
                 confidence=1.0,
             ),
             narrative_role=NarrativeRole.BRIDGE,
-            evidence_ids=[item.id for item in episode.opening_evidence],
+            evidence_ids=[item.id for item in evidence],
             reason="Establish the programme's listening direction after its first song.",
             narration_goal=(
                 "Develop the programme's opening: connect the confirmed first pair to a "
@@ -258,7 +278,7 @@ class StagedProgressiveRuntimeAdapter:
                 chosen_slot_ids={slot.slot_id},
                 chapter_id="chapter-2",
                 order=pending.order,
-                evidence=episode.opening_evidence,
+                evidence=evidence,
                 subject=episode.topic,
                 track_ref=successor_track.track_ref,
                 track_label=f"{successor_artist} - {successor_title}",
@@ -291,7 +311,7 @@ class StagedProgressiveRuntimeAdapter:
             else:
                 script = await self.assembly.background_pipeline.writer.write(
                     chapter,
-                    episode.opening_evidence,
+                    evidence,
                     next_track_metadata=(
                         f"{successor_track.canonical_artist} - {successor_track.canonical_title}"
                     ),
@@ -363,7 +383,7 @@ class StagedProgressiveRuntimeAdapter:
                     segment.hosting_role = "opening"
                 if offer is not None and offer.audio is not None:
                     segment.dialogue_audio = offer.audio
-        return _generated_runtime_chapter(
+        generated = _generated_runtime_chapter(
             "chapter-2",
             playable.segments,
             base_order=min(
@@ -372,6 +392,8 @@ class StagedProgressiveRuntimeAdapter:
                 if segment.chapter_id == "chapter-2"
             ),
         )
+        generated.research_evidence = evidence
+        return generated
 
     @scoped_to_episode
     async def prepare_session(self, episode: LiveEpisode) -> ProgressiveAssemblySession:
@@ -411,6 +433,7 @@ class StagedProgressiveRuntimeAdapter:
         request = LiveEpisodeAssemblyRequest(
             topic=episode.topic,
             editorial_brief=episode.editorial_brief,
+            opening_evidence=list(episode.opening_evidence),
             anchor_tracks=[opening.title],
             desired_duration_seconds=episode.program_estimated_duration_seconds,
             max_tracks=max_tracks,
