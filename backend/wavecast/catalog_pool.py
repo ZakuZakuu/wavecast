@@ -38,16 +38,22 @@ from wavecast.providers.retrieval import (
 )
 from wavecast.spoken_form import catalog_album, catalog_cover, chinese_title
 from wavecast.text_identity import (
+    artist_credit_includes as artist_credit_includes,
+)
+from wavecast.text_identity import (
     base_title_key,
     canonical_name,
     same_catalog_name,
     strip_latin_accents,
     without_feature_credit,
 )
+from wavecast.text_identity import (
+    primary_artist as primary_artist,
+)
+from wavecast.text_identity import (
+    split_artists as split_artists,
+)
 
-# Catalog credits separate artists with commas; "&", "/" and "x" appear inside real
-# names (Simon & Garfunkel, AC/DC, X Japan), so they are deliberately not separators.
-_ARTIST_SEPARATORS = re.compile(r"\s*(?:,|，|、|;|；|\bfeat\.?|\bft\.?)\s*", re.I)
 # Titles that label themselves as someone else's song: "(翻自 久石让)", "(Cover)", "致敬".  A
 # search for an artist returns them because their credit or title names that artist.
 _COVER_MARKER = re.compile(
@@ -85,25 +91,6 @@ class AvailabilityStatus(StrEnum):
     UNPLAYABLE = "unplayable"
     NOT_FOUND = "not_found"
     PROVIDER_ERROR = "provider_error"
-
-
-def split_artists(value: str) -> tuple[str, ...]:
-    """Split a catalog artist credit such as ``"A, B & C"`` into its artists."""
-
-    parts = [part.strip() for part in _ARTIST_SEPARATORS.split(value) if part.strip()]
-    return tuple(parts) if parts else (value.strip(),)
-
-
-def primary_artist(value: str) -> str:
-    return split_artists(value)[0]
-
-
-def artist_credit_includes(credit: str, artist: str) -> bool:
-    """True when ``artist`` is one of the credited artists (script variants folded)."""
-
-    return any(same_catalog_name(part, artist) for part in split_artists(credit)) or (
-        same_catalog_name(credit, artist)
-    )
 
 
 def artist_named_in_query(query: str, credit: str) -> bool:

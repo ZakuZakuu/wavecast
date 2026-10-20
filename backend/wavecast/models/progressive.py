@@ -52,7 +52,7 @@ class ProgressiveAssemblySession(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal[1] = 1
-    topic: str = Field(min_length=1, max_length=300)
+    topic: str = Field(min_length=1, max_length=500)
     listener_taste_context: str | None = Field(default=None, max_length=1000)
     desired_duration_seconds: int = Field(gt=0)
     max_tracks: int = Field(ge=2, le=16)

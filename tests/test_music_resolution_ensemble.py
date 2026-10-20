@@ -1,5 +1,6 @@
 import asyncio
 
+import pytest
 from wavecast.intelligence.models import TrackProposal
 from wavecast.intelligence.resolution import (
     resolve_track_proposal,
@@ -95,6 +96,46 @@ class QueryAwareFixture:
             playback_url="https://sidecar.test/stream/track",
             duration=180,
         )
+
+
+@pytest.mark.parametrize("credit,requested", [
+    ("BAYNK, Cosmo's Midnight", "BAYNK"),
+    ("BAYNK, Cosmo's Midnight", "Cosmo's Midnight"),
+    ("椎名林檎, 斎藤ネコ", "椎名林檎"),
+    ("Simon & Garfunkel", "Simon & Garfunkel"),
+])
+def test_exact_recording_credited_to_requested_artist_survives_detail_check(credit, requested):
+    search = TrackMetadata(track_ref="netease:joint", artist=credit, title="Exact Recording",
+                           duration_seconds=219, playable=False)
+    provider = ResolutionFixture([search], details={
+        "netease:joint": search.model_copy(update={"playable": True}),
+    })
+    retrieval = MusicRetrievalService(MusicProviderRegistry({"netease": provider}))
+    proposal = TrackProposal(artist=requested, title="Exact Recording", confidence=0.9)
+    for resolved in (
+        asyncio.run(resolve_track_proposal(provider, proposal)),
+        asyncio.run(resolve_track_proposal_across_providers(retrieval, proposal)),
+    ):
+        assert resolved is not None
+        assert resolved.track_ref == "netease:joint"
+        assert resolved.canonical_artist == credit  # Preserve every actual collaborator.
+
+
+@pytest.mark.parametrize("credit,requested,catalog_title", [
+    ("Bill Evans Trio", "Bill Evans", "Exact Recording"),
+    ("Other Artist", "Artist", "Exact Recording"),
+    ("A, C", "A, B", "Exact Recording"),
+    ("AC/DC", "AC", "Exact Recording"),
+    ("A, B", "A", "Exact Recording (Live)"),
+])
+def test_credit_membership_keeps_name_and_recording_version_boundaries(credit, requested, catalog_title):
+    track = TrackMetadata(track_ref="netease:wrong", artist=credit, title=catalog_title,
+                          duration_seconds=219, playable=True)
+    provider = ResolutionFixture([track])
+    retrieval = MusicRetrievalService(MusicProviderRegistry({"netease": provider}))
+    proposal = TrackProposal(artist=requested, title="Exact Recording", confidence=0.9)
+    assert asyncio.run(resolve_track_proposal(provider, proposal)) is None
+    assert asyncio.run(resolve_track_proposal_across_providers(retrieval, proposal)) is None
 
 
 def test_ensemble_resolution_requires_exact_catalog_identity() -> None:

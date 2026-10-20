@@ -210,8 +210,9 @@ class NarrationPlacementError(ValueError):
 class LiveEpisodeAssemblyRequest(BaseModel):
     """Provider-neutral input for one bounded episode assembly run."""
 
-    topic: str = Field(min_length=1, max_length=300)
+    topic: str = Field(min_length=1, max_length=500)
     editorial_brief: str | None = Field(default=None, max_length=500)
+    opening_evidence: list[Evidence] = Field(default_factory=list, exclude=True, repr=False)
     anchor_tracks: list[str] = Field(default_factory=list, max_length=8)
     desired_duration_seconds: int = Field(default=900, gt=0)
     max_tracks: int = Field(default=4, ge=2, le=16)
@@ -652,7 +653,10 @@ class LiveEpisodeAssemblyService:
         request = _confirm_work(request, opening_track)
         intelligence_input = FastResearchInput(
             topic=request.topic,
+            editorial_brief=request.editorial_brief,
+            prior_evidence=list(request.opening_evidence),
             anchor_tracks=list(request.anchor_tracks),
+            anchor_artists=[opening_track.canonical_artist],
             desired_duration_seconds=request.desired_duration_seconds,
             listener_taste_context=request.listener_taste_context,
             output_language=request.output_language,
@@ -760,6 +764,8 @@ class LiveEpisodeAssemblyService:
         # Only if FastStart cannot yield a playable successor, spend one bounded
         # catalog lookup on another song by the opening artist. This keeps a
         # concrete next source ahead of the slower Research/Curator route.
+        if not fast_result.plan.allow_artist_fallback:
+            return None
         catalog_fallbacks = await self.retrieval.search(
             opening_track.canonical_artist,
             requested_artist=opening_track.canonical_artist,
@@ -1435,7 +1441,15 @@ class LiveEpisodeAssemblyService:
         request_id = request_id or uuid4().hex
         intelligence_input = FastResearchInput(
             topic=request.topic,
+            editorial_brief=request.editorial_brief,
+            prior_evidence=list(request.opening_evidence),
             anchor_tracks=list(request.anchor_tracks),
+            anchor_artists=list(dict.fromkeys(
+                track.canonical_artist for track in (
+                    *reserved_tracks,
+                    *((locked_successor,) if locked_successor is not None else ()),
+                )
+            )),
             desired_duration_seconds=request.desired_duration_seconds,
             listener_taste_context=request.listener_taste_context,
             output_language=request.output_language,
@@ -2419,7 +2433,7 @@ def _locked_successor_fast_result(
             f"{locked_successor.canonical_artist} - {locked_successor.canonical_title}",
         ],
         taste_hypotheses=[],
-        evidence=[],
+        evidence=list(request.prior_evidence),
         candidates=[proposal],
         research_plan=research_plan,
         uncertainties=[],

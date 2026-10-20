@@ -107,7 +107,7 @@ class PostgresProgramProposalRepository:
                 "owner_listener_id": owner_listener_id,
                 "owner_user_id": owner_user_id,
                 "source": source,
-                "payload": proposal.model_dump(mode="json"),
+                "payload": proposal.persistence_payload(),
                 "created_at": proposal.created_at,
             }
             for proposal in proposals
@@ -134,7 +134,7 @@ class PostgresProgramProposalRepository:
                 row.owner_listener_id != owner_listener_id
                 or row.owner_user_id != owner_user_id
                 or row.source != source
-                or ProgramProposal.model_validate(row.payload).model_dump(mode="json")
+                or ProgramProposal.model_validate(row.payload).persistence_payload()
                 != expected[row.id]["payload"]
                 for row in existing
             ):

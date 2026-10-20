@@ -141,6 +141,28 @@ def same_catalog_name(left: str, right: str) -> bool:
     return canonical_name(left) == canonical_name(right)
 
 
+# "&", "/" and "x" are part of real names (Simon & Garfunkel, AC/DC, X Japan),
+# not collaboration separators. Keep this shared by pools and exact resolution.
+_ARTIST_SEPARATORS = re.compile(r"\s*(?:,|，|、|;|；|\bfeat\.?|\bft\.?)\s*", re.I)
+
+
+def split_artists(value: str) -> tuple[str, ...]:
+    """Split explicit catalog credit separators, preserving complete artist names."""
+    parts = [part.strip() for part in _ARTIST_SEPARATORS.split(value) if part.strip()]
+    return tuple(parts) if parts else (value.strip(),)
+
+
+def primary_artist(value: str) -> str:
+    return split_artists(value)[0]
+
+
+def artist_credit_includes(credit: str, artist: str) -> bool:
+    """Match a complete credited artist, never a substring or a related performer."""
+    return same_catalog_name(credit, artist) or any(
+        same_catalog_name(part, artist) for part in split_artists(credit)
+    )
+
+
 def text_mentions_name(text: str, name: str) -> bool:
     """True when ``name`` is written in ``text`` (script variants and case folded).
 
