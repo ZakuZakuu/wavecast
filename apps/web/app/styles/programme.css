@@ -166,6 +166,7 @@
 .ss-vis { display: flex; flex-direction: column; gap: 8px; }
 .ss-label { padding: 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-3); }
 .ss-hint { padding: 0 4px; font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+.ss-hint.is-error { color: #b3261e; }
 .ss-choices { margin: 0; padding: 0; list-style: none; border-radius: var(--radius-group); background: var(--surface); overflow: hidden; }
 .ss-choices li + li { border-top: 0.5px solid var(--hairline, rgba(60,60,67,.18)); }
 .ss-choices button { width: 100%; min-height: 64px; padding: 10px 16px; border: 0; background: transparent; color: var(--ink); display: flex; align-items: center; gap: 12px; text-align: left; font: inherit; }

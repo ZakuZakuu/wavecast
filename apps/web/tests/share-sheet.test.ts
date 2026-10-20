@@ -96,6 +96,28 @@ describe("ShareSheet", () => {
     expect(text()).toContain("已完成");
   });
 
+  it("keeps who may listen when the 完整版 has to be made first, instead of quietly choosing link-only", async () => {
+    vi.mocked(api.publishProgramme).mockResolvedValue(item({ status: "preparing", step: "full", progress: 10, visibility: "public" }));
+    await mount({ episodeId: null });
+    expect(text()).toContain("谁能听");
+
+    await press("所有人");
+    await press("准备完整版");
+
+    expect(api.publishProgramme).toHaveBeenCalledWith(OWN, "public");
+  });
+
+  it("says so when who may listen could not be saved, and keeps showing what is really saved", async () => {
+    vi.mocked(api.programmePublication).mockResolvedValue(item());
+    vi.mocked(api.setPublicationVisibility).mockRejectedValue(new ApiRequestError("down", 500));
+    await mount();
+
+    await act(async () => { document.body.querySelectorAll<HTMLButtonElement>(".share-sheet [role=tab]")[1].click(); });
+
+    expect(text()).toContain("没有保存成功");
+    expect(document.body.querySelectorAll<HTMLButtonElement>(".share-sheet [role=tab]")[0].getAttribute("aria-selected")).toBe("true");
+  });
+
   it("gives the link of a published programme: copyable, with who may listen and a way to stop", async () => {
     vi.mocked(api.programmePublication).mockResolvedValue(item());
     await mount();

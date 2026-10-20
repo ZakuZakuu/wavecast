@@ -27,7 +27,7 @@ FRESHNESS_WEIGHT = 0.5
 #: One author may have this many programmes on the shelf.
 MAX_PER_AUTHOR = 10
 #: Below this many programmes to show, the whole section is left out.
-MIN_ON_SHELF = 3
+MIN_ON_SHELF = 1
 #: Programmes shown at a time.
 BATCH_SIZE = 6
 #: How many ranked programmes are kept, to page through.

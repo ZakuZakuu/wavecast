@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
+import { readHomeCache, sharedRequest, writeHomeCache } from "./home-cache";
 import type { PublicShelfItem } from "./types";
 
 export type PublicShelfState = {
@@ -35,13 +36,25 @@ export function usePublicShelf(identity: string | null, enabled: boolean): Publi
     if (!enabled) return;
     const mine = ++generation.current;
     shown.current = [];
-    setLoading(true);
+    const key = "shelf:" + (identity ?? "guest");
+    // The last visit's first batch is shown at once and replaced by the fresh answer when it comes.
+    const cached = readHomeCache<{ items: PublicShelfItem[]; atEnd: boolean }>(key);
+    if (cached?.items.length) {
+      shown.current = cached.items.map((item) => item.id);
+      setItems(cached.items);
+      setAtEnd(cached.atEnd);
+      setHidden(false);
+      setLoading(false);
+    } else {
+      setLoading(true);
+      setHidden(false);
+      setAtEnd(false);
+    }
     setRefreshing(false);
-    setHidden(false);
-    setAtEnd(false);
-    api.publicShelf()
+    sharedRequest(key, () => api.publicShelf())
       .then((page) => {
         if (generation.current !== mine) return;
+        writeHomeCache(key, { items: page.items, atEnd: !page.has_more });
         shown.current = page.items.map((item) => item.id);
         setItems(page.items);
         setHidden(page.items.length === 0);
@@ -49,7 +62,8 @@ export function usePublicShelf(identity: string | null, enabled: boolean): Publi
       })
       .catch(() => {
         if (generation.current !== mine) return;
-        // A shelf that cannot be reached is not worth an error on the home page.
+        // A shelf that cannot be reached is not worth an error on the home page; what was shown stays.
+        if (shown.current.length) return;
         setItems([]);
         setHidden(true);
       })
