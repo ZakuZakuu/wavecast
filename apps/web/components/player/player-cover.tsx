@@ -8,6 +8,8 @@ import { TypeCover } from "../cover/type-cover";
 
 /** How long the previous song's cover stays underneath while the next one fades in. */
 const FADE_MS = 400;
+/** How long a swap of the two stacked covers runs (player.css: --swap). The marker stays a little longer. */
+const SWAP_MS = 250;
 /** Of the cover area, the share one stacked cover takes; the rest is the offset of the one behind. */
 const CARD_SHARE = 0.912;
 
@@ -83,6 +85,25 @@ export function PlayerCover({
   front: CoverFront;
   onToggle: () => void;
 }) {
+  // Which way the stack is turning, for as long as it turns. Only a change of `front` while the stack is
+  // already on screen counts: the stack appearing is not a swap, so nothing animates then.
+  const [swap, setSwap] = useState<"to-show" | "to-song" | null>(null);
+  const previousFront = useRef(front);
+  const wasStacked = useRef(false);
+  const swapTimer = useRef<number | undefined>(undefined);
+  const stacked = Boolean(song.current);
+  useEffect(() => {
+    const turned = previousFront.current !== front;
+    previousFront.current = front;
+    const wasOn = wasStacked.current;
+    wasStacked.current = stacked;
+    if (!turned || !wasOn || !stacked) return;
+    setSwap(front === "show" ? "to-show" : "to-song");
+    window.clearTimeout(swapTimer.current);
+    swapTimer.current = window.setTimeout(() => setSwap(null), SWAP_MS + 50);
+  }, [front, stacked]);
+  useEffect(() => () => window.clearTimeout(swapTimer.current), []);
+
   if (!song.current) {
     return (
       <div key="single" className="player-cover" data-drag-handle style={{ width: size, height: size }}>
@@ -97,6 +118,7 @@ export function PlayerCover({
       className="player-cover-stack"
       data-drag-handle
       data-front={front}
+      data-swap={swap ?? undefined}
       style={{ width: size, height: size, ["--card" as string]: `${card}px`, ["--off" as string]: `${size - card}px` }}
     >
       <div className="player-cover-card is-show">
