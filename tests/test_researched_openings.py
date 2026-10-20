@@ -289,6 +289,7 @@ def test_fast_and_full_planning_receive_the_same_durable_opening_evidence(tmp_pa
     assert generated is not None
     planner_prompt = next(c["prompt"] for c in llm.calls if c["output_type"] is FastStartPlan)
     assert request.editorial_brief in planner_prompt
+    assert '"anchor_artists":["Mira Fields"]' in planner_prompt
     assert facts[0].claim_or_excerpt in planner_prompt
     assert set(item.id for item in facts).issubset(
         {item.id for item in generated.research_evidence}

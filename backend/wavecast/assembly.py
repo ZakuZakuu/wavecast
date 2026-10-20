@@ -656,6 +656,7 @@ class LiveEpisodeAssemblyService:
             editorial_brief=request.editorial_brief,
             prior_evidence=list(request.opening_evidence),
             anchor_tracks=list(request.anchor_tracks),
+            anchor_artists=[opening_track.canonical_artist],
             desired_duration_seconds=request.desired_duration_seconds,
             listener_taste_context=request.listener_taste_context,
             output_language=request.output_language,
@@ -1443,6 +1444,12 @@ class LiveEpisodeAssemblyService:
             editorial_brief=request.editorial_brief,
             prior_evidence=list(request.opening_evidence),
             anchor_tracks=list(request.anchor_tracks),
+            anchor_artists=list(dict.fromkeys(
+                track.canonical_artist for track in (
+                    *reserved_tracks,
+                    *((locked_successor,) if locked_successor is not None else ()),
+                )
+            )),
             desired_duration_seconds=request.desired_duration_seconds,
             listener_taste_context=request.listener_taste_context,
             output_language=request.output_language,
