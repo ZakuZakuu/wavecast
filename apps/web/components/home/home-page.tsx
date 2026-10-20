@@ -10,6 +10,7 @@ import { authClient } from "../../lib/auth-client";
 import { programmeCover, rememberCoverSource } from "../../lib/cover/programme-cover";
 import { dedupeByTitle, featureEyebrow, ideaStation, pickMeta, RECOMMENDATION_MINUTES } from "../../lib/home-picks";
 import { FEATURED_PROGRAMMES, featuredDurationIntent, type FeaturedProgramme } from "../../lib/featured";
+import { clearHomeCache, LAST_USER_KEY, readHomeCache, sharedRequest, writeHomeCache } from "../../lib/home-cache";
 import { requestLoginHint } from "../../lib/login-nudge";
 import { usePublicShelf } from "../../lib/public-shelf";
 import {
@@ -110,40 +111,66 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
   const np = useNowPlaying();
   const { data: session, isPending: sessionPending } = authClient.useSession();
   const user = session?.user ?? null;
+  // Cards from the last visit are shown at once; the fresh answer quietly replaces them.
   const [seeds, setSeeds] = useState<Seed[] | null>(null);
   const [ideas, setIdeas] = useState<ProgramIdea[] | null>(null);
+  const [lastUserId, setLastUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rotating, setRotating] = useState(false);
   const [rotationNote, setRotationNote] = useState<string | null>(null);
   const tune = useTuneStart();
-  const shelf = usePublicShelf(user?.id ?? null, !sessionPending);
+  // While the session is still being checked, the person who was signed in last is assumed.
+  const userId = user?.id ?? (sessionPending ? lastUserId : null);
+  const shelf = usePublicShelf(userId, userId !== null || !sessionPending);
   const askToSignIn = () => requestLoginHint({ title: "登录后才能换一批", note: "登录后可以获得完整推荐" });
 
   useEffect(() => {
-    api.seeds()
-      .then(setSeeds)
-      .catch(() => setSeeds([]));
+    setSeeds(readHomeCache<Seed[]>("seeds"));
+    setLastUserId(readHomeCache<string>(LAST_USER_KEY));
+    let active = true;
+    sharedRequest("seeds", () => api.seeds())
+      .then((value) => {
+        if (!active) return;
+        writeHomeCache("seeds", value);
+        setSeeds(value);
+      })
+      .catch(() => {
+        // Keep what was shown; only an empty first visit has nothing to fall back on.
+        if (active) setSeeds((current) => current ?? []);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
     if (sessionPending) return;
     if (!user) {
+      clearHomeCache(LAST_USER_KEY);
+      setLastUserId(null);
       setIdeas(null);
       return;
     }
+    writeHomeCache(LAST_USER_KEY, user.id);
+    setLastUserId(user.id);
+    const key = "ideas:" + user.id;
+    const cached = readHomeCache<ProgramIdea[]>(key);
+    if (cached) setIdeas(cached);
     let active = true;
-    api.recommendations(user.id)
+    sharedRequest(key, () => api.recommendations(user.id))
       .then((value) => {
-        if (active) setIdeas(value);
+        if (!active) return;
+        writeHomeCache(key, value);
+        setIdeas(value);
       })
       .catch(() => {
-        if (active) setIdeas([]);
+        if (active) setIdeas((current) => current ?? []);
       });
     return () => {
       active = false;
     };
-  }, [sessionPending, user]);
+  }, [sessionPending, user?.id]);
 
   /** 换一批: shown ideas are not offered again; when nothing new can be offered the shelf stays. */
   const rotateIdeas = async () => {
@@ -187,9 +214,11 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
   // Guests: hand-picked featured cards (generated only on click). Signed in:
   // personalised ideas, or the seeds when there are none — rendered once.
   const guest = !sessionPending && !user;
+  // A session still being checked keeps showing the last visit's cards instead of emptying the page.
+  const cardsKnown = sessionPending && lastUserId !== null && (ideas !== null || seeds !== null);
   const picks: Pick[] = useMemo(() => {
-    if (sessionPending) return [];
-    if (!user) {
+    if (sessionPending && !cardsKnown) return [];
+    if (!user && !cardsKnown) {
       return FEATURED_PROGRAMMES.map((item: FeaturedProgramme) => ({
         key: "featured:" + item.id,
         id: item.id,
@@ -229,7 +258,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
         openPlayer(`/episode/${seed.id}`);
       },
     }));
-  }, [busyId, ideas, router, seeds, sessionPending, tune.start, user]);
+  }, [busyId, cardsKnown, ideas, router, seeds, sessionPending, tune.start, user]);
 
   // Tapping a card shows what the programme promises; it is made only when play is pressed.
   const [selected, setSelected] = useState<Pick | null>(null);
@@ -263,7 +292,7 @@ export function HomePage({ onOnboardingFinished }: { onOnboardingFinished?: () =
     onOnboardingFinished?.();
   }, [onOnboardingFinished]);
 
-  const loading = sessionPending || (!guest && (seeds === null || ideas === null));
+  const loading = (sessionPending && !cardsKnown) || (!guest && !cardsKnown && (seeds === null || ideas === null));
   const glow = np?.station?.light ?? "#5C7CE0";
   const initial = user?.name?.trim().slice(0, 1) || user?.email?.slice(0, 1)?.toUpperCase() || null;
 

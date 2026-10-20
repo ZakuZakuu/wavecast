@@ -9,6 +9,7 @@ vi.mock("../components/cover/type-cover", () => ({ TypeCover: () => null }));
 
 import { PublicShelf } from "../components/home/public-shelf";
 import { api } from "../lib/api";
+import { resetHomeCache } from "../lib/home-cache";
 import { usePublicShelf } from "../lib/public-shelf";
 import type { PublicShelfItem, PublicShelfPage } from "../lib/types";
 
@@ -26,6 +27,8 @@ function Probe({ identity, enabled = true }: { identity: string | null; enabled?
 }
 
 beforeEach(() => {
+  resetHomeCache();
+  window.localStorage.clear();
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -45,6 +48,24 @@ const press = () => act(async () => { host.querySelector<HTMLButtonElement>(".pi
 const settle = () => act(async () => { await Promise.resolve(); });
 
 describe("大家都在听", () => {
+  it("shows the last visit's programmes at once and swaps in the fresh answer when it comes", async () => {
+    vi.mocked(api.publicShelf).mockResolvedValue(page([1, 2], false));
+    await mount();
+    expect(titles()).toEqual(["别人的节目 1", "别人的节目 2"]);
+
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    resetHomeCache();
+    let answer!: (value: PublicShelfPage) => void;
+    vi.mocked(api.publicShelf).mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    await mount();
+    expect(titles()).toEqual(["别人的节目 1", "别人的节目 2"]);
+
+    await act(async () => { answer(page([3], false)); await Promise.resolve(); });
+    await settle();
+    expect(titles()).toEqual(["别人的节目 3"]);
+  });
+
   it("shows the programmes as links to their own pages, with the station and length", async () => {
     vi.mocked(api.publicShelf).mockResolvedValue(page([1, 2, 3], true));
     await mount();

@@ -903,6 +903,69 @@ def test_program_render_does_not_drop_narration_already_in_frozen_prefix(
     assert repository.get(episode.id).segment("frozen-host").state is SegmentState.AUDIO_READY
 
 
+def _late_host_episode(state: EpisodeState, mode: GenerationMode) -> tuple[LiveEpisode, ProgramRenderManifest]:
+    music = MusicSegment(
+        id="music-a", chapter_id="chapter-a", order=0, state=SegmentState.AUDIO_READY,
+        planned_duration_seconds=120, actual_duration_seconds=120, track_ref="track-a",
+        audio_source_url="/api/assets/audio/music-a.wav", title="A", artist="Artist A",
+    )
+    previous = plan_episode_mix(PlayableEpisode(id="program-render-late-host-done", segments=[music]))
+    manifest = _manifest_for_plan_prefix(previous, end_seconds=6)
+    episode = LiveEpisode(
+        id=previous.episode_id, seed_id="seed", title="Late host", topic="Frozen prefix admission",
+        listener_id="listener-a", state=state, generation_mode=mode,
+        program_estimated_duration_seconds=240,
+        segments=[
+            NarrationSegment(
+                id="late-host", chapter_id="chapter-a", order=0, state=SegmentState.AUDIO_READY,
+                planned_duration_seconds=8, actual_duration_seconds=8,
+                audio_source_url="/api/assets/audio/late-host.wav", title="Late Track Intro",
+                narration_text="This arrived after the programme had already published.",
+                narration_role=NarrationRole.TRACK_INTRO,
+            ),
+            music.model_copy(update={"order": 1}),
+        ],
+        current_segment_id="music-a",
+    )
+    return episode, manifest
+
+
+def test_a_finished_programme_recovers_when_late_narration_removal_restores_the_frozen_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The full version finished after narration had been written into audio already frozen: the
+    rest could not be rendered, played or shared until that narration is taken out again."""
+    repository = InMemoryEpisodeRepository()
+    monkeypatch.setattr(api_module, "repository", repository)
+    monkeypatch.setattr(api_module, "orchestrator", EpisodeOrchestrator(repository))
+    episode, manifest = _late_host_episode(EpisodeState.MATERIALIZED, GenerationMode.FULL)
+    repository.save(episode)
+    assert not api_module.frozen_prefix_is_compatible(
+        api_module.canonical_render_plan_for_episode(episode.id), manifest,
+    )
+
+    skipped = api_module._recover_late_optional_narration_for_frozen_prefix(episode.id, manifest)
+
+    assert skipped == ["late-host"]
+    assert repository.get(episode.id).segment("late-host").state is SegmentState.SKIPPED
+    assert api_module.frozen_prefix_is_compatible(
+        api_module.canonical_render_plan_for_episode(episode.id), manifest,
+    )
+
+
+def test_a_published_programme_is_never_changed_to_fit_a_frozen_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = InMemoryEpisodeRepository()
+    monkeypatch.setattr(api_module, "repository", repository)
+    monkeypatch.setattr(api_module, "orchestrator", EpisodeOrchestrator(repository))
+    episode, manifest = _late_host_episode(EpisodeState.PUBLISHED, GenerationMode.FULL)
+    repository.save(episode)
+
+    assert api_module._recover_late_optional_narration_for_frozen_prefix(episode.id, manifest) == []
+    assert repository.get(episode.id).segment("late-host").state is SegmentState.AUDIO_READY
+
+
 def _finished_programme(count: int, seconds: int = 40) -> LiveEpisode:
     return LiveEpisode(
         seed_id="finished", listener_id="listener-f", state=EpisodeState.MATERIALIZED,

@@ -1002,6 +1002,11 @@ class EpisodeOrchestrator:
             last_order = max(segment.order for segment in existing)
             replacement: list[MusicSegment | NarrationSegment]
 
+            if generated is not None and episode.rendered_programme_covers(base_order):
+                # The seam is already behind the programme's frozen audio: filling it now would
+                # rewrite what the listener has heard (and what a share or the full version renders).
+                generated = None
+
             if generated is None:
                 replacement = [
                     (

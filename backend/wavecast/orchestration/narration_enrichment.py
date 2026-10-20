@@ -427,6 +427,8 @@ def _finish_authoring(
                 segment.order > last_order and segment.is_committed
                 for segment in episode.timeline_segments
             )
+            # The programme's audio is frozen as it is rendered, without committing anything.
+            or episode.rendered_programme_covers(min(segment.order for segment in existing))
         )
 
         replacement: list[MusicSegment | NarrationSegment] | None = None

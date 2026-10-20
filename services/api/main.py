@@ -2401,16 +2401,23 @@ def _recover_late_optional_narration_for_frozen_prefix(
     episode_id: str,
     manifest: ProgramRenderManifest,
 ) -> list[str]:
-    """Drop only narration whose removal exactly restores the frozen programme."""
+    """Drop only narration whose removal exactly restores the frozen programme.
+
+    Also for a programme whose full version is done (MATERIALIZED) but whose rendering stopped at a
+    frozen prefix: narration that was written into that stretch after it had been rendered would
+    otherwise keep the rest of it from being rendered, played or shared. Skipping exactly those
+    narrations gives back the frozen timeline, so every position, subtitle and jump stays where the
+    listener heard it. A programme already published is left alone.
+    """
 
     if manifest.complete:
         return []
 
     for attempt in range(5):
         episode = repository.get(episode_id).model_copy(deep=True)
-        if (
-            episode.generation_mode is not GenerationMode.PROGRESSIVE
-            or episode.state in {EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED}
+        finished = episode.state is EpisodeState.MATERIALIZED
+        if episode.state is EpisodeState.PUBLISHED or (
+            not finished and episode.generation_mode is not GenerationMode.PROGRESSIVE
         ):
             return []
 
@@ -2421,7 +2428,8 @@ def _recover_late_optional_narration_for_frozen_prefix(
                 isinstance(segment, NarrationSegment)
                 and segment.id != "segment-opening-host"
                 and segment.state is SegmentState.AUDIO_READY
-                and not segment.is_committed
+                # What the finished programme marks as committed says nothing about what was heard.
+                and (finished or not segment.is_committed)
             )
         ]
         if not candidates:
@@ -2696,9 +2704,7 @@ async def _render_programme_locked(episode_id: str, ahead_step: float | None = N
                 complete=complete,
             )
         except ProgramImmutabilityError:
-            if manifest is None or manifest.complete or current.state in {
-                EpisodeState.MATERIALIZED, EpisodeState.PUBLISHED,
-            }:
+            if manifest is None or manifest.complete or current.state is EpisodeState.PUBLISHED:
                 raise
             skipped_late = await to_thread.run_sync(
                 _recover_late_optional_narration_for_frozen_prefix,

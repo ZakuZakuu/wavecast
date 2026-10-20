@@ -115,14 +115,14 @@ def test_only_public_published_programmes_are_on_the_shelf() -> None:
     assert page.hidden is False and page.has_more is False
 
 
-def test_fewer_than_three_programmes_leave_the_whole_section_out() -> None:
+def test_one_public_programme_is_enough_to_make_a_shelf() -> None:
     rig = Rig()
-    for index in range(MIN_ON_SHELF - 1):
-        rig.add(owner=f"author-{index}")
+    assert MIN_ON_SHELF == 1
     assert rig.page().hidden is True
     rig.add(owner="author-new")
     rig.shelf.invalidate()
-    assert rig.page().hidden is False
+    page = rig.page()
+    assert page.hidden is False and len(page.items) == 1
 
 
 def test_a_listener_is_not_offered_their_own_programmes_or_ones_they_already_hold() -> None:

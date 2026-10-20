@@ -13,7 +13,7 @@ from wavecast.models.episode import (
     SegmentState,
 )
 from wavecast.models.progressive import ProgressiveAssemblyChapter, ProgressiveAssemblySession
-from wavecast.orchestration.episode import InMemoryEpisodeRepository
+from wavecast.orchestration.episode import EpisodeOrchestrator, InMemoryEpisodeRepository
 from wavecast.orchestration.generation import GeneratedChapter
 from wavecast.orchestration.narration_enrichment import _finish_authoring, author_pending_narration
 
@@ -160,6 +160,123 @@ def test_late_writer_enrichment_never_rewrites_committed_music() -> None:
     assert updated.segment("chapter-3:music:0").order == 2
     assert updated.progressive_session is not None
     assert updated.progressive_session.narration_authored_chapter_ids == ["chapter-2"]
+
+
+def test_late_writer_enrichment_never_changes_audio_the_programme_has_already_frozen() -> None:
+    """The listener plays the HLS programme: its audio is frozen as it is rendered, but nothing is
+    committed on the segments. A narration inserted into a frozen stretch rewrites the mix of that
+    stretch, and the full version could then never be rendered or shared (409, frozen prefix)."""
+    repository = InMemoryEpisodeRepository()
+    episode = _episode()
+    # Opening (120 s) and the bridge song (180 s) are already rendered into the programme.
+    episode.program_rendered_frontier_seconds = 300.0
+    repository.save(episode)
+
+    updated = _finish_authoring(
+        _Host(repository),
+        episode.id,
+        "chapter-2",
+        _authored_chapter(),
+    )
+
+    chapter = [segment for segment in updated.ordered_segments if segment.chapter_id == "chapter-2"]
+    assert [segment.id for segment in chapter] == ["chapter-2:music:0"]
+    assert updated.segment("chapter-3:music:0").order == 2
+    assert updated.progressive_session is not None
+    assert updated.progressive_session.narration_authored_chapter_ids == ["chapter-2"]
+
+
+def test_late_writer_enrichment_still_inserts_before_a_chapter_the_programme_has_not_reached() -> None:
+    repository = InMemoryEpisodeRepository()
+    episode = _episode()
+    # Only the opening is rendered; the bridge starts exactly where the frozen audio ends.
+    episode.program_rendered_frontier_seconds = 120.0
+    repository.save(episode)
+
+    updated = _finish_authoring(
+        _Host(repository),
+        episode.id,
+        "chapter-2",
+        _authored_chapter(),
+    )
+
+    chapter = [segment for segment in updated.ordered_segments if segment.chapter_id == "chapter-2"]
+    assert [segment.id for segment in chapter] == ["chapter-2:narration:0", "chapter-2:music:0"]
+
+
+def test_a_frozen_narration_placeholder_is_skipped_instead_of_filled() -> None:
+    repository = InMemoryEpisodeRepository()
+    episode = _trackless_episode()
+    episode.segments = [
+        segment.model_copy(update={"state": SegmentState.PLANNED})
+        if segment.id == "chapter-2:narration:0" else segment
+        for segment in episode.segments
+    ]
+    # Opening (120 s) plus the later song are rendered: the seam at 120 s is behind the frozen frontier.
+    episode.program_rendered_frontier_seconds = 300.0
+    repository.save(episode)
+
+    updated = _finish_authoring(
+        _Host(repository),
+        episode.id,
+        "chapter-2",
+        _authored_trackless_chapter(),
+    )
+
+    narration = updated.segment("chapter-2:narration:0")
+    assert narration.state is SegmentState.SKIPPED
+    assert narration.narration_text != "A short scene-setting beat."
+
+
+def _episode_with_fast_placeholder() -> LiveEpisode:
+    """Opening (120 s), then chapter 2: a host seam still PLANNED in front of its song (180 s)."""
+    episode = _episode()
+    placeholder = NarrationSegment(
+        id="chapter-2:narration:0",
+        chapter_id="chapter-2",
+        order=1,
+        state=SegmentState.PLANNED,
+        planned_duration_seconds=8,
+        title="Host seam",
+    )
+    shifted = [
+        segment.model_copy(update={"order": segment.order + 1}) if segment.order >= 1 else segment
+        for segment in episode.segments
+    ]
+    episode.segments = [shifted[0], placeholder, *shifted[1:]]
+    return episode
+
+
+def _authored_with_song() -> GeneratedChapter:
+    chapter = _authored_chapter()
+    return chapter
+
+
+def test_the_fast_successor_placeholder_behind_the_frozen_audio_is_skipped_not_filled() -> None:
+    repository = InMemoryEpisodeRepository()
+    episode = _episode_with_fast_placeholder()
+    # The opening (120 s) and the song after the seam are rendered: the seam is behind the frontier.
+    episode.program_rendered_frontier_seconds = 300.0
+    repository.save(episode)
+
+    updated = EpisodeOrchestrator(repository)._finish_fast_successor_narration(
+        episode.id, _authored_with_song(),
+    )
+
+    assert updated.segment("chapter-2:narration:0").state is SegmentState.SKIPPED
+
+
+def test_the_fast_successor_placeholder_ahead_of_the_frozen_audio_is_still_filled() -> None:
+    repository = InMemoryEpisodeRepository()
+    episode = _episode_with_fast_placeholder()
+    episode.program_rendered_frontier_seconds = 120.0   # the seam starts where the frozen audio ends
+    repository.save(episode)
+
+    updated = EpisodeOrchestrator(repository)._finish_fast_successor_narration(
+        episode.id, _authored_with_song(),
+    )
+
+    assert updated.segment("chapter-2:narration:0").state is SegmentState.SCRIPT_READY
 
 
 def _trackless_episode(

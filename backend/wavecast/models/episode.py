@@ -275,6 +275,26 @@ class LiveEpisode(BaseModel):
     def timeline_segments(self) -> list[Segment]:
         return [segment for segment in self.ordered_segments if segment.is_timeline_active]
 
+    def rendered_programme_covers(self, order: int) -> bool:
+        """Whether the slot at `order` begins inside audio the programme renderer has frozen.
+
+        The listener plays the single-source programme (HLS): its audio is frozen chunk by chunk as it
+        is rendered, while nothing is committed on the segments themselves. Whatever starts before the
+        frozen frontier must not be changed any more (a narration put in front of it, a song moved
+        later): the next render would find the frozen audio rewritten and refuse, and the full version
+        could neither be played on nor shared.
+        """
+
+        frontier = self.program_rendered_frontier_seconds
+        if not frontier:
+            return False
+        start = sum(
+            segment.duration_seconds
+            for segment in self.timeline_segments
+            if segment.order < order
+        )
+        return start + 1e-6 < frontier
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def hosting_coverage(self) -> HostingCoverage | None:

@@ -139,8 +139,29 @@ function problemFor(error: unknown): Problem {
 const VISIBILITY_LABEL: Record<Visibility, string> = { link: "知道链接的人", public: "所有人" };
 const VISIBILITY_HINT: Record<Visibility, string> = {
   link: "只有拿到链接的人能听，不会出现在首页。",
-  public: "也会出现在首页的「大家都在听」。",
+  public: "也会出现在首页的「大家都在听」（你自己的首页不显示自己分享的）。",
 };
+
+function VisibilityChoices({ value, onChange }: { value: Visibility; onChange: (value: Visibility) => void }) {
+  return (
+    <div className="ss-vis">
+      <span className="ss-label">谁能听</span>
+      <ul className="ss-choices">
+        {(["link", "public"] as const).map((option) => (
+          <li key={option}>
+            <button type="button" aria-pressed={value === option} onClick={() => onChange(option)}>
+              <span>
+                <strong>{VISIBILITY_LABEL[option]}</strong>
+                <small>{option === "link" ? "不会出现在首页" : "也会出现在首页的「大家都在听」"}</small>
+              </span>
+              {value === option ? <CheckIcon size={22} strokeWidth={2.4} aria-label="已选" /> : null}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 /** Sharing a generated programme: ask for its 完整版, wait for the mix, then hand over the link. */
 function PublishSheet({ open, onClose, target }: { open: boolean; onClose: () => void; target: ShareTarget }) {
@@ -150,6 +171,7 @@ function PublishSheet({ open, onClose, target }: { open: boolean; onClose: () =>
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
   const [revoked, setRevoked] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
   // The link is only shown once it opens: before that the card has nothing to point at.
   const url = item?.status === "published" ? publishedShareUrl(item.id) : undefined;
   const { copied, failed, native, copy, reset } = useCopy(url ?? "");
@@ -159,6 +181,7 @@ function PublishSheet({ open, onClose, target }: { open: boolean; onClose: () =>
     reset();
     setProblem(null);
     setRevoked(false);
+    setSaveFailed(false);
   }, [open]);
 
   // Whether the programme's 完整版 is made already decides what is asked first.
@@ -197,11 +220,14 @@ function PublishSheet({ open, onClose, target }: { open: boolean; onClose: () =>
   };
 
   const change = async (visibility: Visibility, current: PublicationItem) => {
+    setSaveFailed(false);
     setItem({ ...current, visibility });
     try {
+      // What the server kept is what is shown: never a choice that was not saved.
       setItem(await api.setPublicationVisibility(current.id, visibility));
     } catch {
       setItem(current);
+      setSaveFailed(true);
     }
   };
 
@@ -300,6 +326,7 @@ function PublishSheet({ open, onClose, target }: { open: boolean; onClose: () =>
             onChange={(value) => void change(value, item)}
           />
           <span className="ss-hint">{VISIBILITY_HINT[item.visibility]}</span>
+          {saveFailed ? <span className="ss-hint is-error" role="alert">没有保存成功，现在仍是「{VISIBILITY_LABEL[item.visibility]}」，再选一次试试。</span> : null}
         </div>
         <LinkActions url={url ?? ""} title={target.title} copied={copied} native={native} copy={copy} />
         <button type="button" className="ss-revoke" disabled={busy} onClick={() => void withdraw(item)}>撤回分享</button>
@@ -332,8 +359,9 @@ function PublishSheet({ open, onClose, target }: { open: boolean; onClose: () =>
           <h3>节目还没准备完整，需要准备好完整版吗？</h3>
           <p>别人听到的是整档节目，要先做完才能打开链接。</p>
         </div>
+        <VisibilityChoices value={choice} onChange={setChoice} />
         <div className="ss-actions">
-          <button type="button" className="pill-button ss-primary" disabled={busy} onClick={() => void start("link")}>准备完整版</button>
+          <button type="button" className="pill-button ss-primary" disabled={busy} onClick={() => void start(choice)}>准备完整版</button>
           <button type="button" className="pill-button ss-secondary" onClick={onClose}>先不了</button>
         </div>
         <p className="ss-note">做的时候可以离开，做好会提醒你。</p>
@@ -343,22 +371,7 @@ function PublishSheet({ open, onClose, target }: { open: boolean; onClose: () =>
 
   return (
     <Frame {...frameProps}>
-      <div className="ss-vis">
-        <span className="ss-label">谁能听</span>
-        <ul className="ss-choices">
-          {(["link", "public"] as const).map((value) => (
-            <li key={value}>
-              <button type="button" aria-pressed={choice === value} onClick={() => setChoice(value)}>
-                <span>
-                  <strong>{VISIBILITY_LABEL[value]}</strong>
-                  <small>{value === "link" ? "不会出现在首页" : "也会出现在首页的「大家都在听」"}</small>
-                </span>
-                {choice === value ? <CheckIcon size={22} strokeWidth={2.4} aria-label="已选" /> : null}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
+      <VisibilityChoices value={choice} onChange={setChoice} />
       <div className="ss-actions">
         <button type="button" className="pill-button ss-primary" disabled={busy} onClick={() => void start(choice)}>
           {revoked || item?.status === "revoked" ? "重新分享" : "发布"}
