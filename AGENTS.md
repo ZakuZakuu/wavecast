@@ -337,7 +337,7 @@ The full backend suite takes about 15 minutes and CI runs the same suite, so do 
 
 ## Git and PR discipline
 
-The repository is private and must remain private.
+The repository is public. Keep credentials, private user data, and non-public deployment details out of public changes.
 
 Use small, coherent commits with meaningful messages. For substantial work, create a feature branch and PR rather than pushing directly to `main`.
 
