@@ -1,18 +1,28 @@
 <p align="center">
-  <img src="docs/assets/wavecast-banner.svg" width="100%" alt="WaveCast：带有五个电台频率刻度的品牌封面">
+  <img src="docs/assets/wavecast-banner.webp" width="100%" alt="WaveCast：说一句想听什么，电台就为这个主题开播。右侧是应用生成的节目封面，下方是五个电台的 FM 调频刻度。">
 </p>
 
-# WaveCast
+<h1 align="center">WaveCast</h1>
 
-**说一句想听什么，电台就为这个主题开播。**
+<p align="center"><b>说一句想听什么，电台就为这个主题开播。</b></p>
+
+<p align="center">
+  <a href="https://wavecast.space"><img alt="在线体验" src="https://img.shields.io/badge/在线体验-wavecast.space-F25A1C?style=flat-square"></a>
+  <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white">
+  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=nextdotjs&logoColor=white">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white">
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square"></a>
+</p>
 
 WaveCast 把一个音乐问题变成一档可收听的节目。比如输入「City Pop 是怎么来的？」或「从一首喜欢的歌出发，挖几首没听过的」，它会查资料、选曲、编排节目，并用合成主持串起歌曲与故事。开场先播，后面的章节边听边准备。
 
 *WaveCast is an on-demand guided-listening radio app. It turns a music prompt into a hosted programme, starts with a playable opening, and prepares later chapters while you listen.*
 
-[参赛海报](#参赛海报) · [功能](#功能) · [边播边生成](#边播边生成) · [本地体验](#本地体验) · [开发索引](#开发索引) · [MIT](LICENSE)
+<p align="center"><a href="#参赛海报">参赛海报</a> · <a href="#功能">功能</a> · <a href="#边播边生成">边播边生成</a> · <a href="#架构">架构</a> · <a href="#工程上做了什么">工程亮点</a> · <a href="#本地体验">本地体验</a> · <a href="#开发索引">开发索引</a></p>
 
-> 这是一个已结束开发阶段的音乐 AI Hackathon 项目。仓库保留实现和设计记录，暂无后续开发计划。
+> 这是一个已结束开发阶段的音乐 AI Hackathon 项目。仓库保留实现和设计记录，暂无后续开发计划。在线版 [wavecast.space](https://wavecast.space) 仍可体验，推荐用 iPhone Safari 打开。
 
 ## 参赛海报
 
@@ -42,21 +52,32 @@ WaveCast 把一个音乐问题变成一档可收听的节目。比如输入「Ci
 
 ## 边播边生成
 
-```mermaid
-flowchart LR
-    A["主题 · 电台 · 主持密度"] --> B["节目提案 · 匹配开场曲"]
-    B --> C["开场先播"]
-    B --> D["后台研究 · 选曲 · 写稿"]
-    D --> E["口播合成 · 混音"]
-    E --> F["追加 HLS 音频分片"]
-    F --> C
-```
+<p align="center">
+  <img src="docs/assets/wavecast-live-generation.webp" width="100%" alt="边播边生成：上面是听众听到的时间线，已播放的音频固定，前方留 5 到 8 分钟缓冲；下面是后台依次做研究、选曲、写稿、口播合成和混音，做好一段就接到生成前沿后面。">
+</p>
 
 - **把等待放到收听过程中。** 开场先验证曲目可播。更深入的检索、编排、写稿和配音分段进行，优先准备下一段需要的内容。
 - **控制未收听内容的生成成本。** 推荐卡片先生成选题，节目由用户操作触发。默认只维持前方的播放缓冲，完整版由用户主动请求。检索和模型调用设有上限。如果可选口播来不及，运行时可以继续播放已准备好的音乐。
 - **守住已经听到的内容。** 播放位置、任务状态和发布边界由确定性代码管理。后续编排可以继续变化，已经对听众开放的音频分片保持固定。分享会在完整音频通过校验后才生成可用链接。
 
 [播放运行时](docs/adr/0020-buffered-streaming-runtime-v2.md) · [研究与开场](docs/adr/0039-researched-openings-and-proposal-recovery.md) · [发布音频](docs/adr/0037-published-programmes.md)
+
+## 架构
+
+<p align="center">
+  <img src="docs/assets/wavecast-architecture.webp" width="100%" alt="WaveCast 架构：Web、API、节目运行时和服务接入层四层，下方是 Postgres、对象存储和 FFmpeg 渲染。">
+</p>
+
+节目运行时是普通的确定性代码：节目和章节的状态、哪些内容已经对听众开放、缓冲留多少、任务取消与续播，都由它决定。模型只在它划定的边界里工作，分成研究、选曲、写稿、重新规划四个角色，输出结构化结果，检索次数和成本有预算。业务代码只依赖接口，大模型、检索、曲库和语音都通过适配器接入，可以替换，也都有用于测试的模拟实现。
+
+## 工程上做了什么
+
+- **把等待藏在播放里。** 先开播再生成，并区分「已播放」「已就绪」「计划中」三段内容。后台生成只比播放位置领先一小段，不为没人听的内容花钱。
+- **音频一旦放出就不再改。** 分片在播放边界内固定，后续规划只改没播的部分。后来补写的旁白如果会改动已经固定的音频，就跳过它。分享和完整版也遵守同样的规则，相关不变量都有回归测试。
+- **不依赖任何一个厂商。** 大模型、检索、曲库、语音都在接口后面。没有密钥时用模拟实现，测试默认不调用付费接口，本地用 Docker Compose 就能完整体验。
+- **控制成本。** 推荐只生成选题，点播才生成节目。检索、模型调用、每日额度和同时准备的数量都有上限，用量有记录。
+- **能放心改的代码。** 后端约 1900 个测试，前端约 490 个。CI 按改动范围选择检查，发版前走完整验证。40 篇架构决策记录（ADR）写明每个关键取舍，包括后来被取代的方案。
+- **从产品到上线都自己做完。** 调频与播放界面、程序化封面、PWA、登录与额度、分享、后台任务、部署（Vercel、Railway、Postgres）。
 
 ## 本地体验
 
