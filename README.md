@@ -10,9 +10,18 @@ WaveCast 把一个音乐问题变成一档可收听的节目。比如输入「Ci
 
 *WaveCast is an on-demand guided-listening radio app. It turns a music prompt into a hosted programme, starts with a playable opening, and prepares later chapters while you listen.*
 
-[功能](#功能) · [边播边生成](#边播边生成) · [本地体验](#本地体验) · [开发索引](#开发索引) · [MIT](LICENSE)
+[参赛海报](#参赛海报) · [功能](#功能) · [边播边生成](#边播边生成) · [本地体验](#本地体验) · [开发索引](#开发索引) · [MIT](LICENSE)
 
 > 这是一个已结束开发阶段的音乐 AI Hackathon 项目。仓库保留实现和设计记录，暂无后续开发计划。
+
+## 参赛海报
+
+<p align="center">
+  <a href="docs/assets/wavecast-poster-v7.png">
+    <img src="docs/assets/wavecast-poster-v7.png" width="360" alt="WaveCast 参赛海报：手机首页、节目封面与 FM 调频刻度的设计示意">
+  </a>
+</p>
+<p align="center"><sub>腾讯音乐高校 AI Hackathon 参赛海报。界面、封面与节目内容均为设计示意。点击图片查看原图。</sub></p>
 
 ## 一档节目怎么开始
 
