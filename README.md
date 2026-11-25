@@ -18,7 +18,7 @@ WaveCast 把一个音乐问题变成一档可收听的节目。比如输入「Ci
 
 <p align="center">
   <a href="docs/assets/wavecast-poster-v7.png">
-    <img src="docs/assets/wavecast-poster-v7.png" width="360" alt="WaveCast 参赛海报：手机首页、节目封面与 FM 调频刻度的设计示意">
+    <img src="docs/assets/wavecast-poster-preview.webp" width="360" alt="WaveCast 参赛海报：手机首页、节目封面与 FM 调频刻度的设计示意">
   </a>
 </p>
 <p align="center"><sub>腾讯音乐高校 AI Hackathon 参赛海报。界面、封面与节目内容均为设计示意。点击图片查看原图。</sub></p>
